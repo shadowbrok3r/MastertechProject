@@ -3,6 +3,7 @@
 //! `PluginToolProvider` over an in-memory duplex, so logging, consent gates and
 //! provenance behave exactly as for any other MCP caller.
 
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -164,6 +165,55 @@ impl ToolPolicy {
     pub fn may_remember(&self, tool: &str) -> bool {
         !NEVER_REMEMBER_TOOLS.contains(&tool)
     }
+
+    /// How a call gets past the approval gate, given the session's approve-all flag and remembered tools.
+    pub fn gate(&self, tool: &str, arguments: &Value, approve_all: bool, remembered: &HashSet<String>) -> Gate {
+        if !self.needs_approval(tool) || remembered.contains(tool) {
+            Gate::Run
+        } else if tool == "remote_exec_start" && declares_read(arguments) {
+            Gate::ReadOnlyJob
+        } else if approve_all {
+            Gate::SessionAllowsAll
+        } else {
+            Gate::Ask
+        }
+    }
+}
+
+/// How a tool call gets past the approval gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Not gated, or its tool was approved for the session.
+    Run,
+    /// A `remote_exec_start` whose risk is `read`.
+    ReadOnlyJob,
+    /// The technician approved every call of the session.
+    SessionAllowsAll,
+    /// A technician decides.
+    Ask,
+}
+
+impl Gate {
+    pub fn needs_human(self) -> bool {
+        self == Self::Ask
+    }
+
+    /// Transcript note for a gated call that runs without asking.
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Self::ReadOnlyJob => Some("Auto-approved read-only job"),
+            Self::SessionAllowsAll => Some("Auto-approved (session allows all)"),
+            Self::Run | Self::Ask => None,
+        }
+    }
+}
+
+/// `risk` is `read` in any letter case.
+fn declares_read(arguments: &Value) -> bool {
+    arguments
+        .get("risk")
+        .and_then(Value::as_str)
+        .is_some_and(|risk| risk.eq_ignore_ascii_case("read"))
 }
 
 /// An in-process MCP client bound to its own `PluginToolProvider`.
@@ -500,6 +550,42 @@ mod tests {
         assert!(!PROMPT_TOOLS.contains(&"ensure_service_task"));
         let args = json!({ "service_number": "2155467", "connection_string": "OTHER:1" });
         assert!(scope_violation(&args, "DESKTOP-787KAB8:8d3db801f").is_some());
+    }
+
+    fn policy() -> ToolPolicy {
+        let list = |l: &[&str]| l.iter().map(|s| s.to_string()).collect();
+        ToolPolicy { allowed: list(DIAGNOSTICIAN_TOOLS), general: list(GENERAL_TOOLS), prompt: list(PROMPT_TOOLS) }
+    }
+
+    #[test]
+    fn a_read_only_job_runs_without_asking_and_other_jobs_ask() {
+        let (p, none) = (policy(), HashSet::new());
+        for risk in ["read", "READ", "Read"] {
+            let args = json!({ "script": "Get-Date", "risk": risk });
+            assert_eq!(p.gate("remote_exec_start", &args, false, &none), Gate::ReadOnlyJob, "{risk}");
+        }
+        for args in [json!({ "risk": "mutate" }), json!({ "risk": " read" }), json!({ "risk": true }), json!({})] {
+            let gate = p.gate("remote_exec_start", &args, false, &none);
+            assert!(gate.needs_human(), "{args}");
+        }
+        assert!(p.gate("remote_reboot_client", &json!({ "risk": "read" }), false, &none).needs_human());
+        assert!(p.gate("desktop_click", &json!({ "risk": "read" }), false, &none).needs_human());
+    }
+
+    #[test]
+    fn approve_all_runs_every_gated_call_and_remembered_tools_run_silently() {
+        let p = policy();
+        let none = HashSet::new();
+        for tool in ["remote_exec_start", "remote_reboot_client", "desktop_click"] {
+            let gate = p.gate(tool, &json!({ "risk": "destructive" }), true, &none);
+            assert_eq!(gate, Gate::SessionAllowsAll, "{tool}");
+            assert!(!gate.needs_human() && gate.note().is_some());
+        }
+        let remembered: HashSet<String> = ["desktop_click".to_string()].into();
+        assert_eq!(p.gate("desktop_click", &json!({}), false, &remembered), Gate::Run);
+        assert_eq!(p.gate("query_surrealdb", &json!({}), false, &none), Gate::Run);
+        assert_eq!(Gate::Run.note(), None);
+        assert_eq!(Gate::ReadOnlyJob.note(), Some("Auto-approved read-only job"));
     }
 
     #[test]

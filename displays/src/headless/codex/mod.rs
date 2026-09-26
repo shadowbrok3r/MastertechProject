@@ -19,6 +19,7 @@ use crate::plugins::PluginManager;
 mod busy;
 mod coalesce;
 mod dispatch;
+mod parse_check;
 mod prompt;
 mod queue;
 mod runner;

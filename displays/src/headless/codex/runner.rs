@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
+use database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION;
 use database::schema::agent_thread::AgentThreadState;
+use database::schema::agent_turn::APPROVALS_PROMPT;
 use database::schema::{
     AgentActivity, AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest,
     DEFAULT_UPLOAD_DIR, NewAgentApproval, RecordId, RecordIdExt, TurnImage, upload_name,
@@ -18,6 +20,7 @@ use zc_codex_client::{decision, elicitation, Client, Event};
 
 use super::busy::{self, Busy, Signal};
 use super::coalesce::{self, Partial, ThreadRow, TranscriptBuffer};
+use super::parse_check;
 use super::queue::{self, TurnQueue};
 use super::tools::{scope_violation, ToolHost, ToolOutcome, ToolPolicy};
 use super::wait;
@@ -61,6 +64,11 @@ const READ_TIMEOUT: Duration = Duration::from_secs(20);
 /// Transcript text of a context compaction while it runs and once it is done.
 const COMPACTING: &str = "Compacting the conversation to free context\u{2026}";
 const COMPACTED: &str = "Conversation compacted to free context.";
+/// Transcript notes for approve-all turning on and off.
+const APPROVED_ALL: &str = "Technician approved everything for this session.";
+pub(super) const PROMPTS_ON: &str = "Technician turned approval prompts back on; gated tool calls ask again.";
+/// Characters of a call's reason kept in its approval summary.
+const SUMMARY_REASON_CHARS: usize = 160;
 
 /// Starts the thread's runner task and registers its command channel; a thread
 /// that already has a runner gets that runner's channel back instead.
@@ -114,6 +122,8 @@ struct Runner {
     waits: Vec<PendingWait>,
     turn_no: u32,
     remembered: HashSet<String>,
+    /// Every gated call runs without asking; restored from the thread row.
+    approve_all: bool,
     /// Set once the first attach succeeds; a later attach is an in-process reconnect.
     attached: bool,
     memory: Option<Arc<ZeroclawMemory>>,
@@ -175,6 +185,7 @@ impl Runner {
         let mut me = Self {
             next_seq: stored_seq.max(recorded_seq),
             codex_thread_id: thread.codex_thread_id.clone(),
+            approve_all: thread.approves_all(),
             memory: cfg.zeroclaw.clone(),
             cfg,
             thread,
@@ -900,6 +911,7 @@ impl Runner {
     async fn side_cmd(&mut self, cmd: Option<RunnerCmd>) {
         match cmd {
             Some(RunnerCmd::Turn(turn)) if turn.kind == "interrupt" => self.interrupt(&turn).await,
+            Some(RunnerCmd::Turn(turn)) if turn.kind == "approvals" => self.approvals(&turn).await,
             Some(RunnerCmd::Turn(turn)) if turn.kind == "close" => {
                 if !self.stopping {
                     self.begin_stop(None);
@@ -965,18 +977,25 @@ impl Runner {
             self.respond(&request_id, ToolOutcome::failure(refusal).response()).await;
             return;
         }
-        let needs_human = self.tools.policy.needs_approval(&tool) && !self.remembered.contains(&tool);
-        if !needs_human {
+        let summary = self.call_summary(&tool, &arguments);
+        let gate = self.tools.policy.gate(&tool, &arguments, self.approve_all, &self.remembered);
+        if !gate.needs_human() {
+            if let Some(note) = gate.note() {
+                let details = json!({ "tool": tool, "arguments": arguments });
+                self.marker("approval", &format!("{note}: {summary}"), Some(details)).await;
+            }
             let outcome = self.call_tool(&tool, arguments, general, rx).await;
             self.after_tool(&tool, &outcome).await;
             self.respond(&request_id, outcome.response()).await;
             return;
         }
+        if let Some(refusal) = self.parse_refusal(&tool, &arguments, general, rx).await {
+            let details = json!({ "tool": tool, "arguments": arguments });
+            self.marker("approval", &format!("{refusal}\nCall: {summary}"), Some(details)).await;
+            self.respond(&request_id, ToolOutcome::failure(refusal).response()).await;
+            return;
+        }
 
-        let summary = format!(
-            "run {tool} on {}",
-            self.thread.hostname.clone().unwrap_or_else(|| self.thread.connection_string.clone())
-        );
         let new = NewAgentApproval {
             thread: Some(self.thread.id.clone()),
             kind: "tool_call".into(),
@@ -1018,18 +1037,21 @@ impl Runner {
             None => "expired".to_string(),
         };
         let note = row.as_ref().and_then(|r| r.deny_note.clone()).unwrap_or_default();
-        match status.as_str() {
-            "accepted" | "accepted_for_session" => {
-                if status == "accepted_for_session" && self.tools.policy.may_remember(&tool) {
+        match verdict(&status) {
+            Verdict::Run { remember, approve_all } => {
+                if remember && self.tools.policy.may_remember(&tool) {
                     self.remembered.insert(tool.clone());
                 }
                 self.marker("approval", &format!("Approved: {summary}"), None).await;
                 let outcome = self.call_tool(&tool, arguments, general, rx).await;
                 self.after_tool(&tool, &outcome).await;
+                if approve_all {
+                    self.set_approve_all(true).await;
+                }
                 let _ = AgentApproval::resolve_by_broker(&approval_id, &status, Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
-            "cancelled" => {
+            Verdict::Cancelled => {
                 self.marker("approval", &format!("Stopped by the technician: {summary}"), None).await;
                 let outcome = ToolOutcome::failure("The technician stopped the agent; the call was not run.".into());
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "cancelled", Some(outcome.record())).await;
@@ -1039,7 +1061,7 @@ impl Runner {
                     self.begin_stop(None);
                 }
             }
-            "declined" => {
+            Verdict::Declined => {
                 let why = if note.trim().is_empty() { String::new() } else { format!(": {}", note.trim()) };
                 self.marker("approval", &format!("Declined by the technician{why}: {summary}"), None).await;
                 let outcome = ToolOutcome::failure(format!(
@@ -1048,7 +1070,7 @@ impl Runner {
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "declined", Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
-            _ => {
+            Verdict::Expired => {
                 let mins = self.cfg.approval_ttl_secs / 60;
                 self.marker("approval", &format!("No technician answered within {mins} min: {summary}"), None).await;
                 let outcome = ToolOutcome::failure(format!(
@@ -1057,6 +1079,62 @@ impl Runner {
                 let _ = AgentApproval::resolve_by_broker(&approval_id, "expired", Some(outcome.record())).await;
                 self.respond(&request_id, outcome.response()).await;
             }
+        }
+    }
+
+    /// `run <tool> on <machine>`, with the call's stated reason when it gives one.
+    fn call_summary(&self, tool: &str, arguments: &Value) -> String {
+        let machine = self.thread.hostname.clone().unwrap_or_else(|| self.thread.connection_string.clone());
+        match arguments.get("reason").and_then(Value::as_str).map(str::trim).filter(|r| !r.is_empty()) {
+            Some(reason) => format!("run {tool} on {machine} ({})", clip(reason, SUMMARY_REASON_CHARS)),
+            None => format!("run {tool} on {machine}"),
+        }
+    }
+
+    /// Parse-checks a PowerShell job on the client; the refusal when its script does not parse.
+    async fn parse_refusal(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+        general: bool,
+        rx: &mut mpsc::Receiver<RunnerCmd>,
+    ) -> Option<String> {
+        if tool != "remote_exec_start" || self.stopping {
+            return None;
+        }
+        let check = parse_check::Check::for_job(arguments, &self.thread.connection_string)?;
+        let started = self.call_tool("remote_exec_start", check.start_arguments(), general, rx).await;
+        let Some(job_id) = parse_check::job_id(&started.text).filter(|_| started.success) else {
+            log::debug!("codex: parse check did not start: {}", clip(&started.text, 300));
+            return None;
+        };
+        let waited = self.call_tool("remote_exec_wait", check.wait_arguments(&job_id), general, rx).await;
+        let Some(problems) = parse_check::problems(&waited.text).filter(|_| waited.success) else {
+            log::debug!("codex: parse check {job_id} gave no verdict: {}", clip(&waited.text, 300));
+            return None;
+        };
+        (!problems.is_empty()).then(|| parse_check::refusal(&problems))
+    }
+
+    /// Turns approve-all on or off on the thread row too; a change leaves a transcript note.
+    async fn set_approve_all(&mut self, on: bool) {
+        let changed = self.approve_all != on;
+        self.approve_all = on;
+        self.thread.approve_all = Some(on);
+        if let Err(e) = AgentThread::set_approve_all(&self.thread.id, on).await {
+            log::warn!("codex: could not record approve-all on {}: {e}", self.thread.id.key_string());
+        }
+        if changed {
+            self.marker("approval", if on { APPROVED_ALL } else { PROMPTS_ON }, None).await;
+        }
+    }
+
+    /// An `approvals` turn: `prompt` turns approve-all off.
+    async fn approvals(&mut self, turn: &AgentTurn) {
+        if turn.text.trim() == APPROVALS_PROMPT {
+            self.set_approve_all(false).await;
+        } else {
+            let _ = AgentTurn::mark_failed(&turn.id, "unknown approvals setting").await;
         }
     }
 
@@ -1618,6 +1696,10 @@ impl Runner {
                 super::turns::rename(&self.cfg, &turn).await;
                 Flow::Continue
             }
+            "approvals" => {
+                self.approvals(&turn).await;
+                Flow::Continue
+            }
             "close" => {
                 self.stop_waits("the session was closed");
                 if !self.busy.is_idle() && !self.stopping {
@@ -1648,6 +1730,26 @@ impl Runner {
                 Flow::Continue
             }
         }
+    }
+}
+
+/// What a decided tool-call approval lets the broker do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Run { remember: bool, approve_all: bool },
+    Cancelled,
+    Declined,
+    Expired,
+}
+
+fn verdict(status: &str) -> Verdict {
+    match status {
+        "accepted" => Verdict::Run { remember: false, approve_all: false },
+        "accepted_for_session" => Verdict::Run { remember: true, approve_all: false },
+        ACCEPTED_ALL_FOR_SESSION => Verdict::Run { remember: false, approve_all: true },
+        "cancelled" => Verdict::Cancelled,
+        "declined" => Verdict::Declined,
+        _ => Verdict::Expired,
     }
 }
 
@@ -1791,6 +1893,18 @@ fn find_record_key(text: &str, table: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decisions_map_to_what_the_broker_does() {
+        assert_eq!(verdict("accepted"), Verdict::Run { remember: false, approve_all: false });
+        assert_eq!(verdict("accepted_for_session"), Verdict::Run { remember: true, approve_all: false });
+        assert_eq!(verdict("accepted_all_for_session"), Verdict::Run { remember: false, approve_all: true });
+        assert_eq!(verdict("cancelled"), Verdict::Cancelled);
+        assert_eq!(verdict("declined"), Verdict::Declined);
+        for status in ["expired", "failed", "pending", "", "ACCEPTED"] {
+            assert_eq!(verdict(status), Verdict::Expired, "{status}");
+        }
+    }
 
     #[test]
     fn answers_take_strings_arrays_and_passthrough() {
