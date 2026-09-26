@@ -403,6 +403,18 @@ impl EnhancedAiPlayground {
             .show_separator_line(false)
             .show(ui, |ui| self.show_chat_topbar(ui));
 
+        if sessions_pinned(ui) {
+            let mut pick = ThreadPick::default();
+            eframe::egui::Panel::left("enhanced_ai_sessions")
+                .frame(Frame::default().inner_margin(Margin::symmetric(6, 4)))
+                .resizable(true)
+                .default_size(240.)
+                .min_size(180.)
+                .max_size(420.)
+                .show(ui, |ui| self.thread_rows(ui, f32::INFINITY, &mut pick));
+            self.apply_pick(pick);
+        }
+
         if let Some(row) = self
             .open_row
             .clone()
@@ -498,9 +510,16 @@ impl EnhancedAiPlayground {
                 self.rename_field(ui);
                 return;
             }
-            // ── Threads dropdown (opens on hover, stays open over the popup) ──
-            let label = format!("{}  {}  {}", icons::CHAT, self.current_thread_title(), icons::CHEV_OPEN);
-            let resp = ui.button(RichText::new(label));
+            // ── Threads dropdown (opens on hover, stays open over the popup; a click pins it to the side) ──
+            let pinned = sessions_pinned(ui);
+            let tail = if pinned { icons::UNPIN } else { icons::CHEV_OPEN };
+            let label = format!("{}  {}  {}", icons::CHAT, self.current_thread_title(), tail);
+            let resp = ui
+                .add(eframe::egui::Button::new(RichText::new(label)).selected(pinned))
+                .on_hover_text(if pinned { "Click to unpin the session list" } else { "Click to pin the session list to the side" });
+            if resp.clicked() {
+                set_sessions_pinned(ui, !pinned);
+            }
             if self.threads.contains_key(&self.selected_thread) {
                 resp.context_menu(|ui| {
                     if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
@@ -519,89 +538,20 @@ impl EnhancedAiPlayground {
                 (Some(r), Some(p)) => r.expand(8.0).contains(p),
                 _ => false,
             };
-            let open = resp.hovered() || over_popup;
+            let open = !pinned && !resp.clicked() && (resp.hovered() || over_popup);
 
-            let mut picked: Option<String> = None;
-            let mut rename: Option<String> = None;
+            let mut pick = ThreadPick::default();
             let popup = Popup::from_response(&resp)
                 .open(open)
                 .gap(2.0)
                 .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
                     ui.set_min_width(220.);
-                    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-                    let agent_index = self.index_with_open_row();
-                    #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
-                    let agent_index: Vec<AgentThread> = Vec::new();
-                    if self.threads.is_empty() && agent_index.is_empty() {
-                        ui.label(RichText::new("No chats yet").weak());
-                        return;
-                    }
-                    let selected = self.selected_thread.clone();
-                    let mut ids: Vec<String> = self.threads.keys().cloned().collect();
-                    ids.sort();
-                    ScrollArea::vertical().max_height(320.).show(ui, |ui| {
-                        for id in ids {
-                            let title = self.thread_title(&id);
-                            let row = ui.selectable_label(selected == id, RichText::new(format!("{}  {title}", icons::CHAT)));
-                            if row.clicked() {
-                                picked = Some(id.clone());
-                            }
-                            row.context_menu(|ui| {
-                                if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                                    rename = Some(id.clone());
-                                    ui.close();
-                                }
-                            });
-                        }
-                        if agent_index.is_empty() {
-                            return;
-                        }
-                        ui.separator();
-                        ui.label(RichText::new("Agent sessions").weak().small());
-                        for t in &agent_index {
-                            let who = t.requested_by.as_deref().unwrap_or("unattributed");
-                            let key = t.id.key_string();
-                            let (icon, color, _) = agent_chat::status_chip(ui, &t.status);
-                            let row = ui
-                                .horizontal(|ui| {
-                                    if agent_chat::is_active(t) {
-                                        ui.add(eframe::egui::Spinner::new().size(12.0).color(color));
-                                    } else {
-                                        ui.label(RichText::new(icon).color(color));
-                                    }
-                                    let line = format!("{}  ({})", t.label(), agent_chat::status_words(t));
-                                    ui.selectable_label(selected == key, RichText::new(line))
-                                })
-                                .inner
-                                .on_hover_text(format!("{who}\n{}", t.connection_string));
-                            if row.clicked() {
-                                picked = Some(key.clone());
-                            }
-                            row.context_menu(|ui| {
-                                if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                                    rename = Some(key.clone());
-                                    ui.close();
-                                }
-                            });
-                        }
-                    });
+                    self.thread_rows(ui, 320., &mut pick);
                 });
             let stored = popup.map(|r| r.response.rect).unwrap_or(eframe::egui::Rect::NOTHING);
             ui.memory_mut(|m| m.data.insert_temp(rect_id, stored));
-            if let Some(id) = rename {
-                picked = Some(id.clone());
-                self.start_rename(id);
-            }
-            if let Some(id) = picked {
-                #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-                if !self.threads.contains_key(&id) {
-                    // Only an agent conversation can be picked without local
-                    // state; opening it backfills the transcript.
-                    self.open_agent_thread(id.clone());
-                }
-                self.select_thread(id);
-            }
+            self.apply_pick(pick);
 
             if ui.button(RichText::new(icons::PLUS)).on_hover_text("New chat").clicked() {
                 self.create_new_chat_thread();
@@ -638,6 +588,89 @@ impl EnhancedAiPlayground {
                 );
             });
         });
+    }
+
+    /// Local chats, then agent sessions, as selectable rows; clicks and renames land in `pick`.
+    fn thread_rows(&self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        let agent_index = self.index_with_open_row();
+        #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
+        let agent_index: Vec<AgentThread> = Vec::new();
+        if self.threads.is_empty() && agent_index.is_empty() {
+            ui.label(RichText::new("No chats yet").weak());
+            return;
+        }
+        let selected = self.selected_thread.clone();
+        let mut ids: Vec<String> = self.threads.keys().cloned().collect();
+        ids.sort();
+        ScrollArea::vertical()
+            .id_salt("enhanced_ai_thread_rows")
+            .max_height(max_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for id in ids {
+                    let title = self.thread_title(&id);
+                    let row = ui.selectable_label(selected == id, RichText::new(format!("{}  {title}", icons::CHAT)));
+                    if row.clicked() {
+                        pick.picked = Some(id.clone());
+                    }
+                    row.context_menu(|ui| {
+                        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                            pick.rename = Some(id.clone());
+                            ui.close();
+                        }
+                    });
+                }
+                if agent_index.is_empty() {
+                    return;
+                }
+                ui.separator();
+                ui.label(RichText::new("Agent sessions").weak().small());
+                for t in &agent_index {
+                    let who = t.requested_by.as_deref().unwrap_or("unattributed");
+                    let key = t.id.key_string();
+                    let (icon, color, _) = agent_chat::status_chip(ui, &t.status);
+                    let row = ui
+                        .horizontal(|ui| {
+                            if agent_chat::is_active(t) {
+                                ui.add(eframe::egui::Spinner::new().size(12.0).color(color));
+                            } else {
+                                ui.label(RichText::new(icon).color(color));
+                            }
+                            let line = format!("{}  ({})", t.label(), agent_chat::status_words(t));
+                            ui.selectable_label(selected == key, RichText::new(line))
+                        })
+                        .inner
+                        .on_hover_text(format!("{who}\n{}", t.connection_string));
+                    if row.clicked() {
+                        pick.picked = Some(key.clone());
+                    }
+                    row.context_menu(|ui| {
+                        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                            pick.rename = Some(key.clone());
+                            ui.close();
+                        }
+                    });
+                }
+            });
+    }
+
+    /// Opens the picked thread, starting a rename first when one was asked for.
+    fn apply_pick(&mut self, pick: ThreadPick) {
+        let mut picked = pick.picked;
+        if let Some(id) = pick.rename {
+            picked = Some(id.clone());
+            self.start_rename(id);
+        }
+        if let Some(id) = picked {
+            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+            if !self.threads.contains_key(&id) {
+                // Only an agent conversation can be picked without local
+                // state; opening it backfills the transcript.
+                self.open_agent_thread(id.clone());
+            }
+            self.select_thread(id);
+        }
     }
 
     /// The agent index with the open session's fresher row in place of its listed one.
@@ -1642,6 +1675,26 @@ fn may_steer(row: &AgentThread) -> bool {
     ApprovalViewer::signed_in().flatten().is_some_and(|v| v.may_steer(row.assignee.as_ref()))
 }
 
+/// A thread clicked or asked to be renamed in the session list.
+#[derive(Debug, Default)]
+struct ThreadPick {
+    picked: Option<String>,
+    rename: Option<String>,
+}
+
+fn sessions_pinned_id() -> Id {
+    Id::new("enhanced_ai_sessions_pinned")
+}
+
+/// Whether the session list is pinned to the side; kept across restarts.
+fn sessions_pinned(ui: &Ui) -> bool {
+    ui.data_mut(|d| *d.get_persisted_mut_or_default::<bool>(sessions_pinned_id()))
+}
+
+fn set_sessions_pinned(ui: &Ui, pinned: bool) {
+    ui.data_mut(|d| d.insert_persisted(sessions_pinned_id(), pinned));
+}
+
 fn short_title(s: &str) -> String {
     let t = s.trim().replace('\n', " ");
     if t.chars().count() <= 28 {
@@ -1988,6 +2041,34 @@ mod tests {
         let bare = format!("{TOOL_PREFIX}remote_egui_list_targets \u{2192} ok");
         let t = ToolLine::parse(&bare);
         assert_eq!((t.name, t.args, t.status), ("remote_egui_list_targets", "", "ok"));
+    }
+
+    #[test]
+    fn clicking_the_threads_button_pins_and_unpins_the_session_list() {
+        use eframe::egui::{pos2, vec2, Context, Event, PointerButton, RawInput, Rect};
+        let ctx = Context::default();
+        let mut chat = EnhancedAiPlayground::default();
+        let at = pos2(12.0, 10.0);
+        let mut frame = |events: Vec<Event>| {
+            let input = RawInput {
+                events,
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(640.0, 400.0))),
+                ..Default::default()
+            };
+            let mut pinned = false;
+            let mut out = ctx.run_ui(input, |ui| {
+                chat.show_chat_topbar(ui);
+                pinned = sessions_pinned(ui);
+            });
+            out.textures_delta.clear();
+            pinned
+        };
+        let press = |pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Default::default() };
+        assert!(!frame(vec![Event::PointerMoved(at)]), "the list starts unpinned");
+        frame(vec![press(true)]);
+        assert!(frame(vec![press(false)]), "a click pins the list");
+        frame(vec![press(true)]);
+        assert!(!frame(vec![press(false)]), "a second click unpins it");
     }
 
     #[test]
