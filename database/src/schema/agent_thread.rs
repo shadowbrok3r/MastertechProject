@@ -31,6 +31,21 @@ pub const ADOPT_THREAD_LINKS_SQL: &str = "UPDATE agent_thread SET service_order 
      AND (service_order = NONE OR (customer = NONE AND $cust != NONE)) \
      RETURN VALUE id";
 
+/// Inserts a `starting` row whose assignee is the user matching `$requested_by`, ignoring case.
+pub const CREATE_THREAD_SQL: &str = "LET $assignee = IF $requested_by THEN (SELECT VALUE id FROM user \
+     WHERE string::lowercase(email) = string::lowercase($requested_by) LIMIT 1)[0] END; \
+     CREATE agent_thread CONTENT { status: 'starting', assist_request: $assist_request, \
+     connection_string: $cs, hostname: $hostname, service_number: $sn, store: $store, \
+     requested_by: $requested_by, assignee: $assignee, service_order: $service_order, \
+     computer: $computer, customer: $customer, model: $model, provider: $provider, \
+     driven_by: $driven_by, tool_path: $tool_path, broker_node: $broker_node, title: $title, \
+     updated_at: time::now() } RETURN VALUE id";
+
+/// True when the active user whose email is `$by`, ignoring case, is `$thread`'s assignee or a Root.
+pub const MAY_STEER_SQL: &str = "LET $u = IF $by THEN (SELECT id, authorization, active FROM user \
+     WHERE string::lowercase(email) = string::lowercase($by) LIMIT 1)[0] END; \
+     RETURN $u != NONE AND $u.active = true AND ($u.id = $thread.assignee OR $u.authorization = 'Root')";
+
 /// A token count in thousands, or millions past a million.
 pub fn compact_tokens(n: i64) -> String {
     match n {
@@ -332,18 +347,10 @@ impl AgentThread {
         Ok(())
     }
 
-    /// Inserts a `starting` row; the assignee is the user whose email matches the requester.
+    /// Inserts a `starting` row; the assignee is the user whose email matches the requester, ignoring case.
     pub async fn create(new: &NewAgentThread) -> anyhow::Result<RecordId> {
         let mut res = db()
-            .query(
-                "LET $assignee = (SELECT VALUE id FROM user WHERE email = $requested_by LIMIT 1)[0]; \
-                 CREATE agent_thread CONTENT { status: 'starting', assist_request: $assist_request, \
-                 connection_string: $cs, hostname: $hostname, service_number: $sn, store: $store, \
-                 requested_by: $requested_by, assignee: $assignee, service_order: $service_order, \
-                 computer: $computer, customer: $customer, model: $model, provider: $provider, \
-                 driven_by: $driven_by, tool_path: $tool_path, broker_node: $broker_node, title: $title, \
-                 updated_at: time::now() } RETURN VALUE id",
-            )
+            .query(CREATE_THREAD_SQL)
             .bind(("assist_request", new.assist_request.clone()))
             .bind(("cs", new.connection_string.clone()))
             .bind(("hostname", new.hostname.clone()))
@@ -362,6 +369,18 @@ impl AgentThread {
             .await?;
         let ids: Vec<RecordId> = res.take(1).unwrap_or_default();
         ids.into_iter().next().ok_or_else(|| anyhow::anyhow!("agent_thread was not created"))
+    }
+
+    /// Whether the requester with email `requested_by` may send turns into `thread`.
+    pub async fn may_steer(thread: &RecordId, requested_by: Option<&str>) -> anyhow::Result<bool> {
+        let allowed: Option<bool> = db()
+            .query(MAY_STEER_SQL)
+            .bind(("thread", thread.clone()))
+            .bind(("by", requested_by.map(str::to_string)))
+            .await?
+            .check()?
+            .take(1)?;
+        Ok(allowed.unwrap_or(false))
     }
 
     pub async fn get(id: &RecordId) -> anyhow::Result<Option<Self>> {

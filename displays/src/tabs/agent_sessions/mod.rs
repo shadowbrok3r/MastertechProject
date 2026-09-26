@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
 use database::live_data::{listen_data_filtered, Action};
-use database::schema::{AgentEvent, AgentThread, AgentTurn, QueuedTurn, RecordId, RecordIdExt, TurnImage};
+use database::schema::{AgentEvent, AgentThread, AgentTurn, ApprovalViewer, QueuedTurn, RecordId, RecordIdExt, TurnImage};
 use eframe::egui::{self, Align, Id, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
 use futures::future::AbortHandle;
 use web_time::Instant;
@@ -44,6 +44,7 @@ const COMPOSER_TEXT_MAX: f32 = 140.0;
 const COMPOSER_H_GUESS: f32 = 64.0;
 /// Width of the close button inside a session card.
 const CLOSE_W: f32 = 22.0;
+const NOT_YOURS: &str = "Only this session's technician or a Root user can message, stop, rename or close it.";
 
 enum Msg {
     Threads(Result<Vec<AgentThread>, String>),
@@ -108,6 +109,8 @@ pub struct AgentSessions {
     last_waiting_poll: Option<Instant>,
     thread_stream: LiveStream,
     event_stream: LiveStream,
+    /// The signed-in user; kept while the user lock is busy.
+    viewer: Option<ApprovalViewer>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     thread_live_tx: Sender<(Action, AgentThread)>,
@@ -142,6 +145,7 @@ impl Default for AgentSessions {
             last_waiting_poll: None,
             thread_stream: LiveStream::default(),
             event_stream: LiveStream::default(),
+            viewer: None,
             tx,
             rx,
             thread_live_tx,
@@ -439,7 +443,15 @@ impl AgentSessions {
         self.threads.iter().find(|t| &t.id == id)
     }
 
+    /// Whether the viewer is `thread`'s technician or an active Root.
+    fn may_steer(&self, thread: &AgentThread) -> bool {
+        self.viewer.as_ref().is_some_and(|v| v.may_steer(thread.assignee.as_ref()))
+    }
+
     pub fn ui(&mut self, ui: &mut Ui) {
+        if let Some(viewer) = ApprovalViewer::signed_in() {
+            self.viewer = viewer;
+        }
         self.drain(ui.ctx());
         if self.thread_stream.due() {
             self.start_thread_stream();
@@ -528,7 +540,8 @@ impl AgentSessions {
                         continue;
                     }
                     let selected = self.selected.as_ref() == Some(&t.id);
-                    let open = t.is_open();
+                    let steerable = self.may_steer(t);
+                    let open = t.is_open() && steerable;
                     let card = selectable_card(ui, &key, selected, |ui| {
                         ui.horizontal(|ui| {
                             let reserve = if open {
@@ -572,12 +585,14 @@ impl AgentSessions {
                     if card.response.clicked() {
                         picked = Some(t.id.clone());
                     }
-                    card.response.context_menu(|ui| {
-                        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                            self.renaming = Some(Rename::new(key.clone(), &t.label()));
-                            ui.close();
-                        }
-                    });
+                    if steerable {
+                        card.response.context_menu(|ui| {
+                            if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+                                self.renaming = Some(Rename::new(key.clone(), &t.label()));
+                                ui.close();
+                            }
+                        });
+                    }
                 }
             });
         if let Some(id) = picked {
@@ -606,14 +621,16 @@ impl AgentSessions {
             return;
         };
         crate::ui_data::agent_session_notify::mark_in_view(&thread.id);
+        let steerable = self.may_steer(&thread);
         let pane = ui.available_rect_before_wrap();
         ui.horizontal_wrapped(|ui| {
             agent_chat::status_badge(ui, &thread);
             ui.label(RichText::new(format!("\u{00b7} {}", thread.label())).strong());
-            if ui
-                .small_button(icons::EDIT)
-                .on_hover_text("Rename this session")
-                .clicked()
+            if steerable
+                && ui
+                    .small_button(icons::EDIT)
+                    .on_hover_text("Rename this session")
+                    .clicked()
             {
                 self.renaming = Some(Rename::new(thread.id.key_string(), &thread.label()));
             }
@@ -625,7 +642,7 @@ impl AgentSessions {
                 ui.label(RichText::new(format!("\u{00b7} asked by {by}")).weak());
             }
         });
-        if agent_chat::context_bar(ui, &thread) {
+        if agent_chat::context_bar(ui, &thread, steerable) {
             self.send_turn("compact");
         }
         if let Some(err) = thread.error.as_deref().filter(|e| !e.is_empty()) {
@@ -655,10 +672,13 @@ impl AgentSessions {
 
         let composer_top = ui.min_rect().bottom();
         ui.separator();
-        if let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
+        if steerable && let Some(action) = agent_chat::queue_strip(ui, &self.waiting) {
             self.apply_queue_action(action);
         }
-        let open = thread.is_open();
+        if thread.is_open() && !steerable {
+            ui.label(RichText::new(NOT_YOURS).weak().small());
+        }
+        let open = thread.is_open() && steerable;
         let composer_id = Id::new(("agent_sessions_composer", &salt));
         let action = self.attachments.show(
             ui,

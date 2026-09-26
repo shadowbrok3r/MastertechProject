@@ -254,7 +254,7 @@ impl <'a>TerminalApp<'a> {
             crate::tcp_listener::spawn_direct_tcp_listener(tcp_client_id).await;
         }));
         loop {
-            if self.handle_events(None, None) { 
+            if self.handle_events(None, None, false) { 
                 // Signal process-wide shutdown so the TCP accept loop also
                 // exits cleanly (it waits on displays::wait_for_shutdown).
                 displays::signal_shutdown();
@@ -294,11 +294,11 @@ impl <'a>TerminalApp<'a> {
                     );
                     for event in queued.collect::<Vec<_>>() {
                         if let Ok(mouse) = TryFrom::try_from(event.clone()) {
-                            if self.handle_events(Some(mouse), None) {
+                            if self.handle_events(Some(mouse), None, true) {
                                 log::info!("Quit signal received from handle_events (mouse)");
                             }
                         } else if let Ok(key) = TryFrom::try_from(event) {
-                            if self.handle_events(None, Some(key)) {
+                            if self.handle_events(None, Some(key), true) {
                                 log::info!("Quit signal received from handle_events (key)");
                             }
                         }

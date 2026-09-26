@@ -2305,7 +2305,7 @@ pub struct SearchOdooInventoryParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct QuerySurrealDbParams {
-    #[schemars(description = "Read-only SurrealQL query. Must start with SELECT or RETURN.")]
+    #[schemars(description = "Read-only SurrealQL query: exactly one SELECT, INFO or RETURN statement.")]
     pub query: String,
 }
 
@@ -9496,19 +9496,14 @@ matched, and an error when the lookup itself failed."
 
     #[tool(
         name = "query_surrealdb",
-        description = "Read-only SurrealQL (SELECT/RETURN only) against the Mastertech database. SurrealDB 3.x rejects five patterns that are legal elsewhere: ORDER BY must name a projected field or alias; SPLIT and GROUP BY are mutually exclusive; aggregates do not nest; NONE poisons arithmetic and casts (guard with ?? or WHERE x != NONE); queries are cut off at 45s, so LIMIT or aggregate server-side. A failed query returns the database error plus a hint naming which rule it hit."
+        description = "Read-only SurrealQL against the Mastertech database: exactly one SELECT, INFO or RETURN statement, with no write, DDL, LET, http::, fn::, api::, file::, sequence:: or file literal anywhere in it, no backslash inside a quoted identifier, and no `/` (division or regex literal). SurrealDB 3.x rejects five patterns that are legal elsewhere: ORDER BY must name a projected field or alias; SPLIT and GROUP BY are mutually exclusive; aggregates do not nest; NONE poisons arithmetic and casts (guard with ?? or WHERE x != NONE); queries are cut off at 45s, so LIMIT or aggregate server-side. A failed query returns the database error plus a hint naming which rule it hit."
     )]
     async fn query_surrealdb(
         &self,
         Parameters(p): Parameters<QuerySurrealDbParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let trimmed = p.query.trim();
-        let upper = trimmed.to_uppercase();
-        if !upper.starts_with("SELECT") && !upper.starts_with("RETURN") {
-            return Err(to_internal(
-                "Only SELECT and RETURN queries are allowed. Mutations (CREATE, UPDATE, DELETE, etc.) are not permitted.",
-            ));
-        }
+        database::schema::check_read_only(trimmed).map_err(to_internal)?;
         let result: Vec<serde_json::Value> = database::db()
             .query(trimmed)
             .await
@@ -9584,6 +9579,7 @@ recorded before the session opened\"), not a paraphrase of the SQL."
 
         let id = request.submit().await.map_err(to_internal)?;
         let request_id = id.key_string();
+        remember_submitted(&request_id, &statement);
 
         let wait = p.wait_secs.unwrap_or(90).min(240);
         match await_decision(&id, wait).await? {
@@ -9636,7 +9632,8 @@ recorded before the session opened\"), not a paraphrase of the SQL."
         name = "surrealql_approval_status",
         description = "Check (or keep waiting on) a surrealql_execute request. When the operator has \
 approved it, THIS call runs the statement and returns the result — approval alone does not execute \
-anything. Returns status pending / approved / denied / executed / failed / expired."
+anything, and only the MCP server that submitted the request runs it. Returns status pending / approved / \
+denied / executed / failed / expired."
     )]
     async fn surrealql_approval_status(
         &self,
@@ -9660,7 +9657,16 @@ anything. Returns status pending / approved / denied / executed / failed / expir
         };
 
         match status {
-            Some(ApprovalStatus::Approved) => run_approved_statement(&id, &row.statement).await,
+            Some(ApprovalStatus::Approved) => match submitted_statement(&p.request_id) {
+                Some(statement) => run_approved_statement(&id, &statement).await,
+                None => Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+                    "request_id": p.request_id,
+                    "status": "approved",
+                    "guidance": "This MCP server did not submit that request, so it will not run it. \
+                                 Nothing ran; submit the statement again with surrealql_execute."
+                }))
+                .map_err(to_internal)?])),
+            },
             Some(ApprovalStatus::Denied) => Ok(CallToolResult::success(vec![ContentBlock::json(
                 serde_json::json!({
                     "request_id": p.request_id,
@@ -12125,6 +12131,24 @@ fn hostname_or_unknown() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
+/// Statements this process filed for approval, by request key, with when each was filed.
+static SUBMITTED_SQL: Lazy<std::sync::Mutex<HashMap<String, (String, std::time::Instant)>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Records the statement filed under `request_id`, dropping entries older than four approval windows.
+fn remember_submitted(request_id: &str, statement: &str) {
+    let keep = std::time::Duration::from_secs(database::schema::sql_approval::APPROVAL_TTL_SECS as u64 * 4);
+    if let Ok(mut filed) = SUBMITTED_SQL.lock() {
+        filed.retain(|_, (_, at)| at.elapsed() < keep);
+        filed.insert(request_id.to_string(), (statement.to_string(), std::time::Instant::now()));
+    }
+}
+
+/// The statement this process filed under `request_id`.
+fn submitted_statement(request_id: &str) -> Option<String> {
+    SUBMITTED_SQL.lock().ok()?.get(request_id).map(|(statement, _)| statement.clone())
+}
+
 /// Polls one `sql_approval` row until it leaves `pending` or `wait_secs`
 /// elapses. `None` means still pending — the caller reports that and hands
 /// back a request_id rather than blocking past the MCP client's idle timeout.
@@ -12177,13 +12201,7 @@ async fn run_approved_statement(
 
     // Re-read and claim under the approved status so two concurrent pollers
     // cannot both execute; whoever flips it first owns the run.
-    let claimed: Option<SqlApproval> = database::db()
-        .query("UPDATE $id SET status = 'executing' WHERE status = 'approved' RETURN AFTER")
-        .bind(("id", id.clone()))
-        .await
-        .map_err(to_internal)?
-        .take(0)
-        .map_err(to_internal)?;
+    let claimed = SqlApproval::claim(id, statement).await.map_err(to_internal)?;
 
     if claimed.is_none() {
         let row = SqlApproval::fetch(id).await.map_err(to_internal)?;
@@ -12191,12 +12209,19 @@ async fn run_approved_statement(
             .as_ref()
             .map(|r| r.status.clone())
             .unwrap_or_else(|| "missing".to_string());
+        let guidance = match row.as_ref() {
+            Some(r) if r.status == "approved" && r.statement != statement => {
+                "The stored statement no longer matches the one submitted; nothing ran."
+            }
+            Some(r) if r.status == "approved" => "The approval was not recorded by an active Root user; nothing ran.",
+            _ => "Already executed or no longer approved; nothing was re-run.",
+        };
         return Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({
                 "request_id": request_id,
                 "status": status,
                 "result_summary": row.and_then(|r| r.result_summary),
-                "guidance": "Already executed or no longer approved; nothing was re-run."
+                "guidance": guidance
             }),
         )
         .map_err(to_internal)?]));

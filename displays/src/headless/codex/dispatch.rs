@@ -55,12 +55,13 @@ pub async fn dispatch(req: AssistRequest) {
             return;
         }
     }
+    let req = verified_requester(req);
     let opening = super::super::assist::compose_prompt(&req, &cfg.agent_actor());
 
-    // A request that is not fresh joins the machine's live thread as a new turn.
+    // A request that is not fresh joins the machine's live thread when its requester may steer it.
     if !req.fresh {
         match AgentThread::active_for_connection(&req.connection_string).await {
-            Ok(Some(existing)) => {
+            Ok(Some(existing)) if may_join(&existing, &req).await => {
                 log::info!(
                     "codex: request {} joins live thread {} for {}",
                     req.id.key_string(),
@@ -72,6 +73,14 @@ pub async fn dispatch(req: AssistRequest) {
                     log::warn!("codex: could not queue the joining turn: {e}");
                 }
                 return;
+            }
+            Ok(Some(existing)) => {
+                log::info!(
+                    "codex: request {} opens its own session; its requester may not steer live thread {}",
+                    req.id.key_string(),
+                    existing.id.key_string()
+                );
+                release_idle_runners(&req.connection_string).await;
             }
             Ok(None) => {}
             Err(e) => log::warn!("codex: active-thread lookup failed for {}: {e}", req.connection_string),
@@ -133,6 +142,31 @@ pub async fn dispatch(req: AssistRequest) {
     }
     log::info!("codex: starting thread {} for {}", thread_id.key_string(), req.connection_string);
     runner::spawn(cfg, thread, Some(opening));
+}
+
+/// The request with `requested_by` dropped when the database did not vouch for who filed it.
+fn verified_requester(req: AssistRequest) -> AssistRequest {
+    if req.requester_is_verified() {
+        return req;
+    }
+    log::warn!(
+        "codex: request {} was filed through '{}' access; ignoring its requested_by {:?}",
+        req.id.key_string(),
+        req.filed_access.as_deref().unwrap_or_default(),
+        req.requested_by
+    );
+    AssistRequest { requested_by: None, ..req }
+}
+
+/// Whether the request's requester is the live thread's assignee or an active Root.
+async fn may_join(thread: &AgentThread, req: &AssistRequest) -> bool {
+    match AgentThread::may_steer(&thread.id, req.requested_by.as_deref()).await {
+        Ok(allowed) => allowed,
+        Err(e) => {
+            log::warn!("codex: steer check failed for {}: {e}", thread.id.key_string());
+            false
+        }
+    }
 }
 
 /// Asks the runners of a machine's open threads to free their pool slots while idle.

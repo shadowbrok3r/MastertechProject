@@ -8,8 +8,10 @@
 -- thread close. A `queue` row waits as `queued` (or `held` after a stop or a
 -- failed turn) until the running turn ends. `tech` defaults from $auth so the
 -- recorded sender is the signed-in technician.
+-- Only the thread's active assignee or an active Root may queue or change turns, and only the broker deletes them.
 
-DEFINE TABLE agent_turn TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE TABLE agent_turn TYPE ANY SCHEMALESS
+    PERMISSIONS FOR select FULL, FOR create, update WHERE $access = 'user' AND $auth.id != NONE AND $auth.active = true AND (thread.assignee = $auth.id OR $auth.authorization = 'Root'), FOR delete NONE;
 
 DEFINE FIELD created_at ON agent_turn TYPE datetime DEFAULT time::now()   PERMISSIONS FULL;
 DEFINE FIELD error      ON agent_turn TYPE none | string                  PERMISSIONS FULL;
@@ -22,7 +24,7 @@ DEFINE FIELD status     ON agent_turn TYPE string DEFAULT 'pending'
     ASSERT $value IN ['pending', 'sent', 'failed', 'queued', 'held', 'cancelled'] PERMISSIONS FULL;
 DEFINE FIELD tech       ON agent_turn TYPE none | string DEFAULT $auth.email PERMISSIONS FULL;
 DEFINE FIELD text       ON agent_turn TYPE string DEFAULT ''              PERMISSIONS FULL;
-DEFINE FIELD thread     ON agent_turn TYPE record<agent_thread>           PERMISSIONS FULL;
+DEFINE FIELD thread     ON agent_turn TYPE record<agent_thread>           PERMISSIONS FOR select, create FULL, FOR update NONE;
 
 DEFINE INDEX agent_turn_status_idx ON agent_turn FIELDS status;
 DEFINE INDEX agent_turn_thread_idx ON agent_turn FIELDS thread;

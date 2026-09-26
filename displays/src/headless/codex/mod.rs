@@ -133,8 +133,31 @@ fn provenance_slug(raw: &str, allow_colon: bool) -> String {
 
 static CONFIG: OnceLock<Option<Arc<Config>>> = OnceLock::new();
 
+/// Set when the database session is not a system user, which disables the broker.
+static REFUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn config() -> Option<Arc<Config>> {
+    if REFUSED.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
     CONFIG.get_or_init(|| Config::from_env().map(Arc::new)).clone()
+}
+
+/// Disables the broker when the database session signed in through record access instead of as a system user.
+pub async fn require_system_session() {
+    let access = match database::db().query("RETURN $access").await.and_then(|mut r| r.take::<Option<String>>(0)) {
+        Ok(access) => access,
+        Err(e) => {
+            log::warn!("codex: could not read the database session's access method: {e}");
+            return;
+        }
+    };
+    let Some(access) = access else { return };
+    REFUSED.store(true, std::sync::atomic::Ordering::Relaxed);
+    log::error!(
+        "codex: broker disabled: the database session uses '{access}' record access, not a system user; \
+         set MTECH_AGENT_USER and MTECH_AGENT_PASS"
+    );
 }
 
 pub fn enabled() -> bool {

@@ -13,6 +13,11 @@ pub const AGENT_TURN_TABLE: &str = "agent_turn";
 /// Staging directory zc-codexd reports when its hello names none.
 pub const DEFAULT_UPLOAD_DIR: &str = "/tmp/zc-codexd-uploads";
 
+/// The database wrote no turn: the session is not the signed-in user's, or the user is not an active Root.
+#[derive(Debug, thiserror::Error)]
+#[error("the message was not queued: only this session's technician or an active Root user can message it")]
+pub struct TurnRefused;
+
 /// A picture a turn carries: base64 `data` until the broker stages it, then the staged `path`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, SurrealValue)]
 pub struct TurnImage {
@@ -140,7 +145,7 @@ impl AgentTurn {
             .await?
             .check()?;
         let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
-        ids.into_iter().next().ok_or_else(|| anyhow::anyhow!("agent_turn was not created"))
+        ids.into_iter().next().ok_or_else(|| anyhow::Error::new(TurnRefused))
     }
 
     /// Guarded claim so one broker owns a row even with several running; a queue turn moves to `queued`.

@@ -125,13 +125,7 @@ impl crate::app_state::SharedContext {
         self.live_spawned_at = None;
     }
 
-    /// Drains the `sql_approval` streams and renders the approval modal.
-    ///
-    /// Driven from the shared receive loop rather than `AdminConsole::receive`
-    /// (which only runs while that tab is rendered) so a Root operator sitting
-    /// on any tab still sees a pending mutation. Every call is a no-op for a
-    /// non-Root user: their live stream is never spawned and the modal
-    /// re-checks authorization before drawing.
+    /// Drains the `sql_approval` streams and draws its modal and Root toasts on any tab.
     fn receive_sql_approvals(&mut self, ctx: &eframe::egui::Context) {
         let queue = &mut self.web_console_layout.sql_approvals;
         while let Ok(rows) = crate::get_sql_approval_snapshot_receiver().try_recv() {
@@ -146,13 +140,12 @@ impl crate::app_state::SharedContext {
             ctx.request_repaint();
         }
         queue.poll();
-        queue.ui(ctx);
+        queue.ui(ctx, self.current_user.as_ref(), &mut self.toasts);
     }
 
-    /// Polls the Codex agent's pending approvals and questions for this user
-    /// and draws the decision modal, on whichever tab is showing.
+    /// Polls agent approvals and draws the owner's modal and Root toasts on any tab.
     fn receive_agent_approvals(&mut self, ctx: &eframe::egui::Context) {
-        self.agent_approvals.tick_and_ui(ctx);
+        self.agent_approvals.tick_and_ui(ctx, self.current_user.as_ref(), &mut self.toasts);
     }
 
     /// Queues toasts for the signed-in user's agent sessions that replied, failed or wait on them.

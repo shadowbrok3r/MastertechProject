@@ -97,8 +97,8 @@ fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
-/// Context use as a bar with its percent and token counts, and a Compact button; true when Compact was pressed.
-pub fn context_bar(ui: &mut Ui, thread: &AgentThread) -> bool {
+/// Context use as a bar with its percent and token counts, and a Compact button when `compactable`; true when Compact was pressed.
+pub fn context_bar(ui: &mut Ui, thread: &AgentThread, compactable: bool) -> bool {
     let mut compact = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -128,6 +128,9 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread) -> bool {
         if thread.activity() == AgentActivity::Compacting {
             ui.add(Spinner::new().size(12.0));
             ui.label(RichText::new("Compacting\u{2026}").small().weak());
+            return;
+        }
+        if !compactable {
             return;
         }
         let emphasised = fraction.is_some_and(|f| f >= COMPACT_EMPHASIS);

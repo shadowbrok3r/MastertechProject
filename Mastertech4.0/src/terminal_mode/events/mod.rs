@@ -100,7 +100,8 @@ impl EventHandler {
 }
 
 impl <'a>TerminalApp<'a> {
-    pub fn handle_events(&mut self, remote_mouse_event: Option<MouseEvent>, remote_key_event: Option<KeyEvent>) -> bool {
+    /// Applies injected mouse and key events, then drains local terminal input; `remote` marks the injected ones as a remote viewer's.
+    pub fn handle_events(&mut self, remote_mouse_event: Option<MouseEvent>, remote_key_event: Option<KeyEvent>, remote: bool) -> bool {
         let quit = &mut false;
         if let Ok(menu_bar) = self.menu_bar.try_borrow() {
             // Handle remote mouse event if provided
@@ -191,7 +192,7 @@ impl <'a>TerminalApp<'a> {
                             Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
                             Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_key_event(key_event),
                             Tab::Settings => self.settings_tab.borrow_mut().handle_key_event(key_event),
-                            Tab::Assistant => self.assistant_tab.borrow_mut().handle_key_event(key_event),
+                            Tab::Assistant => self.assistant_tab.borrow_mut().handle_key_from(key_event, remote),
                             Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_key_event(key_event),
                         };
 

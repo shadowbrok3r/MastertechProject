@@ -6,8 +6,10 @@
 -- zeroclaw gateway. Identity fields default from $auth so the signed-in tech
 -- is the recorded requester regardless of what the client sent.
 -- ============================================================
+-- Any session files; only record users update; no record session deletes.
 
-DEFINE TABLE assist_request TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE TABLE assist_request TYPE ANY SCHEMALESS
+    PERMISSIONS FOR select, create FULL, FOR update WHERE $access = 'user', FOR delete NONE;
 
 DEFINE FIELD agent              ON assist_request TYPE none | string PERMISSIONS FULL;
 -- The codex session the broker opened for this request.
@@ -19,10 +21,14 @@ DEFINE FIELD customer           ON assist_request TYPE none | record<customer> P
 DEFINE FIELD dispatch_error     ON assist_request TYPE none | string PERMISSIONS FULL;
 DEFINE FIELD dispatched_at      ON assist_request TYPE none | datetime PERMISSIONS FULL;
 DEFINE FIELD finished_at        ON assist_request TYPE none | datetime PERMISSIONS FULL;
+-- Access method of the session that filed the row ('user', 'guest', ...), or 'system' for a system user.
+DEFINE FIELD filed_access       ON assist_request TYPE none | string VALUE $before ?? $access ?? 'system'
+    PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD hostname           ON assist_request TYPE none | string PERMISSIONS FULL;
 -- Tech affirmed this machine is the one on that service order; ground truth.
 DEFINE FIELD machine_confirmed  ON assist_request TYPE bool DEFAULT false PERMISSIONS FULL;
-DEFINE FIELD requested_by       ON assist_request TYPE none | string DEFAULT $auth.email PERMISSIONS FULL;
+DEFINE FIELD requested_by       ON assist_request TYPE none | string DEFAULT $auth.email
+    ASSERT $access != 'user' OR $value = $auth.email PERMISSIONS FULL;
 DEFINE FIELD service_number     ON assist_request TYPE none | string PERMISSIONS FULL;
 DEFINE FIELD service_order      ON assist_request TYPE none | record<service_order> PERMISSIONS FULL;
 DEFINE FIELD status             ON assist_request TYPE string DEFAULT 'pending'
