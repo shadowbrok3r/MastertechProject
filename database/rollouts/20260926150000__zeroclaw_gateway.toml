@@ -1,0 +1,31 @@
+# ZeroClaw gateway credentials for the Root-only agent and automation viewer:
+# one row, readable by active Root users and written only by a system user.
+#
+# A new table, so nothing existing changes and no row needs a backfill.
+id = "20260926150000__zeroclaw_gateway"
+name = "zeroclaw_gateway"
+state = "completed"
+source_schema_hash = "1ed34b00e4d9b4d1fc31c958e2acd85dbb6d98a38ab44318cc0dce11c827b301"
+target_schema_hash = "5cfe2ce775c4c5415e599c10e4307673db41617629ac7b2dffa022491e835fe0"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_zeroclaw_gateway"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE zeroclaw_gateway TYPE NORMAL SCHEMAFULL
+    PERMISSIONS FOR select WHERE $access = 'user' AND $auth.id != NONE AND $auth.active = true AND $auth.authorization = 'Root', FOR create, update, delete NONE;
+DEFINE FIELD OVERWRITE token      ON zeroclaw_gateway TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE updated_at ON zeroclaw_gateway TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE url        ON zeroclaw_gateway TYPE string                       PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "remove_zeroclaw_gateway"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS zeroclaw_gateway;
+"""

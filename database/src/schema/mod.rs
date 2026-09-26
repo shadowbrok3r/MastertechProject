@@ -62,6 +62,7 @@ pub mod agent_event;
 pub mod agent_turn;
 pub mod agent_approval;
 pub mod waiting_services;
+pub mod zeroclaw_gateway;
 
 pub use task::*;
 pub use task_note::*;
@@ -164,6 +165,7 @@ pub use prestashop as prestashop_schema;
 
 // Re-export RecordIdKey for use in other modules
 pub use surrealdb::types::RecordIdKey;
+pub use zeroclaw_gateway::{ZeroclawGateway, ZEROCLAW_GATEWAY_TABLE};
 
 // Helper function to generate random record IDs
 pub fn random_record_id(table: &str) -> RecordId {
