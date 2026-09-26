@@ -25,6 +25,18 @@ pub struct Notification {
     pub created_at: Datetime,
     /// Time the notification was accessed
     pub accessed_at: Option<Datetime>,
+    /// Task the notification is about.
+    #[serde(default)]
+    #[surreal(default)]
+    pub task: Option<RecordId>,
+    /// Sender of an assistant reminder.
+    #[serde(default)]
+    #[surreal(default)]
+    pub from_user: Option<RecordId>,
+    /// When a snoozed notification returns to unread.
+    #[serde(default)]
+    #[surreal(default)]
+    pub snooze_until: Option<Datetime>,
 }
 
 impl Default for Notification {
@@ -37,6 +49,9 @@ impl Default for Notification {
             status: Default::default(),
             created_at: Datetime::now(),
             accessed_at: None,
+            task: None,
+            from_user: None,
+            snooze_until: None,
         }
     }
 }

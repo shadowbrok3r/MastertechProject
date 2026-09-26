@@ -44,6 +44,9 @@ pub struct TaskModal {
     pub spo: SpecialPartOrder,
     store_users: Vec<User>,
     user: User,
+    /// An AI brief was requested from this modal.
+    #[serde(skip)]
+    brief_requested: bool,
     #[serde(skip)]
     pub service_ticket_tx: Sender<TicketData>,
     #[serde(skip)]
@@ -384,7 +387,8 @@ impl TaskModal {
                 user
             } else {
                 User::default()
-            }
+            },
+            brief_requested: false,
         }
     }
 
@@ -1250,6 +1254,18 @@ impl DisplayModal for TaskModal {
                         if self.resyncing {
                             Spinner::new().size(16.0).ui(ui);
                         }
+                        let label = if self.brief_requested { "Brief requested" } else { "AI brief" };
+                        let brief_btn = Button::new(format!("{} {label}", crate::ui_tools::icons::AI_BRIEF)).min_size([22., 22.].into());
+                        if ui
+                            .add_enabled(!self.brief_requested, brief_btn)
+                            .on_hover_text("Private staff brief: what's happening, what was found, what to tell the customer")
+                            .clicked()
+                        {
+                            self.brief_requested = true;
+                            if let Some(sn) = self.task.service_number.clone() {
+                                request_ticket_brief(&self.user, &sn, &self.task.task_name);
+                            }
+                        }
                     }
                 });
 
@@ -1840,3 +1856,22 @@ impl SpecialPartOrder {
  * 7 American Fork [AF]
  * 8 Orem [ORE]
 */
+
+/// Asks the user's AI session for a private staff brief on `service_number`.
+fn request_ticket_brief(user: &User, service_number: &str, task_name: &str) {
+    let email = user.get_email().to_string();
+    let store = user.get_store().as_str().to_string();
+    let sn = service_number.trim().to_string();
+    let text = format!(
+        "Write the staff brief for service {sn} ({task_name}) with post_ticket_brief. Read the ticket, its diagnostic \
+         sessions, AI checklist and notes first. Keep each line short."
+    );
+    PlatformSpawner::spawn(async move {
+        let cs = database::schema::general_connection(&email);
+        let msg = match database::agent_chat::send(&cs, Some(&email), Some(&store), Some(&sn), &text).await {
+            Ok(_) => crate::ToastMessage::Info(format!("Brief for {sn} requested; it lands in the ticket notes.")),
+            Err(e) => crate::ToastMessage::Warning(format!("Could not request the brief: {e}")),
+        };
+        let _ = crate::get_toast_sender().try_send(msg);
+    });
+}

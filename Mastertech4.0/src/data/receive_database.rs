@@ -117,6 +117,7 @@ impl MasterTechApp {
                                 status: "Unread".to_string(),
                                 created_at: Datetime::now(),
                                 accessed_at: None,
+                                ..Default::default()
                             };
                             if let Err(e) = create_guest_notification(notification).await {
                                 log::error!("Failed to create notification: {e:?}");
