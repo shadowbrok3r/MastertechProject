@@ -14,3 +14,5 @@ pub const SEND: &str = p::PAPER_PLANE_RIGHT;
 pub const SEND_NOW: &str = p::LIGHTNING;
 pub const APPROVE_ALL: &str = p::CHECKS;
 pub const UNLOCKED: &str = p::LOCK_OPEN;
+pub const PIN: &str = p::PUSH_PIN;
+pub const UNPIN: &str = p::PUSH_PIN_SLASH;
