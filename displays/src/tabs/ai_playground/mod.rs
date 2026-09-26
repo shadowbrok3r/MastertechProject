@@ -2,6 +2,8 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 pub mod enhanced;
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+mod live_transcript;
 
 pub type ImageType = (String, Bytes);
 
