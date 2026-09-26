@@ -2,7 +2,7 @@
 # Adds one table and optional fields only; the task CREATE event is unchanged for tasks without assigned_by.
 id = "20260926170000__ai_assistant_tools"
 name = "ai_assistant_tools"
-state = "planned"
+state = "completed"
 source_schema_hash = "5cfe2ce775c4c5415e599c10e4307673db41617629ac7b2dffa022491e835fe0"
 target_schema_hash = "b43903f0e9df3077323eee55b35cb9122d70d41b86983a8fba860386be4773aa"
 compatibility = "phased"
