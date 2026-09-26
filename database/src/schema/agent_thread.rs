@@ -197,6 +197,10 @@ pub struct AgentThread {
     #[serde(default)]
     #[surreal(default)]
     pub allow_box_shell: bool,
+    /// Every tool call runs without asking; only the broker writes it.
+    #[serde(default)]
+    #[surreal(default)]
+    pub approve_all: Option<bool>,
     #[serde(default)]
     #[surreal(default)]
     pub tokens_used: Option<i64>,
@@ -335,6 +339,21 @@ impl AgentThread {
             "starting" => AgentActivity::Starting,
             _ => AgentActivity::Idle,
         }
+    }
+
+    /// True while every tool call on the thread runs without asking.
+    pub fn approves_all(&self) -> bool {
+        self.approve_all == Some(true)
+    }
+
+    /// Records whether every tool call on the thread runs without asking.
+    pub async fn set_approve_all(id: &RecordId, on: bool) -> anyhow::Result<()> {
+        db().query("UPDATE $id SET approve_all = $on, updated_at = time::now()")
+            .bind(("id", id.clone()))
+            .bind(("on", on))
+            .await?
+            .check()?;
+        Ok(())
     }
 
     /// Stores a new title.
@@ -584,6 +603,7 @@ mod tests {
             error: None,
             broker_node: None,
             allow_box_shell: false,
+            approve_all: None,
             tokens_used: used,
             tokens_window: window,
             last_seq: None,
@@ -593,6 +613,24 @@ mod tests {
             last_event_at: None,
             closed_at: None,
         }
+    }
+
+    #[test]
+    fn a_row_written_before_approve_all_existed_still_loads() {
+        use surrealdb::types::Value;
+        let mut row = thread(None, None);
+        row.approve_all = Some(true);
+        let mut v = row.into_value();
+        if let Value::Object(obj) = &mut v {
+            obj.remove("approve_all");
+        }
+        let back = AgentThread::from_value(v).expect("a row without approve_all must deserialize");
+        assert_eq!(back.approve_all, None);
+        assert!(!back.approves_all());
+        let mut json = serde_json::to_value(thread(None, None)).expect("serializes");
+        json.as_object_mut().expect("object").remove("approve_all");
+        let back: AgentThread = serde_json::from_value(json).expect("serde fills a missing approve_all");
+        assert_eq!(back.approve_all, None);
     }
 
     #[test]

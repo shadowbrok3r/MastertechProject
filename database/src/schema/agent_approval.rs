@@ -10,8 +10,12 @@ pub const AGENT_APPROVAL_TABLE: &str = "agent_approval";
 /// Tools whose approval never carries over to the rest of the session.
 pub const NEVER_REMEMBER_TOOLS: &[&str] = &["remote_reboot_client", "remote_exec_start"];
 
+/// Decision that runs this call and every later tool call of the session without asking.
+pub const ACCEPTED_ALL_FOR_SESSION: &str = "accepted_all_for_session";
+
 /// Statuses only a technician's decision writes.
-pub const HUMAN_DECISIONS: [&str; 5] = ["accepted", "accepted_for_session", "declined", "cancelled", "answered"];
+pub const HUMAN_DECISIONS: [&str; 6] =
+    ["accepted", "accepted_for_session", ACCEPTED_ALL_FOR_SESSION, "declined", "cancelled", "answered"];
 
 /// Records an active `$auth`'s decision on a pending, unexpired row it owns, or on any such row for a Root.
 pub const DECIDE_SQL: &str = "UPDATE $id SET status = $status, decided_by = $auth.id, deny_note = $note, \
@@ -201,6 +205,11 @@ impl AgentApproval {
     /// Whether "approve for this session" applies: a tool call outside [`NEVER_REMEMBER_TOOLS`].
     pub fn may_approve_for_session(&self) -> bool {
         self.kind != "question" && !self.tool.as_deref().is_some_and(|t| NEVER_REMEMBER_TOOLS.contains(&t))
+    }
+
+    /// Whether "approve all for this session" applies: a tool call, never a question.
+    pub fn may_approve_all(&self) -> bool {
+        self.kind == "tool_call"
     }
 
     /// Seconds left before this request expires; 0 once it has lapsed or has no deadline.
@@ -503,5 +512,13 @@ mod tests {
         assert_eq!(row.refusal(), AgentDecideOutcome::AlreadyResolved("expired".into()));
         row.status = "accepted".into();
         assert_eq!(row.refusal(), AgentDecideOutcome::AlreadyResolved("accepted".into()));
+    }
+
+    #[test]
+    fn every_tool_call_offers_approve_all_and_questions_do_not() {
+        for tool in NEVER_REMEMBER_TOOLS.iter().chain(&["desktop_click"]) {
+            assert!(approval("tool_call", Some(tool)).may_approve_all(), "{tool}");
+        }
+        assert!(!approval("question", Some("request_user_input")).may_approve_all());
     }
 }
