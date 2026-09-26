@@ -1,6 +1,6 @@
 -- ============================================================
 -- Migration 003 — agent approve-all
--- Applied: (pending)
+-- Applied: 2026-09-26 (surrealdb-dev, root /sql)
 -- Safe to re-run: YES (DEFINE FIELD OVERWRITE is idempotent)
 -- ============================================================
 -- The start phase of database/rollouts/20260926030000__agent_approve_all.toml,

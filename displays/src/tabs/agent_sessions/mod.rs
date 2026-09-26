@@ -646,7 +646,7 @@ impl AgentSessions {
         if agent_chat::context_bar(ui, &thread, steerable) {
             self.send_turn("compact");
         }
-        if agent_chat::approve_all_chip(ui, &thread) {
+        if agent_chat::approve_all_chip(ui, &thread, steerable) {
             self.ask(thread.id.clone(), "approvals", APPROVALS_PROMPT.to_string(), Vec::new());
         }
         if let Some(err) = thread.error.as_deref().filter(|e| !e.is_empty()) {

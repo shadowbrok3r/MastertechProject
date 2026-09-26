@@ -1282,8 +1282,12 @@ mod tests {
         let t = thread("t1", "waiting_approval");
         let mut tab = tab(Some(t.clone()));
         tab.approvals.push(approval(&t, Some("tech")));
-        for key in [KeyCode::Char('y'), KeyCode::Char('s')] {
-            tab.handle_key_from(KeyEvent::new(key, KeyModifiers::NONE), true);
+        for (code, mods) in [
+            (KeyCode::Char('y'), KeyModifiers::NONE),
+            (KeyCode::Char('s'), KeyModifiers::NONE),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL),
+        ] {
+            tab.handle_key_from(KeyEvent::new(code, mods), true);
         }
         assert!(tab.in_flight.is_empty(), "no decision went out");
         tab.input.set_text("");
