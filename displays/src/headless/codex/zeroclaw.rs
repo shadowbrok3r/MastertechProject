@@ -119,6 +119,23 @@ fn entry_from(v: &Value) -> Option<Entry> {
 }
 
 /// One line per entry, clipped, for a brief or a tool result.
+/// Entries whose key or content names one of `needles`, compared case-insensitively; blank needles are ignored.
+pub fn entries_about(entries: Vec<Entry>, needles: &[&str]) -> Vec<Entry> {
+    let needles: Vec<String> = needles
+        .iter()
+        .map(|n| n.trim().to_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
+    entries
+        .into_iter()
+        .filter(|e| {
+            let key = e.key.to_lowercase();
+            let content = e.content.to_lowercase();
+            needles.iter().any(|n| key.contains(n) || content.contains(n))
+        })
+        .collect()
+}
+
 pub fn render_entries(entries: &[Entry]) -> String {
     entries
         .iter()
@@ -173,6 +190,23 @@ pub fn tool_specs() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(key: &str, content: &str) -> Entry {
+        Entry { key: key.into(), category: "core".into(), content: content.into(), when: String::new() }
+    }
+
+    #[test]
+    fn a_brief_keeps_only_entries_about_this_machine_or_order() {
+        let entries = vec![
+            entry("DESKTOP-JFAT75B/bronze-cert-2026-09-25", "Cert: Bronze PASSED clean"),
+            entry("desktop-3lf8cbd/onedrive", "Deny ACE removed from the OneDrive root"),
+            entry("fleet/verdict", "SO 2155370 was a tuneup"),
+        ];
+        let kept = entries_about(entries, &["DESKTOP-3LF8CBD", "2155370", " "]);
+        let keys: Vec<&str> = kept.iter().map(|e| e.key.as_str()).collect();
+        assert_eq!(keys, ["desktop-3lf8cbd/onedrive", "fleet/verdict"]);
+        assert!(entries_about(vec![entry("a", "b")], &["", "  "]).is_empty());
+    }
 
     #[test]
     fn entries_read_loosely_and_render_one_line_each() {
