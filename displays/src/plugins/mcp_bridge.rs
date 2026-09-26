@@ -2215,12 +2215,16 @@ pub struct SearchCustomersParams {
 pub struct GetCustomerDetailsParams {
     #[schemars(description = "Customer record ID (e.g. 'customer:abc123' or just the key 'abc123')")]
     pub customer_id: String,
+    #[schemars(description = "Include a compact DisplayName/DisplayVersion list of each computer's installed programs (default false: the field is omitted).")]
+    pub include_programs: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct GetServiceOrderParams {
     #[schemars(description = "Service number to look up (e.g. 'SO-12345')")]
     pub service_number: String,
+    #[schemars(description = "Include a compact DisplayName/DisplayVersion list of the computer's installed programs (default false: the field is omitted).")]
+    pub include_programs: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -3544,6 +3548,57 @@ fn render_job_snapshot(mut snap: serde_json::Value, requested_from_seq: u64) -> 
         }
     }
     snap
+}
+
+/// Recursively rewrites every embedded computer row's `installed_programs`:
+/// drops it entirely, or compacts each entry to DisplayName/DisplayVersion.
+fn slim_installed_programs(value: &mut serde_json::Value, include: bool) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.contains_key("installed_programs") {
+                if include {
+                    if let Some(programs) = map.get_mut("installed_programs") {
+                        compact_installed_programs(programs);
+                    }
+                } else {
+                    map.remove("installed_programs");
+                    map.insert(
+                        "installed_programs_omitted".into(),
+                        serde_json::json!("pass include_programs:true for a DisplayName/DisplayVersion list"),
+                    );
+                }
+            }
+            for v in map.values_mut() {
+                slim_installed_programs(v, include);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                slim_installed_programs(v, include);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Reduces an `installed_programs` array to DisplayName/DisplayVersion entries,
+/// dropping PS* registry noise and entries without a display name.
+fn compact_installed_programs(programs: &mut serde_json::Value) {
+    let serde_json::Value::Array(list) = programs else { return };
+    let compact: Vec<serde_json::Value> = list
+        .iter()
+        .filter_map(|entry| {
+            let obj = entry.as_object()?;
+            let name = obj
+                .get("DisplayName")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?;
+            let version = obj.get("DisplayVersion").and_then(|v| v.as_str()).unwrap_or("");
+            Some(serde_json::json!({ "DisplayName": name, "DisplayVersion": version }))
+        })
+        .collect();
+    *programs = serde_json::Value::Array(compact);
 }
 
 fn parse_shell(s: Option<&str>) -> Result<crate::remote_exec::ShellKind, ErrorData> {
@@ -8977,7 +9032,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "get_customer_details",
-        description = "Get a full customer record including linked service orders and computers."
+        description = "Get a full customer record including linked service orders and their computers. The embedded computer's installed_programs registry dump is omitted by default (it is ~22 KB and truncates the result); pass include_programs:true for a compact DisplayName/DisplayVersion list."
     )]
     async fn get_customer_details(
         &self,
@@ -9001,9 +9056,12 @@ impl PluginToolProvider {
             .take(0)
             .map_err(to_internal)?;
         match result {
-            Some(v) => Ok(CallToolResult::success(vec![
-                ContentBlock::json(v).map_err(to_internal)?
-            ])),
+            Some(mut v) => {
+                slim_installed_programs(&mut v, p.include_programs.unwrap_or(false));
+                Ok(CallToolResult::success(vec![
+                    ContentBlock::json(v).map_err(to_internal)?
+                ]))
+            }
             None => Ok(CallToolResult::success(vec![
                 ContentBlock::text(format!("No customer found with ID '{}'", p.customer_id))
             ])),
@@ -9012,7 +9070,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "get_service_order",
-        description = "Get a service order by service number, with customer and computer details fetched."
+        description = "Get a service order by service number, with customer and computer details fetched. The computer's installed_programs registry dump is omitted by default (it is ~22 KB and truncates the result); pass include_programs:true for a compact DisplayName/DisplayVersion list."
     )]
     async fn get_service_order(
         &self,
@@ -9030,9 +9088,12 @@ impl PluginToolProvider {
             .take(0)
             .map_err(to_internal)?;
         match result {
-            Some(v) => Ok(CallToolResult::success(vec![
-                ContentBlock::json(v).map_err(to_internal)?
-            ])),
+            Some(mut v) => {
+                slim_installed_programs(&mut v, p.include_programs.unwrap_or(false));
+                Ok(CallToolResult::success(vec![
+                    ContentBlock::json(v).map_err(to_internal)?
+                ]))
+            }
             None => Ok(CallToolResult::success(vec![
                 ContentBlock::text(format!("No service order found with number '{}'", p.service_number))
             ])),
@@ -9061,7 +9122,7 @@ impl PluginToolProvider {
         let sql = format!(
             "SELECT * FROM service_order WHERE {where_clause} ORDER BY created_at DESC LIMIT 25 FETCH computer, customer"
         );
-        let results: Vec<serde_json::Value> = database::db()
+        let mut results: Vec<serde_json::Value> = database::db()
             .query(&sql)
             .bind(("q", q))
             .bind(("tech", p.tech.unwrap_or_default()))
@@ -9069,6 +9130,9 @@ impl PluginToolProvider {
             .map_err(to_internal)?
             .take(0)
             .map_err(to_internal)?;
+        for order in &mut results {
+            slim_installed_programs(order, false);
+        }
         Ok(CallToolResult::success(vec![ContentBlock::json(
             serde_json::json!({ "count": results.len(), "orders": results }),
         )
@@ -9077,7 +9141,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "get_computer_details",
-        description = "Get full computer details including hostname, CPU, GPU, RAM, drives, serials, and installed programs."
+        description = "Get full computer details including hostname, CPU, GPU, RAM, drives, serials, and installed programs. installed_programs is compacted to DisplayName/DisplayVersion (the raw registry dump carries PS* path noise)."
     )]
     async fn get_computer_details(
         &self,
@@ -9097,9 +9161,12 @@ impl PluginToolProvider {
             .take(0)
             .map_err(to_internal)?;
         match result {
-            Some(v) => Ok(CallToolResult::success(vec![
-                ContentBlock::json(v).map_err(to_internal)?
-            ])),
+            Some(mut v) => {
+                slim_installed_programs(&mut v, true);
+                Ok(CallToolResult::success(vec![
+                    ContentBlock::json(v).map_err(to_internal)?
+                ]))
+            }
             None => Ok(CallToolResult::success(vec![
                 ContentBlock::text(format!("No computer found with ID '{}'", p.computer_id))
             ])),
@@ -13234,5 +13301,71 @@ mod stress_suite_tests {
         }
         assert!(default_stress_script_timeout_secs("Cert: Bronze", None) >= 5400 + 300);
         assert_eq!(default_stress_script_timeout_secs("Cert: Bronze", Some(42)), 42);
+    }
+}
+
+#[cfg(test)]
+mod customer_tool_tests {
+    use super::{compact_installed_programs, slim_installed_programs};
+
+    fn order_with_programs() -> serde_json::Value {
+        serde_json::json!({
+            "service_number": "2155370",
+            "computer": {
+                "hostname": "DESKTOP-3LF8CBD",
+                "installed_programs": [
+                    {
+                        "DisplayName": "AMD Software",
+                        "DisplayVersion": "25.5.1",
+                        "PSPath": r"Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\Uninstall",
+                        "PSParentPath": "registry-noise",
+                        "Publisher": "Advanced Micro Devices, Inc.",
+                        "UninstallString": "uninstall.exe"
+                    },
+                    { "DisplayName": null, "PSPath": r"registry\Connection Manager" }
+                ]
+            }
+        })
+    }
+
+    #[test]
+    fn the_default_omits_installed_programs() {
+        let mut v = order_with_programs();
+        slim_installed_programs(&mut v, false);
+        assert!(v["computer"].get("installed_programs").is_none());
+        assert!(v["computer"].get("installed_programs_omitted").is_some());
+    }
+
+    #[test]
+    fn opting_in_returns_a_compact_list_without_ps_noise() {
+        let mut v = order_with_programs();
+        slim_installed_programs(&mut v, true);
+        let programs = v["computer"]["installed_programs"].as_array().expect("array");
+        // The null-name registry stub is dropped, leaving one real program.
+        assert_eq!(programs.len(), 1);
+        let entry = programs[0].as_object().expect("object");
+        assert_eq!(entry.len(), 2, "only DisplayName and DisplayVersion survive");
+        assert_eq!(entry["DisplayName"], "AMD Software");
+        assert_eq!(entry["DisplayVersion"], "25.5.1");
+        assert!(entry.get("PSPath").is_none());
+    }
+
+    #[test]
+    fn compaction_reaches_nested_service_computers() {
+        let mut v = serde_json::json!({
+            "name": "Jane",
+            "services": [
+                { "computer": { "installed_programs": [{ "DisplayName": "Chrome", "DisplayVersion": "1", "PSParentPath": "x" }] } }
+            ]
+        });
+        slim_installed_programs(&mut v, false);
+        assert!(v["services"][0]["computer"].get("installed_programs").is_none());
+    }
+
+    #[test]
+    fn compact_leaves_a_non_array_untouched() {
+        let mut v = serde_json::json!("not an array");
+        compact_installed_programs(&mut v);
+        assert_eq!(v, serde_json::json!("not an array"));
     }
 }
