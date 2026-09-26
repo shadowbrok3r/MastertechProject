@@ -31,7 +31,7 @@ DEFINE FIELD response_sent     ON agent_approval TYPE none | object             
 DEFINE FIELD sent_to_codex_at  ON agent_approval TYPE none | datetime           PERMISSIONS FULL;
 DEFINE FIELD server            ON agent_approval TYPE none | string             PERMISSIONS FULL;
 DEFINE FIELD status            ON agent_approval TYPE string DEFAULT 'pending'
-    ASSERT $value IN ['pending', 'accepted', 'accepted_for_session', 'declined', 'cancelled', 'answered', 'expired', 'auto_declined', 'auto_accepted', 'resolved_elsewhere', 'failed'] PERMISSIONS FULL;
+    ASSERT $value IN ['pending', 'accepted', 'accepted_for_session', 'accepted_all_for_session', 'declined', 'cancelled', 'answered', 'expired', 'auto_declined', 'auto_accepted', 'resolved_elsewhere', 'failed'] PERMISSIONS FULL;
 DEFINE FIELD store             ON agent_approval TYPE none | string             PERMISSIONS FULL;
 DEFINE FIELD summary           ON agent_approval TYPE string                    PERMISSIONS FULL;
 DEFINE FIELD thread            ON agent_approval TYPE record<agent_thread>      PERMISSIONS FULL;

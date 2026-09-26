@@ -15,6 +15,9 @@ DEFINE FIELD activity           ON agent_thread TYPE none | string              
 DEFINE FIELD assignee           ON agent_thread TYPE none | record<user>               PERMISSIONS FULL;
 -- Root toggle that lets the agent run shell on the broker host; off by default.
 DEFINE FIELD allow_box_shell    ON agent_thread TYPE bool DEFAULT false                PERMISSIONS FULL;
+-- True while every tool call runs without asking; written by the broker only.
+DEFINE FIELD approve_all        ON agent_thread TYPE none | bool
+    PERMISSIONS FOR select FULL, FOR create, update NONE;
 DEFINE FIELD broker_node        ON agent_thread TYPE none | string                     PERMISSIONS FULL;
 DEFINE FIELD closed_at          ON agent_thread TYPE none | datetime                   PERMISSIONS FULL;
 -- Thread id inside the codex app-server; set once thread/start returns.
