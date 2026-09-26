@@ -3,16 +3,18 @@
 
 mod api;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, FixedOffset, Local};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::ZeroclawGateway;
-use eframe::egui::{self, Align, Color32, Id, Layout, RichText, ScrollArea, Ui};
+use eframe::egui::text::{LayoutJob, TextFormat};
+use eframe::egui::{self, Align, Color32, Id, Layout, RichText, ScrollArea, TextStyle, Ui};
 use web_time::Instant;
 
 use crate::ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle};
+use crate::ui_tools::list_row::{Lead, ListRow};
 use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 use api::{Automation, Item, Outcome, Run, SessionRow};
@@ -26,6 +28,36 @@ const RUNS_POLL: Duration = Duration::from_secs(30);
 const RUNS_SHOWN: usize = 20;
 const SUMMARY_CHARS: usize = 160;
 const DENIED: &str = "Only an active Root user can browse ZeroClaw.";
+const LIST_DEFAULT_W: f32 = 220.0;
+const LIST_MIN_W: f32 = 160.0;
+const LIST_MAX_W: f32 = 240.0;
+/// Frames a newly opened transcript is scrolled to its end, while its rows settle their heights.
+const SCROLL_TO_END_FRAMES: u8 = 3;
+
+/// Message counts the viewer has read, by session id; kept across restarts.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct Seen {
+    /// Set once the first session list has been recorded as read.
+    baselined: bool,
+    sessions: HashMap<String, u64>,
+}
+
+fn seen_id() -> Id {
+    Id::new("zeroclaw_seen")
+}
+
+fn list_open_id() -> Id {
+    Id::new("zeroclaw_list_open")
+}
+
+/// Whether the list panel is shown; kept across restarts.
+fn list_open(ui: &Ui) -> bool {
+    ui.data_mut(|d| d.get_persisted::<bool>(list_open_id())).unwrap_or(true)
+}
+
+fn set_list_open(ui: &Ui, open: bool) {
+    ui.data_mut(|d| d.insert_persisted(list_open_id(), open));
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 enum Pane {
@@ -77,6 +109,10 @@ pub struct ZeroClawView {
     last_lists: Option<Instant>,
     last_transcript: Option<Instant>,
     last_runs: Option<Instant>,
+    /// Loaded from egui memory on the first frame.
+    seen: Option<Seen>,
+    seen_dirty: bool,
+    scroll_to_end: u8,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
 }
@@ -107,6 +143,9 @@ impl Default for ZeroClawView {
             last_lists: None,
             last_transcript: None,
             last_runs: None,
+            seen: None,
+            seen_dirty: false,
+            scroll_to_end: 0,
             tx,
             rx,
         }
@@ -124,8 +163,50 @@ fn local(ts: &str) -> String {
         .unwrap_or_else(|_| ts.chars().take(16).collect::<String>().replacen('T', " ", 1))
 }
 
+fn stamp(ts: &str) -> Option<DateTime<FixedOffset>> {
+    DateTime::parse_from_rfc3339(ts).ok()
+}
+
+/// Sessions newest first; unparsable stamps last.
+fn newest_first(rows: &mut [SessionRow]) {
+    rows.sort_by_key(|r| std::cmp::Reverse(stamp(&r.last_activity)));
+}
+
+/// Rows grouped by agent, in the order of each agent's first row.
+fn group_by_agent(rows: &[SessionRow]) -> Vec<(&str, Vec<&SessionRow>)> {
+    let mut groups: Vec<(&str, Vec<&SessionRow>)> = Vec::new();
+    for row in rows {
+        match groups.iter_mut().find(|(agent, _)| *agent == row.agent) {
+            Some((_, group)) => group.push(row),
+            None => groups.push((row.agent.as_str(), vec![row])),
+        }
+    }
+    groups
+}
+
+/// An agent group's header: its name, session count and new-message count.
+fn group_header(ui: &Ui, agent: &str, count: usize, unread: usize) -> LayoutJob {
+    let font = TextStyle::Body.resolve(ui.style());
+    let mut job = LayoutJob::default();
+    let name = if agent.is_empty() { "no agent" } else { agent };
+    job.append(name, 0.0, TextFormat::simple(font.clone(), ui.visuals().text_color()));
+    job.append(&format!("  {count}"), 0.0, TextFormat::simple(font.clone(), theme::weak_text(ui)));
+    if unread > 0 {
+        job.append(&format!("  \u{00b7} {unread} new"), 0.0, TextFormat::simple(font, theme::accent(ui)));
+    }
+    job
+}
+
+/// A pane button's text, with its new-message count.
+fn pane_label(icon: &str, name: &str, unread: usize) -> String {
+    if unread > 0 { format!("{icon} {name} \u{00b7} {unread} new") } else { format!("{icon} {name}") }
+}
+
 impl ZeroClawView {
     pub fn ui(&mut self, ui: &mut Ui) {
+        if self.seen.is_none() {
+            self.seen = Some(ui.data_mut(|d| d.get_persisted::<Seen>(seen_id())).unwrap_or_default());
+        }
         self.drain();
         match &self.access {
             Access::Unknown => self.load_gateway(),
@@ -150,7 +231,51 @@ impl ZeroClawView {
                 self.ready_ui(ui);
             }
         }
+        if self.seen_dirty
+            && let Some(seen) = &self.seen
+        {
+            ui.data_mut(|d| d.insert_persisted(seen_id(), seen.clone()));
+            self.seen_dirty = false;
+        }
         ui.ctx().request_repaint_after(Duration::from_secs(1));
+    }
+
+    /// Whether `row` has messages the viewer has not read.
+    fn unread(&self, row: &SessionRow) -> bool {
+        self.seen
+            .as_ref()
+            .is_some_and(|s| s.baselined && row.messages > s.sessions.get(&row.id).copied().unwrap_or(0))
+    }
+
+    /// Whether the session `job` delivers its results into has unread messages.
+    fn job_unread(&self, job: &Automation) -> bool {
+        let session = job.session_id();
+        self.sessions.iter().find(|s| s.id == session).is_some_and(|s| self.unread(s))
+    }
+
+    /// Records the session `id` as read up to its current message count.
+    fn mark_read(&mut self, id: &str) {
+        let Some(count) = self.sessions.iter().find(|s| s.id == id).map(|s| s.messages) else {
+            return;
+        };
+        let seen = self.seen.get_or_insert_with(Seen::default);
+        if seen.sessions.get(id) != Some(&count) {
+            seen.sessions.insert(id.to_string(), count);
+            self.seen_dirty = true;
+        }
+    }
+
+    /// Records every listed session as read the first time a list arrives.
+    fn baseline(&mut self) {
+        let seen = self.seen.get_or_insert_with(Seen::default);
+        if seen.baselined {
+            return;
+        }
+        for row in &self.sessions {
+            seen.sessions.insert(row.id.clone(), row.messages);
+        }
+        seen.baselined = true;
+        self.seen_dirty = true;
     }
 
     fn gateway(&self) -> Option<ZeroclawGateway> {
@@ -183,6 +308,7 @@ impl ZeroClawView {
                             self.sessions = sessions;
                             self.running = running.into_iter().collect();
                             self.error = None;
+                            self.baseline();
                         }
                         Err(e) => self.error = Some(e),
                     }
@@ -194,6 +320,9 @@ impl ZeroClawView {
                     if self.session.as_deref() == Some(id.as_str()) {
                         match r {
                             Ok(items) => {
+                                if self.transcript_for.as_deref() != Some(id.as_str()) {
+                                    self.scroll_to_end = SCROLL_TO_END_FRAMES;
+                                }
                                 self.transcript = items;
                                 self.transcript_for = Some(id);
                             }
@@ -270,16 +399,33 @@ impl ZeroClawView {
     }
 
     fn ready_ui(&mut self, ui: &mut Ui) {
+        match self.pane {
+            Pane::Sessions => {
+                if let Some(id) = self.session.clone() {
+                    self.mark_read(&id);
+                }
+            }
+            Pane::Automations => {
+                if let Some(job) = self.job.as_ref().and_then(|id| self.jobs.iter().find(|j| &j.id == id)) {
+                    let session = job.session_id();
+                    self.mark_read(&session);
+                }
+            }
+        }
         egui::Panel::top("zeroclaw_bar").show_separator_line(false).show(ui, |ui| self.top_bar(ui));
+        let mut open = list_open(ui);
         egui::Panel::left("zeroclaw_list")
             .resizable(true)
-            .default_size(280.)
-            .min_size(200.)
-            .max_size(480.)
-            .show(ui, |ui| match self.pane {
+            .default_size(LIST_DEFAULT_W)
+            .min_size(LIST_MIN_W)
+            .max_size(LIST_MAX_W)
+            .show_collapsible(ui, &mut open, |ui| match self.pane {
                 Pane::Sessions => self.session_list(ui),
                 Pane::Automations => self.automation_list(ui),
             });
+        if open != list_open(ui) {
+            set_list_open(ui, open);
+        }
         egui::CentralPanel::default().show(ui, |ui| match self.pane {
             Pane::Sessions => self.transcript_ui(ui),
             Pane::Automations => self.runs_ui(ui),
@@ -288,6 +434,14 @@ impl ZeroClawView {
 
     fn top_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
+            let open = list_open(ui);
+            if ui
+                .selectable_label(open, icons::SIDEBAR)
+                .on_hover_text(if open { "Hide the list" } else { "Show the list" })
+                .clicked()
+            {
+                set_list_open(ui, !open);
+            }
             let shown = self.agent.clone().unwrap_or_else(|| "All agents".to_string());
             egui::ComboBox::from_id_salt("zeroclaw_agent")
                 .selected_text(format!("{}  {shown}", icons::ROBOT))
@@ -302,13 +456,14 @@ impl ZeroClawView {
                     }
                 });
             ui.separator();
-            ui.selectable_value(&mut self.pane, Pane::Sessions, format!("{} Sessions", icons::CHAT));
+            let new_sessions = self.visible_sessions().filter(|s| self.unread(s)).count();
+            ui.selectable_value(&mut self.pane, Pane::Sessions, pane_label(icons::CHAT, "Sessions", new_sessions));
+            let new_runs = self.visible_jobs().filter(|j| self.job_unread(j)).count();
             let failing = self.visible_jobs().filter(|j| matches!(j.outcome(), Outcome::Failed | Outcome::Degraded)).count();
-            let automations = if failing > 0 {
-                format!("{} Automations ({failing} failing)", icons::AUTOMATION)
-            } else {
-                format!("{} Automations", icons::AUTOMATION)
-            };
+            let mut automations = pane_label(icons::AUTOMATION, "Automations", new_runs);
+            if failing > 0 {
+                automations.push_str(&format!(" ({failing} failing)"));
+            }
             ui.selectable_value(&mut self.pane, Pane::Automations, automations);
             ui.separator();
             if ui.button(icons::REFRESH).on_hover_text("Refresh now").clicked() {
@@ -337,39 +492,60 @@ impl ZeroClawView {
         self.jobs.iter().filter(|j| self.agent.as_deref().is_none_or(|a| j.agent_alias == a))
     }
 
+    /// Sessions newest first; with every agent shown, grouped by agent.
     fn session_list(&mut self, ui: &mut Ui) {
-        let rows: Vec<SessionRow> = self.visible_sessions().cloned().collect();
+        let mut rows: Vec<SessionRow> = self.visible_sessions().cloned().collect();
         if rows.is_empty() {
             ui.label(RichText::new("No sessions").color(theme::weak_text(ui)));
             return;
         }
+        newest_first(&mut rows);
+        let mut picked = None;
         ScrollArea::vertical().id_salt("zeroclaw_sessions").auto_shrink([false, false]).show(ui, |ui| {
-            for row in rows {
-                let selected = self.session.as_deref() == Some(row.id.as_str());
-                let icon = if row.is_automation() { icons::AUTOMATION } else { icons::CHAT };
-                let resp = ui
-                    .horizontal(|ui| {
-                        if self.running.contains(&row.id) {
-                            ui.spinner();
-                        }
-                        ui.selectable_label(selected, format!("{icon}  {}", row.label()))
-                    })
-                    .inner
-                    .on_hover_text(format!("{} \u{00b7} {}", row.agent, row.id));
-                ui.label(
-                    RichText::new(format!("{} \u{00b7} {} msg \u{00b7} {}", row.agent, row.messages, local(&row.last_activity)))
-                        .small()
-                        .color(theme::weak_text(ui)),
-                );
-                if resp.clicked() && !selected {
-                    self.session = Some(row.id.clone());
-                    self.transcript.clear();
-                    self.transcript_for = None;
-                    self.error = None;
+            if self.agent.is_some() {
+                for row in &rows {
+                    if self.session_row(ui, row) {
+                        picked = Some(row.id.clone());
+                    }
                 }
-                ui.add_space(4.);
+                return;
+            }
+            for (agent, group) in group_by_agent(&rows) {
+                let unread = group.iter().filter(|r| self.unread(r)).count();
+                egui::CollapsingHeader::new(group_header(ui, agent, group.len(), unread))
+                    .id_salt(("zeroclaw_group", agent))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for row in group {
+                            if self.session_row(ui, row) {
+                                picked = Some(row.id.clone());
+                            }
+                        }
+                    });
             }
         });
+        if let Some(id) = picked {
+            self.session = Some(id);
+            self.transcript.clear();
+            self.transcript_for = None;
+            self.error = None;
+        }
+    }
+
+    /// One session row; returns whether an unselected row was clicked.
+    fn session_row(&self, ui: &mut Ui, row: &SessionRow) -> bool {
+        let selected = self.session.as_deref() == Some(row.id.as_str());
+        let icon = if row.is_automation() { icons::AUTOMATION } else { icons::CHAT };
+        let lead = if self.running.contains(&row.id) { Lead::Spinner(None) } else { Lead::Icon(icon, None) };
+        let detail = format!("{} msg \u{00b7} {}", row.messages, local(&row.last_activity));
+        let resp = ListRow::new(row.label())
+            .lead(lead)
+            .detail(&detail)
+            .selected(selected)
+            .unread(self.unread(row))
+            .show(ui)
+            .on_hover_text(format!("{}\n{} \u{00b7} {}", row.label(), row.agent, row.id));
+        resp.clicked() && !selected
     }
 
     fn transcript_ui(&mut self, ui: &mut Ui) {
@@ -392,6 +568,7 @@ impl ZeroClawView {
         let style = ChatStyle::from_ui(ui);
         let scope = Id::new(("zeroclaw_transcript", row.id.as_str()));
         let agent = row.agent.clone();
+        let to_end = self.scroll_to_end > 0;
         ScrollArea::vertical()
             .id_salt(("zeroclaw_transcript_scroll", row.id.as_str()))
             .auto_shrink([false, false])
@@ -400,7 +577,14 @@ impl ZeroClawView {
                 for (i, item) in self.transcript.iter().enumerate() {
                     item_row(ui, &style, scope, &format!("{i}"), &agent, item);
                 }
+                if to_end {
+                    ui.scroll_to_cursor(Some(Align::BOTTOM));
+                }
             });
+        if to_end {
+            self.scroll_to_end -= 1;
+            ui.ctx().request_repaint();
+        }
     }
 
     fn automation_list(&mut self, ui: &mut Ui) {
@@ -409,38 +593,34 @@ impl ZeroClawView {
             ui.label(RichText::new("No automations").color(theme::weak_text(ui)));
             return;
         }
+        let mut picked = None;
         ScrollArea::vertical().id_salt("zeroclaw_jobs").auto_shrink([false, false]).show(ui, |ui| {
-            for job in jobs {
+            for job in &jobs {
                 let selected = self.job.as_deref() == Some(job.id.as_str());
                 let (icon, color) = outcome_mark(ui, job.outcome());
-                let resp = ui
-                    .horizontal(|ui| {
-                        if self.starting.contains(&job.id) {
-                            ui.spinner();
-                        } else {
-                            ui.label(RichText::new(icon).color(color));
-                        }
-                        ui.selectable_label(selected, job.label())
-                    })
-                    .inner
-                    .on_hover_text(format!("{} \u{00b7} {}", job.agent_alias, job.id));
+                let lead = if self.starting.contains(&job.id) { Lead::Spinner(None) } else { Lead::Icon(icon, Some(color)) };
                 let last = job.last_run.as_deref().map(local).unwrap_or_else(|| "never".to_string());
                 let next = job.next_run.as_deref().map(local).unwrap_or_else(|| "\u{2014}".to_string());
                 let state = if job.enabled { "" } else { " \u{00b7} paused" };
-                ui.label(
-                    RichText::new(format!("{} \u{00b7} last {last} \u{00b7} next {next}{state}", job.expression))
-                        .small()
-                        .color(theme::weak_text(ui)),
-                );
+                let detail = format!("{} \u{00b7} last {last} \u{00b7} next {next}{state}", job.expression);
+                let resp = ListRow::new(job.label())
+                    .lead(lead)
+                    .detail(&detail)
+                    .selected(selected)
+                    .unread(self.job_unread(job))
+                    .show(ui)
+                    .on_hover_text(format!("{}\n{} \u{00b7} {}\n{detail}", job.label(), job.agent_alias, job.id));
                 if resp.clicked() && !selected {
-                    self.job = Some(job.id.clone());
-                    self.runs.clear();
-                    self.runs_for = None;
-                    self.error = None;
+                    picked = Some(job.id.clone());
                 }
-                ui.add_space(4.);
             }
         });
+        if let Some(id) = picked {
+            self.job = Some(id);
+            self.runs.clear();
+            self.runs_for = None;
+            self.error = None;
+        }
     }
 
     fn runs_ui(&mut self, ui: &mut Ui) {
@@ -553,4 +733,73 @@ fn run_row(ui: &mut Ui, style: &ChatStyle, scope: Id, index: usize, run: &Run) {
         row = row.badge(chat_bubble::duration_label(ms.max(0) as u64), color);
     }
     row.show(ui, style, scope, |ui, id| chat_bubble::markdown(ui, style, output, style.text, id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, agent: &str, messages: u64, at: &str) -> SessionRow {
+        SessionRow {
+            id: id.into(),
+            agent: agent.into(),
+            name: String::new(),
+            messages,
+            last_activity: at.into(),
+            keys: vec![id.into()],
+        }
+    }
+
+    fn job(id: &str) -> Automation {
+        serde_json::from_value(serde_json::json!({"id": id})).expect("job")
+    }
+
+    #[test]
+    fn sessions_group_by_agent_in_order_of_each_agents_newest_session() {
+        let mut rows = vec![
+            row("a", "sweeper", 2, "2026-09-10T06:19:00Z"),
+            row("b", "tech_chat", 1, "2026-09-26T16:20:04.088140183+00:00"),
+            row("c", "sweeper", 5, "2026-09-12T10:00:00Z"),
+            row("d", "tech_chat", 3, "2026-09-08T14:29:00Z"),
+            row("e", "consolidator", 1, "not a stamp"),
+        ];
+        newest_first(&mut rows);
+        let order: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(order, ["b", "c", "a", "d", "e"]);
+        let groups: Vec<(&str, Vec<&str>)> = group_by_agent(&rows)
+            .into_iter()
+            .map(|(agent, g)| (agent, g.iter().map(|r| r.id.as_str()).collect()))
+            .collect();
+        assert_eq!(groups, [("tech_chat", vec!["b", "d"]), ("sweeper", vec!["c", "a"]), ("consolidator", vec!["e"])]);
+    }
+
+    #[test]
+    fn only_messages_after_the_baseline_count_as_new_until_read() {
+        let mut view = ZeroClawView::default();
+        view.sessions = vec![row("s", "tech_chat", 2, "2026-09-26T10:00:00Z")];
+        assert!(!view.unread(&view.sessions[0]), "nothing is new before the baseline");
+        view.baseline();
+        assert!(!view.unread(&view.sessions[0]), "the first list is taken as read");
+
+        view.sessions = vec![
+            row("s", "tech_chat", 3, "2026-09-26T11:00:00Z"),
+            row("cron_shelf_triage", "tech_chat", 1, "2026-09-26T16:20:00Z"),
+        ];
+        view.baseline();
+        assert!(view.unread(&view.sessions[0]), "a new message in a known session");
+        assert!(view.unread(&view.sessions[1]), "a session that appeared after the baseline");
+        assert!(view.job_unread(&job("shelf_triage")), "an automation follows its result session");
+        assert!(!view.job_unread(&job("bsod_sweep")), "an automation without a result session");
+
+        view.mark_read("cron_shelf_triage");
+        assert!(!view.job_unread(&job("shelf_triage")));
+        assert!(view.unread(&view.sessions[0]));
+        assert!(view.seen_dirty);
+    }
+
+    #[test]
+    fn pane_labels_carry_their_new_count() {
+        assert_eq!(pane_label("i", "Sessions", 0), "i Sessions");
+        assert_eq!(pane_label("i", "Sessions", 2), "i Sessions \u{00b7} 2 new");
+    }
 }

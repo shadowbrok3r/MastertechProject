@@ -360,6 +360,11 @@ impl Automation {
     pub fn outcome(&self) -> Outcome {
         Outcome::read(self.last_status.as_deref())
     }
+
+    /// The session this job's announced results are written into.
+    pub fn session_id(&self) -> String {
+        format!("{AUTOMATION_SESSION}{}", self.id)
+    }
 }
 
 /// One past run, from `GET /api/cron/{id}/runs`.
