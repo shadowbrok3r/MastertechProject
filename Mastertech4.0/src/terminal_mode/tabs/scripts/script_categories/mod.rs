@@ -42,7 +42,7 @@ pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error
     let output = PsScriptBuilder::new()
         .no_profile(true)
         .non_interactive(true)
-        .hidden(false)
+        .hidden(true)
         .print_commands(false)
         .build()
         .run(script)?;
