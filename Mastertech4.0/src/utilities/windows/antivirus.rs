@@ -7,6 +7,7 @@ use windows::{
     },
 };
 use database::schema::{InstalledSecurityProduct, SecurityProductSource};
+use crate::utilities::no_window::NoWindow;
 
 // Define the GUIDs as per wscapi.h.
 const CLSID_WSC_PRODUCT_LIST: GUID = GUID::from_u128(0x17072F7B_9ABE_4A74_A261_1EB76B55107A);
@@ -167,7 +168,7 @@ $results = foreach ($path in $paths) {
 $results | ConvertTo-Json -Compress -Depth 3
 "#;
 
-    let output = tokio::process::Command::new("powershell")
+    let output = tokio::process::Command::new("powershell").no_window()
         .args(["-NoProfile", "-Command", ps_cmd])
         .output()
         .await;

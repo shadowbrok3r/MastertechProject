@@ -11,6 +11,7 @@ use tracing::info;
 use crate::tabs::file_browser::{read_folder, sort_paths};
 
 use super::{file_copy::CopyBuilder, FileBrowser};
+use crate::utilities::no_window::NoWindow;
 
 #[derive(Debug)]
 pub enum Command {
@@ -268,6 +269,7 @@ pub async fn run_robocopy(
 
     // Build the robocopy command with excluded directories
     let mut cmd = tokio::process::Command::new("robocopy");
+    cmd.no_window();
     cmd.arg(source)
         .arg(&backup_folder)
         .arg("*.*")

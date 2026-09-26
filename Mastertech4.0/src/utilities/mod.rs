@@ -8,6 +8,7 @@ pub mod scripts;
 // replacement is `remote_exec`, which rides the authenticated admin session.
 
 pub mod network;
+pub mod no_window;
 
 pub use crypto::{load_encrypted_user_data, save_encrypted_user_data};
 

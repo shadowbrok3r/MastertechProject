@@ -5,6 +5,8 @@
 //! bugcheck" record), so every query here is scoped to an exact provider. Bugcheck codes come
 //! from EventData properties, not message text.
 
+use crate::utilities::no_window::NoWindow;
+
 pub const DEFAULT_DAYS: u32 = 30;
 
 /// Cap on the WER app-crash count; the report marks a capped count.
@@ -501,7 +503,7 @@ const PS_ARGS: [&str; 5] = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy",
 
 /// Run the collector and parse it. Errors only when PowerShell itself could not run.
 pub fn scan_blocking(days: u32) -> anyhow::Result<BsodScan> {
-    let out = std::process::Command::new("powershell")
+    let out = std::process::Command::new("powershell").no_window()
         .args(PS_ARGS)
         .arg(ps_script(days))
         .output()?;
@@ -510,7 +512,7 @@ pub fn scan_blocking(days: u32) -> anyhow::Result<BsodScan> {
 
 /// Async twin of [`scan_blocking`] for the remote-script path.
 pub async fn scan_async(days: u32) -> anyhow::Result<BsodScan> {
-    let out = tokio::process::Command::new("powershell")
+    let out = tokio::process::Command::new("powershell").no_window()
         .args(PS_ARGS)
         .arg(ps_script(days))
         .output()

@@ -13,6 +13,7 @@ use ewebsock::{WsEvent, WsMessage};
 use ratatui::buffer::Buffer;
 
 use super::{data::LocalTermEvent, TerminalApp};
+use crate::utilities::no_window::NoWindow;
 
 pub mod command;
 
@@ -1606,7 +1607,7 @@ impl TerminalWebsocketClient {
                 log::info!("websockets -> Killing process with PID: {}", pid);
                 #[cfg(target_os = "windows")]
                 {
-                    let output = tokio::process::Command::new("taskkill")
+                    let output = tokio::process::Command::new("taskkill").no_window()
                         .args(["/F", "/PID", &pid.to_string()])
                         .output()
                         .await;
@@ -1875,7 +1876,7 @@ impl TerminalWebsocketClient {
                     #[cfg(target_os = "windows")]
                     {
                         // Use ShellExecuteW to open/execute the file
-                        let _ = tokio::process::Command::new("cmd")
+                        let _ = tokio::process::Command::new("cmd").no_window()
                             .args(["/c", "start", "", &path_str])
                             .spawn();
                         log::info!("Executed file: {}", path_str);
@@ -2088,7 +2089,7 @@ impl TerminalWebsocketClient {
                 log::info!("websockets -> Shutdown system command received");
                 #[cfg(target_os = "windows")]
                 {
-                    let output = tokio::process::Command::new("shutdown")
+                    let output = tokio::process::Command::new("shutdown").no_window()
                         .args(["/s", "/t", "5", "/c", "Mastertech remote shutdown requested"])
                         .output()
                         .await;
@@ -2177,7 +2178,7 @@ impl TerminalWebsocketClient {
                 log::info!("websockets -> Log off user command received");
                 #[cfg(target_os = "windows")]
                 {
-                    let output = tokio::process::Command::new("shutdown")
+                    let output = tokio::process::Command::new("shutdown").no_window()
                         .args(["/l"])
                         .output()
                         .await;
@@ -2231,7 +2232,7 @@ impl TerminalWebsocketClient {
                     log_name, max_entries, level_clause
                 );
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", &ps_cmd])
                     .output()
                     .await;
@@ -2302,7 +2303,7 @@ impl TerminalWebsocketClient {
 
                 let ps_cmd = "Get-CimInstance Win32_Service | Select-Object Name,DisplayName,State,StartMode,ProcessId | ConvertTo-Json -Compress";
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", ps_cmd])
                     .output()
                     .await;
@@ -2340,7 +2341,7 @@ impl TerminalWebsocketClient {
                     ServiceActionType::SetStartType(start_type) => format!("Set-Service -Name '{}' -StartupType '{}' -ErrorAction Stop; 'OK'", name, start_type),
                 };
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", &ps_cmd])
                     .output()
                     .await;
@@ -2373,7 +2374,7 @@ impl TerminalWebsocketClient {
                     folder_filter
                 );
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", &ps_cmd])
                     .output()
                     .await;
@@ -2423,7 +2424,7 @@ impl TerminalWebsocketClient {
                     format!("Disable-ScheduledTask -TaskName '{}' -ErrorAction Stop; 'OK'", path)
                 };
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", &ps_cmd])
                     .output()
                     .await;
@@ -2449,7 +2450,7 @@ impl TerminalWebsocketClient {
                 log::info!("websockets -> Running task: {}", path);
 
                 let ps_cmd = format!("Start-ScheduledTask -TaskName '{}' -ErrorAction Stop; 'OK'", path);
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", &ps_cmd])
                     .output()
                     .await;
@@ -2502,7 +2503,7 @@ impl TerminalWebsocketClient {
                     r#"$subkeys = @(); $values = @(); try {{ Get-ChildItem -Path 'Registry::{path}' -ErrorAction Stop | ForEach-Object {{ $subkeys += @{{ Name=$_.PSChildName; Path=$_.Name; SubkeyCount=(Get-ChildItem -Path $_.PSPath -ErrorAction SilentlyContinue | Measure-Object).Count; ValueCount=(Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue | Get-Member -MemberType NoteProperty | Where-Object {{ $_.Name -notmatch '^PS' }} | Measure-Object).Count }} }}; $props = Get-ItemProperty -Path 'Registry::{path}' -ErrorAction SilentlyContinue; if($props) {{ $props | Get-Member -MemberType NoteProperty | Where-Object {{ $_.Name -notmatch '^PS' }} | ForEach-Object {{ $n = $_.Name; $v = $props.$n; $kind = (Get-Item -Path 'Registry::{path}' -ErrorAction SilentlyContinue).GetValueKind($n); $values += @{{ Name=$n; Kind=$kind.ToString(); Data=[string]$v }} }} }} }} catch {{ }}; @{{ Subkeys=$subkeys; Values=$values }} | ConvertTo-Json -Compress -Depth 4"#
                 );
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", &ps_cmd])
                     .output()
                     .await;
@@ -2555,7 +2556,7 @@ impl TerminalWebsocketClient {
                 let backup_path = backup_dir.join(&backup_filename);
                 let backup_path_str = backup_path.to_string_lossy().to_string();
 
-                let output = tokio::process::Command::new("reg")
+                let output = tokio::process::Command::new("reg").no_window()
                     .args(["export", &path, &backup_path_str, "/y"])
                     .output()
                     .await;
@@ -2623,7 +2624,7 @@ impl TerminalWebsocketClient {
                         }
                     };
 
-                    let output = tokio::process::Command::new("powershell")
+                    let output = tokio::process::Command::new("powershell").no_window()
                         .args(["-NoProfile", "-Command", &ps_cmd])
                         .output()
                         .await;
@@ -2798,7 +2799,7 @@ foreach ($path in $paths) {
 $results | Sort-Object -Property name -Unique | ConvertTo-Json -Depth 3
 "#;
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", ps_cmd])
                     .output()
                     .await;
@@ -2871,7 +2872,7 @@ if (Test-Path $path) {{
 "#
                 );
 
-                let output = tokio::process::Command::new("powershell")
+                let output = tokio::process::Command::new("powershell").no_window()
                     .args(["-NoProfile", "-Command", &ps_cmd])
                     .output()
                     .await;
@@ -3376,7 +3377,7 @@ $states = (powercfg /availablesleepstates 2>&1) -join "`n"
 if ($states -match 'Hibernate') { Write-Output 'Hibernation available: YES' } else { Write-Output 'Hibernation available: NO' }
 if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one setting' } else { Write-Output 'Sleep/Hibernation: all timeouts at 0 (disabled)' }
 "#;
-                            let output = tokio::process::Command::new("powershell")
+                            let output = tokio::process::Command::new("powershell").no_window()
                                 .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd])
                                 .output()
                                 .await;
@@ -3904,12 +3905,12 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                 }
 
                                 let output = if ext == "ps1" {
-                                    tokio::process::Command::new("powershell")
+                                    tokio::process::Command::new("powershell").no_window()
                                         .args(["-ExecutionPolicy", "Bypass", "-File", &script_file.to_string_lossy()])
                                         .output()
                                         .await
                                 } else {
-                                    tokio::process::Command::new("cmd")
+                                    tokio::process::Command::new("cmd").no_window()
                                         .args(["/C", &script_file.to_string_lossy()])
                                         .output()
                                         .await
@@ -4080,10 +4081,10 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 // Run the interpreter on a blocking thread.
                 let ext_for_run = ext.clone();
                 let join = tokio::task::spawn_blocking(move || match ext_for_run.as_str() {
-                    "ps1" => std::process::Command::new("powershell")
+                    "ps1" => std::process::Command::new("powershell").no_window()
                         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &content])
                         .output(),
-                    _ => std::process::Command::new("cmd").args(["/C", &content]).output(),
+                    _ => std::process::Command::new("cmd").no_window().args(["/C", &content]).output(),
                 })
                 .await;
 

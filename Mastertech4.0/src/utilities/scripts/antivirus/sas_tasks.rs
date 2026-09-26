@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use uuid::Uuid;
 use std::path::PathBuf;
 use std::process::Command;
+use crate::utilities::no_window::NoWindow;
 
 const SAS_EXE: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
 
@@ -295,7 +296,7 @@ struct SasTask {
 }
 
 fn get_current_user_sid() -> anyhow::Result<String> {
-    let output = Command::new("powershell")
+    let output = Command::new("powershell").no_window()
         .args([
             "-NoProfile",
             "-Command",
@@ -309,7 +310,7 @@ fn get_current_user_sid() -> anyhow::Result<String> {
 }
 
 fn now_iso8601() -> String {
-    Command::new("powershell")
+    Command::new("powershell").no_window()
         .args(["-NoProfile", "-Command", "Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'"])
         .output()
         .ok()
@@ -330,7 +331,7 @@ fn sas_task_name(guid: &str) -> String {
 
 /// Full names of every task under the SAS Task Scheduler folder.
 fn list_sas_scheduled_tasks() -> Vec<String> {
-    let out = match Command::new("schtasks")
+    let out = match Command::new("schtasks").no_window()
         .args(["/Query", "/TN", SAS_TASK_FOLDER, "/FO", "CSV", "/NH"])
         .output()
     {
@@ -366,7 +367,7 @@ fn prune_orphaned_sas_tasks(keep: &[String]) {
         if keep.iter().any(|k| k.eq_ignore_ascii_case(&name)) {
             continue;
         }
-        match Command::new("schtasks")
+        match Command::new("schtasks").no_window()
             .args(["/Delete", "/TN", &name, "/F"])
             .output()
         {
@@ -452,10 +453,10 @@ fn configure_sas_settings_and_tasks() -> anyhow::Result<(String, String)> {
 
     // Register tasks with Windows Task Scheduler
     // Create-then-delete a throwaway task so the \SUPERAntiSpyware folder exists.
-    let _ = Command::new("schtasks")
+    let _ = Command::new("schtasks").no_window()
         .args(["/Create", "/TN", r"\SUPERAntiSpyware\placeholder", "/SC", "ONCE", "/ST", "00:00", "/TR", "cmd /c echo noop", "/F"])
         .output();
-    let _ = Command::new("schtasks")
+    let _ = Command::new("schtasks").no_window()
         .args(["/Delete", "/TN", r"\SUPERAntiSpyware\placeholder", "/F"])
         .output();
 
@@ -477,7 +478,7 @@ fn configure_sas_settings_and_tasks() -> anyhow::Result<(String, String)> {
 
         let task_name = sas_task_name(&task.guid);
 
-        let out = Command::new("schtasks")
+        let out = Command::new("schtasks").no_window()
             .args(["/Create", "/XML", &xml_path.to_string_lossy(), "/TN", &task_name, "/F"])
             .output()?;
         if out.status.success() {
