@@ -1146,13 +1146,32 @@ struct Credentials {
 /// [`login`] cannot authenticate one: it resolves `$auth.id` against the `user`
 /// table, which a system user has no row in.
 pub async fn signin_database_user(username: &str, password: &str) -> anyhow::Result<()> {
-    db().signin(surrealdb::opt::auth::Database {
-        namespace: NS.to_string(),
-        database: DB.to_string(),
+    signin_database_user_on(&db(), NS, DB, username, password).await
+}
+
+/// Signs `dbh` in as a DB-level user after invalidating it, so no earlier record access leaves `$access` or `$auth` set.
+pub async fn signin_database_user_on<C: surrealdb::Connection>(
+    dbh: &Surreal<C>,
+    namespace: &str,
+    database: &str,
+    username: &str,
+    password: &str,
+) -> anyhow::Result<()> {
+    dbh.invalidate().await?;
+    dbh.signin(surrealdb::opt::auth::Database {
+        namespace: namespace.to_string(),
+        database: database.to_string(),
         username: username.to_string(),
         password: password.to_string(),
     })
     .await?;
+    dbh.use_ns(namespace).use_db(database).await?;
+    Ok(())
+}
+
+/// Signs the shared client in through the guest record access.
+pub async fn signin_guest() -> anyhow::Result<()> {
+    db().signin(guest_credentials()).await?;
     Ok(())
 }
 

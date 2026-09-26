@@ -18,6 +18,9 @@ async fn main() -> anyhow::Result<()> {
 
     if let Err(e) = sign_in().await {
         log::warn!("admin-agent: service signin failed, continuing as guest: {e}");
+        if let Err(e) = database::signin_guest().await {
+            log::error!("admin-agent: guest signin failed too: {e}");
+        }
     }
 
     let http = std::env::var("MTECH_AGENT_MCP_STDIO").is_err();
