@@ -292,7 +292,7 @@ impl Koth {
                             self.employees.clear();
                             let emp_tx = self.employee_tx.clone();
                             PlatformSpawner::spawn(async move {
-                                for store in Store::VALUES {
+                                for store in Store::RETAIL {
                                     match Employee::get_employees_in_store(&store.into_store_id().to_string()).await {
                                         Ok(employees) => { let _ = emp_tx.try_send(employees); },
                                         Err(e) => log::error!("Error getting employee id's: {e:?}"),

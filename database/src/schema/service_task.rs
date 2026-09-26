@@ -13,9 +13,6 @@ pub const AGENT_TASK_ORIGIN: &str = "ai";
 /// Customer half of the task name when the order names no customer.
 const UNKNOWN_CUSTOMER: &str = "Unknown customer";
 
-/// Domain appended to a bare username.
-const STAFF_EMAIL_DOMAIN: &str = "@pclaptops.com";
-
 /// A service number as orders and tasks store it, or `None` when `raw` cannot be one.
 pub fn normalize_service_number(raw: &str) -> Option<String> {
     let sn = raw.trim().trim_start_matches('#').trim();
@@ -158,17 +155,9 @@ impl Requester {
     }
 }
 
-/// The email forms a technician identifier can match: as given, and as a pclaptops username.
+/// The email forms a technician identifier can match: the address itself, or the username on every company domain.
 pub fn requester_emails(ident: &str) -> Vec<String> {
-    let ident = ident.trim().to_lowercase();
-    if ident.is_empty() {
-        return Vec::new();
-    }
-    if ident.contains('@') {
-        vec![ident]
-    } else {
-        vec![ident.clone(), format!("{ident}{STAFF_EMAIL_DOMAIN}")]
-    }
+    super::email_candidates(ident)
 }
 
 /// Content of a task the diagnostic agent files for a service order.
@@ -377,12 +366,12 @@ pub async fn find_service_task(service_number: &str) -> anyhow::Result<Option<Ta
     Ok(pick_existing_task(&candidates).cloned())
 }
 
-/// An active user matching an email, a pclaptops username or an exact name.
+/// An active user matching an email, a company username or an exact name.
 pub async fn resolve_requester(ident: &str) -> anyhow::Result<Option<Requester>> {
-    let emails = requester_emails(ident);
-    if emails.is_empty() {
+    if ident.trim().is_empty() {
         return Ok(None);
     }
+    let emails = requester_emails(ident);
     let rows: Vec<Requester> = db()
         .query(REQUESTER_SQL)
         .bind(("emails", emails))
@@ -697,12 +686,12 @@ mod tests {
     }
 
     #[test]
-    fn a_username_also_matches_its_pclaptops_email() {
+    fn a_username_matches_every_company_email() {
         assert_eq!(
             requester_emails(" Derek.Anderson "),
             vec![
-                "derek.anderson".to_string(),
-                "derek.anderson@pclaptops.com".to_string()
+                "derek.anderson@pclaptops.com".to_string(),
+                "derek.anderson@xidax.com".to_string()
             ]
         );
         assert_eq!(

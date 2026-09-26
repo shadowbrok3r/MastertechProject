@@ -451,16 +451,6 @@ impl SharedContext {
                                                             ui.label(self.account_mod.user.get_authorization().as_str());
                                                         });
                                                     });
-
-                                                    ui.add_space(5.0);
-
-                                                    ui.horizontal(|ui| {
-                                                        ui.label("MtechServer Version: ");
-                                                        
-                                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                                            ui.label(self.account_mod.user.get_version());
-                                                        });
-                                                    });
                                                     // ui.horizontal(|ui| {
                                                     //     ui.label("Database Version: ");
                                                         

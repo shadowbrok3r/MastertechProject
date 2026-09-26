@@ -401,7 +401,7 @@ impl Default for StockTable {
             systems_stream_channel,
             systems_add_channel,
             systems_task_channel,
-            store_selection: Store::RIV.into_odoo_store_id() as u64,
+            store_selection: Store::RIV.into_odoo_store_id().map_or(0, |id| id as u64),
             // Customer change modal
             customer_change_channel,
             customer_search_results_channel,
@@ -547,11 +547,11 @@ impl StockTable {
                             ComboBox::new("Store_Selection", "")
                                 .selected_text(selected_text)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(selected, Store::RIV.into_odoo_store_id() as u64, Store::RIV.as_str());
-                                    ui.selectable_value(selected, Store::LTN.into_odoo_store_id() as u64, Store::LTN.as_str());
-                                    ui.selectable_value(selected, Store::MUR.into_odoo_store_id() as u64, Store::MUR.as_str());
-                                    ui.selectable_value(selected, Store::ORE.into_odoo_store_id() as u64, Store::ORE.as_str());
-                                    ui.selectable_value(selected, Store::SAN.into_odoo_store_id() as u64, Store::SAN.as_str());
+                                    for store in Store::RETAIL {
+                                        if let Some(id) = store.into_odoo_store_id() {
+                                            ui.selectable_value(selected, id as u64, store.as_str());
+                                        }
+                                    }
                                 });
         
                             if *selected != current {
@@ -563,13 +563,14 @@ impl StockTable {
                                     }
                                 });
                                 // Re-pull the audit list for the newly selected store.
-                                let audit_tx = self.audit_list_channel.0.clone();
-                                let store_id = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id();
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = list_audits(store_id, audit_tx).await {
-                                        log::error!("list_audits error: {e:?}");
-                                    }
-                                });
+                                if let Some(store_id) = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id() {
+                                    let audit_tx = self.audit_list_channel.0.clone();
+                                    PlatformSpawner::spawn(async move {
+                                        if let Err(e) = list_audits(store_id, audit_tx).await {
+                                            log::error!("list_audits error: {e:?}");
+                                        }
+                                    });
+                                }
                                 self.inventory_view = InventoryView::Live;
                                 self.inventory_serials_viewer.audit_id = None;
                                 self.scan_mode_active = false;
@@ -2230,13 +2231,14 @@ impl StockTable {
 
             // Seed the audit-source combobox so it's populated by the
             // time the user opens the Store Inventory tab.
-            let audit_tx = self.audit_list_channel.0.clone();
-            let store_id = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id();
-            PlatformSpawner::spawn(async move {
-                if let Err(e) = list_audits(store_id, audit_tx).await {
-                    log::error!("list_audits error (first_run): {e:?}");
-                }
-            });
+            if let Some(store_id) = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id() {
+                let audit_tx = self.audit_list_channel.0.clone();
+                PlatformSpawner::spawn(async move {
+                    if let Err(e) = list_audits(store_id, audit_tx).await {
+                        log::error!("list_audits error (first_run): {e:?}");
+                    }
+                });
+            }
 
             self.is_admin = get_current_user_from_auth()
                 .map(|user| if user.get_username().is_empty() {

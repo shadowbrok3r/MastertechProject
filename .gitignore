@@ -48,6 +48,9 @@ target-linux-compat
 # surreal sql CLI REPL history, written to the cwd it runs in
 history.txt
 
+# user-admin sync records: prior values of every row a sync touched.
+database-tools/out/
+
 # Vendor firmware is licensed to us and must never leave the org. Nothing
 # derived from the BIOSLove share belongs in this repo: not the payloads, not
 # the tools, not the index that catalogues them (it carries the share path,

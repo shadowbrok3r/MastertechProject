@@ -59,8 +59,7 @@ impl WaitingService {
             reference: order.reference.clone(),
             checked_in_at: order.date_add.clone(),
             waiting_open_hours: (open_hours_since(&order.date_add) * 10.0).round() / 10.0,
-            store: matches!(order.id_store.as_str(), "7" | "8" | "10" | "12" | "14")
-                .then(|| Store::from_presta_store_id(&order.id_store).as_str().to_string()),
+            store: Store::try_from_presta_store_id(&order.id_store).map(|s| s.as_str().to_string()),
             customer_id: order.id_customer.clone(),
             device: svc
                 .map(|s| format!("{} {} {}", s.device_mfg, s.device_model, s.device_name))

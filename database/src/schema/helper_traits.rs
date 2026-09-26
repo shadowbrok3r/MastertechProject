@@ -1,6 +1,6 @@
 #![allow(async_fn_in_trait)]
 use super::{
-    prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, RecordId, SurrealValue, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
+    employee_directory, prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, EmployeeDirectory, RecordId, SurrealValue, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
 use crate::{db, PlatformSpawner, Spawner, schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE, parse_msg_date, prestashop::{OrderState, OrderType, PrestashopId}}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -103,9 +103,9 @@ pub trait OrderHelper {
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<Option<User>, Error> {
         log::warn!("EmployeeHelper -> find_user");
-        db().set("email", self.email.clone()).await?;
         let usr: Option<User> = db()
             .query("SELECT * FROM user WHERE email == $email")
+            .bind(("email", self.email.trim().to_lowercase()))
             .await?
             .take(0)?;
         if usr.is_none() {
@@ -136,7 +136,11 @@ impl EmployeeHelper for Employee {
                 Err(e) => { return Err(anyhow::anyhow!("Error getting employee: {e:?}")); }
             }
         } else if !self.email.is_empty() {
-            Ok(User::default().set_email(&self.email).find_employee_by_email().await?)
+            let record = employee_directory()
+                .by_email(&self.email)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No employee record for {}", self.email))?;
+            Ok(Employee::from(record))
         } else {
             Ok(Employee::default())
         }
@@ -737,8 +741,7 @@ impl From<PrestashopPayload> for TaskPayload {
             let res = async {
                 for emp in employees.iter() {
                     let employee = Employee::default().get_employee_from_id(emp).await?;
-                    let emp = User::default().set_email(&employee.email).find_employee_by_email().await?;
-                    tx.try_send(User::query_user_or_employee_from_email(emp.email.clone()).await?)?;
+                    tx.try_send(User::query_user_or_employee_from_email(employee.email.clone()).await?)?;
                 }
                 
                 Ok::<(), anyhow::Error>(())
@@ -796,27 +799,6 @@ impl From<PrestashopPayload> for TaskPayload {
             ticket.service_number.clone()
         );
         task.clone()
-    }
-}
-
-/// Odoo numbering only. A PrestaShop store id (7, 8, 10, 12, 14) misses every
-/// arm and yields RIV — use `Store::from_any_store_id` when the scheme is not
-/// known at the call site.
-impl From<u64> for Store {
-    fn from(value: u64) -> Self {
-        Store::from_odoo_store_id(&value.to_string())
-    }
-}
-
-impl From<Store> for u64 {
-    fn from(value: Store) -> Self {
-        match value {
-            Store::RIV => 76,
-            Store::LTN => 73,
-            Store::MUR => 74,
-            Store::ORE => 75,
-            Store::SAN => 77
-        }
     }
 }
 

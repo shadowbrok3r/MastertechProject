@@ -2,7 +2,7 @@ use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, S
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
-use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::theme, TaskUiActions};
+use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
 use log::{error, info};
@@ -208,13 +208,7 @@ impl MasterTechApp {
                                         .width(60.)
                                         .close_behavior(PopupCloseBehavior::IgnoreClicks)
                                         .selected_text(selected_text)
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(selected, database::schema::task::Store::RIV.into_store_id() as u64, database::schema::task::Store::RIV.as_str());
-                                            ui.selectable_value(selected, database::schema::task::Store::LTN.into_store_id() as u64, database::schema::task::Store::LTN.as_str());
-                                            ui.selectable_value(selected, database::schema::task::Store::MUR.into_store_id() as u64, database::schema::task::Store::MUR.as_str());
-                                            ui.selectable_value(selected, database::schema::task::Store::ORE.into_store_id() as u64, database::schema::task::Store::ORE.as_str());
-                                            ui.selectable_value(selected, database::schema::task::Store::SAN.into_store_id() as u64, database::schema::task::Store::SAN.as_str());
-                                        });
+                                        .show_ui(ui, |ui| presta_store_options(ui, selected, &Store::VALUES));
                             
                                         if *selected != current {
                                             self.context.shared_ctx.store_users.clear();

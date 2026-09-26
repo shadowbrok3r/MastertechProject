@@ -132,7 +132,7 @@ pub async fn product_by_id(id: i64) -> anyhow::Result<Option<Product>> {
 
 /// Odoo location ids of the five store stock locations.
 fn store_locations() -> Vec<i32> {
-    Store::VALUES.iter().map(|s| s.into_odoo_store_id()).collect()
+    Store::RETAIL.iter().filter_map(|s| s.into_odoo_store_id()).collect()
 }
 
 /// Sums quant rows into available units per product and store.
@@ -170,7 +170,7 @@ pub async fn store_stock(product_ids: &[i64]) -> anyhow::Result<Vec<StoreStock>>
 /// Approximate miles along I-15 from Riverdale.
 fn position(store: Store) -> i32 {
     match store {
-        Store::RIV => 0,
+        Store::RIV | Store::WAR | Store::Unknown => 0,
         Store::LTN => 12,
         Store::MUR => 35,
         Store::SAN => 43,

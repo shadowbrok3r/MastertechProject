@@ -1,5 +1,5 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, Store};
-use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
+use crate::{app_state::SharedContext, ui_tools::store_picker::presta_store_options, PlatformSpawner, Spawner};
 use eframe::egui::*;
 use log::info;
 
@@ -55,13 +55,7 @@ impl SharedContext {
 
         ComboBox::new("Store_Selection", "")
             .selected_text(selected_text.as_str())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
-                ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
-                ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
-                ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
-                ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
-            });
+            .show_ui(ui, |ui| presta_store_options(ui, selected, &Store::VALUES));
 
         if *selected != current {
             let tasks_tx = self.initial_tasks_tx.clone();
