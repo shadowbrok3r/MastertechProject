@@ -35,6 +35,7 @@ pub mod dump_text;
 pub mod hex_json;
 pub mod icons;
 pub mod info_card;
+pub mod list_row;
 pub mod plots;
 pub mod selection_stats;
 pub mod store_picker;

@@ -6,6 +6,7 @@ use crate::{
     ui_tools::agent_chat::{self, Composer, ComposerAction, QueueAction, Rename, RenameOutcome},
     ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle},
     ui_tools::icons,
+    ui_tools::list_row::{Lead, ListRow},
     PlatformSpawner, Spawner,
 };
 
@@ -18,6 +19,10 @@ use serde::Serialize;
 /// Smallest outer height of the prompt box.
 const INPUT_MIN_HEIGHT: f32 = 52.0;
 const INPUT_PANEL_MARGIN: i8 = 6;
+/// Session list width, pinned or in its popup.
+const SESSIONS_DEFAULT_W: f32 = 220.0;
+const SESSIONS_MIN_W: f32 = 160.0;
+const SESSIONS_MAX_W: f32 = 240.0;
 /// Longest header summary in characters; the header also truncates to its width.
 const SUMMARY_CHARS: usize = 160;
 /// Prefix on assistant lines that carry a broker notice rather than a reply.
@@ -326,6 +331,18 @@ impl EnhancedAiPlayground {
             && !self.lingering.contains(id)
     }
 
+    /// Local chats for the session list, newest message first; blank chats are left out until they are used.
+    fn listed_chats(&self) -> Vec<String> {
+        let mut chats: Vec<(&String, i64)> = self
+            .threads
+            .iter()
+            .filter(|(id, _)| !self.is_blank_chat(id))
+            .map(|(id, t)| (id, t.messages.iter().map(|m| m.ts).max().unwrap_or(i64::MIN)))
+            .collect();
+        chats.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        chats.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
     /// Selects a placeholder chat titled `label` that opens the session its assist request gets.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     pub fn follow_assist_request(&mut self, label: String) -> PendingSession {
@@ -405,13 +422,17 @@ impl EnhancedAiPlayground {
 
         if sessions_pinned(ui) {
             let mut pick = ThreadPick::default();
+            let mut open = true;
             eframe::egui::Panel::left("enhanced_ai_sessions")
                 .frame(Frame::default().inner_margin(Margin::symmetric(6, 4)))
                 .resizable(true)
-                .default_size(240.)
-                .min_size(180.)
-                .max_size(420.)
-                .show(ui, |ui| self.thread_rows(ui, f32::INFINITY, &mut pick));
+                .default_size(SESSIONS_DEFAULT_W)
+                .min_size(SESSIONS_MIN_W)
+                .max_size(SESSIONS_MAX_W)
+                .show_collapsible(ui, &mut open, |ui| self.thread_rows(ui, f32::INFINITY, &mut pick));
+            if !open {
+                set_sessions_pinned(ui, false);
+            }
             self.apply_pick(pick);
         }
 
@@ -546,7 +567,7 @@ impl EnhancedAiPlayground {
                 .gap(2.0)
                 .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
-                    ui.set_min_width(220.);
+                    ui.set_width(SESSIONS_MAX_W);
                     self.thread_rows(ui, 320., &mut pick);
                 });
             let stored = popup.map(|r| r.response.rect).unwrap_or(eframe::egui::Rect::NOTHING);
@@ -554,7 +575,7 @@ impl EnhancedAiPlayground {
             self.apply_pick(pick);
 
             if ui.button(RichText::new(icons::PLUS)).on_hover_text("New chat").clicked() {
-                self.create_new_chat_thread();
+                self.start_new_session();
             }
 
             // ── Right side: close · diagnose · status or engine ──
@@ -596,13 +617,12 @@ impl EnhancedAiPlayground {
         let agent_index = self.index_with_open_row();
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         let agent_index: Vec<AgentThread> = Vec::new();
-        if self.threads.is_empty() && agent_index.is_empty() {
+        let ids = self.listed_chats();
+        if ids.is_empty() && agent_index.is_empty() {
             ui.label(RichText::new("No chats yet").weak());
             return;
         }
         let selected = self.selected_thread.clone();
-        let mut ids: Vec<String> = self.threads.keys().cloned().collect();
-        ids.sort();
         ScrollArea::vertical()
             .id_salt("enhanced_ai_thread_rows")
             .max_height(max_height)
@@ -610,7 +630,11 @@ impl EnhancedAiPlayground {
             .show(ui, |ui| {
                 for id in ids {
                     let title = self.thread_title(&id);
-                    let row = ui.selectable_label(selected == id, RichText::new(format!("{}  {title}", icons::CHAT)));
+                    let row = ListRow::new(&title)
+                        .lead(Lead::Icon(icons::CHAT, None))
+                        .selected(selected == id)
+                        .show(ui)
+                        .on_hover_text(&title);
                     if row.clicked() {
                         pick.picked = Some(id.clone());
                     }
@@ -630,18 +654,13 @@ impl EnhancedAiPlayground {
                     let who = t.requested_by.as_deref().unwrap_or("unattributed");
                     let key = t.id.key_string();
                     let (icon, color, _) = agent_chat::status_chip(ui, &t.status);
-                    let row = ui
-                        .horizontal(|ui| {
-                            if agent_chat::is_active(t) {
-                                ui.add(eframe::egui::Spinner::new().size(12.0).color(color));
-                            } else {
-                                ui.label(RichText::new(icon).color(color));
-                            }
-                            let line = format!("{}  ({})", t.label(), agent_chat::status_words(t));
-                            ui.selectable_label(selected == key, RichText::new(line))
-                        })
-                        .inner
-                        .on_hover_text(format!("{who}\n{}", t.connection_string));
+                    let lead = if agent_chat::is_active(t) { Lead::Spinner(Some(color)) } else { Lead::Icon(icon, Some(color)) };
+                    let line = format!("{}  ({})", t.label(), agent_chat::status_words(t));
+                    let row = ListRow::new(&line)
+                        .lead(lead)
+                        .selected(selected == key)
+                        .show(ui)
+                        .on_hover_text(format!("{}\n{who}\n{}", t.label(), t.connection_string));
                     if row.clicked() {
                         pick.picked = Some(key.clone());
                     }
@@ -2119,6 +2138,27 @@ mod tests {
         chat.start_new_session();
         assert_ne!(chat.selected_thread, second);
         assert_eq!(chat.threads.len(), 3);
+    }
+
+    #[test]
+    fn the_session_list_leaves_out_blank_chats_and_puts_the_newest_first() {
+        let mut chat = EnhancedAiPlayground::default();
+        chat.start_new_session();
+        let blank = chat.selected_thread.clone();
+        assert!(chat.listed_chats().is_empty(), "a new chat is not listed before it is used");
+
+        let mut older = note("older", "first");
+        older.ts = 100;
+        let mut newer = note("newer", "second");
+        newer.ts = 200;
+        chat.merge_loaded(vec![
+            LoadedThread { id: "older".into(), title: "Older".into(), messages: vec![older] },
+            LoadedThread { id: "newer".into(), title: "Newer".into(), messages: vec![newer] },
+        ]);
+        assert_eq!(chat.listed_chats(), ["newer", "older"]);
+
+        chat.threads.get_mut(&blank).expect("chat").messages.push(note(&blank, "hi"));
+        assert_eq!(chat.listed_chats()[0], blank, "a used chat is listed");
     }
 
     #[test]
