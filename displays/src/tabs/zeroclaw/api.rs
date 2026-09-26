@@ -76,18 +76,6 @@ fn component(value: &str) -> String {
     out
 }
 
-/// Agent aliases the gateway is configured with.
-pub async fn agents(gw: &ZeroclawGateway) -> Result<Vec<String>> {
-    Ok(parse_agents(&get(gw, "/api/config/agent-options").await?))
-}
-
-fn parse_agents(v: &Value) -> Vec<String> {
-    v.get("agents")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
-        .unwrap_or_default()
-}
-
 /// One conversation as the session list shows it; `keys` are every store the gateway holds under its id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionRow {
@@ -516,7 +504,6 @@ mod tests {
         assert_eq!(parse_run_now(&json!({"success": true, "output": "ok"})), (Outcome::Ok, "ok".to_string()));
         assert_eq!(parse_run_now(&json!({"success": false})).0, Outcome::Failed);
         assert_eq!(parse_run_now(&json!({"success": true, "status": "degraded"})).0, Outcome::Degraded);
-        assert_eq!(parse_agents(&json!({"agents": ["tech_chat", 3, "sweeper"]})), vec!["tech_chat", "sweeper"]);
         assert_eq!(parse_running(&json!({"sessions": [{"session_id": "a"}, {"x": 1}]})), vec!["a"]);
     }
 

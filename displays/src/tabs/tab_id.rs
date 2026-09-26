@@ -38,7 +38,6 @@ pub enum TabId {
     AgentAudit,
     AiAnalytics,
     SessionBoard,
-    ZeroClaw,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,7 +123,6 @@ const MT_NATIVE: &[TabId] = &[
     TabId::AgentAudit,
     TabId::AiAnalytics,
     TabId::SessionBoard,
-    TabId::ZeroClaw,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -186,13 +184,12 @@ impl TabId {
             Self::AgentSessions => "agent_sessions",
             Self::AgentAudit => "agent_audit",
             Self::AiAnalytics => "ai_analytics",
-            Self::ZeroClaw => "zeroclaw",
         }
     }
 
     /// Tabs hidden from the View menu and refused at render for anyone but Root.
     pub fn requires_root(self) -> bool {
-        matches!(self, Self::ServerConsole | Self::ZeroClaw)
+        matches!(self, Self::ServerConsole)
     }
 
     pub fn title(self, ctx: TabContext) -> &'static str {
@@ -235,7 +232,6 @@ impl TabId {
             Self::AgentSessions => "Agent Sessions",
             Self::AgentAudit => "Agent Audit",
             Self::AiAnalytics => "AI Analytics",
-            Self::ZeroClaw => "ZeroClaw",
         }
     }
 
@@ -276,7 +272,7 @@ impl TabId {
             "My Tasks" => Some(Self::MyTasks),
             "Completed Tasks" => Some(Self::CompletedTasks),
             "Bug Tracker" | "Bug Report" | "BugReport" => Some(Self::BugReport),
-            "Websockets" | "Scene Editor" | "Web Console" => None,
+            "Websockets" | "Scene Editor" | "Web Console" | "ZeroClaw" => None,
             "Downloads" => Some(Self::Downloads),
             "Task Audit" | "TaskAudit" => Some(Self::TaskAudit),
             "Inventory" => Some(Self::Inventory),
@@ -306,7 +302,7 @@ impl TabId {
 
     fn from_slug(s: &str) -> Option<Self> {
         match s {
-            "websockets" | "scene_editor" | "web_console" => None,
+            "websockets" | "scene_editor" | "web_console" | "zeroclaw" | "zero_claw" => None,
             "tur_sheet" => Some(Self::TurSheet),
             "part_order" => Some(Self::PartOrder),
             "koth" => Some(Self::Koth),
@@ -343,7 +339,6 @@ impl TabId {
             "agent_sessions" => Some(Self::AgentSessions),
             "agent_audit" => Some(Self::AgentAudit),
             "ai_analytics" => Some(Self::AiAnalytics),
-            "zeroclaw" => Some(Self::ZeroClaw),
             _ => None,
         }
     }
@@ -415,5 +410,14 @@ mod tab_id_tests {
                 .any(|t| t.slug() == "qc"),
             "the retired tab must not be listed in any visible set"
         );
+    }
+
+    /// The ZeroClaw tab moved into the Ai tab, so layouts that still name it drop the pane.
+    #[test]
+    fn the_retired_zeroclaw_tab_is_dropped_from_old_layouts() {
+        for name in ["zeroclaw", "zero_claw", "ZeroClaw"] {
+            assert_eq!(TabId::from_legacy_title(name), None, "{name}");
+        }
+        assert!(!TabId::visible_for(TabContext::MastertechNative).iter().any(|t| t.slug() == "zeroclaw"));
     }
 }
