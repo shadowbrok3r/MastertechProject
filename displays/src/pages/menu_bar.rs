@@ -1,5 +1,5 @@
 #![allow(deprecated)]
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext, WorkMode}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
+use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Notification, Store}, db};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
@@ -455,13 +455,7 @@ impl SharedContext {
                             .width(60.)
                             .selected_text(selected_text.as_str())
                             .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
-                                ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
-                                ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
-                                ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
-                                ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
-                            });
+                            .show_ui(ui, |ui| presta_store_options(ui, selected, &Store::VALUES));
                         });
 
                         if *selected != current {

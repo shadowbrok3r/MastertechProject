@@ -10,6 +10,10 @@ description = "Operational tools for the Mastertech SurrealDB instance — audit
 name = "audit-references"
 path = "src/bin/audit_references.rs"
 
+[[bin]]
+name = "user-admin"
+path = "src/bin/user_admin/main.rs"
+
 [dependencies]
 database.workspace = true
 surrealdb.workspace = true
@@ -19,5 +23,12 @@ serde_json.workspace = true
 anyhow.workspace = true
 log.workspace = true
 tokio.workspace = true
+chrono.workspace = true
+dotenvy.workspace = true
 env_logger = "0.11"
 clap = { version = "4", features = ["derive"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+rpassword = "7"
+
+[dev-dependencies]
+surrealdb = { workspace = true, features = ["kv-mem"] }

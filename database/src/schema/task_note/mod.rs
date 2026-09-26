@@ -276,18 +276,10 @@ impl TaskNotePayload {
     /// - `Ok(())` if the check is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the check or update.
     pub async fn check_tagged_user_in_note(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        let re = Regex::new(r"@\b[a-zA-Z]+(\.[a-zA-Z]+)?\b")?;
         let note = self.note.clone();
-        let users: Vec<&str> = re.find_iter(&note).map(|m| m.as_str()).collect();
         let task_id = self.task_id.clone();
-        for user_tag in users {
-            // Remove '@' from the tag to get the user's name
-            let name = &user_tag[1..];
-            let email = format!("{}@pclaptops.com", name);
-            let mut employee = Employee::default();
-            employee.email = email;
-            // Simulate database query for user with the email
-            let tagged_user: Option<User> = employee.find_user().await?;
+        for name in mention_tags(&note)? {
+            let tagged_user: Option<User> = User::find_by_email_candidates(name).await?;
             if let (Some(id), Some(tagged_user)) = (task_id.clone(), tagged_user) {
                 log::debug!("task_note/mod.rs -> check_tagged_user_in_note -> There is an ID, and there IS a tagged user: {id:?} / {tagged_user:?}");
                 let task_name: Option<String> = db()
@@ -986,6 +978,33 @@ pub fn parse_msg_date(date_str: &str) -> Result<Datetime, chrono::ParseError> {
     // Convert to DateTime<Utc> by assuming UTC timezone
     let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
     Ok(dt_utc.into())
+}
+
+/// Names tagged `@name` in a note, skipping an `@` that follows a letter or digit.
+pub(crate) fn mention_tags(note: &str) -> anyhow::Result<Vec<&str>> {
+    let re = Regex::new(r"@\b[a-zA-Z]+(\.[a-zA-Z]+)?\b")?;
+    Ok(re
+        .find_iter(note)
+        .filter(|m| !note[..m.start()].chars().next_back().is_some_and(char::is_alphanumeric))
+        .map(|m| &m.as_str()[1..])
+        .collect())
+}
+
+#[cfg(test)]
+mod mention_tests {
+    use super::mention_tags;
+
+    #[test]
+    fn a_standalone_tag_is_found() {
+        assert_eq!(mention_tags("ping @john.doe please").expect("regex"), ["john.doe"]);
+        assert_eq!(mention_tags("@amy and (@bob.smith)").expect("regex"), ["amy", "bob.smith"]);
+    }
+
+    #[test]
+    fn an_email_address_is_not_a_tag() {
+        assert!(mention_tags("mail john@xidax.com today").expect("regex").is_empty());
+        assert!(mention_tags("j.doe@pclaptops.com").expect("regex").is_empty());
+    }
 }
 
 

@@ -835,9 +835,13 @@ pub struct Employee {
     pub lastname: String,
     pub firstname: String,
     pub email: String,
+    #[serde(default)]
     pub initials: String,
     #[serde(default)]
     pub id_profile: String,
+    /// "1" or "0"; empty when the response omitted it.
+    #[serde(default, deserialize_with = "deserialize_to_string")]
+    pub active: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]

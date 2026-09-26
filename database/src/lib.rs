@@ -8,7 +8,6 @@ use surrealdb::{
 pub use surrealdb::types::SurrealValue;
 use once_cell::sync::Lazy;
 use serde::Serialize;
-use std::fmt::Debug;
 use schema::User;
 use log::info;
 
@@ -513,19 +512,11 @@ impl Database {
             Some(jwt) => {
                 info!("Have a JWT, attempting token auth");
                 dbh.authenticate(jwt.clone()).await?;
+                let user = Some(require_active_account(&dbh).await?);
                 // Cache the JWT so `ensure_db_connected` can replay it
                 // after a DB blip without dropping the operator to guest.
                 cache_auth(Some(jwt.clone()), None, None);
-                let user: Option<User> = dbh.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                let users: Vec<User> = dbh.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
-                // let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
-                // log::info!("Session: {:?}", sess);
- 
-                if !users.is_empty() {
-                    if let Ok(mut users_guard) = STORE_USERS.try_lock() {
-                        *users_guard = users.clone(); 
-                    }
-                }
+                refresh_store_users(&dbh).await;
                 if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
                     // log::warn!("SET THE USER: {:?}", user_info_guard.clone());
                     *user_info_guard = user.clone(); // Set the user info
@@ -533,12 +524,8 @@ impl Database {
                 Ok( Self { jwt: Some(jwt.into()), user } )
             }
             None => {
-                
-                let full_email = if email.ends_with("@pclaptops.com") {
-                    email.clone()
-                } else {
-                    format!("{}@pclaptops.com", email.clone())
-                };
+                let full_email = schema::normalize_email(&email)
+                    .ok_or_else(|| anyhow::anyhow!("{email:?} is not a valid email or username"))?;
 
                 let creds = SurrealRec {
                     namespace: NS.to_string(),
@@ -553,6 +540,7 @@ impl Database {
                 let jwt = dbh
                     .signin(creds)
                     .await?;
+                let user = require_active_account(&dbh).await?;
 
                 // Cache everything we need to fully re-auth after a DB
                 // reconnect. JWT is preferred; email/password is the
@@ -560,29 +548,19 @@ impl Database {
                 let jwt_str = jwt.access.as_insecure_token().to_string();
                 cache_auth(Some(jwt_str.clone()), Some(full_email.clone()), Some(password));
 
-                let user: Option<User> = dbh.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                let users: Vec<User> = dbh.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
-                if !users.is_empty() {
-                    if let Ok(mut users_guard) = STORE_USERS.try_lock() {
-                        *users_guard = users.clone();
-                    }
+                refresh_store_users(&dbh).await;
+
+                if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
+                    *user_info_guard = Some(user.clone());
                 }
 
-                if let Some(u) = user.clone() {
-                    if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
-                        *user_info_guard = Some(u);
-                    }
-                }
-
-                Ok( Self { jwt: Some(jwt_str), user } )
+                Ok( Self { jwt: Some(jwt_str), user: Some(user) } )
             }
         }
     }
 
-    pub async fn signup<T: Serialize + Debug + Clone + SurrealValue>(
-        signup: T,
-        email: String,
-    ) -> anyhow::Result<Self, anyhow::Error> {
+    /// Signs up through the `user` access; the error is user-facing text.
+    pub async fn signup(params: schema::SignupParams) -> Result<Self, String> {
         let dbh = db();
         if cfg!(debug_assertions) {
             match dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await {
@@ -603,31 +581,120 @@ impl Database {
             Err(e) => log::error!("Failed using NS {NS:?} / DB {DB:?}: {e:?}"),
         }
 
-        // Select a specific namespace / database
+        let email = params.email.clone();
+        let password = params.password.clone();
         let jwt = dbh
             .signup(SurrealRec {
                 namespace: NS.to_string(),
                 database: DB.to_string(),
                 access: USER_SCOPE.to_string(),
-                params: signup.clone(),
+                params,
             })
-            .await;
+            .await
+            .map_err(|e| {
+                log::error!("Signup for {email} failed: {e:?}");
+                schema::signup_error_text(&e)
+            })?;
+        let user = require_active_account(&dbh).await.map_err(|e| {
+            log::error!("Signup for {email} succeeded but the account check failed: {e:?}");
+            match e {
+                AccountCheckError::Deactivated => e.to_string(),
+                AccountCheckError::Unreadable(_) => {
+                    "The account was created but could not be loaded; sign in to continue.".to_string()
+                }
+            }
+        })?;
+        let jwt_str = jwt.access.as_insecure_token().to_string();
+        cache_auth(Some(jwt_str.clone()), Some(email.clone()), Some(password));
 
-        match jwt {
-            Ok(j) => {
-                let query = "SELECT * FROM user WHERE email == $email";
-                dbh.set("email", email).await?;
-                let user: Option<User> = dbh.query(query).await?.take(0)?;
-                Ok(Self {
-                    jwt: Some(j.access.as_insecure_token().to_string()),
-                    user,
-                })
-            },
-            Err(e) => {
-                log::error!("Error signing up: {e:?}");
-                return Err(anyhow::anyhow!("Error signing up: {e:?}"));
-            },
+        refresh_store_users(&dbh).await;
+        if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
+            *user_info_guard = Some(user.clone());
         }
+
+        Ok(Self { jwt: Some(jwt_str), user: Some(user) })
+    }
+}
+
+/// Why [`require_active_account`] refused a signed-in session.
+#[derive(Debug, thiserror::Error)]
+pub enum AccountCheckError {
+    #[error("This account is deactivated.")]
+    Deactivated,
+    #[error("The signed-in account could not be read: {0}")]
+    Unreadable(#[from] surrealdb::Error),
+}
+
+/// The signed-in user's own row; invalidates the session unless it exists and is active.
+pub async fn require_active_account<C: surrealdb::Connection>(
+    dbh: &Surreal<C>,
+) -> Result<User, AccountCheckError> {
+    let row: Result<Option<User>, surrealdb::Error> = dbh
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await
+        .and_then(|mut response| response.take(0));
+    let refusal = match row {
+        Ok(Some(user)) if user.is_active() => return Ok(user),
+        Ok(_) => AccountCheckError::Deactivated,
+        Err(e) => AccountCheckError::Unreadable(e),
+    };
+    if let Err(e) = dbh.invalidate().await {
+        log::error!("Invalidating the refused session failed: {e}");
+    }
+    Err(refusal)
+}
+
+/// Loads the active users into [`STORE_USERS`], skipping rows that fail to decode.
+async fn refresh_store_users(dbh: &Surreal<WsClient>) {
+    let rows: Vec<surrealdb::types::Value> = match dbh
+        .query("SELECT * FROM user WHERE active == true")
+        .await
+        .and_then(|mut response| response.take(0))
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::error!("Active user list failed to load: {e}");
+            return;
+        }
+    };
+    let users = decode_users(rows);
+    if !users.is_empty()
+        && let Ok(mut users_guard) = STORE_USERS.try_lock()
+    {
+        *users_guard = users;
+    }
+}
+
+/// Decodes each row into a [`User`], logging and dropping the ones that fail.
+fn decode_users(rows: Vec<surrealdb::types::Value>) -> Vec<User> {
+    rows.into_iter()
+        .filter_map(|row| {
+            let id = match &row {
+                surrealdb::types::Value::Object(map) => map.get("id").map(|id| format!("{id:?}")),
+                _ => None,
+            };
+            User::from_value(row)
+                .inspect_err(|e| log::error!("Skipping user row {id:?} that failed to decode: {e}"))
+                .ok()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod decode_users_tests {
+    use super::*;
+    use surrealdb::types::Value;
+
+    #[test]
+    fn a_row_that_fails_to_decode_is_skipped() {
+        let good = User::default().into_value();
+        let mut bad = User::default().into_value();
+        let Value::Object(ref mut row) = bad else {
+            panic!("User did not encode as an object");
+        };
+        row.insert("active".to_string(), Value::String("yes".into()));
+        let users = decode_users(vec![bad, good]);
+        assert_eq!(users.len(), 1);
     }
 }
 
@@ -1142,8 +1209,8 @@ struct Credentials {
     password: String,
 }
 
-/// Signs in a DB-level user (`DEFINE USER ... ON DATABASE`). Record-access
-/// [`login`] cannot authenticate one: it resolves `$auth.id` against the `user`
+/// Signs in a DB-level user (`DEFINE USER ... ON DATABASE`). A record-access
+/// sign-in cannot authenticate one: it resolves `$auth.id` against the `user`
 /// table, which a system user has no row in.
 pub async fn signin_database_user(username: &str, password: &str) -> anyhow::Result<()> {
     signin_database_user_on(&db(), NS, DB, username, password).await
@@ -1173,46 +1240,6 @@ pub async fn signin_database_user_on<C: surrealdb::Connection>(
 pub async fn signin_guest() -> anyhow::Result<()> {
     db().signin(guest_credentials()).await?;
     Ok(())
-}
-
-pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
-    let dbh = db();
-    let jwt = dbh
-        .signin(SurrealRec {
-            namespace: NS.to_string(),
-            database: DB.to_string(),
-            access: USER_SCOPE.to_string(),
-            params: Auth { email, password },
-        })
-        .await?;
-
-    let user: User = dbh
-        .query("SELECT * FROM user WHERE id == $auth.id")
-        .await?
-        .take::<Option<User>>(0)?
-        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
-
-    Ok(Session { jwt: jwt.access.as_insecure_token().to_string(), user })
-}
-
-pub async fn signup<T: Serialize + SurrealValue>(signup_data: T) -> anyhow::Result<Session> {
-    let dbh = db();
-    let jwt = dbh
-        .signup(SurrealRec {
-            namespace: NS.to_string(),
-            database: DB.to_string(),
-            access: USER_SCOPE.to_string(),
-            params: signup_data,
-        })
-        .await?;
-
-    let user: User = dbh
-        .query("SELECT * FROM user WHERE id == $auth.id")
-        .await?
-        .take::<Option<User>>(0)?
-        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
-
-    Ok(Session { jwt: jwt.access.as_insecure_token().to_string(), user })
 }
 
 pub async fn token_login(jwt: &str) -> anyhow::Result<Session> {

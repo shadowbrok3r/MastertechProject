@@ -1,4 +1,5 @@
 use bincode::config::Configuration;
+use database::schema::{normalize_email, repair_legacy_email};
 use displays::pages::login_page::Login;
 use log::info;
 use ring::aead;
@@ -56,11 +57,9 @@ pub fn save_encrypted_user_data(user_data: &Login, password: &[u8])
         return Err(anyhow::anyhow!("Username || Password is empty"));
     }
 
-    let email = if user_data.username.ends_with("@pclaptops.com") {
-        user_data.username.clone()
-    } else {
-        format!("{}@pclaptops.com", user_data.username)
-    };
+    let email = normalize_email(&user_data.username).ok_or_else(|| {
+        anyhow::anyhow!("{:?} is not a valid email or username", user_data.username)
+    })?;
 
     let login = &Login {
         username: email.clone(),
@@ -96,13 +95,22 @@ pub fn load_encrypted_user_data(password: &[u8]) -> Option<Login> {
             let decrypted_data = decrypt_data(encrypted_data, &key);
             // let login: Login = serde_json::from_slice(&decrypted_data).unwrap();
             match decode_from_slice::<Login, Configuration>(&decrypted_data, standard()) {
-                Ok((login, _)) => {
+                Ok((mut login, _)) => {
                     if login.username.is_empty() || login.password.is_empty(){
                         let rm = std::fs::remove_file(path);
                         log::info!("Rm file: {rm:?}");
                         None
                     } else {
-                        Some(login)
+                        match normalize_email(&repair_legacy_email(&login.username)) {
+                            Some(email) => {
+                                login.username = email;
+                                Some(login)
+                            }
+                            None => {
+                                log::warn!("Stored login {:?} is not a valid email", login.username);
+                                None
+                            }
+                        }
                     }
                 },
                 Err(e) => {

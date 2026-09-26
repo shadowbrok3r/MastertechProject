@@ -311,7 +311,7 @@ Services: web UI `:8080`, websocket `:8081`, axum `:8082`, plugin_builder.
 
 ## Technician onboarding (short)
 
-1. Create an account with your PC Laptops email (store + initials). Password reset is limited — contact Logan if locked out.
+1. Create an account with your work email (@pclaptops.com or @xidax.com); your name and store come from your employee record. Password reset is limited — contact Logan if locked out.
 2. Sign in on [master-tech.app](https://master-tech.app) and in MasterTech.exe; download the latest exe from **Downloads**.
 3. Core job loop: finish a checked-in PC → fill a **TUR sheet** (recommendations for sales) → that creates a **Task** on the web with hardware / customer context.
 4. Layout is egui dock tabs — drag title bars to split or stack views. TUR Sheet + File Browser are the usual starting layout.

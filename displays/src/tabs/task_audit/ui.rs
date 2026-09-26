@@ -2,6 +2,7 @@ use eframe::egui::{Button, CentralPanel, ComboBox, Id, Layout, RichText, ScrollA
 use eframe::egui::{Color32, Grid, Style, scroll_area};
 use database::schema::prestashop::{OrderState, OrderType};
 use crate::ui_tools::icons;
+use crate::ui_tools::store_picker::presta_store_options;
 use crate::{PlatformSpawner, TaskUiActions};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use database::schema::{Store, User};
@@ -180,13 +181,7 @@ impl TaskAuditViewer {
                 
                 ComboBox::new("TaskAudit Store Selection", "")
                 .selected_text(selected_text.as_str())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
-                    ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
-                    ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
-                    ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
-                    ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
-                });
+                .show_ui(ui, |ui| presta_store_options(ui, selected, &Store::VALUES));
 
                 let selected_text = match &self.audit_selection {
                     TaskAudit::MyInRepair => " My In Repair ".to_string(),

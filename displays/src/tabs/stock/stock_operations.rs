@@ -868,6 +868,7 @@ pub fn get_customer_ids_for_store(store_id: u64) -> Vec<&'static str> {
         Store::MUR => MUR_CUSTOMER_IDS.to_vec(),
         Store::ORE => ORE_CUSTOMER_IDS.to_vec(),
         Store::SAN => SAN_CUSTOMER_IDS.to_vec(),
+        Store::WAR | Store::Unknown => vec![],
     }
 }
 
@@ -1570,4 +1571,17 @@ async fn get_system_cost_from_order(order: &Order) -> f64 {
         }
     }
     0.0
+}
+
+#[cfg(test)]
+mod customer_ids_tests {
+    use super::*;
+
+    #[test]
+    fn only_retail_stores_have_in_store_customers() {
+        for store in Store::RETAIL {
+            assert!(!get_customer_ids_for_store(store.into_store_id() as u64).is_empty(), "{store:?}");
+        }
+        assert!(get_customer_ids_for_store(Store::WAR.into_store_id() as u64).is_empty());
+    }
 }

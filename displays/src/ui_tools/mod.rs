@@ -36,6 +36,7 @@ pub mod icons;
 pub mod info_card;
 pub mod plots;
 pub mod selection_stats;
+pub mod store_picker;
 
 pub use mtech_ui::{dock_style, egui_logger, theme};
 

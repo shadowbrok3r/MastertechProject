@@ -48,34 +48,6 @@ impl MtechServer {
             if let Some(user) = self.shared_ctx.current_user.as_ref() {
                 apply_user_color_scheme(ctx, &user.get_color_scheme());
                 self.shared_ctx.user_theme_loaded = true;
-                gloo_console::info!("2 We have a user");
-                let user_version = user.get_version();
-                gloo_console::info!(format!("2 current_version: {current_version}\nuser_version: {user_version}"));
-                if let Some(version) = storage.get_string("version") {
-                    if (current_version != version) || (current_version != user_version) {
-                        gloo_console::info!("1 Mismatched Cargo Version. Doing update");
-                        self.invalidate();
-                    } else {
-                        let mut usr = user.clone();
-                        let v = current_version;
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let res = usr.save_version(v).await;
-                            gloo_console::info!(format!("Saving user version: {res:?}"));
-                        });
-                    }
-                } else {
-                    if current_version != user_version {
-                        gloo_console::info!("3 Mismatched Cargo Version. Doing update");
-                        self.invalidate();
-                    } else {
-                        let mut usr = user.clone();
-                        let v = current_version;
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let res = usr.save_version(v).await;
-                            gloo_console::info!(format!("Saving user version: {res:?}"));
-                        });
-                    }
-                }
             } else {
                 bootstrap_startup_theme(ctx);
             }
@@ -86,49 +58,6 @@ impl MtechServer {
                     self.invalidate();
                 }
             }
-            //     } else {
-            //         if let Some(user) = self.shared_ctx.current_user.as_ref() {
-            //             gloo_console::info!("1 We have a user");
-            //             let current_version = env!("CARGO_PKG_VERSION");
-            //             let user_version = user.get_version();
-            //             gloo_console::info!(format!("1 current_version: {version}\nuser_version: {user_version}"));
-            //             if current_version != user_version {
-            //                 gloo_console::info!("2 Mismatched Cargo Version. Doing update");
-            //                 self.invalidate();
-            //             } else {
-            //                 let mut usr = user.clone();
-            //                 let v = current_version;
-            //                 wasm_bindgen_futures::spawn_local(async move {
-            //                     let res = usr.save_version(v).await;
-            //                     gloo_console::info!(format!("Saving user version: {res:?}"));
-            //                 });
-            //             }
-            //         }
-            //     }
-            // } // else {
-            //     if let Some(user) = self.shared_ctx.current_user.as_ref() {
-            //         gloo_console::info!("2 We have a user");
-            //         let user_version = user.get_version();
-            //         gloo_console::info!(format!("2 current_version: {current_version}\nuser_version: {user_version}"));
-            //         if current_version != user_version {
-            //             gloo_console::info!("3 Mismatched Cargo Version. Doing update");
-            //             self.invalidate();
-            //         } else {
-            //             let mut usr = user.clone();
-            //             let v = current_version;
-            //             wasm_bindgen_futures::spawn_local(async move {
-            //                 let res = usr.save_version(v).await;
-            //                 gloo_console::info!(format!("Saving user version: {res:?}"));
-            //             });
-            //         }
-            //     } else {
-            //         gloo_console::error!("No user");
-            //         storage.set_string(
-            //             "version",
-            //             env!("CARGO_PKG_VERSION").to_string()
-            //         );
-            //     }
-            // }
         }
 
         #[cfg(target_arch="wasm32")]
