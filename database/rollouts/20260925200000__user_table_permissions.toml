@@ -18,7 +18,7 @@
 # the ones hidden from non-owners are all Option<_> there.
 id = "20260925200000__user_table_permissions"
 name = "user_table_permissions"
-state = "planned"
+state = "completed"
 source_schema_hash = "c487577c5f5bc1b54d1a806b6175ecac10994ecdbfd789ea69f546a1b71b4d13"
 target_schema_hash = "389d38c90d6dd97f39971723f1950de272289a412191ae4125286a4bd0d31b25"
 compatibility = "phased"

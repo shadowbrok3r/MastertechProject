@@ -8,7 +8,7 @@
 # database/migrations/003_agent_approve_all.surql applied these statements to production on 2026-09-26.
 id = "20260926030000__agent_approve_all"
 name = "agent_approve_all"
-state = "planned"
+state = "completed"
 source_schema_hash = "9e2abc2643f2b57e5f9a26dd087b4325b13c1acb7262573c2054f8a555c55c35"
 target_schema_hash = "1ed34b00e4d9b4d1fc31c958e2acd85dbb6d98a38ab44318cc0dce11c827b301"
 compatibility = "phased"

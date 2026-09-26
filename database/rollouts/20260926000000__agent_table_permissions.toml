@@ -29,7 +29,7 @@
 # longer create threads or approvals).
 id = "20260926000000__agent_table_permissions"
 name = "agent_table_permissions"
-state = "planned"
+state = "completed"
 source_schema_hash = "389d38c90d6dd97f39971723f1950de272289a412191ae4125286a4bd0d31b25"
 target_schema_hash = "9e2abc2643f2b57e5f9a26dd087b4325b13c1acb7262573c2054f8a555c55c35"
 compatibility = "phased"
