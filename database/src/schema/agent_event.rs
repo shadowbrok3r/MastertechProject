@@ -165,6 +165,18 @@ impl AgentEvent {
         Ok(res.take(0).unwrap_or_default())
     }
 
+    /// The newest `limit` rows of one thread, oldest first.
+    pub async fn recent(thread: &RecordId, limit: usize) -> anyhow::Result<Vec<Self>> {
+        let mut res = db()
+            .query("SELECT * FROM agent_event WHERE thread = $thread ORDER BY seq DESC LIMIT $limit")
+            .bind(("thread", thread.clone()))
+            .bind(("limit", limit))
+            .await?;
+        let mut rows: Vec<Self> = res.take(0).unwrap_or_default();
+        rows.reverse();
+        Ok(rows)
+    }
+
     /// Rows of one thread in order, starting after `after_seq`.
     pub async fn history(thread: &RecordId, after_seq: i64, limit: usize) -> anyhow::Result<Vec<Self>> {
         let mut res = db()

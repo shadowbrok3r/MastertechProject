@@ -464,6 +464,15 @@ impl AgentThread {
         Ok(rows.into_iter().next())
     }
 
+    /// Every thread of a machine that is not closed or failed.
+    pub async fn open_for_connection(connection_string: &str) -> anyhow::Result<Vec<Self>> {
+        let mut res = db()
+            .query("SELECT * FROM agent_thread WHERE connection_string = $cs AND status NOT IN ['closed', 'failed']")
+            .bind(("cs", connection_string.to_string()))
+            .await?;
+        Ok(res.take(0)?)
+    }
+
     /// The newest thread for a machine regardless of status.
     pub async fn latest_for_connection(connection_string: &str) -> anyhow::Result<Option<Self>> {
         let mut res = db()

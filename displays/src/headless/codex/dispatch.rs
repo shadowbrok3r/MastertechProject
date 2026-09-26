@@ -2,7 +2,7 @@
 
 use database::schema::{AgentThread, AgentTurn, AssistRequest, NewAgentThread, RecordIdExt};
 
-use super::{config, runner, running_count};
+use super::{config, runner, runner_for, running_count, RunnerCmd};
 
 /// Opens a session for a machine directly, with the same opening prompt a request would carry.
 pub async fn start_for_connection(cfg: std::sync::Arc<super::Config>, connection_string: &str, requested_by: Option<&str>) {
@@ -57,23 +57,28 @@ pub async fn dispatch(req: AssistRequest) {
     }
     let opening = super::super::assist::compose_prompt(&req, &cfg.agent_actor());
 
-    // One live thread per machine: a second request joins it as a new turn.
-    match AgentThread::active_for_connection(&req.connection_string).await {
-        Ok(Some(existing)) => {
-            log::info!(
-                "codex: request {} joins live thread {} for {}",
-                req.id.key_string(),
-                existing.id.key_string(),
-                req.connection_string
-            );
-            let _ = AssistRequest::link_thread(&req.id, &existing.id).await;
-            if let Err(e) = AgentTurn::ask(&existing.id, "start", &opening).await {
-                log::warn!("codex: could not queue the joining turn: {e}");
+    // A request that is not fresh joins the machine's live thread as a new turn.
+    if !req.fresh {
+        match AgentThread::active_for_connection(&req.connection_string).await {
+            Ok(Some(existing)) => {
+                log::info!(
+                    "codex: request {} joins live thread {} for {}",
+                    req.id.key_string(),
+                    existing.id.key_string(),
+                    req.connection_string
+                );
+                let _ = AssistRequest::link_thread(&req.id, &existing.id).await;
+                if let Err(e) = AgentTurn::ask(&existing.id, "start", &opening).await {
+                    log::warn!("codex: could not queue the joining turn: {e}");
+                }
+                return;
             }
-            return;
+            Ok(None) => {}
+            Err(e) => log::warn!("codex: active-thread lookup failed for {}: {e}", req.connection_string),
         }
-        Ok(None) => {}
-        Err(e) => log::warn!("codex: active-thread lookup failed for {}: {e}", req.connection_string),
+    } else {
+        log::info!("codex: request {} asked for a fresh session", req.id.key_string());
+        release_idle_runners(&req.connection_string).await;
     }
 
     let title = if super::is_general(&req.connection_string) {
@@ -128,4 +133,20 @@ pub async fn dispatch(req: AssistRequest) {
     }
     log::info!("codex: starting thread {} for {}", thread_id.key_string(), req.connection_string);
     runner::spawn(cfg, thread, Some(opening));
+}
+
+/// Asks the runners of a machine's open threads to free their pool slots while idle.
+async fn release_idle_runners(connection_string: &str) {
+    let threads = match AgentThread::open_for_connection(connection_string).await {
+        Ok(threads) => threads,
+        Err(e) => {
+            log::warn!("codex: open-thread lookup failed for {connection_string}: {e}");
+            return;
+        }
+    };
+    for thread in threads {
+        if let Some(tx) = runner_for(&thread.id.key_string()) {
+            let _ = tx.send(RunnerCmd::Release).await;
+        }
+    }
 }

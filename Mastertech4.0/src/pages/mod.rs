@@ -66,6 +66,13 @@ impl MasterTechApp {
             }
         }
 
+        // Starts a new Ai session when the Ai tab leaves the dock.
+        let ai_open = tree.find_tab(&TabId::Ai).is_some();
+        if self.context.ai_tab_open && !ai_open {
+            self.context.shared_ctx.enhanced_ai_playground.start_new_session();
+        }
+        self.context.ai_tab_open = ai_open;
+
         self.dock.tree = tree;
     }
 }

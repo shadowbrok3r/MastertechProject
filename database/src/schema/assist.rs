@@ -63,22 +63,71 @@ pub struct AssistRequest {
     #[serde(default)]
     #[surreal(default)]
     pub agent_thread: Option<RecordId>,
+    /// Opens a new session even when the machine already has a live one.
+    #[serde(default)]
+    #[surreal(default)]
+    pub fresh: bool,
+}
+
+/// Files a bench-confirmed request under a caller-chosen id; it always opens a new session.
+pub const CREATE_CONFIRMED_SQL: &str = "CREATE $id CONTENT { \
+     connection_string: $cs, hostname: $host, service_number: $sn, \
+     computer: $computer, requested_by: $by, store: $store, \
+     trigger_source: 'tur_sheet', machine_confirmed: true, fresh: true, status: 'pending' }";
+
+/// Declines a request no dispatcher has claimed, returning its id when it did.
+pub const WITHDRAW_SQL: &str = "UPDATE $id SET status = 'declined', \
+     dispatch_error = 'the client stopped waiting', finished_at = time::now() \
+     WHERE status = 'pending' RETURN VALUE id";
+
+/// A technician's bench confirmation that this machine is the one on a service order.
+#[derive(Debug, Clone)]
+pub struct ConfirmedRequest {
+    pub connection_string: String,
+    pub hostname: String,
+    pub service_number: String,
+    pub computer: RecordId,
+    pub requested_by: String,
+    pub store: String,
 }
 
 impl AssistRequest {
+    /// Files a bench confirmation under the caller's `id`.
+    pub async fn create_confirmed(id: &RecordId, request: ConfirmedRequest) -> anyhow::Result<()> {
+        db().query(CREATE_CONFIRMED_SQL)
+            .bind(("id", id.clone()))
+            .bind(("cs", request.connection_string))
+            .bind(("host", request.hostname))
+            .bind(("sn", request.service_number))
+            .bind(("computer", request.computer))
+            .bind(("by", request.requested_by))
+            .bind(("store", request.store))
+            .await?
+            .check()?;
+        Ok(())
+    }
+
+    /// Withdraws a request nobody has claimed; `false` when a dispatcher already took it.
+    pub async fn withdraw(id: &RecordId) -> anyhow::Result<bool> {
+        let mut res = db().query(WITHDRAW_SQL).bind(("id", id.clone())).await?;
+        let withdrawn: Vec<RecordId> = res.take(0)?;
+        Ok(!withdrawn.is_empty())
+    }
+
     pub async fn get(id: &RecordId) -> anyhow::Result<Option<Self>> {
         let mut res = db().query("SELECT * FROM $id").bind(("id", id.clone())).await?;
         let rows: Vec<Self> = res.take(0).unwrap_or_default();
         Ok(rows.into_iter().next())
     }
 
-    /// Files a request from the chat rail; nobody confirmed the machine at the bench.
+    /// Files an unconfirmed request from the chat rail; `fresh` opens a new session instead of joining the live one.
     pub async fn create_from_chat(
         connection_string: &str,
         requested_by: Option<&str>,
         store: Option<&str>,
         service_number: Option<&str>,
         tech_note: &str,
+        fresh: bool,
     ) -> anyhow::Result<RecordId> {
         // `general:<tech>` names a session with no machine, so it carries no hostname.
         let hostname = (!connection_string.starts_with("general:"))
@@ -88,7 +137,8 @@ impl AssistRequest {
             .query(
                 "CREATE assist_request CONTENT { connection_string: $cs, hostname: $host, \
                  requested_by: $by, store: $store, service_number: $sn, trigger_source: 'chat', \
-                 machine_confirmed: false, status: 'pending', tech_note: $note } RETURN VALUE id",
+                 machine_confirmed: false, status: 'pending', tech_note: $note, fresh: $fresh } \
+                 RETURN VALUE id",
             )
             .bind(("cs", connection_string.to_string()))
             .bind(("host", hostname))
@@ -96,6 +146,7 @@ impl AssistRequest {
             .bind(("store", store.map(str::to_string)))
             .bind(("sn", service_number.map(str::to_string)))
             .bind(("note", tech_note.chars().take(500).collect::<String>()))
+            .bind(("fresh", fresh))
             .await?;
         let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
         ids.into_iter().next().ok_or_else(|| anyhow::anyhow!("assist_request was not created"))

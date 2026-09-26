@@ -34,7 +34,8 @@ pub async fn send(
     }
     let fits = text.chars().count() <= REQUEST_NOTE_MAX;
     let note = if fits { text } else { OPENER };
-    let request = AssistRequest::create_from_chat(connection_string, requested_by, store, service_number, note).await?;
+    let request =
+        AssistRequest::create_from_chat(connection_string, requested_by, store, service_number, note, false).await?;
     let thread = await_thread(&request, OPEN_TIMEOUT).await?;
     if fits {
         return Ok(Sent { thread, after_seq: 0 });
