@@ -154,6 +154,21 @@ mod tests {
     }
 
     #[test]
+    fn the_check_job_of_a_state_changing_script_passes_the_read_guard() {
+        let job = json!({
+            "connection_string": "DESKTOP-3LF8CBD:f075c9a24",
+            "script": "icacls C:\\Users\\Owner\\OneDrive /remove:d Everyone\nStart-Process OneDrive.exe\nRemove-Item C:\\x -Recurse",
+            "risk": "mutate",
+        });
+        let check = Check::for_job(&job, "fallback").expect("a PowerShell job gets a check");
+        let start = check.start_arguments();
+        assert_eq!(start["risk"], "read");
+        let script = start["script"].as_str().expect("check script");
+        let flagged = crate::plugins::mcp_bridge::state_changing_commands(script);
+        assert!(flagged.is_empty(), "the read guard would refuse the check job: {flagged:?}");
+    }
+
+    #[test]
     fn the_check_embeds_the_script_as_utf8_base64() {
         let script = "Write-Output 'caf\u{e9}'\n";
         let check = check_script(script);
