@@ -29,6 +29,7 @@ pub fn run() {
     // eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
+    claim_command_bar_shortcut();
 
     gloo_console::info!("Spawn App");
     wasm_bindgen_futures::spawn_local(async {
@@ -85,6 +86,19 @@ pub fn run() {
     });
 }
 
+/// Keeps the browser from acting on Ctrl+K (its search box) so the app's assistant bar gets it.
+#[cfg(target_arch = "wasm32")]
+fn claim_command_bar_shortcut() {
+    use eframe::wasm_bindgen::JsCast as _;
+    let Some(window) = web_sys::window() else { return };
+    let on_key = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(|e: web_sys::KeyboardEvent| {
+        if (e.ctrl_key() || e.meta_key()) && !e.alt_key() && !e.shift_key() && e.key().eq_ignore_ascii_case("k") {
+            e.prevent_default();
+        }
+    });
+    let _ = window.add_event_listener_with_callback_and_bool("keydown", on_key.as_ref().unchecked_ref(), true);
+    on_key.forget();
+}
 
 #[cfg(test)]
 mod inventory_tests {
