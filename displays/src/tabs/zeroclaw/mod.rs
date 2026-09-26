@@ -1,5 +1,6 @@
-//! Root-only view of the ZeroClaw gateway: each agent's sessions and transcripts, and the
-//! scheduled automations with their runs, read from the same API the zc-codex app uses.
+//! ZeroClaw gateway sessions and automations for the Ai tab's session list (Root only): each
+//! agent's sessions and transcripts, and the scheduled automations with their runs, read from the
+//! same API the zc-codex app uses.
 
 mod api;
 
@@ -19,7 +20,7 @@ use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 use api::{Automation, Item, Outcome, Run, SessionRow};
 
-/// Session and automation list poll while the tab is drawn.
+/// Session and automation list poll while the list is drawn.
 const LIST_POLL: Duration = Duration::from_secs(30);
 /// Transcript poll while its session has a turn running, and otherwise.
 const TRANSCRIPT_POLL_BUSY: Duration = Duration::from_secs(5);
@@ -28,9 +29,6 @@ const RUNS_POLL: Duration = Duration::from_secs(30);
 const RUNS_SHOWN: usize = 20;
 const SUMMARY_CHARS: usize = 160;
 const DENIED: &str = "Only an active Root user can browse ZeroClaw.";
-const LIST_DEFAULT_W: f32 = 220.0;
-const LIST_MIN_W: f32 = 160.0;
-const LIST_MAX_W: f32 = 240.0;
 /// Frames a newly opened transcript is scrolled to its end, while its rows settle their heights.
 const SCROLL_TO_END_FRAMES: u8 = 3;
 
@@ -46,29 +44,15 @@ fn seen_id() -> Id {
     Id::new("zeroclaw_seen")
 }
 
-fn list_open_id() -> Id {
-    Id::new("zeroclaw_list_open")
-}
-
-/// Whether the list panel is shown; kept across restarts.
-fn list_open(ui: &Ui) -> bool {
-    ui.data_mut(|d| d.get_persisted::<bool>(list_open_id())).unwrap_or(true)
-}
-
-fn set_list_open(ui: &Ui, open: bool) {
-    ui.data_mut(|d| d.insert_persisted(list_open_id(), open));
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-enum Pane {
-    #[default]
-    Sessions,
-    Automations,
+/// A ZeroClaw item picked from the session list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ZeroClawPick {
+    Session(String),
+    Automation(String),
 }
 
 enum Msg {
     Gateway(Result<Option<ZeroclawGateway>, String>),
-    Agents(Result<Vec<String>, String>),
     Sessions(Result<(Vec<SessionRow>, Vec<String>), String>),
     Transcript(String, Result<Vec<Item>, String>),
     Jobs(Result<Vec<Automation>, String>),
@@ -86,16 +70,14 @@ enum Access {
 
 pub struct ZeroClawView {
     access: Access,
-    agents: Vec<String>,
-    /// `None` shows every agent.
-    agent: Option<String>,
-    pane: Pane,
     sessions: Vec<SessionRow>,
     running: HashSet<String>,
+    /// The picked session; polled while set.
     session: Option<String>,
     transcript: Vec<Item>,
     transcript_for: Option<String>,
     jobs: Vec<Automation>,
+    /// The picked automation; its runs are polled while set.
     job: Option<String>,
     runs: Vec<Run>,
     runs_for: Option<String>,
@@ -122,9 +104,6 @@ impl Default for ZeroClawView {
         let (tx, rx) = crossbeam::channel::unbounded();
         Self {
             access: Access::Unknown,
-            agents: Vec::new(),
-            agent: None,
-            pane: Pane::default(),
             sessions: Vec::new(),
             running: HashSet::new(),
             session: None,
@@ -184,11 +163,11 @@ fn group_by_agent(rows: &[SessionRow]) -> Vec<(&str, Vec<&SessionRow>)> {
     groups
 }
 
-/// An agent group's header: its name, session count and new-message count.
-fn group_header(ui: &Ui, agent: &str, count: usize, unread: usize) -> LayoutJob {
+/// A group's header: its name, row count and new-message count.
+fn group_header(ui: &Ui, name: &str, count: usize, unread: usize) -> LayoutJob {
     let font = TextStyle::Body.resolve(ui.style());
     let mut job = LayoutJob::default();
-    let name = if agent.is_empty() { "no agent" } else { agent };
+    let name = if name.is_empty() { "no agent" } else { name };
     job.append(name, 0.0, TextFormat::simple(font.clone(), ui.visuals().text_color()));
     job.append(&format!("  {count}"), 0.0, TextFormat::simple(font.clone(), theme::weak_text(ui)));
     if unread > 0 {
@@ -197,39 +176,25 @@ fn group_header(ui: &Ui, agent: &str, count: usize, unread: usize) -> LayoutJob 
     job
 }
 
-/// A pane button's text, with its new-message count.
-fn pane_label(icon: &str, name: &str, unread: usize) -> String {
-    if unread > 0 { format!("{icon} {name} \u{00b7} {unread} new") } else { format!("{icon} {name}") }
+/// Whether any field contains the lowercased `needle`; an empty needle matches everything.
+fn mentions(needle: &str, fields: &[&str]) -> bool {
+    needle.is_empty() || fields.iter().any(|f| f.to_lowercase().contains(needle))
 }
 
 impl ZeroClawView {
-    pub fn ui(&mut self, ui: &mut Ui) {
+    /// Loads read state, applies finished requests, starts due polls and marks the shown session read.
+    pub fn tick(&mut self, ui: &Ui) {
         if self.seen.is_none() {
             self.seen = Some(ui.data_mut(|d| d.get_persisted::<Seen>(seen_id())).unwrap_or_default());
         }
         self.drain();
-        match &self.access {
+        match self.access {
             Access::Unknown => self.load_gateway(),
-            Access::Loading => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Connecting to ZeroClaw\u{2026}");
-                });
-            }
-            Access::Denied => {
-                ui.label(RichText::new(DENIED).color(theme::weak_text(ui)));
-            }
-            Access::Failed(why) => {
-                let why = why.clone();
-                ui.label(RichText::new(format!("{} {why}", icons::STATUS_ERR)).color(theme::error(ui)));
-                if ui.button(format!("{} Retry", icons::REFRESH)).clicked() {
-                    self.access = Access::Unknown;
-                }
-            }
-            Access::Ready(_) => {
-                self.poll();
-                self.ready_ui(ui);
-            }
+            Access::Ready(_) => self.poll(),
+            Access::Loading | Access::Denied | Access::Failed(_) => {}
+        }
+        if let Some(id) = self.shown_session() {
+            self.mark_read(&id);
         }
         if self.seen_dirty
             && let Some(seen) = &self.seen
@@ -238,6 +203,169 @@ impl ZeroClawView {
             self.seen_dirty = false;
         }
         ui.ctx().request_repaint_after(Duration::from_secs(1));
+    }
+
+    /// Sessions with messages the viewer has not read.
+    pub fn unread_count(&self) -> usize {
+        self.sessions.iter().filter(|s| self.unread(s)).count()
+    }
+
+    /// The picked item, if any.
+    pub fn picked(&self) -> Option<ZeroClawPick> {
+        self.session.clone().map(ZeroClawPick::Session).or_else(|| self.job.clone().map(ZeroClawPick::Automation))
+    }
+
+    /// Shows `pick` in the detail view and polls its transcript or runs.
+    pub fn select(&mut self, pick: &ZeroClawPick) {
+        match pick {
+            ZeroClawPick::Session(id) => {
+                if self.session.as_deref() != Some(id.as_str()) {
+                    self.session = Some(id.clone());
+                    self.transcript.clear();
+                    self.transcript_for = None;
+                }
+                self.job = None;
+            }
+            ZeroClawPick::Automation(id) => {
+                if self.job.as_deref() != Some(id.as_str()) {
+                    self.job = Some(id.clone());
+                    self.runs.clear();
+                    self.runs_for = None;
+                }
+                self.session = None;
+            }
+        }
+        self.error = None;
+    }
+
+    /// Stops showing and polling any item.
+    pub fn deselect(&mut self) {
+        self.session = None;
+        self.job = None;
+    }
+
+    /// The picked item's name for the top bar.
+    pub fn title(&self) -> Option<String> {
+        if let Some(id) = &self.session {
+            let row = self.sessions.iter().find(|s| &s.id == id);
+            return Some(row.map_or_else(|| id.clone(), |s| s.label().to_string()));
+        }
+        let id = self.job.as_ref()?;
+        let job = self.jobs.iter().find(|j| &j.id == id);
+        Some(job.map_or_else(|| id.clone(), |j| j.label().to_string()))
+    }
+
+    /// Automations, then each agent's sessions newest first, filtered by `needle`; returns the item clicked.
+    pub fn list_ui(&mut self, ui: &mut Ui, needle: &str) -> Option<ZeroClawPick> {
+        match &self.access {
+            Access::Unknown | Access::Loading => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Connecting to ZeroClaw\u{2026}").color(theme::weak_text(ui)).small());
+                });
+                return None;
+            }
+            Access::Denied => {
+                ui.label(RichText::new(DENIED).color(theme::weak_text(ui)).small());
+                return None;
+            }
+            Access::Failed(why) => {
+                ui.label(RichText::new(format!("{} {why}", icons::STATUS_ERR)).color(theme::error(ui)).small());
+                if ui.button(format!("{} Retry", icons::REFRESH)).clicked() {
+                    self.access = Access::Unknown;
+                }
+                return None;
+            }
+            Access::Ready(_) => {}
+        }
+        let needle = needle.trim().to_lowercase();
+        let searching = !needle.is_empty();
+        let mut picked = None;
+
+        let jobs: Vec<Automation> = self
+            .jobs
+            .iter()
+            .filter(|j| mentions(&needle, &[j.label(), &j.id, &j.agent_alias]))
+            .cloned()
+            .collect();
+        if !jobs.is_empty() {
+            let unread = jobs.iter().filter(|j| self.job_unread(j)).count();
+            egui::CollapsingHeader::new(group_header(ui, "Automations", jobs.len(), unread))
+                .id_salt("zeroclaw_automations")
+                .default_open(true)
+                .open(searching.then_some(true))
+                .show(ui, |ui| {
+                    for job in &jobs {
+                        if self.job_row(ui, job) {
+                            picked = Some(ZeroClawPick::Automation(job.id.clone()));
+                        }
+                    }
+                });
+        }
+
+        let mut rows: Vec<SessionRow> = self
+            .sessions
+            .iter()
+            .filter(|s| mentions(&needle, &[s.label(), &s.agent, &s.id]))
+            .cloned()
+            .collect();
+        newest_first(&mut rows);
+        for (agent, group) in group_by_agent(&rows) {
+            let unread = group.iter().filter(|r| self.unread(r)).count();
+            egui::CollapsingHeader::new(group_header(ui, agent, group.len(), unread))
+                .id_salt(("zeroclaw_group", agent))
+                .default_open(false)
+                .open(searching.then_some(true))
+                .show(ui, |ui| {
+                    for row in group {
+                        if self.session_row(ui, row) {
+                            picked = Some(ZeroClawPick::Session(row.id.clone()));
+                        }
+                    }
+                });
+        }
+
+        if jobs.is_empty() && rows.is_empty() {
+            let empty = if searching { "No matches" } else { "No sessions" };
+            ui.label(RichText::new(empty).color(theme::weak_text(ui)).small());
+        }
+        picked
+    }
+
+    /// The picked session's transcript or automation's runs.
+    pub fn detail_ui(&mut self, ui: &mut Ui) {
+        match &self.access {
+            Access::Ready(_) => {}
+            Access::Denied => {
+                ui.label(RichText::new(DENIED).color(theme::weak_text(ui)));
+                return;
+            }
+            Access::Failed(why) => {
+                ui.label(RichText::new(format!("{} {why}", icons::STATUS_ERR)).color(theme::error(ui)));
+                return;
+            }
+            Access::Unknown | Access::Loading => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Connecting to ZeroClaw\u{2026}");
+                });
+                return;
+            }
+        }
+        if self.session.is_some() {
+            self.transcript_ui(ui);
+        } else if self.job.is_some() {
+            self.runs_ui(ui);
+        }
+    }
+
+    /// The session whose messages are on screen: the picked session, or the picked automation's result session.
+    fn shown_session(&self) -> Option<String> {
+        if let Some(id) = &self.session {
+            return Some(id.clone());
+        }
+        let job = self.job.as_ref()?;
+        self.jobs.iter().find(|j| &j.id == job).map(Automation::session_id)
     }
 
     /// Whether `row` has messages the viewer has not read.
@@ -299,8 +427,6 @@ impl ZeroClawView {
                 Msg::Gateway(Ok(Some(gw))) => self.access = Access::Ready(gw),
                 Msg::Gateway(Ok(None)) => self.access = Access::Denied,
                 Msg::Gateway(Err(e)) => self.access = Access::Failed(e),
-                Msg::Agents(Ok(agents)) => self.agents = agents,
-                Msg::Agents(Err(e)) => self.error = Some(e),
                 Msg::Sessions(r) => {
                     self.loading_lists = false;
                     match r {
@@ -361,31 +487,30 @@ impl ZeroClawView {
             self.loading_lists = true;
             self.last_lists = Some(Instant::now());
             let tx = self.tx.clone();
-            let want_agents = self.agents.is_empty();
+            let gw = gw.clone();
             PlatformSpawner::spawn(async move {
-                if want_agents {
-                    let _ = tx.send(Msg::Agents(api::agents(&gw).await.map_err(|e| e.to_string())));
-                }
                 let _ = tx.send(Msg::Jobs(api::automations(&gw).await.map_err(|e| e.to_string())));
                 let lists = async { Ok::<_, anyhow::Error>((api::sessions(&gw).await?, api::running(&gw).await.unwrap_or_default())) };
                 let _ = tx.send(Msg::Sessions(lists.await.map_err(|e| e.to_string())));
             });
         }
-        if let (Some(id), Some(gw)) = (self.session.clone(), self.gateway()) {
+        if let Some(id) = self.session.clone() {
             let every = if self.running.contains(&id) { TRANSCRIPT_POLL_BUSY } else { TRANSCRIPT_POLL_IDLE };
             let stale = self.transcript_for.as_deref() != Some(id.as_str());
-            if !self.loading_transcript && (stale || due(self.last_transcript, every))
+            if !self.loading_transcript
+                && (stale || due(self.last_transcript, every))
                 && let Some(row) = self.sessions.iter().find(|s| s.id == id).cloned()
             {
                 self.loading_transcript = true;
                 self.last_transcript = Some(Instant::now());
                 let tx = self.tx.clone();
+                let gw = gw.clone();
                 PlatformSpawner::spawn(async move {
                     let _ = tx.send(Msg::Transcript(row.id.clone(), api::transcript(&gw, &row).await.map_err(|e| e.to_string())));
                 });
             }
         }
-        if let (Some(job), Some(gw)) = (self.job.clone(), self.gateway()) {
+        if let Some(job) = self.job.clone() {
             let stale = self.runs_for.as_deref() != Some(job.as_str());
             if !self.loading_runs && (stale || due(self.last_runs, RUNS_POLL)) {
                 self.loading_runs = true;
@@ -395,140 +520,6 @@ impl ZeroClawView {
                     let _ = tx.send(Msg::Runs(job.clone(), api::runs(&gw, &job, RUNS_SHOWN).await.map_err(|e| e.to_string())));
                 });
             }
-        }
-    }
-
-    fn ready_ui(&mut self, ui: &mut Ui) {
-        match self.pane {
-            Pane::Sessions => {
-                if let Some(id) = self.session.clone() {
-                    self.mark_read(&id);
-                }
-            }
-            Pane::Automations => {
-                if let Some(job) = self.job.as_ref().and_then(|id| self.jobs.iter().find(|j| &j.id == id)) {
-                    let session = job.session_id();
-                    self.mark_read(&session);
-                }
-            }
-        }
-        egui::Panel::top("zeroclaw_bar").show_separator_line(false).show(ui, |ui| self.top_bar(ui));
-        let mut open = list_open(ui);
-        egui::Panel::left("zeroclaw_list")
-            .resizable(true)
-            .default_size(LIST_DEFAULT_W)
-            .min_size(LIST_MIN_W)
-            .max_size(LIST_MAX_W)
-            .show_collapsible(ui, &mut open, |ui| match self.pane {
-                Pane::Sessions => self.session_list(ui),
-                Pane::Automations => self.automation_list(ui),
-            });
-        if open != list_open(ui) {
-            set_list_open(ui, open);
-        }
-        egui::CentralPanel::default().show(ui, |ui| match self.pane {
-            Pane::Sessions => self.transcript_ui(ui),
-            Pane::Automations => self.runs_ui(ui),
-        });
-    }
-
-    fn top_bar(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            let open = list_open(ui);
-            if ui
-                .selectable_label(open, icons::SIDEBAR)
-                .on_hover_text(if open { "Hide the list" } else { "Show the list" })
-                .clicked()
-            {
-                set_list_open(ui, !open);
-            }
-            let shown = self.agent.clone().unwrap_or_else(|| "All agents".to_string());
-            egui::ComboBox::from_id_salt("zeroclaw_agent")
-                .selected_text(format!("{}  {shown}", icons::ROBOT))
-                .show_ui(ui, |ui| {
-                    if ui.selectable_label(self.agent.is_none(), "All agents").clicked() {
-                        self.agent = None;
-                    }
-                    for a in self.agents.clone() {
-                        if ui.selectable_label(self.agent.as_deref() == Some(a.as_str()), &a).clicked() {
-                            self.agent = Some(a);
-                        }
-                    }
-                });
-            ui.separator();
-            let new_sessions = self.visible_sessions().filter(|s| self.unread(s)).count();
-            ui.selectable_value(&mut self.pane, Pane::Sessions, pane_label(icons::CHAT, "Sessions", new_sessions));
-            let new_runs = self.visible_jobs().filter(|j| self.job_unread(j)).count();
-            let failing = self.visible_jobs().filter(|j| matches!(j.outcome(), Outcome::Failed | Outcome::Degraded)).count();
-            let mut automations = pane_label(icons::AUTOMATION, "Automations", new_runs);
-            if failing > 0 {
-                automations.push_str(&format!(" ({failing} failing)"));
-            }
-            ui.selectable_value(&mut self.pane, Pane::Automations, automations);
-            ui.separator();
-            if ui.button(icons::REFRESH).on_hover_text("Refresh now").clicked() {
-                self.last_lists = None;
-                self.last_transcript = None;
-                self.last_runs = None;
-            }
-            if self.loading_lists || self.loading_transcript || self.loading_runs {
-                ui.spinner();
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if let Some(e) = &self.error {
-                    ui.label(RichText::new(format!("{} {e}", icons::STATUS_ERR)).color(theme::error(ui)).small());
-                } else if let Some(n) = &self.notice {
-                    ui.label(RichText::new(n).color(theme::weak_text(ui)).small());
-                }
-            });
-        });
-    }
-
-    fn visible_sessions(&self) -> impl Iterator<Item = &SessionRow> {
-        self.sessions.iter().filter(|s| self.agent.as_deref().is_none_or(|a| s.agent == a))
-    }
-
-    fn visible_jobs(&self) -> impl Iterator<Item = &Automation> {
-        self.jobs.iter().filter(|j| self.agent.as_deref().is_none_or(|a| j.agent_alias == a))
-    }
-
-    /// Sessions newest first; with every agent shown, grouped by agent.
-    fn session_list(&mut self, ui: &mut Ui) {
-        let mut rows: Vec<SessionRow> = self.visible_sessions().cloned().collect();
-        if rows.is_empty() {
-            ui.label(RichText::new("No sessions").color(theme::weak_text(ui)));
-            return;
-        }
-        newest_first(&mut rows);
-        let mut picked = None;
-        ScrollArea::vertical().id_salt("zeroclaw_sessions").auto_shrink([false, false]).show(ui, |ui| {
-            if self.agent.is_some() {
-                for row in &rows {
-                    if self.session_row(ui, row) {
-                        picked = Some(row.id.clone());
-                    }
-                }
-                return;
-            }
-            for (agent, group) in group_by_agent(&rows) {
-                let unread = group.iter().filter(|r| self.unread(r)).count();
-                egui::CollapsingHeader::new(group_header(ui, agent, group.len(), unread))
-                    .id_salt(("zeroclaw_group", agent))
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        for row in group {
-                            if self.session_row(ui, row) {
-                                picked = Some(row.id.clone());
-                            }
-                        }
-                    });
-            }
-        });
-        if let Some(id) = picked {
-            self.session = Some(id);
-            self.transcript.clear();
-            self.transcript_for = None;
-            self.error = None;
         }
     }
 
@@ -548,9 +539,45 @@ impl ZeroClawView {
         resp.clicked() && !selected
     }
 
+    /// One automation row; returns whether an unselected row was clicked.
+    fn job_row(&self, ui: &mut Ui, job: &Automation) -> bool {
+        let selected = self.job.as_deref() == Some(job.id.as_str());
+        let (icon, color) = outcome_mark(ui, job.outcome());
+        let lead = if self.starting.contains(&job.id) { Lead::Spinner(None) } else { Lead::Icon(icon, Some(color)) };
+        let last = job.last_run.as_deref().map(local).unwrap_or_else(|| "never".to_string());
+        let next = job.next_run.as_deref().map(local).unwrap_or_else(|| "\u{2014}".to_string());
+        let state = if job.enabled { "" } else { " \u{00b7} paused" };
+        let detail = format!("{} \u{00b7} last {last} \u{00b7} next {next}{state}", job.expression);
+        let resp = ListRow::new(job.label())
+            .lead(lead)
+            .detail(&detail)
+            .selected(selected)
+            .unread(self.job_unread(job))
+            .show(ui)
+            .on_hover_text(format!("{}\n{} \u{00b7} {}\n{detail}", job.label(), job.agent_alias, job.id));
+        resp.clicked() && !selected
+    }
+
+    /// Refresh, a spinner while loading, and the last error or notice, laid out right to left.
+    fn status_tail(&mut self, ui: &mut Ui) {
+        if ui.button(icons::REFRESH).on_hover_text("Refresh now").clicked() {
+            self.last_lists = None;
+            self.last_transcript = None;
+            self.last_runs = None;
+        }
+        if self.loading_lists || self.loading_transcript || self.loading_runs {
+            ui.spinner();
+        }
+        if let Some(e) = &self.error {
+            ui.add(egui::Label::new(RichText::new(format!("{} {e}", icons::STATUS_ERR)).color(theme::error(ui)).small()).truncate());
+        } else if let Some(n) = &self.notice {
+            ui.add(egui::Label::new(RichText::new(n).color(theme::weak_text(ui)).small()).truncate());
+        }
+    }
+
     fn transcript_ui(&mut self, ui: &mut Ui) {
         let Some(row) = self.session.as_ref().and_then(|id| self.sessions.iter().find(|s| &s.id == id)).cloned() else {
-            ui.label(RichText::new("Pick a session to read its transcript.").color(theme::weak_text(ui)));
+            ui.label(RichText::new("This session is no longer listed.").color(theme::weak_text(ui)));
             return;
         };
         ui.horizontal(|ui| {
@@ -559,6 +586,7 @@ impl ZeroClawView {
             if self.running.contains(&row.id) {
                 ui.label(RichText::new("\u{00b7} working").color(theme::accent(ui)));
             }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| self.status_tail(ui));
         });
         ui.separator();
         if self.transcript_for.as_deref() != Some(row.id.as_str()) {
@@ -587,45 +615,9 @@ impl ZeroClawView {
         }
     }
 
-    fn automation_list(&mut self, ui: &mut Ui) {
-        let jobs: Vec<Automation> = self.visible_jobs().cloned().collect();
-        if jobs.is_empty() {
-            ui.label(RichText::new("No automations").color(theme::weak_text(ui)));
-            return;
-        }
-        let mut picked = None;
-        ScrollArea::vertical().id_salt("zeroclaw_jobs").auto_shrink([false, false]).show(ui, |ui| {
-            for job in &jobs {
-                let selected = self.job.as_deref() == Some(job.id.as_str());
-                let (icon, color) = outcome_mark(ui, job.outcome());
-                let lead = if self.starting.contains(&job.id) { Lead::Spinner(None) } else { Lead::Icon(icon, Some(color)) };
-                let last = job.last_run.as_deref().map(local).unwrap_or_else(|| "never".to_string());
-                let next = job.next_run.as_deref().map(local).unwrap_or_else(|| "\u{2014}".to_string());
-                let state = if job.enabled { "" } else { " \u{00b7} paused" };
-                let detail = format!("{} \u{00b7} last {last} \u{00b7} next {next}{state}", job.expression);
-                let resp = ListRow::new(job.label())
-                    .lead(lead)
-                    .detail(&detail)
-                    .selected(selected)
-                    .unread(self.job_unread(job))
-                    .show(ui)
-                    .on_hover_text(format!("{}\n{} \u{00b7} {}\n{detail}", job.label(), job.agent_alias, job.id));
-                if resp.clicked() && !selected {
-                    picked = Some(job.id.clone());
-                }
-            }
-        });
-        if let Some(id) = picked {
-            self.job = Some(id);
-            self.runs.clear();
-            self.runs_for = None;
-            self.error = None;
-        }
-    }
-
     fn runs_ui(&mut self, ui: &mut Ui) {
         let Some(job) = self.job.as_ref().and_then(|id| self.jobs.iter().find(|j| &j.id == id)).cloned() else {
-            ui.label(RichText::new("Pick an automation to read its runs.").color(theme::weak_text(ui)));
+            ui.label(RichText::new("This automation is no longer listed.").color(theme::weak_text(ui)));
             return;
         };
         ui.horizontal(|ui| {
@@ -650,6 +642,7 @@ impl ZeroClawView {
                 if busy {
                     ui.spinner();
                 }
+                self.status_tail(ui);
             });
         });
         ui.separator();
@@ -790,6 +783,7 @@ mod tests {
         assert!(view.unread(&view.sessions[1]), "a session that appeared after the baseline");
         assert!(view.job_unread(&job("shelf_triage")), "an automation follows its result session");
         assert!(!view.job_unread(&job("bsod_sweep")), "an automation without a result session");
+        assert_eq!(view.unread_count(), 2);
 
         view.mark_read("cron_shelf_triage");
         assert!(!view.job_unread(&job("shelf_triage")));
@@ -798,8 +792,25 @@ mod tests {
     }
 
     #[test]
-    fn pane_labels_carry_their_new_count() {
-        assert_eq!(pane_label("i", "Sessions", 0), "i Sessions");
-        assert_eq!(pane_label("i", "Sessions", 2), "i Sessions \u{00b7} 2 new");
+    fn picking_an_automation_shows_its_result_session_and_drops_the_session_pick() {
+        let mut view = ZeroClawView::default();
+        view.jobs = vec![job("shelf_triage")];
+        view.sessions = vec![row("cron_shelf_triage", "tech_chat", 1, "2026-09-26T16:20:00Z")];
+        view.select(&ZeroClawPick::Session("other".into()));
+        assert_eq!(view.picked(), Some(ZeroClawPick::Session("other".into())));
+        view.select(&ZeroClawPick::Automation("shelf_triage".into()));
+        assert_eq!(view.picked(), Some(ZeroClawPick::Automation("shelf_triage".into())));
+        assert_eq!(view.shown_session().as_deref(), Some("cron_shelf_triage"));
+        view.deselect();
+        assert_eq!(view.picked(), None);
+        assert_eq!(view.shown_session(), None);
+    }
+
+    #[test]
+    fn a_search_matches_any_listed_field_case_insensitively() {
+        assert!(mentions("", &["anything"]));
+        assert!(mentions("shelf", &["Shelf triage", "tech_chat"]));
+        assert!(mentions("tech", &["Shelf triage", "tech_chat"]));
+        assert!(!mentions("sweep", &["Shelf triage", "tech_chat"]));
     }
 }

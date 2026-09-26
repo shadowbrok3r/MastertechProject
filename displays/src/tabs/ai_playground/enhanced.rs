@@ -1,5 +1,5 @@
 use eframe::egui::{
-    Align, CentralPanel, Frame, Id, Layout, Margin, Popup, PopupCloseBehavior, RichText, ScrollArea, Ui,
+    Align, CentralPanel, Frame, Id, Layout, Margin, Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, Ui,
 };
 use crate::{
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom, TOOL_PREFIX},
@@ -241,6 +241,19 @@ pub struct EnhancedAiPlayground {
     /// Local chats re-keyed onto an agent session, so late messages reach the session.
     #[serde(skip)]
     rekeyed: HashMap<String, String>,
+    /// ZeroClaw sessions and automations, listed for an active Root.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[serde(skip)]
+    zeroclaw: crate::tabs::zeroclaw::ZeroClawView,
+    /// Whether the signed-in user was last seen as an active Root.
+    #[serde(skip)]
+    viewer_root: bool,
+    /// Session list search text.
+    #[serde(skip)]
+    list_filter: String,
+    /// Whether closed and failed agent sessions are listed.
+    #[serde(skip)]
+    show_closed: bool,
 }
 
 impl Default for EnhancedAiPlayground {
@@ -299,6 +312,11 @@ impl Default for EnhancedAiPlayground {
             follow_tx,
             follow_rx,
             rekeyed: HashMap::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            zeroclaw: Default::default(),
+            viewer_root: false,
+            list_filter: String::new(),
+            show_closed: false,
         }
     }
 }
@@ -311,6 +329,8 @@ impl EnhancedAiPlayground {
 
     /// Selects an empty local chat: the open one when blank, else another blank one, else a new one.
     pub fn start_new_session(&mut self) {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        self.zeroclaw.deselect();
         if self.is_blank_chat(&self.selected_thread) {
             return;
         }
@@ -341,6 +361,40 @@ impl EnhancedAiPlayground {
             .collect();
         chats.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
         chats.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
+    /// Caches whether the signed-in user is an active Root; keeps the last answer while the user lock is busy.
+    fn refresh_viewer(&mut self) {
+        if let Some(viewer) = ApprovalViewer::signed_in() {
+            self.viewer_root = viewer.is_some_and(|v| v.root);
+        }
+    }
+
+    /// Whether a ZeroClaw session or automation fills the chat area.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    fn zeroclaw_open(&self) -> bool {
+        self.viewer_root && self.zeroclaw.picked().is_some()
+    }
+
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+    fn zeroclaw_open(&self) -> bool {
+        false
+    }
+
+    /// Agent sessions for the list: closed ones only when asked for, then those matching the search.
+    fn listed_sessions(&self, index: &[AgentThread]) -> Vec<AgentThread> {
+        let needle = self.list_filter.trim().to_lowercase();
+        index
+            .iter()
+            .filter(|t| self.show_closed || t.is_open() || t.id.key_string() == self.selected_thread)
+            .filter(|t| {
+                needle.is_empty()
+                    || [t.label(), t.requested_by.clone().unwrap_or_default(), t.connection_string.clone(), t.status.clone()]
+                        .iter()
+                        .any(|f| f.to_lowercase().contains(&needle))
+            })
+            .cloned()
+            .collect()
     }
 
     /// Selects a placeholder chat titled `label` that opens the session its assist request gets.
@@ -412,6 +466,11 @@ impl EnhancedAiPlayground {
 
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
         self.ensure_loaded();
+        self.refresh_viewer();
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if self.viewer_root {
+            self.zeroclaw.tick(ui);
+        }
         let rail = ui.max_rect();
 
         eframe::egui::Panel::top("enhanced_ai_topbar")
@@ -434,6 +493,15 @@ impl EnhancedAiPlayground {
                 set_sessions_pinned(ui, false);
             }
             self.apply_pick(pick);
+        }
+
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if self.zeroclaw_open() {
+            CentralPanel::default()
+                .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
+                .show(ui, |ui| self.zeroclaw.detail_ui(ui));
+            self.handle_enhanced_ai_events(ui);
+            return;
         }
 
         if let Some(row) = self
@@ -517,6 +585,12 @@ impl EnhancedAiPlayground {
     }
 
     fn current_thread_title(&self) -> String {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if self.zeroclaw_open()
+            && let Some(title) = self.zeroclaw.title()
+        {
+            return title;
+        }
         if self.threads.contains_key(&self.selected_thread) {
             self.thread_title(&self.selected_thread)
         } else {
@@ -541,7 +615,7 @@ impl EnhancedAiPlayground {
             if resp.clicked() {
                 set_sessions_pinned(ui, !pinned);
             }
-            if self.threads.contains_key(&self.selected_thread) {
+            if self.threads.contains_key(&self.selected_thread) && !self.zeroclaw_open() {
                 resp.context_menu(|ui| {
                     if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
                         self.start_rename(self.selected_thread.clone());
@@ -595,6 +669,9 @@ impl EnhancedAiPlayground {
                     let cs = self.focused_client.clone();
                     self.start_agent_diagnosis(cs);
                 }
+                if self.zeroclaw_open() {
+                    return;
+                }
                 if let Some(row) = self.open_row.as_ref().filter(|r| r.id.key_string() == self.selected_thread) {
                     agent_chat::status_badge(ui, row);
                     return;
@@ -611,25 +688,53 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// Local chats, then agent sessions, as selectable rows; clicks and renames land in `pick`.
-    fn thread_rows(&self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
+    /// The search box and closed-session toggle above the session list.
+    fn list_search(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let toggle_w = ui.spacing().interact_size.y + ui.spacing().item_spacing.x;
+            ui.add(
+                TextEdit::singleline(&mut self.list_filter)
+                    .hint_text(format!("{} Search", icons::SEARCH))
+                    .desired_width((ui.available_width() - toggle_w).max(40.0)),
+            );
+            let tip = if self.show_closed { "Hide closed sessions" } else { "Show closed sessions" };
+            ui.toggle_value(&mut self.show_closed, icons::ARCHIVE).on_hover_text(tip);
+        });
+    }
+
+    /// The search box, local chats, agent sessions and, for Root, ZeroClaw; clicks and renames land in `pick`.
+    fn thread_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         let agent_index = self.index_with_open_row();
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         let agent_index: Vec<AgentThread> = Vec::new();
-        let ids = self.listed_chats();
-        if ids.is_empty() && agent_index.is_empty() {
-            ui.label(RichText::new("No chats yet").weak());
-            return;
-        }
-        let selected = self.selected_thread.clone();
+        self.list_search(ui);
+        let sessions = self.listed_sessions(&agent_index);
+        let session_keys: std::collections::HashSet<String> = agent_index.iter().map(|t| t.id.key_string()).collect();
+        let needle = self.list_filter.trim().to_lowercase();
+        let chats: Vec<(String, String)> = self
+            .listed_chats()
+            .into_iter()
+            .filter(|id| !session_keys.contains(id))
+            .map(|id| {
+                let title = self.thread_title(&id);
+                (id, title)
+            })
+            .filter(|(_, title)| needle.is_empty() || title.to_lowercase().contains(&needle))
+            .collect();
+        let selected = if self.zeroclaw_open() { String::new() } else { self.selected_thread.clone() };
+        let searching = !needle.is_empty();
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        let (root, filter) = (self.viewer_root, self.list_filter.clone());
         ScrollArea::vertical()
             .id_salt("enhanced_ai_thread_rows")
             .max_height(max_height)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                for id in ids {
-                    let title = self.thread_title(&id);
+                if chats.is_empty() && sessions.is_empty() {
+                    ui.label(RichText::new(if searching { "No matching chats" } else { "No chats yet" }).weak());
+                }
+                for (id, title) in chats {
                     let row = ListRow::new(&title)
                         .lead(Lead::Icon(icons::CHAT, None))
                         .selected(selected == id)
@@ -645,12 +750,11 @@ impl EnhancedAiPlayground {
                         }
                     });
                 }
-                if agent_index.is_empty() {
-                    return;
+                if !sessions.is_empty() {
+                    ui.separator();
+                    ui.label(RichText::new("Agent sessions").weak().small());
                 }
-                ui.separator();
-                ui.label(RichText::new("Agent sessions").weak().small());
-                for t in &agent_index {
+                for t in &sessions {
                     let who = t.requested_by.as_deref().unwrap_or("unattributed");
                     let key = t.id.key_string();
                     let (icon, color, _) = agent_chat::status_chip(ui, &t.status);
@@ -671,11 +775,27 @@ impl EnhancedAiPlayground {
                         }
                     });
                 }
+                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                if root {
+                    ui.separator();
+                    let unread = self.zeroclaw.unread_count();
+                    let label = if unread > 0 { format!("ZeroClaw \u{00b7} {unread} new") } else { "ZeroClaw".to_string() };
+                    ui.label(RichText::new(label).weak().small());
+                    if let Some(p) = self.zeroclaw.list_ui(ui, &filter) {
+                        pick.zeroclaw = Some(p);
+                    }
+                }
             });
     }
 
-    /// Opens the picked thread, starting a rename first when one was asked for.
+    /// Opens the picked thread or ZeroClaw item, starting a rename first when one was asked for.
     fn apply_pick(&mut self, pick: ThreadPick) {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if let Some(item) = &pick.zeroclaw {
+            self.renaming = None;
+            self.zeroclaw.select(item);
+            return;
+        }
         let mut picked = pick.picked;
         if let Some(id) = pick.rename {
             picked = Some(id.clone());
@@ -705,6 +825,8 @@ impl EnhancedAiPlayground {
     }
 
     fn select_thread(&mut self, id: String) {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        self.zeroclaw.deselect();
         if self.selected_thread != id {
             self.open_row = None;
             self.waiting.clear();
@@ -1699,6 +1821,8 @@ fn may_steer(row: &AgentThread) -> bool {
 struct ThreadPick {
     picked: Option<String>,
     rename: Option<String>,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    zeroclaw: Option<crate::tabs::zeroclaw::ZeroClawPick>,
 }
 
 fn sessions_pinned_id() -> Id {
