@@ -35,6 +35,9 @@ pub use platform::PlatformSpawner;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mcp;
 
+#[cfg(windows)]
+pub mod firewall;
+
 pub mod plugins;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
