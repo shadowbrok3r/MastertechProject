@@ -1,5 +1,5 @@
 -- ============================================================
--- TABLE: user                     last changed: user_table_permissions
+-- TABLE: user                     last changed: ai_assistant_tools
 -- Managed by surrealkit. Edit here, then `rollout plan`.
 -- ============================================================
 -- SCHEMAFULL. Rust source of truth: `database::schema::user::User`.
@@ -78,6 +78,21 @@ DEFINE FIELD user_settings.ui_layout.mtechserver ON user TYPE none | object FLEX
 DEFINE FIELD user_settings.ui_layout.default_work_mode ON user TYPE none | string
     ASSERT $value == NONE OR $value IN ['tuneup_qc', 'diagnostic', 'admin', 'full']
     PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id;
+
+-- The owner's AI assistant persona, injected into their agent sessions.
+DEFINE FIELD ai_profile                ON user TYPE none | object
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD ai_profile.assistant_name ON user TYPE none | string ASSERT $value == NONE OR string::len($value) <= 40
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD ai_profile.personality    ON user TYPE none | string ASSERT $value == NONE OR string::len($value) <= 300
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD ai_profile.detail         ON user TYPE none | string ASSERT $value == NONE OR $value IN ['brief', 'normal', 'detailed']
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD ai_profile.about_me       ON user TYPE none | string ASSERT $value == NONE OR string::len($value) <= 500
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+-- NONE means on.
+DEFINE FIELD ai_profile.morning_brief  ON user TYPE none | bool
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
 
 DEFINE FIELD user_statuses    ON user TYPE none | array<string> DEFAULT []
     PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id;

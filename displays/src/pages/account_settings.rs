@@ -565,6 +565,9 @@ impl SharedContext {
                                             }
                                         });
                                     });
+
+                                    ui.add_space(14.0);
+                                    crate::pages::ai_profile::ai_profile_section(ui, &self.account_mod.user);
                                 });
                             });
                             s.empty();

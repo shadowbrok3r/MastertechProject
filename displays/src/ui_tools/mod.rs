@@ -29,6 +29,7 @@ pub mod terminal_font;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tui_theme;
 pub mod notification_center;
+pub mod command_bar;
 pub mod do_not_disturb;
 pub mod dump_text;
 pub mod hex_json;

@@ -16,7 +16,8 @@ pub const CLOSE_HOUR: u32 = 19;
 /// Seconds a store is open on a normal day.
 pub const OPEN_SECS_PER_DAY: i64 = (CLOSE_HOUR - OPEN_HOUR) as i64 * 3600;
 
-fn is_open_day(day: Weekday) -> bool {
+/// True for days the stores open (Monday-Saturday).
+pub fn is_open_day(day: Weekday) -> bool {
     day != Weekday::Sun
 }
 

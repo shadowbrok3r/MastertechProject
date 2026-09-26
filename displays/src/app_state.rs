@@ -438,6 +438,8 @@ pub struct SharedContext {
     pub search_input: String,
     // Miscellaneous Fields
     pub notification_center: NotificationCenter,
+    #[serde(skip)]
+    pub command_bar: crate::ui_tools::command_bar::CommandBar,
     /// When downloading mastertech from the website
     pub total_download_size: f32,
     /// progress of downloading mastertech
@@ -844,6 +846,7 @@ impl SharedContext {
             agent_notify: Default::default(),
             ai_analytics: Default::default(),
             notification_center: NotificationCenter::default(),
+            command_bar: Default::default(),
             user_settings: UserSettings::default(),
             update_settings: false,
             get_settings: true,

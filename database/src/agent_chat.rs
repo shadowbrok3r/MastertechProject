@@ -29,7 +29,8 @@ pub async fn send(
 ) -> anyhow::Result<Sent> {
     if let Some(thread) = AgentThread::active_for_connection(connection_string).await? {
         let after_seq = last_seq(&thread.id).await?;
-        AgentTurn::ask(&thread.id, "start", text).await?;
+        let kind = if thread.is_busy() { "queue" } else { "start" };
+        AgentTurn::ask(&thread.id, kind, text).await?;
         return Ok(Sent { thread: thread.id, after_seq });
     }
     let fits = text.chars().count() <= REQUEST_NOTE_MAX;
@@ -80,25 +81,40 @@ pub async fn await_thread(request: &RecordId, timeout: Duration) -> anyhow::Resu
     }
 }
 
+/// Where the turn after a sent message stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplyState {
+    /// Still working; carries the newest finished agent message so far.
+    Waiting(Option<String>),
+    Done(String),
+}
+
+/// One check of the turn after `after_seq`; `Err` when the session failed or vanished.
+pub async fn poll_reply(thread: &RecordId, after_seq: i64) -> anyhow::Result<ReplyState> {
+    let status = AgentThread::get(thread).await?.map(|t| (t.status, t.error));
+    let reply = AgentEvent::history(thread, after_seq, 500)
+        .await?
+        .into_iter()
+        .rev()
+        .find(|e| e.kind == "agent" && e.done)
+        .map(|e| e.text);
+    match (status, reply) {
+        (Some((s, err)), _) if s == "failed" => {
+            anyhow::bail!("the agent session failed: {}", err.unwrap_or_else(|| "unknown error".into()))
+        }
+        (Some((s, _)), Some(text)) if s == "idle" || s == "closed" => Ok(ReplyState::Done(text)),
+        (Some((s, _)), None) if s == "closed" => anyhow::bail!("the agent session closed without replying"),
+        (None, _) => anyhow::bail!("the agent session no longer exists"),
+        (_, reply) => Ok(ReplyState::Waiting(reply)),
+    }
+}
+
 /// Waits for the turn after `after_seq` to finish and returns the agent's last message.
 pub async fn await_reply(thread: &RecordId, after_seq: i64, timeout: Duration) -> anyhow::Result<String> {
     let mut waited = Duration::ZERO;
     loop {
-        let status = AgentThread::get(thread).await?.map(|t| (t.status, t.error));
-        let reply = AgentEvent::history(thread, after_seq, 500)
-            .await?
-            .into_iter()
-            .rev()
-            .find(|e| e.kind == "agent" && e.done)
-            .map(|e| e.text);
-        match (status, reply) {
-            (Some((s, err)), _) if s == "failed" => {
-                anyhow::bail!("the agent session failed: {}", err.unwrap_or_else(|| "unknown error".into()))
-            }
-            (Some((s, _)), Some(text)) if s == "idle" || s == "closed" => return Ok(text),
-            (Some((s, _)), None) if s == "closed" => anyhow::bail!("the agent session closed without replying"),
-            (None, _) => anyhow::bail!("the agent session no longer exists"),
-            _ => {}
+        if let ReplyState::Done(text) = poll_reply(thread, after_seq).await? {
+            return Ok(text);
         }
         if waited >= timeout {
             anyhow::bail!("the agent did not finish within {}s", timeout.as_secs());

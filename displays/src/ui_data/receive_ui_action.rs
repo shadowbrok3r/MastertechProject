@@ -9,6 +9,7 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
+                    self.command_bar.focus_task(&task);
                     // Mark notes as read for this task when modal is opened
                     self.last_read_notes.insert(task.id.clone(), chrono::Utc::now());
                     let read_task_id = task.id.clone();
@@ -38,6 +39,7 @@ impl SharedContext {
                     }
                 }
                 TaskUiActions::OpenTaskModalAtPage { task, page } => {
+                    self.command_bar.focus_task(&task);
                     self.last_read_notes.insert(task.id.clone(), chrono::Utc::now());
                     let read_task_id = task.id.clone();
                     PlatformSpawner::spawn(async move {

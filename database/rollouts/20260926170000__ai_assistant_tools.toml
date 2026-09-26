@@ -1,0 +1,138 @@
+# Task schedules, reminder and part-request fields, the per-user AI profile and the ticket-brief note kind.
+# Adds one table and optional fields only; the task CREATE event is unchanged for tasks without assigned_by.
+id = "20260926170000__ai_assistant_tools"
+name = "ai_assistant_tools"
+state = "planned"
+source_schema_hash = "5cfe2ce775c4c5415e599c10e4307673db41617629ac7b2dffa022491e835fe0"
+target_schema_hash = "b43903f0e9df3077323eee55b35cb9122d70d41b86983a8fba860386be4773aa"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_ai_assistant_tools"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE task_schedule TYPE NORMAL SCHEMAFULL
+    PERMISSIONS
+        FOR select WHERE $access = 'user' AND (assignee = $auth.id OR created_by = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true)),
+        FOR create WHERE $access = 'user' AND $auth.active = true AND ($auth.authorization = 'Root' OR (created_by = $auth.id AND assignee.store = $auth.store)),
+        FOR update WHERE $access = 'user' AND $auth.active = true AND ($auth.authorization = 'Root' OR ((created_by = $auth.id OR assignee = $auth.id) AND assignee.store = $auth.store)),
+        FOR delete WHERE $access = 'user' AND (assignee = $auth.id OR created_by = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true));
+DEFINE FIELD OVERWRITE title          ON task_schedule TYPE string ASSERT string::len($value) > 0 AND string::len($value) <= 120;
+DEFINE FIELD OVERWRITE description    ON task_schedule TYPE none | string ASSERT $value == NONE OR string::len($value) <= 1000;
+DEFINE FIELD OVERWRITE assignee       ON task_schedule TYPE record<user> READONLY;
+DEFINE FIELD OVERWRITE created_by     ON task_schedule TYPE none | record<user> DEFAULT $auth.id READONLY;
+DEFINE FIELD OVERWRITE every          ON task_schedule TYPE string ASSERT $value IN ['once', 'day', 'week', 'month'];
+DEFINE FIELD OVERWRITE interval       ON task_schedule TYPE int DEFAULT 1 ASSERT $value >= 1 AND $value <= 12;
+DEFINE FIELD OVERWRITE weekdays       ON task_schedule TYPE array<int> DEFAULT [];
+DEFINE FIELD OVERWRITE weekdays.*     ON task_schedule TYPE int ASSERT $value >= 1 AND $value <= 7;
+DEFINE FIELD OVERWRITE month_day      ON task_schedule TYPE none | int ASSERT $value == NONE OR ($value >= 1 AND $value <= 31);
+DEFINE FIELD OVERWRITE at             ON task_schedule TYPE string ASSERT $value = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+DEFINE FIELD OVERWRITE next_run       ON task_schedule TYPE none | datetime;
+DEFINE FIELD OVERWRITE last_run       ON task_schedule TYPE none | datetime;
+DEFINE FIELD OVERWRITE runs           ON task_schedule TYPE int DEFAULT 0;
+DEFINE FIELD OVERWRITE active         ON task_schedule TYPE bool DEFAULT true;
+DEFINE FIELD OVERWRITE due_hours      ON task_schedule TYPE none | int ASSERT $value == NONE OR ($value >= 0 AND $value <= 720);
+DEFINE FIELD OVERWRITE priority       ON task_schedule TYPE none | string;
+DEFINE FIELD OVERWRITE service_number ON task_schedule TYPE none | string;
+DEFINE FIELD OVERWRITE origin         ON task_schedule TYPE none | string ASSERT $value == NONE OR $value IN ['ai', 'tech'];
+DEFINE FIELD OVERWRITE created_at     ON task_schedule TYPE datetime DEFAULT time::now() READONLY;
+DEFINE INDEX OVERWRITE task_schedule_due      ON task_schedule FIELDS active, next_run;
+DEFINE INDEX OVERWRITE task_schedule_assignee ON task_schedule FIELDS assignee;
+
+DEFINE FIELD OVERWRITE assigned_by               ON task TYPE none | record<user>          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE schedule                  ON task TYPE none | record<task_schedule> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE escalated_at              ON task TYPE none | datetime              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE about_service             ON task TYPE none | string                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request              ON task TYPE none | object                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request.part         ON task TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request.quantity     ON task TYPE int                          PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request.from_store   ON task TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request.to_store     ON task TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request.service_number ON task TYPE none | string              PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request.product_code ON task TYPE none | string                PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE part_request.product_id   ON task TYPE none | int                   PERMISSIONS FULL;
+DEFINE EVENT OVERWRITE created ON task
+    WHEN $event = 'CREATE'
+    THEN {
+        IF $auth != NULL OR NONE {
+            UPDATE $value.id SET created_at = time::now();
+            CREATE notification CONTENT {
+                notification_description: IF $value.assigned_by != NONE
+                    THEN string::concat($value.assigned_by.name, ': ', $value.task_name)
+                    ELSE string::concat('New Task for ', $value.assignee.name) END,
+                notification_type: IF $value.part_request != NONE THEN 'Part Request'
+                    ELSE IF $value.assigned_by != NONE THEN 'Reminder' ELSE 'Task Created' END,
+                status: 'Unread',
+                user: $value.assignee,
+                task: $value.id,
+                from_user: $value.assigned_by
+            };
+        };
+    };
+
+DEFINE FIELD OVERWRITE task         ON notification TYPE none | record<task> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE from_user    ON notification TYPE none | record<user> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE snooze_until ON notification TYPE none | datetime     PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE notification_snooze ON notification FIELDS snooze_until;
+
+DEFINE FIELD OVERWRITE ai_profile                ON user TYPE none | object
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD OVERWRITE ai_profile.assistant_name ON user TYPE none | string ASSERT $value == NONE OR string::len($value) <= 40
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD OVERWRITE ai_profile.personality    ON user TYPE none | string ASSERT $value == NONE OR string::len($value) <= 300
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD OVERWRITE ai_profile.detail         ON user TYPE none | string ASSERT $value == NONE OR $value IN ['brief', 'normal', 'detailed']
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD OVERWRITE ai_profile.about_me       ON user TYPE none | string ASSERT $value == NONE OR string::len($value) <= 500
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD OVERWRITE ai_profile.morning_brief  ON user TYPE none | bool
+    PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
+
+DEFINE FIELD OVERWRITE kind ON task_note TYPE none | string ASSERT $value == NONE OR $value IN ['ai_brief'] PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "remove_ai_assistant_tools"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS kind ON task_note;
+REMOVE FIELD IF EXISTS ai_profile.morning_brief ON user;
+REMOVE FIELD IF EXISTS ai_profile.about_me ON user;
+REMOVE FIELD IF EXISTS ai_profile.detail ON user;
+REMOVE FIELD IF EXISTS ai_profile.personality ON user;
+REMOVE FIELD IF EXISTS ai_profile.assistant_name ON user;
+REMOVE FIELD IF EXISTS ai_profile ON user;
+REMOVE INDEX IF EXISTS notification_snooze ON notification;
+REMOVE FIELD IF EXISTS snooze_until ON notification;
+REMOVE FIELD IF EXISTS from_user ON notification;
+REMOVE FIELD IF EXISTS task ON notification;
+DEFINE EVENT OVERWRITE created ON task
+    WHEN $event = 'CREATE'
+    THEN {
+        IF $auth != NULL OR NONE {
+            UPDATE $value.id SET created_at = time::now();
+            CREATE notification CONTENT {
+                notification_description: string::concat('New Task for ', $value.assignee.name),
+                notification_type: 'Task Created',
+                status: 'Unread',
+                user: $value.assignee
+            };
+        };
+    };
+REMOVE FIELD IF EXISTS part_request.product_id ON task;
+REMOVE FIELD IF EXISTS part_request.product_code ON task;
+REMOVE FIELD IF EXISTS part_request.service_number ON task;
+REMOVE FIELD IF EXISTS part_request.to_store ON task;
+REMOVE FIELD IF EXISTS part_request.from_store ON task;
+REMOVE FIELD IF EXISTS part_request.quantity ON task;
+REMOVE FIELD IF EXISTS part_request.part ON task;
+REMOVE FIELD IF EXISTS part_request ON task;
+REMOVE FIELD IF EXISTS about_service ON task;
+REMOVE FIELD IF EXISTS escalated_at ON task;
+REMOVE FIELD IF EXISTS schedule ON task;
+REMOVE FIELD IF EXISTS assigned_by ON task;
+REMOVE TABLE IF EXISTS task_schedule;
+"""

@@ -10,6 +10,8 @@ use base64::Engine;
 use database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION;
 use database::schema::agent_thread::AgentThreadState;
 use database::schema::agent_turn::APPROVALS_PROMPT;
+use database::schema::assistant::Person;
+use database::schema::AiProfile;
 use database::schema::{
     AgentActivity, AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest,
     DEFAULT_UPLOAD_DIR, NewAgentApproval, RecordId, RecordIdExt, TurnImage, upload_name,
@@ -18,11 +20,13 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use zc_codex_client::{decision, elicitation, Client, Event};
 
+use crate::plugins::assistant_tools::AssistantCaller;
+
 use super::busy::{self, Busy, Signal};
 use super::coalesce::{self, Partial, ThreadRow, TranscriptBuffer};
 use super::parse_check;
 use super::queue::{self, TurnQueue};
-use super::tools::{scope_violation, ToolHost, ToolOutcome, ToolPolicy};
+use super::tools::{assistant_summary, scope_violation, ToolHost, ToolOutcome, ToolPolicy};
 use super::wait;
 use super::zeroclaw::{self, ZeroclawMemory};
 use super::{manager, prompt, register_runner, runner_for, unregister_runner, Config};
@@ -178,6 +182,10 @@ struct Runner {
     stopping: bool,
     /// A compaction was sent and no turn has started for it yet.
     compact_unstarted: bool,
+    /// The requester the assistant tools act for.
+    owner: Option<Person>,
+    /// The owner's persona block for the developer instructions.
+    persona: Option<String>,
 }
 
 impl Runner {
@@ -192,11 +200,28 @@ impl Runner {
             AgentThread::set_status(&thread.id, "failed", Some("plugin manager not initialised")).await?;
             anyhow::bail!("plugin manager not initialised");
         };
+        let owner = match &thread.assignee {
+            Some(id) => Person::load(id).await.unwrap_or_else(|e| {
+                log::warn!("codex: could not load the requester of {}: {e}", thread.id.key_string());
+                None
+            }),
+            None => None,
+        };
+        let persona = match &owner {
+            Some(person) => {
+                let profile = AiProfile::for_user(&person.id).await.unwrap_or_default();
+                let now = database::schema::task_schedule::local_label(chrono::Utc::now());
+                Some(prompt::persona_block(person, profile.as_ref(), &now, super::is_general(&thread.connection_string)))
+            }
+            None => None,
+        };
+        let caller = owner.as_ref().map(|p| AssistantCaller { user: p.id.clone() });
         let tools = match ToolHost::start(
             manager,
             ToolPolicy::from_env(),
             cfg.tool_output_chars,
             Duration::from_secs(cfg.tool_timeout_secs),
+            caller,
         )
         .await
         {
@@ -244,6 +269,8 @@ impl Runner {
             turn_failed: false,
             stopping: false,
             compact_unstarted: false,
+            owner,
+            persona,
         };
         if let Err(e) = me.attach().await {
             me.write_status("failed", Some(&format!("thread start: {e}"))).await?;
@@ -337,7 +364,8 @@ impl Runner {
             "approvalPolicy": "on-request",
             "sandbox": "read-only",
             "developerInstructions": prompt::developer_instructions(
-                &self.cfg, &self.thread, &offered, &self.tools.policy.prompt, self.memory.is_some()),
+                &self.cfg, &self.thread, &offered, &self.tools.policy.prompt, self.memory.is_some(),
+                self.persona.as_deref()),
             "dynamicTools": self.dynamic_tools(general),
             "config": {
                 "features.shell_tool": false,
@@ -1013,7 +1041,7 @@ impl Runner {
             return;
         }
         let summary = self.call_summary(&tool, &arguments);
-        let gate = self.tools.policy.gate(&tool, &arguments, self.approve_all, &self.remembered);
+        let gate = self.tools.policy.gate_for(&tool, &arguments, self.approve_all, &self.remembered, self.owner.as_ref());
         if !gate.needs_human() {
             if let Some(note) = gate.note() {
                 let details = json!({ "tool": tool, "arguments": arguments });
@@ -1119,6 +1147,9 @@ impl Runner {
 
     /// `run <tool> on <machine>`, with the call's stated reason when it gives one.
     fn call_summary(&self, tool: &str, arguments: &Value) -> String {
+        if let Some(summary) = assistant_summary(tool, arguments) {
+            return summary;
+        }
         let machine = self.thread.hostname.clone().unwrap_or_else(|| self.thread.connection_string.clone());
         match arguments.get("reason").and_then(Value::as_str).map(str::trim).filter(|r| !r.is_empty()) {
             Some(reason) => format!("run {tool} on {machine} ({})", clip(reason, SUMMARY_REASON_CHARS)),
@@ -1173,11 +1204,44 @@ impl Runner {
         }
     }
 
+    /// The owner's memory key prefix in a general session.
+    fn person_prefix(&self) -> Option<String> {
+        if !self.general() {
+            return None;
+        }
+        self.owner.as_ref().map(|o| zeroclaw::person_prefix(&o.email))
+    }
+
+    /// The owner's own memories ahead of a general session's opening.
+    async fn with_person_brief(&self, mem: &ZeroclawMemory, opening: String) -> String {
+        let (Some(owner), Some(prefix)) = (&self.owner, self.person_prefix()) else { return opening };
+        let query = format!("{} {}", owner.email, owner.name);
+        match tokio::time::timeout(Duration::from_secs(10), mem.recall(zeroclaw::GENERAL_AGENT, &query)).await {
+            Ok(Ok(entries)) => {
+                let mine: Vec<zeroclaw::Entry> =
+                    entries.into_iter().filter(|e| e.key.to_lowercase().starts_with(&prefix)).collect();
+                if mine.is_empty() {
+                    return opening;
+                }
+                format!(
+                    "WHAT {} ASKED YOU TO REMEMBER:\n{}\n\n{opening}",
+                    owner.first_name().to_uppercase(),
+                    zeroclaw::render_entries(&mine)
+                )
+            }
+            Ok(Err(e)) => {
+                log::warn!("codex: person memory brief failed: {e}");
+                opening
+            }
+            Err(_) => opening,
+        }
+    }
+
     /// Prepends what ZeroClaw remembers about the machine to the opening turn.
     async fn with_memory_brief(&self, opening: String) -> String {
         let Some(mem) = &self.memory else { return opening };
         if self.general() {
-            return opening;
+            return self.with_person_brief(mem, opening).await;
         }
         let query = format!(
             "{} {}",
@@ -1228,9 +1292,19 @@ impl Runner {
                 if query.is_empty() {
                     return ToolOutcome::failure("query is required".into());
                 }
+                let prefix = self.person_prefix();
                 match mem.recall(agent, &query).await {
-                    Ok(entries) if entries.is_empty() => ToolOutcome::ok("no matching memories".into()),
-                    Ok(entries) => ToolOutcome::ok(zeroclaw::render_entries(&entries)),
+                    Ok(entries) => {
+                        let entries = match &prefix {
+                            Some(p) => zeroclaw::visible_to(entries, p),
+                            None => entries,
+                        };
+                        if entries.is_empty() {
+                            ToolOutcome::ok("no matching memories".into())
+                        } else {
+                            ToolOutcome::ok(zeroclaw::render_entries(&entries))
+                        }
+                    }
                     Err(e) => ToolOutcome::failure(format!("memory recall failed: {e}")),
                 }
             }
@@ -1239,6 +1313,10 @@ impl Runner {
                 if key.is_empty() || content.is_empty() {
                     return ToolOutcome::failure("key and content are required".into());
                 }
+                let key = match self.person_prefix() {
+                    Some(p) => zeroclaw::scoped_key(&p, &key),
+                    None => key,
+                };
                 let category = match arg("category").as_str() {
                     "" => "core".to_string(),
                     c => c.to_string(),
@@ -1259,6 +1337,10 @@ impl Runner {
         let Some(last) = rows.iter().rev().find(|e| e.kind == "agent" && !e.text.trim().is_empty()) else { return };
         let agent = ZeroclawMemory::agent_for(&self.thread.connection_string);
         let key = format!("codex/{}", self.thread.id.key_string());
+        let key = match self.person_prefix() {
+            Some(p) => zeroclaw::scoped_key(&p, &key),
+            None => key,
+        };
         let summary: String = last.text.chars().take(1200).collect();
         let content = format!(
             "{} ({}) session closed. Agent's last word:\n{summary}",

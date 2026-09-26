@@ -1071,15 +1071,30 @@ pub struct PluginToolProvider {
     tool_router: ToolRouter<Self>,
     manager: Arc<RwLock<PluginManager>>,
     artifacts: Arc<Mutex<ArtifactStore>>,
+    /// Person the assistant tools act for; `None` falls back to the signed-in user.
+    caller: Option<super::assistant_tools::AssistantCaller>,
 }
 
 impl PluginToolProvider {
     pub fn new(manager: Arc<RwLock<PluginManager>>) -> Self {
+        Self::for_caller(manager, None)
+    }
+
+    /// A provider whose assistant tools act for `caller`.
+    pub fn for_caller(
+        manager: Arc<RwLock<PluginManager>>,
+        caller: Option<super::assistant_tools::AssistantCaller>,
+    ) -> Self {
         Self {
-            tool_router: Self::tool_router(),
+            tool_router: Self::tool_router() + Self::assistant_tool_router(),
             manager,
             artifacts: GLOBAL_ARTIFACTS.clone(),
+            caller,
         }
+    }
+
+    pub(crate) fn assistant_caller(&self) -> Option<&super::assistant_tools::AssistantCaller> {
+        self.caller.as_ref()
     }
 
     fn try_read_manager(&self) -> Result<std::sync::RwLockReadGuard<'_, PluginManager>, ErrorData> {
@@ -12329,6 +12344,16 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - search_prestashop_orders — search PrestaShop orders by reference, customer email, or customer name (email/name resolve the customer first, then their orders). count 0 means no orders; a tool error means the lookup failed.
 - search_odoo_inventory — search Odoo product catalog by part number or name.
 - query_surrealdb — run arbitrary read-only SurrealQL (SELECT/RETURN only).
+
+=== Assistant: tasks, reminders, parts, briefs ===
+These act for the signed-in person, or the technician whose agent session is calling.
+- create_task — a to-do for someone now, optional due time. notify_user — an FYI popup now, no task.
+- schedule_task — a task delivered later (every=once + when) or on repeat (day = Mon-Sat, week + weekdays, month + month_day). list_task_schedules / cancel_task_schedule manage them; list before adding to avoid duplicates.
+- People resolve by email, full or first name; "me" is the requester. Non-Root users assign only within their own store and the tools refuse otherwise.
+- Times are store-local (America/Denver): "tomorrow 3pm", "friday", "2026-09-28 09:30", "in 2 hours". Every reply carries store_time_now.
+- route_part — Odoo stock for a part across the five stores. Call with create_task=false first; create_task=true files a send task at the nearest store that has it and notes it on the ticket.
+- post_ticket_brief — three short lines on a service ticket for staff: now, found, tell_customer. Saved as a PRIVATE note (never customer-facing) that replaces the previous brief. Write it after a diagnosis or when asked.
+Keep titles short and imperative.
 
 === SurrealQL Writes (human-approved) ===
 query_surrealdb is READ-ONLY and always will be. To write, use surrealql_execute — it queues the statement for a Root operator, who sees it verbatim in an approval modal in the admin console along with your stated reason and a count of the rows it matches, and approves or denies it. Nothing runs until they approve.

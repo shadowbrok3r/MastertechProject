@@ -5,6 +5,7 @@ use serde_json::json;
 use crate::{ODOO_API_KEY, ODOO_DB, ODOO_JSONRPC_URL, ODOO_UID};
 
 pub mod inventory;
+pub mod parts;
 
 pub async fn search_odoo_products(search_term: &str) -> anyhow::Result<JsonRpcResponse, anyhow::Error> {
     let client = Client::new();

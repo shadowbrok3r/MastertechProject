@@ -136,6 +136,32 @@ pub fn entries_about(entries: Vec<Entry>, needles: &[&str]) -> Vec<Entry> {
         .collect()
 }
 
+/// Key prefix of one person's memories in the general alias.
+pub fn person_prefix(email: &str) -> String {
+    format!("tech/{}/", email.trim().to_lowercase())
+}
+
+/// `key` inside `prefix`, unless it already is.
+pub fn scoped_key(prefix: &str, key: &str) -> String {
+    let key = key.trim().trim_start_matches('/');
+    if key.to_lowercase().starts_with(prefix) {
+        key.to_string()
+    } else {
+        format!("{prefix}{key}")
+    }
+}
+
+/// Entries that are shared or belong to `prefix`; other people's are dropped.
+pub fn visible_to(entries: Vec<Entry>, prefix: &str) -> Vec<Entry> {
+    entries
+        .into_iter()
+        .filter(|e| {
+            let key = e.key.to_lowercase();
+            key.starts_with(prefix) || !key.starts_with("tech/")
+        })
+        .collect()
+}
+
 pub fn render_entries(entries: &[Entry]) -> String {
     entries
         .iter()
@@ -193,6 +219,21 @@ mod tests {
 
     fn entry(key: &str, content: &str) -> Entry {
         Entry { key: key.into(), category: "core".into(), content: content.into(), when: String::new() }
+    }
+
+    #[test]
+    fn a_person_sees_shared_memories_and_only_their_own() {
+        let prefix = person_prefix(" Sam.Jones@pclaptops.com ");
+        assert_eq!(prefix, "tech/sam.jones@pclaptops.com/");
+        assert_eq!(scoped_key(&prefix, "tone"), "tech/sam.jones@pclaptops.com/tone");
+        assert_eq!(scoped_key(&prefix, "tech/sam.jones@pclaptops.com/tone"), "tech/sam.jones@pclaptops.com/tone");
+        let entries = vec![
+            entry("tech/sam.jones@pclaptops.com/tone", "short answers"),
+            entry("tech/kim.park@pclaptops.com/tone", "long answers"),
+            entry("fleet/verdict", "shared"),
+        ];
+        let keys: Vec<String> = visible_to(entries, &prefix).into_iter().map(|e| e.key).collect();
+        assert_eq!(keys, ["tech/sam.jones@pclaptops.com/tone", "fleet/verdict"]);
     }
 
     #[test]

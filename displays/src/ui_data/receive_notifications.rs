@@ -86,6 +86,15 @@ impl SharedContext {
                             self.notification_center.read_notifications = false;
                         }
                         self.notification_center.apply_update(notification.clone());
+                    } else if notification.notification_type == database::schema::assistant::TYPE_MORNING_BRIEF {
+                        if notification.user == user.get_id() {
+                            self.notification_center.read_notifications = false;
+                            if !crate::ui_tools::do_not_disturb::silenced() {
+                                self.notification_center
+                                    .show_brief(notification.id.clone(), notification.notification_description.clone());
+                            }
+                        }
+                        self.notification_center.apply_update(notification.clone());
                     } else if notification.notification_type.starts_with("ZeroClaw") {
                         // Agent activity is continuous — a single turn emits
                         // dozens of these. A toast each buries the ones a tech
@@ -142,6 +151,15 @@ impl SharedContext {
                         )
                 })
                 .collect();
+            let today = database::schema::morning_brief::start_of_day(chrono::Utc::now());
+            let fresh_brief = notifications.iter().find(|n| {
+                n.notification_type == database::schema::assistant::TYPE_MORNING_BRIEF
+                    && n.status == "Unread"
+                    && n.created_at.into_inner() >= today
+            });
+            if let Some(brief) = fresh_brief.filter(|_| !crate::ui_tools::do_not_disturb::silenced()) {
+                self.notification_center.show_brief(brief.id.clone(), brief.notification_description.clone());
+            }
             self.notification_center.set_notifications(notifications);
         }
     }

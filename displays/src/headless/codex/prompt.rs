@@ -1,6 +1,7 @@
 //! The developer instructions every codex thread starts with.
 
-use database::schema::AgentThread;
+use database::schema::assistant::Person;
+use database::schema::{AgentThread, AiProfile};
 
 use super::Config;
 
@@ -13,12 +14,17 @@ pub fn developer_instructions(
     offered: &[String],
     prompt_tools: &[String],
     memory: bool,
+    persona: Option<&str>,
 ) -> String {
     let mut out = String::new();
     if super::is_general(&thread.connection_string) {
         general_scope(&mut out, thread);
     } else {
         machine_scope(&mut out, cfg, thread);
+    }
+    if let Some(block) = persona.filter(|b| !b.trim().is_empty()) {
+        out.push_str(block);
+        out.push_str("\n\n");
     }
     if memory {
         out.push_str(
@@ -150,7 +156,9 @@ fn general_scope(out: &mut String, thread: &AgentThread) {
     out.push_str(&format!(
         "NO MACHINE IS IN SCOPE. This is {}'s standing session for questions answered from \
          Mastertech's records: service orders, customers, computers, diagnostic history, crash \
-         intel, driver snapshots, AI task checklists, PrestaShop orders and Odoo inventory.\n\n",
+         intel, driver snapshots, AI task checklists, PrestaShop orders and Odoo inventory. \
+         You can also create tasks and reminders, schedule recurring tasks, notify coworkers, \
+         route parts between stores and write ticket briefs for them.\n\n",
         thread.requested_by.as_deref().unwrap_or("the technician")
     ));
     out.push_str(
@@ -167,6 +175,27 @@ fn general_scope(out: &mut String, thread: &AgentThread) {
            roster, not a list of sessions.\n\
          - Keep replies short and concrete. The technician reads you between jobs.\n\n",
     );
+}
+
+/// Who the session works for and how they want to be answered.
+pub fn persona_block(owner: &Person, profile: Option<&AiProfile>, store_time: &str, general: bool) -> String {
+    let mut out = format!(
+        "WHO YOU WORK FOR\n{} ({}, {}). Store time when this session attached: {store_time}.\n",
+        owner.name, owner.store, owner.authorization
+    );
+    for line in profile.map(|p| p.persona_lines(owner.first_name())).unwrap_or_default() {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    if general {
+        out.push_str(&format!(
+            "- Save {}'s standing preferences with zeroclaw_remember; they are kept for {} only.\n",
+            owner.first_name(),
+            owner.first_name()
+        ));
+    }
+    out.push_str("These shape tone and depth only; every rule, tool limit and approval above still applies.");
+    out
 }
 
 #[cfg(test)]
@@ -221,6 +250,26 @@ mod tests {
             ),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_persona_block_names_the_owner_and_keeps_the_rules() {
+        let owner = Person {
+            id: RecordId::new("user", "logan"),
+            name: "Logan Lees".into(),
+            email: "logan.lees@pclaptops.com".into(),
+            store: "RIV".into(),
+            authorization: "Root".into(),
+            active: true,
+        };
+        let profile = AiProfile { assistant_name: Some("Jarvis".into()), detail: Some("brief".into()), ..Default::default() };
+        let block = persona_block(&owner, Some(&profile), "Sat Sep 26 10:00", true);
+        assert!(block.starts_with("WHO YOU WORK FOR\nLogan Lees (RIV, Root)."), "{block}");
+        assert!(block.contains("Logan calls you Jarvis"), "{block}");
+        assert!(block.contains("kept for Logan only"), "{block}");
+        assert!(block.ends_with("every rule, tool limit and approval above still applies."), "{block}");
+        let plain = persona_block(&owner, None, "Sat Sep 26 10:00", false);
+        assert!(!plain.contains("zeroclaw_remember"), "{plain}");
     }
 
     #[test]

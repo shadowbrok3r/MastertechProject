@@ -1,8 +1,20 @@
-use database::schema::{utilities::NotificationMod, Notification};
-use database::live_data::{handle_live_delete, update_or_insert_anything};
+use database::schema::assistant::{
+    complete_assistant_task, snooze_notification, TYPE_MORNING_BRIEF, TYPE_OVERDUE, TYPE_PART_REQUEST, TYPE_REMINDER,
+};
+use database::schema::{utilities::NotificationMod, Notification, RecordId};
 use eframe::egui::*;
 
-use crate::{ui_tools::theme, PlatformSpawner, Spawner};
+use crate::{ui_tools::{icons, theme}, PlatformSpawner, Spawner};
+
+/// Notification types that carry an assistant task a person can finish or snooze.
+const ACTIONABLE_TYPES: [&str; 3] = [TYPE_REMINDER, TYPE_OVERDUE, TYPE_PART_REQUEST];
+
+/// A click on a notification row, applied after the list is drawn.
+enum RowAction {
+    Done(usize),
+    Snooze(usize, chrono::DateTime<chrono::Utc>),
+    OpenBrief(usize),
+}
 
 /// Known notification categories
 pub const NOTIFICATION_CATEGORIES: &[&str] = &[
@@ -25,6 +37,12 @@ pub struct NotificationCenter {
     /// Selected category filter (None = "All")
     #[serde(skip)]
     pub selected_category: Option<String>,
+    /// Morning brief text shown in its own window.
+    #[serde(skip)]
+    pub brief: Option<String>,
+    /// Notification behind the open brief; marked read when the window closes.
+    #[serde(skip)]
+    pub brief_id: Option<RecordId>,
 }
 
 impl NotificationCenter {
@@ -192,10 +210,15 @@ impl NotificationCenter {
             let _ = ui.style_mut().visuals.extreme_bg_color + Color32::from_rgb(30,30,30);
             // clone indices for the closure
             let indices = filtered_indices.clone();
+            let mut actions: Vec<RowAction> = Vec::new();
             scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
                 for row in row_range {
                     if let Some(&idx) = indices.get(row) {
                         let notification = &mut self.notifications[idx];
+                        let actionable = notification.status == "Unread"
+                            && notification.task.is_some()
+                            && ACTIONABLE_TYPES.contains(&notification.notification_type.as_str());
+                        let is_brief = notification.notification_type == TYPE_MORNING_BRIEF;
                         
                         Frame::new()
                         .corner_radius(eframe::egui::CornerRadius::same(8))
@@ -236,28 +259,134 @@ impl NotificationCenter {
                                             });
                                         } else {
                                             notification.status = "Read".to_string();
-                                            PlatformSpawner::spawn(async move {
+                                                                                        PlatformSpawner::spawn(async move {
                                                 let _ = notif.mark_notification(true).await;
                                             });
                                         }
                                     }
+                                    if actionable {
+                                        let now = chrono::Utc::now();
+                                        ui.menu_button(icons::menu_item(icons::SNOOZE, "Snooze"), |ui| {
+                                            if ui.button("1 hour").clicked() {
+                                                actions.push(RowAction::Snooze(idx, now + chrono::Duration::hours(1)));
+                                                ui.close();
+                                            }
+                                            if ui.button("Next open morning").clicked() {
+                                                let until = database::schema::task_schedule::next_open_morning(now);
+                                                actions.push(RowAction::Snooze(idx, until));
+                                                ui.close();
+                                            }
+                                        });
+                                        if ui.small_button(icons::menu_item(icons::CHECK, "Done")).clicked() {
+                                            actions.push(RowAction::Done(idx));
+                                        }
+                                    }
                                 });
                             });
-                            
+
                             ui.separator();
-                            crate::ui_tools::show_notification(
-                                ui,
-                                &notification.notification_description,
-                                &task_names,
-                                ui_actions_tx.clone(),
-                                &tasks,
-                            );
+                            if is_brief {
+                                let first = notification.notification_description.lines().next().unwrap_or("");
+                                ui.horizontal(|ui| {
+                                    ui.label(first);
+                                    if ui.small_button("Open brief").clicked() {
+                                        actions.push(RowAction::OpenBrief(idx));
+                                    }
+                                });
+                            } else {
+                                crate::ui_tools::show_notification(
+                                    ui,
+                                    &notification.notification_description,
+                                    &task_names,
+                                    ui_actions_tx.clone(),
+                                    &tasks,
+                                );
+                            }
                         })
                         .inner;
                     }
                 }
             });
+            for action in actions {
+                self.apply_row_action(action);
+            }
         });
+    }
+
+    fn apply_row_action(&mut self, action: RowAction) {
+        match action {
+            RowAction::OpenBrief(idx) => {
+                if let Some(n) = self.notifications.get(idx) {
+                    self.show_brief(n.id.clone(), n.notification_description.clone());
+                }
+            }
+            RowAction::Done(idx) => {
+                let Some(n) = self.notifications.get_mut(idx) else { return };
+                n.status = "Read".to_string();
+                let mut notif = n.clone();
+                let task = n.task.clone();
+                PlatformSpawner::spawn(async move {
+                    if let Some(task) = task
+                        && let Err(e) = complete_assistant_task(&task).await
+                    {
+                        log::warn!("notification Done: completing the task failed: {e}");
+                    }
+                    let _ = notif.mark_notification(true).await;
+                });
+            }
+            RowAction::Snooze(idx, until) => {
+                let Some(n) = self.notifications.get_mut(idx) else { return };
+                n.status = "Snoozed".to_string();
+                let id: RecordId = n.id.clone();
+                PlatformSpawner::spawn(async move {
+                    if let Err(e) = snooze_notification(&id, until).await {
+                        log::warn!("notification snooze failed: {e}");
+                    }
+                });
+            }
+        }
+    }
+
+    /// Opens the brief window on `text`.
+    pub fn show_brief(&mut self, id: RecordId, text: String) {
+        self.brief = Some(text);
+        self.brief_id = Some(id);
+    }
+
+    /// Marks the brief notification read once its window closes.
+    fn close_brief(&mut self) {
+        self.brief = None;
+        let Some(id) = self.brief_id.take() else { return };
+        let Some(n) = self.notifications.iter_mut().find(|n| n.id == id) else { return };
+        if n.status != "Read" {
+            n.status = "Read".to_string();
+            let mut notif = n.clone();
+            PlatformSpawner::spawn(async move {
+                let _ = notif.mark_notification(true).await;
+            });
+        }
+    }
+
+    /// The morning brief window, while one is open.
+    pub fn brief_window(&mut self, ctx: &Context) {
+        let Some(text) = self.brief.clone() else { return };
+        let mut open = true;
+        Window::new(format!("{} Morning brief", icons::MORNING_BRIEF))
+            .id(Id::new("morning_brief_window"))
+            .open(&mut open)
+            .default_width(460.0)
+            .collapsible(false)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                    for line in text.lines() {
+                        ui.label(line);
+                    }
+                });
+            });
+        if !open {
+            self.close_brief();
+        }
     }
 
     /// Opens the notification window on the unread list, optionally filtered
@@ -272,13 +401,16 @@ impl NotificationCenter {
         self.notifications = notifications;
     }
 
-    // Apply live updates from SurrealDB to the center's own list
+    /// Replaces the row with the same id, or adds it first.
     pub fn apply_update(&mut self, notification: Notification) {
-        let _ = update_or_insert_anything(&mut self.notifications, notification);
+        match self.notifications.iter_mut().find(|n| n.id == notification.id) {
+            Some(existing) => *existing = notification,
+            None => self.notifications.insert(0, notification),
+        }
     }
 
     pub fn apply_delete(&mut self, notification: Notification) {
-        let _ = handle_live_delete(&mut self.notifications, notification);
+        self.notifications.retain(|n| n.id != notification.id);
     }
 
     // Bulk mark all currently filtered indices as read/unread and persist
