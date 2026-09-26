@@ -16,13 +16,13 @@ const SUMMARY_CHARS: usize = 160;
 const LINE_ARGS_CHARS: usize = 2_000;
 const LINE_DETAIL_CHARS: usize = 4_000;
 
-/// Renders a transcript; shared with the bench-side progress window.
-pub fn transcript_ui(ui: &mut Ui, salt: &str, events: &[AgentEvent], show_reasoning: bool) {
+/// Renders a transcript; `user` labels the technician's rows.
+pub fn transcript_ui(ui: &mut Ui, salt: &str, events: &[AgentEvent], show_reasoning: bool, user: &str) {
     let style = ChatStyle::from_ui(ui);
     let scope = Id::new(("agent_transcript", salt));
     let now = Local::now();
     for ev in events {
-        event_row(ui, &style, scope, &now, ev, show_reasoning);
+        event_row(ui, &style, scope, &now, ev, show_reasoning, user);
     }
 }
 
@@ -38,6 +38,7 @@ fn event_row(
     now: &DateTime<Local>,
     ev: &AgentEvent,
     show_reasoning: bool,
+    user: &str,
 ) {
     let key = ev.id.key_string();
     let time = event_time(ev, now);
@@ -52,7 +53,7 @@ fn event_row(
         }
         "user" => {
             let images = agent_chat::attach::image_names(ev.item.as_ref());
-            ChatRow::new(ChatKind::User, &key, "Technician")
+            ChatRow::new(ChatKind::User, &key, user)
                 .time(time)
                 .copy(text)
                 .has_body(has_text || !images.is_empty())
@@ -489,7 +490,7 @@ mod tests {
         let mut size = vec2(0.0, 0.0);
         let mut out = ctx.run_ui(input, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                transcript_ui(ui, "test", events, true);
+                transcript_ui(ui, "test", events, true, "Technician");
                 size = ui.min_rect().size();
             });
         });

@@ -260,6 +260,10 @@ pub struct EnhancedAiPlayground {
     /// Whether closed and failed agent sessions are listed.
     #[serde(skip)]
     show_closed: bool,
+    /// The open agent session's transcript, streamed from `agent_event`.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    #[serde(skip)]
+    live: super::live_transcript::LiveTranscript,
 }
 
 impl Default for EnhancedAiPlayground {
@@ -325,6 +329,8 @@ impl Default for EnhancedAiPlayground {
             show_everyone: false,
             list_filter: String::new(),
             show_closed: false,
+            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+            live: Default::default(),
         }
     }
 }
@@ -983,6 +989,12 @@ impl EnhancedAiPlayground {
             .map(|t| t.messages.clone())
             .unwrap_or_default();
 
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if self.live_shown() {
+            self.show_live_transcript(ui, &messages);
+            return;
+        }
+
         if messages.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(120.);
@@ -1009,6 +1021,49 @@ impl EnhancedAiPlayground {
             .auto_shrink([false, false])
             .stick_to_bottom(true)
             .show(ui, |ui| chat_rows(ui, &style, scope, &now, &messages, &user));
+    }
+
+    /// Whether the open session is drawn from its live transcript: streamed rows for it have arrived.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn live_shown(&self) -> bool {
+        self.live.loaded()
+            && !self.live.events().is_empty()
+            && self.live.thread().is_some_and(|t| t.key_string() == self.selected_thread)
+    }
+
+    #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
+    fn live_shown(&self) -> bool {
+        false
+    }
+
+    /// The live transcript, then local rows newer than its last row, such as a message not yet picked up or a send error.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn show_live_transcript(&self, ui: &mut Ui, messages: &[ChatMessage]) {
+        let events = self.live.events();
+        let newest = events
+            .iter()
+            .filter_map(|e| e.created_at.or(e.updated_at))
+            .map(|at| DateTime::<Utc>::from(at).timestamp())
+            .max()
+            .unwrap_or(i64::MIN);
+        let pending = pending_rows(messages, newest);
+        let user = self.user_label();
+        let salt = self.selected_thread.clone();
+        let style = ChatStyle::from_ui(ui);
+        let scope = Id::new(("ai_chat_rows", salt.as_str()));
+        let now = Local::now();
+        let error = self.live.error().map(str::to_string);
+        ScrollArea::vertical()
+            .id_salt(("ai_live_transcript", salt.as_str()))
+            .auto_shrink([false, false])
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                crate::tabs::agent_sessions::transcript_ui(ui, &salt, events, true, &user);
+                chat_rows(ui, &style, scope, &now, &pending, &user);
+                if let Some(e) = error {
+                    ui.label(RichText::new(e).small().color(crate::ui_tools::theme::warn(ui)));
+                }
+            });
     }
 
     /// Kicks off a one-time load of the user's persisted chat threads.
@@ -1134,6 +1189,10 @@ impl EnhancedAiPlayground {
         }
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         {
+            let followed = (!self.zeroclaw_open() && self.agent_threads.contains(&self.selected_thread))
+                .then(|| RecordId::new("agent_thread", self.selected_thread.as_str()));
+            self.live.follow(followed);
+            self.live.tick(ui.ctx());
             self.poll_agent_index(ui);
             self.poll_agent_replies(ui);
             self.poll_agent_state(ui);
@@ -1716,7 +1775,11 @@ impl EnhancedAiPlayground {
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn poll_agent_replies(&mut self, ui: &Ui) {
         use std::time::Duration;
-        let gap = if self.agent_threads.contains(&self.selected_thread) { 2 } else { 8 };
+        let gap = match (self.agent_threads.contains(&self.selected_thread), self.live_shown()) {
+            (true, true) => 10,
+            (true, false) => 2,
+            (false, _) => 8,
+        };
         let now = web_time::Instant::now();
         if self.last_agent_poll.is_some_and(|t| now.duration_since(t) < Duration::from_secs(gap)) {
             return;
@@ -1864,6 +1927,11 @@ impl EnhancedAiPlayground {
 /// The composer id of a chat thread.
 fn composer_id(thread: &str) -> Id {
     Id::new(("enhanced_ai_composer", thread))
+}
+
+/// Local rows stamped after `newest`, the newest transcript row's time in unix seconds.
+fn pending_rows(messages: &[ChatMessage], newest: i64) -> Vec<ChatMessage> {
+    messages.iter().filter(|m| m.ts > newest).cloned().collect()
 }
 
 /// The session's requester, machine and model on one line, and its last error when it has one.
@@ -2355,6 +2423,18 @@ mod tests {
 
         chat.threads.get_mut(&blank).expect("chat").messages.push(note(&blank, "hi"));
         assert_eq!(chat.listed_chats()[0], blank, "a used chat is listed");
+    }
+
+    #[test]
+    fn only_local_rows_newer_than_the_transcript_show_after_it() {
+        let mut echo = note("t", "sent just now");
+        echo.ts = 200;
+        let mut old = note("t", "already in the transcript");
+        old.ts = 100;
+        let rows = pending_rows(&[old, echo], 150);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].ts, 200);
+        assert!(pending_rows(&rows, 200).is_empty(), "a row stamped with the newest transcript second is taken as shown");
     }
 
     #[test]
