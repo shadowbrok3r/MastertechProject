@@ -63,6 +63,9 @@ pub mod agent_turn;
 pub mod agent_approval;
 pub mod waiting_services;
 pub mod zeroclaw_gateway;
+pub mod task_schedule;
+pub mod assistant;
+pub mod morning_brief;
 
 pub use task::*;
 pub use task_note::*;

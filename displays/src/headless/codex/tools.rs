@@ -8,6 +8,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use base64::Engine;
+use database::schema::assistant::Person;
 use database::schema::NEVER_REMEMBER_TOOLS;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ClientConfig, ContentBlock, Implementation, ResourceContents, Tool,
@@ -16,6 +17,7 @@ use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::{json, Value};
 
+use crate::plugins::assistant_tools::AssistantCaller;
 use crate::plugins::image_fit;
 use crate::plugins::mcp_bridge::PluginToolProvider;
 use crate::plugins::PluginManager;
@@ -84,6 +86,13 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "desktop_type",
     "desktop_key",
     "desktop_scroll",
+    "create_task",
+    "notify_user",
+    "schedule_task",
+    "list_task_schedules",
+    "cancel_task_schedule",
+    "post_ticket_brief",
+    "route_part",
 ];
 
 /// Tools of a session with no machine in scope: records only; `MTECH_CODEX_GENERAL_TOOLS` replaces the list.
@@ -112,6 +121,13 @@ pub const GENERAL_TOOLS: &[&str] = &[
     "edit_ai_task_item",
     "remove_ai_task_item",
     "repair_entity_links",
+    "create_task",
+    "notify_user",
+    "schedule_task",
+    "list_task_schedules",
+    "cancel_task_schedule",
+    "post_ticket_brief",
+    "route_part",
 ];
 
 /// Tools a technician must approve each time; `MTECH_CODEX_PROMPT_TOOLS` replaces the list.
@@ -125,7 +141,65 @@ pub const PROMPT_TOOLS: &[&str] = &[
     "desktop_key",
     "desktop_scroll",
     "desktop_activate_window",
+    "create_task",
+    "notify_user",
+    "schedule_task",
+    "route_part",
 ];
+
+/// Assistant tools and the argument naming the person they act on.
+const PEOPLE_ARGUMENT: &[(&str, &str)] = &[("create_task", "assignee"), ("schedule_task", "assignee"), ("notify_user", "person")];
+
+/// True when an assistant call acts only for the session's requester, or `route_part` only reads stock.
+pub fn serves_only_owner(tool: &str, arguments: &Value, owner: Option<&Person>) -> bool {
+    if tool == "route_part" {
+        return !arguments.get("create_task").and_then(Value::as_bool).unwrap_or(false);
+    }
+    let Some((_, field)) = PEOPLE_ARGUMENT.iter().find(|(name, _)| *name == tool) else {
+        return false;
+    };
+    let target = arguments.get(*field).and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
+    if target.is_empty() || matches!(target.as_str(), "me" | "myself" | "self" | "i") {
+        return tool != "notify_user";
+    }
+    let Some(owner) = owner else { return false };
+    let email = owner.email.to_lowercase();
+    let username = email.split('@').next().unwrap_or("");
+    target == email || target == username || target == owner.name.trim().to_lowercase()
+}
+
+/// Approval-card wording for an assistant call.
+pub fn assistant_summary(tool: &str, arguments: &Value) -> Option<String> {
+    let arg = |k: &str| arguments.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+    let who = |k: &str| arg(k).unwrap_or("me").to_string();
+    match tool {
+        "create_task" => {
+            let due = arg("due").map(|d| format!(", due {d}")).unwrap_or_default();
+            Some(format!("Create a task for {}: \"{}\"{due}", who("assignee"), arg("title").unwrap_or("")))
+        }
+        "schedule_task" => {
+            let every = arg("every").unwrap_or("once");
+            let when = arg("when").map(|w| format!(" {w}")).or_else(|| arg("at").map(|a| format!(" at {a}"))).unwrap_or_default();
+            let days = arguments
+                .get("weekdays")
+                .and_then(Value::as_array)
+                .filter(|d| !d.is_empty())
+                .map(|d| format!(" on {}", d.iter().map(|v| v.to_string().trim_matches('"').to_string()).collect::<Vec<_>>().join(", ")))
+                .unwrap_or_default();
+            Some(format!("Schedule for {}: \"{}\" ({every}{days}{when})", who("assignee"), arg("title").unwrap_or("")))
+        }
+        "notify_user" => Some(format!("Notify {}: \"{}\"", who("person"), arg("message").unwrap_or(""))),
+        "route_part" => {
+            let qty = arguments.get("quantity").and_then(Value::as_i64).unwrap_or(1);
+            let part = arg("part").map(str::to_string).unwrap_or_else(|| {
+                arguments.get("product_id").map(|v| format!("product {v}")).unwrap_or_default()
+            });
+            let sn = arg("service_number").map(|s| format!(" for {s}")).unwrap_or_default();
+            Some(format!("Ask another store to send {qty}× {part}{sn}"))
+        }
+        _ => None,
+    }
+}
 
 fn env_list(key: &str, default: &[&str]) -> Vec<String> {
     match std::env::var(key) {
@@ -164,6 +238,21 @@ impl ToolPolicy {
 
     pub fn may_remember(&self, tool: &str) -> bool {
         !NEVER_REMEMBER_TOOLS.contains(&tool)
+    }
+
+    /// [`Self::gate`], except assistant calls that serve only the requester run without asking.
+    pub fn gate_for(
+        &self,
+        tool: &str,
+        arguments: &Value,
+        approve_all: bool,
+        remembered: &HashSet<String>,
+        owner: Option<&Person>,
+    ) -> Gate {
+        if serves_only_owner(tool, arguments, owner) {
+            return Gate::Run;
+        }
+        self.gate(tool, arguments, approve_all, remembered)
     }
 
     /// How a call gets past the approval gate, given the session's approve-all flag and remembered tools.
@@ -231,11 +320,12 @@ impl ToolHost {
         policy: ToolPolicy,
         output_chars: usize,
         timeout: Duration,
+        caller: Option<AssistantCaller>,
     ) -> anyhow::Result<Self> {
         let (a, b) = tokio::io::duplex(1 << 20);
         let (ar, aw) = tokio::io::split(a);
         let (br, bw) = tokio::io::split(b);
-        let provider = PluginToolProvider::new(manager);
+        let provider = PluginToolProvider::for_caller(manager, caller);
         tokio::spawn(async move {
             match provider.serve((ar, aw)).await {
                 Ok(running) => {
@@ -621,5 +711,53 @@ mod tests {
         assert_eq!(scope_violation(&args, "DESKTOP-EOA4FR0:3a1e473a3"), None);
         assert_eq!(scope_violation(&json!({ "query": "RTX 4070" }), "DESKTOP-EOA4FR0:3a1e473a3"), None);
         assert!(scope_violation(&json!({ "connection_string": "OTHER:1" }), "DESKTOP-EOA4FR0:3a1e473a3").is_some());
+    }
+
+    fn owner() -> Person {
+        Person {
+            id: database::schema::RecordId::new("user", "sam"),
+            name: "Sam Jones".into(),
+            email: "sam.jones@pclaptops.com".into(),
+            store: "RIV".into(),
+            authorization: "User".into(),
+            active: true,
+        }
+    }
+
+    #[test]
+    fn assistant_calls_for_the_requester_run_and_others_ask() {
+        let (p, none, me) = (policy(), HashSet::new(), owner());
+        for tool in ["create_task", "schedule_task", "notify_user", "route_part"] {
+            assert!(PROMPT_TOOLS.contains(&tool), "{tool} must be gated");
+            assert!(GENERAL_TOOLS.contains(&tool) && DIAGNOSTICIAN_TOOLS.contains(&tool), "{tool} must be offered");
+        }
+        for target in ["", "me", "Sam Jones", "sam.jones", "SAM.JONES@pclaptops.com"] {
+            let args = json!({ "assignee": target, "title": "Count paste" });
+            assert_eq!(p.gate_for("create_task", &args, false, &none, Some(&me)), Gate::Run, "{target}");
+        }
+        let other = json!({ "assignee": "Kim", "title": "Count paste" });
+        assert!(p.gate_for("create_task", &other, false, &none, Some(&me)).needs_human());
+        assert!(p.gate_for("schedule_task", &json!({ "assignee": "Sam" }), false, &none, Some(&me)).needs_human());
+        assert!(p.gate_for("notify_user", &json!({ "person": "me" }), false, &none, Some(&me)).needs_human());
+        assert!(p.gate_for("create_task", &json!({ "assignee": "sam.jones" }), false, &none, None).needs_human());
+        assert_eq!(p.gate_for("route_part", &json!({ "part": "SSD" }), false, &none, Some(&me)), Gate::Run);
+        assert!(p.gate_for("route_part", &json!({ "part": "SSD", "create_task": true }), false, &none, Some(&me)).needs_human());
+        for tool in ["post_ticket_brief", "list_task_schedules", "cancel_task_schedule"] {
+            assert_eq!(p.gate_for(tool, &json!({}), false, &none, Some(&me)), Gate::Run, "{tool}");
+        }
+    }
+
+    #[test]
+    fn assistant_calls_read_plainly_on_the_approval_card() {
+        let task = json!({ "assignee": "Kim", "title": "Count paste", "due": "friday" });
+        assert_eq!(assistant_summary("create_task", &task).unwrap(), "Create a task for Kim: \"Count paste\", due friday");
+        let weekly = json!({ "assignee": "Kim", "title": "Count paste", "every": "week", "weekdays": ["mon", 4], "at": "10:00" });
+        assert_eq!(
+            assistant_summary("schedule_task", &weekly).unwrap(),
+            "Schedule for Kim: \"Count paste\" (week on mon, 4 at 10:00)"
+        );
+        let part = json!({ "part": "1TB NVMe", "quantity": 2, "service_number": "2155144", "create_task": true });
+        assert_eq!(assistant_summary("route_part", &part).unwrap(), "Ask another store to send 2× 1TB NVMe for 2155144");
+        assert_eq!(assistant_summary("query_surrealdb", &json!({})), None);
     }
 }

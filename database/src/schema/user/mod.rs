@@ -28,6 +28,9 @@ pub struct User {
     sales: Option<Vec<RecordId>>,
     #[serde(default)]
     mcp_settings: Option<McpSettings>,
+    /// Skipped by serde; read from the database only.
+    #[serde(skip)]
+    ai_profile: Option<AiProfile>,
 }
 
 impl Default for User {
@@ -49,7 +52,86 @@ impl Default for User {
             version: String::new(),
             sales: None,
             mcp_settings: None,
+            ai_profile: None,
         }
+    }
+}
+
+/// Longest assistant name, in characters.
+pub const AI_NAME_MAX_CHARS: usize = 40;
+/// Longest personality description, in characters.
+pub const AI_PERSONALITY_MAX_CHARS: usize = 300;
+/// Longest "about me" text, in characters.
+pub const AI_ABOUT_MAX_CHARS: usize = 500;
+/// Accepted `detail` levels.
+pub const AI_DETAIL_LEVELS: [&str; 3] = ["brief", "normal", "detailed"];
+
+/// The owner's AI assistant persona, injected into their agent sessions.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default, SurrealValue)]
+pub struct AiProfile {
+    pub assistant_name: Option<String>,
+    pub personality: Option<String>,
+    pub detail: Option<String>,
+    pub about_me: Option<String>,
+    pub morning_brief: Option<bool>,
+}
+
+fn clip_field(field: &str, raw: Option<String>, max: usize) -> Result<Option<String>, String> {
+    let Some(text) = raw.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    let len = text.chars().count();
+    if len > max {
+        return Err(format!("{field} is {len} characters; the limit is {max}"));
+    }
+    Ok(Some(text))
+}
+
+impl AiProfile {
+    /// Trimmed copy with blanks cleared; `Err` names the field over its limit.
+    pub fn cleaned(self) -> Result<Self, String> {
+        let detail = self.detail.map(|d| d.trim().to_lowercase()).filter(|d| !d.is_empty());
+        if detail.as_deref().is_some_and(|d| !AI_DETAIL_LEVELS.contains(&d)) {
+            return Err(format!("detail must be one of {}", AI_DETAIL_LEVELS.join(", ")));
+        }
+        Ok(Self {
+            assistant_name: clip_field("Assistant name", self.assistant_name, AI_NAME_MAX_CHARS)?,
+            personality: clip_field("Personality", self.personality, AI_PERSONALITY_MAX_CHARS)?,
+            detail,
+            about_me: clip_field("About me", self.about_me, AI_ABOUT_MAX_CHARS)?,
+            morning_brief: self.morning_brief,
+        })
+    }
+
+    pub fn wants_morning_brief(&self) -> bool {
+        self.morning_brief != Some(false)
+    }
+
+    /// Prompt lines describing the persona for `owner`; empty when nothing is set.
+    pub fn persona_lines(&self, owner: &str) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(name) = &self.assistant_name {
+            lines.push(format!("- {owner} calls you {name}; use that name for yourself."));
+        }
+        if let Some(p) = &self.personality {
+            lines.push(format!("- Personality {owner} asked for: {p}"));
+        }
+        match self.detail.as_deref() {
+            Some("brief") => lines.push("- Detail: brief. Answer in as few words as the facts allow.".to_string()),
+            Some("detailed") => lines.push("- Detail: detailed. Explain steps and reasoning fully.".to_string()),
+            _ => {}
+        }
+        if let Some(about) = &self.about_me {
+            lines.push(format!("- About {owner}: {about}"));
+        }
+        lines
+    }
+
+    /// The stored profile of `user`, if any.
+    pub async fn for_user(user: &RecordId) -> anyhow::Result<Option<Self>> {
+        let rows: Vec<Option<Self>> =
+            db().query("SELECT VALUE ai_profile FROM $id").bind(("id", user.clone())).await?.check()?.take(0)?;
+        Ok(rows.into_iter().flatten().next())
     }
 }
 
@@ -751,6 +833,22 @@ impl User {
         Ok(())
     }
 
+    pub fn get_ai_profile(&self) -> AiProfile {
+        self.ai_profile.clone().unwrap_or_default()
+    }
+
+    pub fn set_ai_profile(&mut self, profile: AiProfile) -> &mut Self {
+        self.ai_profile = Some(profile);
+        self
+    }
+
+    /// Saves the signed-in user's AI profile after [`AiProfile::cleaned`].
+    pub async fn save_ai_profile(profile: AiProfile) -> anyhow::Result<AiProfile> {
+        let profile = profile.cleaned().map_err(|e| anyhow::anyhow!(e))?;
+        db().query("UPDATE $auth.id SET ai_profile = $profile").bind(("profile", profile.clone())).await?.check()?;
+        Ok(profile)
+    }
+
     pub async fn save_mcp_settings(settings: McpSettings) -> anyhow::Result<(), anyhow::Error> {
         match db()
             .query("UPDATE $auth.id SET mcp_settings = $settings")
@@ -879,5 +977,58 @@ mod row_visibility_tests {
         let restored = User::from_value(value).expect("a row with owner-only fields hidden must deserialize");
         assert_eq!(restored.get_minio_secret_key(), None);
         assert_eq!(restored.get_mcp_api_key(), None);
+    }
+}
+
+#[cfg(test)]
+mod ai_profile_tests {
+    use super::*;
+    use surrealdb::types::Value as SurrealDBValue;
+
+    #[test]
+    fn cleaned_trims_and_clears_blanks() {
+        let p = AiProfile {
+            assistant_name: Some("  Jarvis ".into()),
+            personality: Some("   ".into()),
+            detail: Some("Brief".into()),
+            about_me: None,
+            morning_brief: Some(false),
+        }
+        .cleaned()
+        .unwrap();
+        assert_eq!(p.assistant_name.as_deref(), Some("Jarvis"));
+        assert_eq!(p.personality, None);
+        assert_eq!(p.detail.as_deref(), Some("brief"));
+        assert!(!p.wants_morning_brief());
+    }
+
+    #[test]
+    fn cleaned_rejects_long_text_and_unknown_detail() {
+        let long = AiProfile { about_me: Some("x".repeat(AI_ABOUT_MAX_CHARS + 1)), ..Default::default() };
+        assert!(long.cleaned().unwrap_err().contains("About me"));
+        let odd = AiProfile { detail: Some("verbose".into()), ..Default::default() };
+        assert!(odd.cleaned().is_err());
+    }
+
+    #[test]
+    fn persona_lines_name_the_owner() {
+        let p = AiProfile { assistant_name: Some("Jarvis".into()), detail: Some("brief".into()), ..Default::default() };
+        let lines = p.persona_lines("Logan");
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("Logan calls you Jarvis"));
+        assert!(AiProfile::default().persona_lines("Logan").is_empty());
+    }
+
+    #[test]
+    fn a_user_row_with_a_profile_round_trips_and_serde_skips_it() {
+        let mut user = User::default();
+        user.set_ai_profile(AiProfile { assistant_name: Some("Jarvis".into()), ..Default::default() });
+        let value = user.clone().into_value();
+        let SurrealDBValue::Object(ref row) = value else { panic!("User did not encode as an object") };
+        assert!(row.get("ai_profile").is_some());
+        let restored = User::from_value(value).unwrap();
+        assert_eq!(restored.get_ai_profile().assistant_name.as_deref(), Some("Jarvis"));
+        let json = serde_json::to_value(&user).unwrap();
+        assert!(json.get("ai_profile").is_none());
     }
 }

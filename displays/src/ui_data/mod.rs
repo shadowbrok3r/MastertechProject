@@ -984,6 +984,10 @@ impl crate::app_state::SharedContext {
     pub fn receive_shared_ui(&mut self, ctx: &eframe::egui::Context) {
         self.admin_notification_ui(ctx);
         self.notification_center_ui(ctx);
+        self.notification_center.brief_window(ctx);
+        let open_tasks: Vec<String> = self.opened_modals.keys().cloned().collect();
+        let focused_client = self.web_console_layout.focused_client.clone();
+        self.command_bar.ui(ctx, self.current_user.as_ref(), &open_tasks, focused_client, self.ui_actions_tx.clone());
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
         self.client_diagnostics_popup_ui(ctx);

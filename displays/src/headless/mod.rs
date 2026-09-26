@@ -16,12 +16,14 @@ use crate::tabs::admin_console::client_interface::{AdminTransport, SessionEvent}
 use crate::Cmd;
 
 mod assist;
+mod assistant_jobs;
 pub mod codex;
 mod notify;
 mod offer;
 mod stress_reap;
 
 pub use assist::spawn_assist_dispatcher;
+pub use assistant_jobs::spawn_assistant_jobs;
 pub use codex::spawn_codex_broker;
 pub use notify::spawn_shelf_notifier;
 pub use stress_reap::spawn_stress_reaper;
@@ -281,6 +283,7 @@ pub async fn run(mcp_http: bool) -> anyhow::Result<()> {
     spawn_assist_dispatcher();
     spawn_shelf_notifier();
     spawn_stress_reaper();
+    spawn_assistant_jobs();
 
     if mcp_http {
         crate::plugins::run_plugin_mcp_server_http(manager).await

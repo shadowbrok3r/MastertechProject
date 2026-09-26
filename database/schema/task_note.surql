@@ -1,5 +1,5 @@
 -- ============================================================
--- TABLE: task_note
+-- TABLE: task_note                last changed: ai_assistant_tools
 -- Managed by surrealkit. Edit here, then `rollout plan`.
 -- ============================================================
 
@@ -16,3 +16,5 @@ DEFINE FIELD service_number      ON task_note TYPE none | string DEFAULT ''     
 DEFINE FIELD task_id             ON task_note TYPE record<task>                        PERMISSIONS FULL;
 DEFINE FIELD user                ON task_note TYPE record<user> DEFAULT $auth.id       PERMISSIONS FULL;
 DEFINE FIELD username            ON task_note TYPE string DEFAULT ''                   PERMISSIONS FULL;
+-- 'ai_brief' marks the assistant's ticket brief; NONE for ordinary notes.
+DEFINE FIELD kind                ON task_note TYPE none | string ASSERT $value == NONE OR $value IN ['ai_brief'] PERMISSIONS FULL;

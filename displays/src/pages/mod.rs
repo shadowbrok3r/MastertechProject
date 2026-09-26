@@ -1,5 +1,6 @@
 use eframe::egui::*;
 pub mod account_settings;
+pub mod ai_profile;
 pub mod signup_page;
 pub mod login_page;
 pub mod menu_bar;
