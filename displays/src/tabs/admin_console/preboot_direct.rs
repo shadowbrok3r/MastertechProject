@@ -41,6 +41,14 @@ const ACCEPT_ERROR_LIMIT: u32 = 10;
 /// Pause between failed accepts, so a persistent fault cannot spin the runtime.
 const ACCEPT_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
 
+/// Windows firewall rule that opens the listen port for every exe path.
+#[cfg(windows)]
+const FIREWALL_RULE: &str = "Mastertech Preboot Direct";
+
+/// Set once this process has written the firewall rule.
+#[cfg(windows)]
+static FIREWALL_RULE_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Per-session shared state, updated by the reader task and read by egui.
 struct Session {
     /// Latest decoded frame bytes (bincode `PreBootFrame`).
@@ -116,6 +124,10 @@ impl DirectHub {
         let busy = self.busy.clone();
         let started = self.started.clone();
         PlatformSpawner::spawn(async move {
+            #[cfg(windows)]
+            if !FIREWALL_RULE_SET.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                allow_through_firewall(port).await;
+            }
             let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
                 Ok(l) => l,
                 Err(e) => {
@@ -411,6 +423,17 @@ fn relay_url_for(base: &str, ip: std::net::IpAddr) -> Option<String> {
         format!("http://{v4}:{DEFAULT_RELAY_PORT}")
     };
     preboot::is_valid_relay_url(&url).then_some(url)
+}
+
+/// Writes the port-only firewall rule for `port`.
+#[cfg(windows)]
+async fn allow_through_firewall(port: u16) {
+    match tokio::task::spawn_blocking(move || crate::firewall::try_add_firewall_rule(port, FIREWALL_RULE)).await {
+        Ok(Ok(true)) => log::debug!("preboot direct: firewall rule set for :{port}"),
+        Ok(Ok(false)) => log::warn!("preboot direct: netsh refused the firewall rule for :{port}"),
+        Ok(Err(e)) => log::warn!("preboot direct: netsh failed: {e}"),
+        Err(e) => log::warn!("preboot direct: firewall task failed: {e}"),
+    }
 }
 
 /// Frame one payload as `[u32 LE total_len][tag][body]` (total_len counts tag).
