@@ -293,7 +293,18 @@ pub fn normalize_bugcheck_code(raw: &str) -> Option<String> {
     if s.is_empty() || !s.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
-    u64::from_str_radix(s, 16).ok().map(|n| format!("{n:#x}"))
+    u64::from_str_radix(s, 16).ok().map(|n| format!("{:#x}", fold_bugcheck_m_variant(n)))
+}
+
+/// Strips the `0x10000000` _M-variant flag when the base code is below `0x1000`.
+fn fold_bugcheck_m_variant(n: u64) -> u64 {
+    const M_FLAG: u64 = 0x1000_0000;
+    let base = n & !M_FLAG;
+    if n & M_FLAG != 0 && base < 0x1000 {
+        base
+    } else {
+        n
+    }
 }
 
 /// Lowercased module file name, preferring the image name when meaningful.
@@ -1474,6 +1485,26 @@ Probably caused by : rtwlane.sys ( rtwlane+18e2b )\n";
         );
         assert_eq!(normalize_bugcheck_code("0x1A").as_deref(), Some("0x1a"));
         assert_eq!(normalize_bugcheck_code("not hex"), None);
+    }
+
+    #[test]
+    fn folds_m_variant_bugcheck_codes() {
+        assert_eq!(normalize_bugcheck_code("0x1000007e").as_deref(), Some("0x7e"));
+        assert_eq!(normalize_bugcheck_code("1000007E").as_deref(), Some("0x7e"));
+        assert_eq!(normalize_bugcheck_code("0x1000015e").as_deref(), Some("0x15e"));
+        assert_eq!(
+            normalize_bugcheck_code("UNKNOWN_BUGCHECK (0x1000007e)").as_deref(),
+            Some("0x7e")
+        );
+    }
+
+    #[test]
+    fn keeps_codes_that_only_look_like_m_variants() {
+        // The 0x10000000 bit is only the _M flag when the base is below 0x1000.
+        assert_eq!(normalize_bugcheck_code("0xa1000001").as_deref(), Some("0xa1000001"));
+        assert_eq!(normalize_bugcheck_code("0xa2000002").as_deref(), Some("0xa2000002"));
+        assert_eq!(normalize_bugcheck_code("0x10001234").as_deref(), Some("0x10001234"));
+        assert_eq!(normalize_bugcheck_code("0x1000").as_deref(), Some("0x1000"));
     }
 
     #[test]
