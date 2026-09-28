@@ -59,8 +59,16 @@ async fn main() -> Result<()> {
         bail!("empty transcript");
     }
 
-    let cs = database::schema::general_connection(tech.as_deref().unwrap_or("guest"));
-    let reply = database::agent_chat::ask(&cs, tech.as_deref(), &transcript, Duration::from_secs(180)).await?;
+    // Unique per call so send() opens a fresh session instead of messaging an
+    // existing thread (the guest session cannot write turns to another's thread).
+    let who = tech.as_deref().unwrap_or("guest");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let cs = format!("general:voice:{who}:{nonce}");
+    let timeout_secs: u64 = env_or("VB_TIMEOUT", "600").parse().unwrap_or(600);
+    let reply = database::agent_chat::ask(&cs, tech.as_deref(), &transcript, Duration::from_secs(timeout_secs)).await?;
     log::info!("ASSISTANT: {reply}");
 
     synthesize(&reply, &out_wav)?;
