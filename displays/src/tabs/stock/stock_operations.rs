@@ -38,19 +38,14 @@ fn odoo_client() -> Client {
     }
 }
 
-/// Odoo `execute_kw` search_read over JSON-RPC. `domain` is the full
-/// positional domain argument, e.g. `[[["name", "in", [...]]]]`.
-async fn odoo_search_read<T: serde::de::DeserializeOwned>(
+/// Odoo `execute_kw` over JSON-RPC; `args` is the method's positional argument list.
+async fn odoo_execute_kw<T: serde::de::DeserializeOwned>(
     model: &str,
-    domain: serde_json::Value,
-    fields: serde_json::Value,
-    limit: Option<u32>,
+    method: &str,
+    args: serde_json::Value,
+    kwargs: serde_json::Value,
 ) -> Result<Vec<T>, Error> {
     let uid: u32 = ODOO_UID.parse()?;
-    let mut kwargs = json!({ "fields": fields });
-    if let Some(l) = limit {
-        kwargs["limit"] = json!(l);
-    }
     let body = json!({
         "jsonrpc": "2.0",
         "method": "call",
@@ -58,7 +53,7 @@ async fn odoo_search_read<T: serde::de::DeserializeOwned>(
         "params": {
             "service": "object",
             "method": "execute_kw",
-            "args": [ODOO_DB, uid, ODOO_API_KEY, model, "search_read", domain, kwargs]
+            "args": [ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs]
         }
     });
     let env: OdooEnvelope<T> = odoo_client()
@@ -69,9 +64,171 @@ async fn odoo_search_read<T: serde::de::DeserializeOwned>(
         .json()
         .await?;
     if let Some(err) = env.error {
-        return Err(anyhow::anyhow!("Odoo {model} search_read error: {err}"));
+        return Err(anyhow::anyhow!("Odoo {model} {method} error: {err}"));
     }
     Ok(env.result.unwrap_or_default())
+}
+
+/// Odoo `execute_kw` search_read over JSON-RPC. `domain` is the full
+/// positional domain argument, e.g. `[[["name", "in", [...]]]]`.
+async fn odoo_search_read<T: serde::de::DeserializeOwned>(
+    model: &str,
+    domain: serde_json::Value,
+    fields: serde_json::Value,
+    limit: Option<u32>,
+) -> Result<Vec<T>, Error> {
+    let mut kwargs = json!({ "fields": fields });
+    if let Some(l) = limit {
+        kwargs["limit"] = json!(l);
+    }
+    odoo_execute_kw(model, "search_read", domain, kwargs).await
+}
+
+/// Odoo `read_group` returning one row per `groupby` combination; `domain` is the bare domain list.
+async fn odoo_read_group(
+    model: &str,
+    domain: serde_json::Value,
+    fields: serde_json::Value,
+    groupby: serde_json::Value,
+) -> Result<Vec<serde_json::Value>, Error> {
+    odoo_execute_kw(model, "read_group", json!([domain, fields, groupby]), json!({ "lazy": false })).await
+}
+
+/// Odoo location id of the bare `WAR/Stock` bin.
+pub const WAR_STOCK_LOCATION: i32 = 8;
+
+/// Move states Odoo counts toward forecast quantities.
+const PENDING_MOVE_STATES: [&str; 4] = ["waiting", "confirmed", "assigned", "partially_available"];
+
+/// Sums `field` per product id over `read_group` rows grouped by `product_id`.
+fn sum_by_product(rows: &[serde_json::Value], field: &str) -> HashMap<i32, f64> {
+    let mut sums = HashMap::new();
+    for row in rows {
+        let Some(product) = row
+            .get("product_id")
+            .and_then(|p| p.get(0))
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|id| i32::try_from(id).ok())
+        else {
+            continue;
+        };
+        *sums.entry(product).or_default() += row.get(field).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    }
+    sums
+}
+
+async fn odoo_sum_by_product(model: &str, domain: serde_json::Value, field: &str) -> Result<HashMap<i32, f64>, Error> {
+    let rows = odoo_read_group(model, domain, json!([format!("{field}:sum")]), json!(["product_id"])).await?;
+    Ok(sum_by_product(&rows, field))
+}
+
+/// Per-product sums behind the bare `WAR/Stock` bin quantities.
+#[derive(Debug, Default)]
+struct WarStockSums {
+    on_hand: HashMap<i32, f64>,
+    incoming: HashMap<i32, f64>,
+    outgoing: HashMap<i32, f64>,
+    /// Incoming units put away into a child bin.
+    incoming_elsewhere: HashMap<i32, f64>,
+    /// Outgoing units reserved from a child bin.
+    outgoing_elsewhere: HashMap<i32, f64>,
+}
+
+impl WarStockSums {
+    fn on_hand(&self, product: i32) -> f64 {
+        self.on_hand.get(&product).copied().unwrap_or(0.0)
+    }
+
+    /// On hand plus pending moves in, minus pending moves out, child bins excluded.
+    fn forecast(&self, product: i32) -> f64 {
+        let get = |sums: &HashMap<i32, f64>| sums.get(&product).copied().unwrap_or(0.0);
+        get(&self.on_hand) + get(&self.incoming) - get(&self.incoming_elsewhere) - get(&self.outgoing)
+            + get(&self.outgoing_elsewhere)
+    }
+}
+
+async fn fetch_war_stock_sums() -> Result<WarStockSums, Error> {
+    let bin = WAR_STOCK_LOCATION;
+    let states = PENDING_MOVE_STATES;
+    let (on_hand, incoming, outgoing, incoming_elsewhere, outgoing_elsewhere) = futures::try_join!(
+        odoo_sum_by_product("stock.quant", json!([["location_id", "=", bin]]), "quantity"),
+        odoo_sum_by_product(
+            "stock.move",
+            json!([["location_dest_id", "=", bin], ["location_id", "!=", bin], ["state", "in", states]]),
+            "product_qty",
+        ),
+        odoo_sum_by_product(
+            "stock.move",
+            json!([["location_id", "=", bin], ["location_dest_id", "!=", bin], ["state", "in", states]]),
+            "product_qty",
+        ),
+        odoo_sum_by_product(
+            "stock.move.line",
+            json!([
+                ["move_id.location_dest_id", "=", bin],
+                ["move_id.location_id", "!=", bin],
+                ["move_id.state", "in", states],
+                ["location_dest_id", "!=", bin]
+            ]),
+            "reserved_qty",
+        ),
+        odoo_sum_by_product(
+            "stock.move.line",
+            json!([
+                ["move_id.location_id", "=", bin],
+                ["move_id.location_dest_id", "!=", bin],
+                ["move_id.state", "in", states],
+                ["location_id", "!=", bin]
+            ]),
+            "reserved_qty",
+        ),
+    )?;
+    Ok(WarStockSums { on_hand, incoming, outgoing, incoming_elsewhere, outgoing_elsewhere })
+}
+
+/// Units of one product in one Odoo location.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinQuantity {
+    pub location_id: i32,
+    pub location: String,
+    pub on_hand: f64,
+    pub reserved: f64,
+}
+
+/// Non-empty locations from quant `read_group` rows: `WAR/Stock` first, then most units on hand.
+fn bins_from_rows(rows: &[serde_json::Value]) -> Vec<BinQuantity> {
+    let mut bins: Vec<BinQuantity> = rows
+        .iter()
+        .filter_map(|row| {
+            let location = row.get("location_id")?.as_array()?;
+            Some(BinQuantity {
+                location_id: i32::try_from(location.first()?.as_i64()?).ok()?,
+                location: location.get(1)?.as_str()?.to_string(),
+                on_hand: row.get("quantity").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
+                reserved: row.get("reserved_quantity").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
+            })
+        })
+        .filter(|bin| bin.on_hand != 0.0 || bin.reserved != 0.0)
+        .collect();
+    bins.sort_by(|a, b| {
+        (b.location_id == WAR_STOCK_LOCATION)
+            .cmp(&(a.location_id == WAR_STOCK_LOCATION))
+            .then(b.on_hand.total_cmp(&a.on_hand))
+            .then_with(|| a.location.cmp(&b.location))
+    });
+    bins
+}
+
+/// Units of `product_id` in every internal and transit location, live from Odoo.
+pub async fn fetch_product_bins(product_id: i32) -> Result<Vec<BinQuantity>, Error> {
+    let rows = odoo_read_group(
+        "stock.quant",
+        json!([["product_id", "=", product_id], ["location_id.usage", "in", ["internal", "transit"]]]),
+        json!(["quantity:sum", "reserved_quantity:sum"]),
+        json!(["location_id"]),
+    )
+    .await?;
+    Ok(bins_from_rows(&rows))
 }
 
 /// Mirrors the retired fn::store_stock.
@@ -101,15 +258,23 @@ async fn fetch_attached_serials_from_odoo(serials: &[String]) -> Result<Vec<Seri
     .await
 }
 
-/// Mirrors the retired fn::get_stock_extra_info.
+/// Products with more than 3 units company-wide, with their bare `WAR/Stock` bin quantities.
 async fn fetch_extra_stock_info_from_odoo() -> Result<Vec<ExtraInventoryData>, Error> {
-    odoo_search_read(
-        "product.template",
-        json!([[["qty_available", ">", 3]]]),
-        json!(["name", "product_variant_id", "qty_available", "display_name", "virtual_available", "list_price", "standard_price"]),
-        Some(5000),
-    )
-    .await
+    let (mut rows, war_stock) = futures::try_join!(
+        odoo_search_read::<ExtraInventoryData>(
+            "product.template",
+            json!([[["qty_available", ">", 3]]]),
+            json!(["name", "product_variant_id", "qty_available", "display_name", "virtual_available", "list_price", "standard_price"]),
+            Some(5000),
+        ),
+        fetch_war_stock_sums(),
+    )?;
+    for row in rows.iter_mut() {
+        let product = row.product_variant_id.0;
+        row.warehouse_available = war_stock.on_hand(product);
+        row.warehouse_virtual_available = war_stock.forecast(product);
+    }
+    Ok(rows)
 }
 
 /// Cached `data` from `stock_cache:<key>` when fresher than the TTL.
@@ -298,7 +463,7 @@ pub async fn find_attached_serials(
 }
 
 pub async fn get_extra_stock_info(stock_tx: Sender<Vec<ExtraInventoryData>>, force: bool) -> Result<(), Error> {
-    let (data, _) = cached_pull("extra_info", "extra_info", None, force, fetch_extra_stock_info_from_odoo).await?;
+    let (data, _) = cached_pull("extra_info_war_stock", "extra_info", None, force, fetch_extra_stock_info_from_odoo).await?;
     stock_tx.try_send(data)?;
     Ok(())
 }
@@ -1583,5 +1748,80 @@ mod customer_ids_tests {
             assert!(!get_customer_ids_for_store(store.into_store_id() as u64).is_empty(), "{store:?}");
         }
         assert!(get_customer_ids_for_store(Store::WAR.into_store_id() as u64).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod war_stock_tests {
+    use super::*;
+    use database::SurrealValue;
+
+    #[test]
+    fn sums_read_group_rows_per_product() {
+        let rows = vec![
+            json!({"product_id": [7, "SSD"], "quantity": 2.0, "__count": 1}),
+            json!({"product_id": [7, "SSD"], "quantity": 3.0, "__count": 2}),
+            json!({"product_id": [9, "RAM"], "quantity": -1.0, "__count": 1}),
+            json!({"product_id": false, "quantity": 9.0, "__count": 1}),
+        ];
+        let sums = sum_by_product(&rows, "quantity");
+        assert_eq!(sums.len(), 2);
+        assert_eq!(sums[&7], 5.0);
+        assert_eq!(sums[&9], -1.0);
+    }
+
+    #[test]
+    fn forecast_ignores_moves_served_by_child_bins() {
+        let sums = WarStockSums {
+            on_hand: HashMap::from([(7, 10.0)]),
+            incoming: HashMap::from([(7, 5.0)]),
+            outgoing: HashMap::from([(7, 8.0)]),
+            incoming_elsewhere: HashMap::from([(7, 1.0)]),
+            outgoing_elsewhere: HashMap::from([(7, 3.0)]),
+        };
+        assert_eq!(sums.on_hand(7), 10.0);
+        assert_eq!(sums.forecast(7), 10.0 + (5.0 - 1.0) - (8.0 - 3.0));
+        assert_eq!(sums.on_hand(42), 0.0);
+        assert_eq!(sums.forecast(42), 0.0);
+    }
+
+    #[test]
+    fn bins_list_war_stock_first_then_most_units() {
+        let rows = vec![
+            json!({"location_id": [76, "WAR/RIV Cage"], "quantity": 12.0, "reserved_quantity": 0.0}),
+            json!({"location_id": [102, "WAR/Stock/RMA"], "quantity": 0.0, "reserved_quantity": 0.0}),
+            json!({"location_id": [8, "WAR/Stock"], "quantity": 3.0, "reserved_quantity": 1.0}),
+            json!({"location_id": [99, "WAR/Stock/NB-RMA"], "quantity": 12.0, "reserved_quantity": 0.0}),
+            json!({"location_id": [90, "WAR/Stock/Build"], "quantity": 0.0, "reserved_quantity": 2.0}),
+        ];
+        let bins = bins_from_rows(&rows);
+        let names: Vec<&str> = bins.iter().map(|b| b.location.as_str()).collect();
+        assert_eq!(names, ["WAR/Stock", "WAR/RIV Cage", "WAR/Stock/NB-RMA", "WAR/Stock/Build"]);
+        assert_eq!(bins[0], BinQuantity { location_id: 8, location: "WAR/Stock".into(), on_hand: 3.0, reserved: 1.0 });
+    }
+
+    #[test]
+    fn extra_inventory_rows_without_bin_fields_deserialize() {
+        let odoo: ExtraInventoryData = serde_json::from_value(json!({
+            "id": 1,
+            "display_name": "[SSD] SSD",
+            "list_price": 1.0,
+            "qty_available": 4.0,
+            "standard_price": 0.5,
+            "virtual_available": 4.0,
+            "product_variant_id": [7, "[SSD] SSD"],
+            "name": "SSD"
+        }))
+        .expect("an Odoo row without bin fields must deserialize");
+        assert_eq!(odoo.warehouse_available, 0.0);
+
+        let mut stored = ExtraInventoryData { warehouse_available: 3.0, ..odoo }.into_value();
+        if let surrealdb::types::Value::Object(obj) = &mut stored {
+            obj.remove("warehouse_available");
+            obj.remove("warehouse_virtual_available");
+        }
+        let cached = ExtraInventoryData::from_value(stored).expect("a cached row without bin fields must deserialize");
+        assert_eq!(cached.warehouse_available, 0.0);
+        assert_eq!(cached.product_variant_id.0, 7);
     }
 }

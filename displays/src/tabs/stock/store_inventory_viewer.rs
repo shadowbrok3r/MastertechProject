@@ -1,5 +1,6 @@
+use crossbeam::channel::Sender;
 use egui_data_table::{viewer::{DecodeErrorBehavior, RowCodec}, RowViewer};
-use eframe::egui::{Color32, Response, RichText, Ui};
+use eframe::egui::{Color32, Link, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use database::SurrealValue;
 use regex::Regex;
@@ -11,21 +12,55 @@ pub struct ExtraInventoryData {
     pub display_name: String,   // Display name is a String
     // pub id: f64,             // ID is a positive integer
     pub list_price: f64,        // Monetary value (with decimals), so f64 is appropriate
-    pub qty_available: f64,     // Quantities should remain as u64 for non-negative integers
+    /// Company-wide on-hand units.
+    pub qty_available: f64,
     pub standard_price: f64,    // Monetary value (with decimals), so f64 is appropriate
-    pub virtual_available: f64, // Quantities should remain as u64 for non-negative integers
+    /// Company-wide forecast units.
+    pub virtual_available: f64,
     pub product_variant_id: ProductID,
     pub name: String,
+    /// On-hand units in the bare `WAR/Stock` bin.
+    #[serde(default)]
+    #[surreal(default)]
+    pub warehouse_available: f64,
+    /// Forecast units in the bare `WAR/Stock` bin.
+    #[serde(default)]
+    #[surreal(default)]
+    pub warehouse_virtual_available: f64,
 }
 
-// Don't need to implement any trait on row data itself.
+/// Company Stock row; `available` and `virtual_available` cover the bare `WAR/Stock` bin only.
 #[derive(Default, Serialize, Clone)]
-pub struct StockQuantityData(pub String, pub f64, pub f64, pub f64, pub f64);
+pub struct StockQuantityData {
+    pub name: String,
+    pub available: f64,
+    pub virtual_available: f64,
+    pub std_price: f64,
+    pub list_price: f64,
+    pub product_id: i32,
+    pub company_available: f64,
+    pub company_virtual_available: f64,
+}
+
+/// `(product_id, name)` of a clicked `# Available` cell.
+pub type BinClick = (i32, String);
 
 #[derive(Default, Serialize)]
 pub struct StockQuantityViewer {
     pub filter: String,
     pub row_protection: bool,
+    #[serde(skip)]
+    pub bins_click_tx: Option<Sender<BinClick>>,
+}
+
+fn qty_color(qty: f64) -> Color32 {
+    if qty <= 10.0 {
+        Color32::from_rgb(191, 33, 101)
+    } else if qty <= 40.0 {
+        Color32::LIGHT_RED
+    } else {
+        Color32::from_rgb(51, 255, 189)
+    }
 }
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
@@ -54,7 +89,7 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
     fn filter_row(&mut self, row: &StockQuantityData) -> bool {
         let filter = &self.filter.to_uppercase();
 
-        row.0.contains(&format!("[{}]", filter)) || row.0.contains(filter)
+        row.name.contains(&format!("[{}]", filter)) || row.name.contains(filter)
     }
 
     fn show_cell_view(&mut self, ui: &mut Ui, row: &StockQuantityData, column: usize) {
@@ -65,7 +100,7 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
         let _ = match column {
             0 => {
                 ui.horizontal_centered(|ui| {
-                    if let Some(splt) = row.0.split_once(']') {
+                    if let Some(splt) = row.name.split_once(']') {
                         let strings = splt.0.split_terminator('/').collect::<Vec<&str>>();
                         if strings.len() == 2 {
                             if let Some(s) = strings.get(0) {
@@ -103,33 +138,31 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
                         ui.add_space(10.);
                         ui.label(splt.1)
                     } else {
-                        ui.label(&row.0)
+                        ui.label(&row.name)
                     }
                 })
                 .inner
             }
             1 => {
-                let color = if row.1 <= 10.0 {
-                    Color32::from_rgb(191, 33, 101)
-                } else if row.1 > 10.0 && row.1 <= 40.0 {
-                    Color32::LIGHT_RED
-                } else {
-                    Color32::from_rgb(51, 255, 189)
-                };
-                ui.label(RichText::new(format!(" {}", &row.1)).color(color))
+                let res = Link::new(RichText::new(format!(" {}", row.available)).color(qty_color(row.available)))
+                    .ui(ui)
+                    .on_hover_text(format!(
+                        "WAR/Stock bin only\nCompany-wide: {}\nClick for every bin holding this item",
+                        row.company_available
+                    ));
+                if res.clicked() && let Some(tx) = self.bins_click_tx.as_ref() {
+                    let _ = tx.try_send((row.product_id, row.name.clone()));
+                }
+                res
             }
-            2 => {
-                let color = if row.2 <= 10.0 {
-                    Color32::from_rgb(191, 33, 101)
-                } else if row.2 > 10.0 && row.2 <= 40.0 {
-                    Color32::LIGHT_RED
-                } else {
-                    Color32::from_rgb(51, 255, 189)
-                };
-                ui.label(RichText::new(format!(" {}", &row.2)).color(color))
-            }
-            3 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.3))),
-            4 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.4))),
+            2 => ui
+                .label(RichText::new(format!(" {}", row.virtual_available)).color(qty_color(row.virtual_available)))
+                .on_hover_text(format!(
+                    "WAR/Stock bin only\nCompany-wide: {}",
+                    row.company_virtual_available
+                )),
+            3 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.std_price))),
+            4 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.list_price))),
             _ => unreachable!(),
         };
     }
@@ -142,11 +175,11 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
     ) -> Option<Response> {
         ui.vertical_centered_justified(|ui| {
             match column {
-                0 => ui.label(format!("{}", row.0)),
-                1 => ui.label(format!("{}", row.1)),
-                2 => ui.label(format!("{}", row.2)),
-                3 => ui.label(format!("{}", row.3)),
-                4 => ui.label(format!("{}", row.4)),
+                0 => ui.label(&row.name),
+                1 => ui.label(format!("{}", row.available)),
+                2 => ui.label(format!("{}", row.virtual_available)),
+                3 => ui.label(format!("{}", row.std_price)),
+                4 => ui.label(format!("{}", row.list_price)),
                 _ => unreachable!(),
             }
             .into() // To make focusing work correctly, valid response must be returned.
@@ -161,11 +194,11 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
         column: usize,
     ) {
         match column {
-            0 => dst.0 = src.0.clone(),
-            1 => dst.1 = src.1.clone(),
-            2 => dst.2 = src.2.clone(),
-            3 => dst.3 = src.3.clone(),
-            4 => dst.4 = src.4,
+            0 => dst.name = src.name.clone(),
+            1 => dst.available = src.available,
+            2 => dst.virtual_available = src.virtual_available,
+            3 => dst.std_price = src.std_price,
+            4 => dst.list_price = src.list_price,
             _ => unreachable!(),
         }
     }
@@ -176,7 +209,7 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
     //     column: usize,
     //     resp: &eframe::egui::Response,
     // ) -> Option<Box<StockQuantityData>> {
-        
+
     // }
 
     fn compare_cell(
@@ -186,22 +219,22 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
         column: usize,
     ) -> std::cmp::Ordering {
         match column {
-            0 => row_l.0.cmp(&row_r.0),
+            0 => row_l.name.cmp(&row_r.name),
             1 => row_l
-                .1
-                .partial_cmp(&row_r.1)
+                .available
+                .partial_cmp(&row_r.available)
                 .unwrap_or(std::cmp::Ordering::Equal),
             2 => row_l
-                .2
-                .partial_cmp(&row_r.2)
+                .virtual_available
+                .partial_cmp(&row_r.virtual_available)
                 .unwrap_or(std::cmp::Ordering::Equal),
             3 => row_l
-                .3
-                .partial_cmp(&row_r.3)
+                .std_price
+                .partial_cmp(&row_r.std_price)
                 .unwrap_or(std::cmp::Ordering::Equal),
             4 => row_l
-                .4
-                .partial_cmp(&row_r.4)
+                .list_price
+                .partial_cmp(&row_r.list_price)
                 .unwrap_or(std::cmp::Ordering::Equal),
             _ => unreachable!(),
         }
@@ -240,17 +273,17 @@ impl RowCodec<StockQuantityData> for Codec {
             0 => {
                 let re = Regex::new(r"\[([^\]]+)\]").unwrap();
 
-                if let Some(caps) = re.captures(&src_row.0) {
+                if let Some(caps) = re.captures(&src_row.name) {
                     let inner_text = &caps[1];
                     dst.push_str(inner_text);
                 } else {
-                    dst.push_str(&src_row.0);
+                    dst.push_str(&src_row.name);
                 }
             },
-            1 => dst.push_str(&format!("{}", src_row.1)),
-            2 => dst.push_str(&format!("{}", src_row.2)),
-            3 => dst.push_str(&format!("{}", src_row.3)),
-            4 => dst.push_str(&format!("{}", src_row.4)),
+            1 => dst.push_str(&format!("{}", src_row.available)),
+            2 => dst.push_str(&format!("{}", src_row.virtual_available)),
+            3 => dst.push_str(&format!("{}", src_row.std_price)),
+            4 => dst.push_str(&format!("{}", src_row.list_price)),
             _ => unreachable!(),
         }
     }
@@ -264,14 +297,14 @@ impl RowCodec<StockQuantityData> for Codec {
         match column {
             0 => {
                 let re = Regex::new(r"\[([^\]]+)\]").unwrap();
-                if let Some(caps) = re.captures(&dst_row.0) {
-                    dst_row.0 = caps[1].to_string();
+                if let Some(caps) = re.captures(&dst_row.name) {
+                    dst_row.name = caps[1].to_string();
                 }
             },
-            1 => dst_row.1 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            4 => dst_row.4 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            1 => dst_row.available = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            2 => dst_row.virtual_available = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.std_price = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst_row.list_price = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             _ => unreachable!(),
         }
 
@@ -279,7 +312,7 @@ impl RowCodec<StockQuantityData> for Codec {
     }
 
     fn create_empty_decoded_row(&mut self) -> StockQuantityData {
-        StockQuantityData("".to_string(), 0., 0., 0., 0.)
+        StockQuantityData::default()
     }
 }
 
