@@ -5,7 +5,7 @@ use egui_extras::Column as TableColumnConfig;
 use database::SurrealValue;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use crate::tabs::stock::ProductID;
+use crate::tabs::stock::{FORECAST_MONTHS, ProductID};
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct ExtraInventoryData {
@@ -19,17 +19,17 @@ pub struct ExtraInventoryData {
     pub virtual_available: f64,
     pub product_variant_id: ProductID,
     pub name: String,
-    /// On-hand units in the bare `WAR/Stock` bin.
+    /// On-hand units in `WAR/Stock` and its shelf bins.
     #[serde(default)]
     #[surreal(default)]
     pub warehouse_available: f64,
-    /// Forecast units in the bare `WAR/Stock` bin.
+    /// Forecast units in `WAR/Stock` and its shelf bins, from moves of the last `FORECAST_MONTHS` months.
     #[serde(default)]
     #[surreal(default)]
     pub warehouse_virtual_available: f64,
 }
 
-/// Company Stock row; `available` and `virtual_available` cover the bare `WAR/Stock` bin only.
+/// Company Stock row; `available` and `virtual_available` cover `WAR/Stock` and its shelf bins.
 #[derive(Default, Serialize, Clone)]
 pub struct StockQuantityData {
     pub name: String,
@@ -39,7 +39,6 @@ pub struct StockQuantityData {
     pub list_price: f64,
     pub product_id: i32,
     pub company_available: f64,
-    pub company_virtual_available: f64,
 }
 
 /// `(product_id, name)` of a clicked `# Available` cell.
@@ -147,7 +146,7 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
                 let res = Link::new(RichText::new(format!(" {}", row.available)).color(qty_color(row.available)))
                     .ui(ui)
                     .on_hover_text(format!(
-                        "WAR/Stock bin only\nCompany-wide: {}\nClick for every bin holding this item",
+                        "WAR/Stock and its shelf bins\nCompany-wide: {}\nClick for every bin holding this item",
                         row.company_available
                     ));
                 if res.clicked() && let Some(tx) = self.bins_click_tx.as_ref() {
@@ -158,8 +157,7 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
             2 => ui
                 .label(RichText::new(format!(" {}", row.virtual_available)).color(qty_color(row.virtual_available)))
                 .on_hover_text(format!(
-                    "WAR/Stock bin only\nCompany-wide: {}",
-                    row.company_virtual_available
+                    "WAR/Stock and its shelf bins\nOn hand + pending moves in - pending moves out\nIgnores moves created over {FORECAST_MONTHS} months ago"
                 )),
             3 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.std_price))),
             4 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.list_price))),
