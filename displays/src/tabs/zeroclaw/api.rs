@@ -12,8 +12,8 @@ use serde_json::Value;
 const BODY_MAX: usize = 24 * 1024 * 1024;
 /// Longest output kept from one run.
 const OUTPUT_MAX: usize = 16 * 1024;
-/// Stored messages a transcript shows, the newest ones.
-const TRANSCRIPT_KEEP: usize = 200;
+/// Stored rows a transcript shows, the newest ones, tool rows included.
+const TRANSCRIPT_KEEP: usize = 600;
 const RUNS_MAX: usize = 100;
 /// The gateway runs the job before it answers `POST /api/cron/{id}/run`.
 const RUN_NOW_TIMEOUT: Duration = Duration::from_secs(600);
@@ -159,13 +159,13 @@ pub enum Item {
     ToolOutput(String),
 }
 
-/// A session's stored messages from every store it has, oldest first, as transcript rows.
+/// A session's stored messages and tool context from every store it has, oldest first, as transcript rows.
 pub async fn transcript(gw: &ZeroclawGateway, row: &SessionRow) -> Result<Vec<Item>> {
     let keys: Vec<&str> = if row.keys.is_empty() { vec![row.id.as_str()] } else { row.keys.iter().map(String::as_str).collect() };
     let mut messages: Vec<Value> = Vec::new();
     let mut failed = None;
     for key in keys {
-        match get(gw, &format!("/api/sessions/{}/messages", component(key))).await {
+        match get(gw, &format!("/api/sessions/{}/messages?tool_context=true", component(key))).await {
             Ok(v) => messages.extend(v.get("messages").and_then(Value::as_array).cloned().unwrap_or_default()),
             Err(e) => failed = Some(e),
         }
@@ -473,6 +473,32 @@ mod tests {
                 Item::Agent { text: "Done.".into(), at: "2".into() },
                 Item::ToolOutput("3 services".into()),
                 Item::Agent { text: "see [image] here".into(), at: "4".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn stored_tool_context_rows_read_in_turn_order() {
+        let call = json!({"content": null, "reasoning_content": "look it up",
+            "tool_calls": [{"id": "c1", "name": "mastertech__list_waiting_services", "arguments": "{\"store\":\"RIV\"}"}]});
+        let result = json!({"tool_call_id": "c1", "content": "10 waiting", "tool_name": "mastertech__list_waiting_services"});
+        let note = json!({"content": null, "tool_calls": [], "reasoning_content": "rank them"});
+        let messages = vec![
+            json!({"role": "user", "content": "easy fixes at Riverdale?", "created_at": "2026-09-28T19:24:59.1+00:00"}),
+            json!({"role": "assistant", "content": call.to_string(), "created_at": "2026-09-28T19:26:04.2+00:00"}),
+            json!({"role": "tool", "content": result.to_string(), "created_at": "2026-09-28T19:26:04.3+00:00"}),
+            json!({"role": "assistant", "content": note.to_string(), "created_at": "2026-09-28T19:26:04.4+00:00"}),
+            json!({"role": "assistant", "content": "Six are worth a look.", "created_at": "2026-09-28T19:26:04.5+00:00"}),
+        ];
+        assert_eq!(
+            parse_transcript(&messages),
+            vec![
+                Item::User { text: "easy fixes at Riverdale?".into(), at: "2026-09-28T19:24:59.1+00:00".into() },
+                Item::Reasoning("look it up".into()),
+                Item::ToolCall { name: "mastertech__list_waiting_services".into(), arguments: json!({"store": "RIV"}) },
+                Item::ToolOutput("10 waiting".into()),
+                Item::Reasoning("rank them".into()),
+                Item::Agent { text: "Six are worth a look.".into(), at: "2026-09-28T19:26:04.5+00:00".into() },
             ]
         );
     }
