@@ -59,6 +59,8 @@ spec:
               key: token
         - name: MTECH_CODEX_MODEL
           value: "zc-heavy"
+        - name: MTECH_CODEX_GENERAL_MODEL
+          value: "zc-quick"
         - name: MTECH_CODEX_PROVIDER
           value: "zcpool"
         - name: MTECH_CODEX_CWD

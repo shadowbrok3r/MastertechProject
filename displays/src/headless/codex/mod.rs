@@ -38,6 +38,8 @@ pub struct Config {
     pub url: String,
     pub token: String,
     pub model: String,
+    /// Model for `general:` sessions; `model` when `MTECH_CODEX_GENERAL_MODEL` is unset.
+    pub general_model: String,
     pub provider: String,
     /// Working directory for threads on the codex host.
     pub cwd: String,
@@ -79,10 +81,12 @@ impl Config {
             Some(m) => log::info!("codex: ZeroClaw memory via {}", m.base()),
             None => log::warn!("codex: MTECH_ZC_GATEWAY/MTECH_ZC_TOKEN unset; sessions run without ZeroClaw memory"),
         }
+        let model = env_trimmed("MTECH_CODEX_MODEL").unwrap_or_else(|| "zc-heavy".to_string());
         Some(Self {
             url,
             token,
-            model: env_trimmed("MTECH_CODEX_MODEL").unwrap_or_else(|| "zc-heavy".to_string()),
+            general_model: env_trimmed("MTECH_CODEX_GENERAL_MODEL").unwrap_or_else(|| model.clone()),
+            model,
             provider: env_trimmed("MTECH_CODEX_PROVIDER").unwrap_or_else(|| "zcpool".to_string()),
             cwd: env_trimmed("MTECH_CODEX_CWD").unwrap_or_else(|| "/home/shadowbroker/zc-sessions".to_string()),
             max_threads: env_parse("MTECH_CODEX_MAX_THREADS", 2usize).max(1),
@@ -96,12 +100,17 @@ impl Config {
         })
     }
 
+    /// The model a thread on `connection_string` runs on.
+    pub fn model_for(&self, connection_string: &str) -> &str {
+        if is_general(connection_string) { &self.general_model } else { &self.model }
+    }
+
     /// `codex/<alias>@<model>#<node>`, in the provenance grammar the schema asserts.
-    pub fn driven_by(&self) -> String {
+    pub fn driven_by(&self, connection_string: &str) -> String {
         format!(
             "codex/{}@{}#{}",
             provenance_slug(&self.agent_alias, false),
-            provenance_slug(&self.model, true),
+            provenance_slug(self.model_for(connection_string), true),
             provenance_slug(&self.node, false)
         )
     }
@@ -250,8 +259,8 @@ pub fn spawn_codex_broker(manager: Arc<RwLock<PluginManager>>) {
     };
     let _ = MANAGER.set(manager);
     log::info!(
-        "codex: broker -> {} model {} provider {} (max {} threads, approvals expire after {}s)",
-        cfg.url, cfg.model, cfg.provider, cfg.max_threads, cfg.approval_ttl_secs
+        "codex: broker -> {} model {} (general sessions {}) provider {} (max {} threads, approvals expire after {}s)",
+        cfg.url, cfg.model, cfg.general_model, cfg.provider, cfg.max_threads, cfg.approval_ttl_secs
     );
     tokio::spawn(resume_open_threads(cfg.clone()));
     turns::spawn_turn_watcher(cfg.clone());
