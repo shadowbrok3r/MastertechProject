@@ -41,6 +41,9 @@ extern "C" {
     fn audio_write(buf: *const u8, len: usize) -> i32;
     fn audio_read(buf: *mut u8, len: usize) -> i32;
     fn audio_set_amp(on: i32);
+    fn display_init() -> i32;
+    fn ui_start() -> i32;
+    fn ui_attach_touch() -> i32;
 }
 
 /// Plays a 440 Hz tone for `ms` to the speaker.
@@ -75,6 +78,17 @@ fn main() -> Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
     log::info!("voice-console {} starting; device_id={DEVICE_ID}", env!("CARGO_PKG_VERSION"));
 
+    match unsafe { display_init() } {
+        0 => {
+            log::info!("display ready (st7703 720x720)");
+            match unsafe { ui_start() } {
+                0 => log::info!("ui started (lvgl)"),
+                e => log::warn!("ui_start failed: {e}"),
+            }
+        }
+        e => log::warn!("display_init failed: {e}"),
+    }
+
     if WIFI_SSID.is_empty() {
         log::error!("no Wi-Fi configured; build with VOICE_WIFI_SSID and VOICE_WIFI_PASS set");
         loop {
@@ -97,6 +111,10 @@ fn main() -> Result<()> {
     match unsafe { audio_init() } {
         0 => log::info!("audio ready (es8311, 16 kHz)"),
         e => log::warn!("audio_init failed: {e}"),
+    }
+    match unsafe { ui_attach_touch() } {
+        0 => log::info!("touch ready (gt911)"),
+        e => log::warn!("ui_attach_touch failed: {e}"),
     }
     let echo = Arc::new(AtomicBool::new(false));
 

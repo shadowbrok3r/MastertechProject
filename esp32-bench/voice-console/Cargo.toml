@@ -35,8 +35,23 @@ remote_component = { name = "espressif/esp_wifi_remote", version = "*" }
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/es8311", version = "^1.0.0" }
 
+# ST7703 MIPI-DSI panel driver + LVGL port; the local display_shim wraps them.
 [[package.metadata.esp-idf-sys.extra_components]]
-component_dirs = ["components/audio_shim"]
+remote_component = { name = "waveshare/esp_lcd_st7703", version = "*" }
+
+# 2.5.0 exactly: 2.6+ reference LV_COLOR_FORMAT_RGB565_SWAPPED, absent in lvgl 9.2.0.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_lvgl_port", version = "==2.5.0" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "lvgl/lvgl", version = "9.2.0" }
+
+# GT911 capacitive touch (shares I2C0 with the ES8311, legacy driver).
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_lcd_touch_gt911", version = "^1.1" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/audio_shim", "components/display_shim"]
 
 [profile.release]
 opt-level = "s"
