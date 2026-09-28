@@ -18,6 +18,7 @@ use crate::Cmd;
 mod assist;
 mod assistant_jobs;
 pub mod codex;
+mod fleet_notice;
 mod notify;
 mod offer;
 mod stress_reap;
@@ -257,6 +258,7 @@ pub async fn run_session_engine() {
                     let (cs, computer) = (client.connection_string.clone(), client.computer.clone());
                     tokio::spawn(async move {
                         offer::offer_for(&cs, computer.as_ref()).await;
+                        fleet_notice::notice_for(&cs, computer.as_ref()).await;
                     });
                 }
             }

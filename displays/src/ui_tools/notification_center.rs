@@ -23,6 +23,7 @@ pub const NOTIFICATION_CATEGORIES: &[&str] = &[
     "Task Created",
     "AI Attention",
     "AI Followup",
+    database::schema::fleet_intel::TYPE_FLEET_PATTERN,
     "ALERT",
     "Admin",
     "System",
