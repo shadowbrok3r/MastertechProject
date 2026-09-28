@@ -2299,8 +2299,10 @@ impl StockTable {
             return;
         }
 
-        let on_hand: f64 = bins.iter().map(|b| b.on_hand).sum();
-        let reserved: f64 = bins.iter().map(|b| b.reserved).sum();
+        let (warehouse_bins, other_bins) = bins.split_at(bins.iter().take_while(|b| b.warehouse).count());
+        let total = |bins: &[BinQuantity]| {
+            (bins.iter().map(|b| b.on_hand).sum::<f64>(), bins.iter().map(|b| b.reserved).sum::<f64>())
+        };
         ScrollArea::vertical().show(ui, |ui| {
             use egui_extras::{TableBuilder, Column as TblCol};
             TableBuilder::new(ui)
@@ -2315,25 +2317,14 @@ impl StockTable {
                     h.col(|ui| { ui.strong("Reserved"); });
                 })
                 .body(|mut body| {
-                    for bin in bins {
-                        body.row(20., |mut row| {
-                            row.col(|ui| {
-                                let text = RichText::new(&bin.location);
-                                ui.label(if bin.location_id == WAR_STOCK_LOCATION {
-                                    text.strong().color(Color32::LIGHT_GREEN)
-                                } else {
-                                    text
-                                });
-                            });
-                            row.col(|ui| { ui.label(format!("{}", bin.on_hand)); });
-                            row.col(|ui| { ui.label(format!("{}", bin.reserved)); });
-                        });
+                    for bin in warehouse_bins {
+                        bin_row(&mut body, bin, Some(Color32::LIGHT_GREEN));
                     }
-                    body.row(20., |mut row| {
-                        row.col(|ui| { ui.strong("Company total"); });
-                        row.col(|ui| { ui.strong(format!("{on_hand}")); });
-                        row.col(|ui| { ui.strong(format!("{reserved}")); });
-                    });
+                    total_row(&mut body, "Warehouse total", total(warehouse_bins), Some(Color32::LIGHT_GREEN));
+                    for bin in other_bins {
+                        bin_row(&mut body, bin, None);
+                    }
+                    total_row(&mut body, "Company total", total(bins), None);
                 });
         });
     }
@@ -2496,7 +2487,6 @@ impl StockTable {
                     list_price: stock_data.list_price,
                     product_id: stock_data.product_variant_id.0,
                     company_available: stock_data.qty_available,
-                    company_virtual_available: stock_data.virtual_available,
                 })
                 .collect();
             self.stock_quantity_table.replace(data);
@@ -3011,6 +3001,32 @@ impl StockTable {
                     });
             });
     }
+}
+
+fn tinted(text: impl Into<String>, color: Option<Color32>) -> RichText {
+    let text = RichText::new(text);
+    match color {
+        Some(color) => text.color(color),
+        None => text,
+    }
+}
+
+/// Bin Breakdown row for one location.
+fn bin_row(body: &mut egui_extras::TableBody<'_>, bin: &BinQuantity, color: Option<Color32>) {
+    body.row(20., |mut row| {
+        row.col(|ui| { ui.label(tinted(bin.location.as_str(), color)); });
+        row.col(|ui| { ui.label(tinted(format!("{}", bin.on_hand), color)); });
+        row.col(|ui| { ui.label(tinted(format!("{}", bin.reserved), color)); });
+    });
+}
+
+/// Bold Bin Breakdown row for an `(on_hand, reserved)` total.
+fn total_row(body: &mut egui_extras::TableBody<'_>, label: &str, (on_hand, reserved): (f64, f64), color: Option<Color32>) {
+    body.row(20., |mut row| {
+        row.col(|ui| { ui.label(tinted(label, color).strong()); });
+        row.col(|ui| { ui.label(tinted(format!("{on_hand}"), color).strong()); });
+        row.col(|ui| { ui.label(tinted(format!("{reserved}"), color).strong()); });
+    });
 }
 
 /// Storage key for a store's cached Systems In-Store rows.
