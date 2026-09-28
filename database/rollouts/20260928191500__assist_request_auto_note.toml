@@ -1,0 +1,27 @@
+# Widens the tech_note ASSERT to 2000 characters on 'auto' rows; other rows keep 500.
+id = "20260928191500__assist_request_auto_note"
+name = "assist_request_auto_note"
+state = "completed"
+source_schema_hash = "b43903f0e9df3077323eee55b35cb9122d70d41b86983a8fba860386be4773aa"
+target_schema_hash = "922f08ef06d5f1b9ee70239e9c68031a10eb677b3acef5ab95fab1b71d06e99a"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "widen_tech_note"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE tech_note ON assist_request TYPE none | string
+    ASSERT $value == NONE OR string::len($value) <= 500
+        OR (trigger_source == 'auto' AND string::len($value) <= 2000) PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "narrow_tech_note"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE tech_note ON assist_request TYPE none | string
+    ASSERT $value == NONE OR string::len($value) <= 500 PERMISSIONS FULL;
+"""
