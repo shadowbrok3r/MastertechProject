@@ -1,6 +1,11 @@
 //! Server voice pipeline: STT (whisper.cpp) -> the tech's Mastertech assistant
 //! (`database::agent_chat::ask`, the Ctrl+K path) -> TTS (Piper). Stand-in CLI:
 //! `voice-bridge <input.wav> [tech_email]`; a WAV in, a spoken reply WAV out.
+//!
+//! Identity: with `VB_TECH_EMAIL` (or the CLI arg) and `VB_TECH_PASSWORD` set,
+//! signs in as that tech and reuses one warm `general:voice:<email>` thread
+//! (prompt-cache hits + follow-ups). Without a password it runs as guest,
+//! opening a fresh thread per utterance.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -70,10 +75,28 @@ async fn main() -> Result<()> {
     env_logger::init();
     let mut args = std::env::args().skip(1);
     let in_wav = args.next().context("usage: voice-bridge <input.wav> [tech_email]")?;
-    let tech = args.next();
     let out_wav = env_or("VB_OUT", "/tmp/vb_reply.wav");
 
-    database::init_database().await?;
+    let tech_email = args
+        .next()
+        .or_else(|| std::env::var("VB_TECH_EMAIL").ok())
+        .filter(|e| !e.is_empty());
+    let tech_password = std::env::var("VB_TECH_PASSWORD").ok().filter(|p| !p.is_empty());
+
+    // Signs in as the tech (a warm, reusable thread) when both an email and a
+    // password are present; otherwise as guest (a fresh thread per utterance).
+    let authed_tech = match (tech_email.as_deref(), tech_password.as_deref()) {
+        (Some(email), Some(password)) => {
+            database::Database::new(email.to_string(), password.to_string(), None).await?;
+            log::info!("signed in as {email}");
+            Some(email.to_string())
+        }
+        _ => {
+            database::init_database().await?;
+            log::info!("running as guest");
+            None
+        }
+    };
 
     let transcript = transcribe(&in_wav)?;
     log::info!("STT: {transcript}");
@@ -81,22 +104,24 @@ async fn main() -> Result<()> {
         bail!("empty transcript");
     }
 
-    // Guest opens a fresh thread per utterance (it cannot write turns to an
-    // existing thread); a tech record-user could reuse general:<email> for a warm
-    // prompt cache.
-    let who = tech.as_deref().unwrap_or("guest");
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let cs = format!("general:voice:{who}:{nonce}");
+    let cs = match authed_tech.as_deref() {
+        Some(email) => format!("general:voice:{email}"),
+        None => {
+            let who = tech_email.as_deref().unwrap_or("guest");
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            format!("general:voice:{who}:{nonce}")
+        }
+    };
     let timeout_secs: u64 = env_or("VB_TIMEOUT", "600").parse().unwrap_or(600);
 
     let prompt = format!(
         "Voice mode: reply in one or two short spoken sentences for text-to-speech; use tools only if necessary.\n\n{transcript}"
     );
 
-    let reply = stream_reply(&cs, tech.as_deref(), &prompt, timeout_secs).await?;
+    let reply = stream_reply(&cs, tech_email.as_deref(), &prompt, timeout_secs).await?;
     log::info!("ASSISTANT: {reply}");
 
     synthesize(&reply, &out_wav)?;
