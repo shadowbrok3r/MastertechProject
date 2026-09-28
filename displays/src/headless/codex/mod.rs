@@ -161,6 +161,41 @@ pub async fn require_system_session() {
     );
 }
 
+/// Disables the broker when its database user may not write the agent tables.
+pub async fn require_write_role() {
+    let Ok(user) = std::env::var("MTECH_AGENT_USER") else { return };
+    let defined = database::db()
+        .query("RETURN (INFO FOR DB).users[$user]")
+        .bind(("user", user.clone()))
+        .await
+        .and_then(|mut r| r.take::<Option<String>>(0));
+    let definition = match defined {
+        Ok(Some(definition)) => definition,
+        Ok(None) => return,
+        Err(e) => {
+            log::warn!("codex: could not read database user {user}'s roles: {e}");
+            return;
+        }
+    };
+    if may_write(&definition) {
+        return;
+    }
+    REFUSED.store(true, std::sync::atomic::Ordering::Relaxed);
+    log::error!(
+        "codex: broker disabled: database user {user} is read-only, so every claim and new session would be \
+         filtered out; sign the broker in as an EDITOR or OWNER user"
+    );
+}
+
+/// Whether a `DEFINE USER … ROLES …` statement grants EDITOR or OWNER.
+fn may_write(definition: &str) -> bool {
+    definition
+        .split(" ROLES ")
+        .nth(1)
+        .map(|rest| rest.split(" DURATION").next().unwrap_or(rest))
+        .is_some_and(|roles| roles.split(',').any(|role| matches!(role.trim(), "EDITOR" | "OWNER")))
+}
+
 pub fn enabled() -> bool {
     config().is_some()
 }
@@ -307,5 +342,21 @@ async fn queue_pump(cfg: Arc<Config>) {
             let _ = AgentThread::set_status(&thread.id, "starting", None).await;
             runner::spawn(cfg.clone(), thread, opening);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::may_write;
+
+    #[test]
+    fn only_editor_or_owner_users_may_run_the_broker() {
+        let viewer = "DEFINE USER mcp_agent ON DATABASE PASSHASH 'x' ROLES VIEWER DURATION FOR TOKEN 1w, FOR SESSION NONE";
+        let editor = "DEFINE USER admin_agent ON DATABASE PASSHASH 'x' PASSSCRAM 'y' ROLES EDITOR DURATION FOR TOKEN 1w, FOR SESSION NONE";
+        let several = "DEFINE USER ops ON DATABASE PASSHASH 'x' ROLES VIEWER, OWNER";
+        assert!(!may_write(viewer));
+        assert!(may_write(editor));
+        assert!(may_write(several));
+        assert!(!may_write("DEFINE USER nobody ON DATABASE PASSHASH 'x'"));
     }
 }
