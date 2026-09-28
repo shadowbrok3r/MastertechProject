@@ -11717,6 +11717,150 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
         };
         Ok(CallToolResult::success(vec![ContentBlock::json(json).map_err(to_internal)?]))
     }
+
+    #[tool(
+        name = "hid_status",
+        description = "Read a bench USB HID injector's state (armed, usb connection, firmware) over the relay. Read-only. `device_id` is the injector's relay room id (default HID-DEV)."
+    )]
+    async fn hid_status(&self, Parameters(p): Parameters<HidTargetParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "status" })).await
+    }
+
+    #[tool(
+        name = "hid_arm",
+        description = "Arm a bench USB HID injector so it will inject keystrokes/mouse into the machine its USB-OTG port is plugged into. Injection stays refused until armed. Approval-gated."
+    )]
+    async fn hid_arm(&self, Parameters(p): Parameters<HidTargetParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "arm" })).await
+    }
+
+    #[tool(
+        name = "hid_disarm",
+        description = "Disarm a bench USB HID injector and drop any held keys/buttons. Safety action; not gated."
+    )]
+    async fn hid_disarm(&self, Parameters(p): Parameters<HidTargetParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "disarm" })).await
+    }
+
+    #[tool(
+        name = "hid_release",
+        description = "Release all held keys and mouse buttons on a bench USB HID injector without disarming. Safety action; not gated."
+    )]
+    async fn hid_release(&self, Parameters(p): Parameters<HidTargetParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "release_all" })).await
+    }
+
+    #[tool(
+        name = "hid_type",
+        description = "Type text into the target machine through a bench USB HID injector (must be armed). Sends each character as a key press. Approval-gated."
+    )]
+    async fn hid_type(&self, Parameters(p): Parameters<HidTypeParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "type", "text": p.text })).await
+    }
+
+    #[tool(
+        name = "hid_key",
+        description = "Press one key chord through a bench USB HID injector (must be armed), e.g. `ctrl+alt+del`, `F2`, `win+r`, `enter`. Approval-gated."
+    )]
+    async fn hid_key(&self, Parameters(p): Parameters<HidKeyParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "key", "chord": p.chord })).await
+    }
+
+    #[tool(
+        name = "hid_click",
+        description = "Click a mouse button (`left`, `right`, `middle`) at the current cursor position through a bench USB HID injector (must be armed). Approval-gated."
+    )]
+    async fn hid_click(&self, Parameters(p): Parameters<HidClickParams>) -> Result<CallToolResult, ErrorData> {
+        let button = p.button.unwrap_or_else(|| "left".to_string());
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "click", "button": button })).await
+    }
+
+    #[tool(
+        name = "hid_mouse_move",
+        description = "Move the cursor to an absolute screen position through a bench USB HID injector (must be armed). x and y are 0..32767 across the target's primary screen. Approval-gated."
+    )]
+    async fn hid_mouse_move(&self, Parameters(p): Parameters<HidMouseMoveParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "mouse_move", "x": p.x, "y": p.y })).await
+    }
+
+    #[tool(
+        name = "hid_macro",
+        description = "Run an ordered macro on a bench USB HID injector (must be armed). `steps` is a list of {op,...} objects: {op:type,text}, {op:key,chord}, {op:mouse_move,x,y}, {op:click,button}, {op:delay,ms}, {op:release_all}. Approval-gated."
+    )]
+    async fn hid_macro(&self, Parameters(p): Parameters<HidMacroParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "combo", "steps": p.steps })).await
+    }
+}
+
+fn default_hid_device() -> String {
+    "HID-DEV".to_string()
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidTargetParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidTypeParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub text: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidKeyParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub chord: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidClickParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub button: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidMouseMoveParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidMacroParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub steps: Vec<serde_json::Value>,
+}
+
+/// Joins the injector's relay room as `role=master`, sends one JSON command, and returns its reply.
+async fn hid_relay_call(device_id: &str, command: serde_json::Value) -> Result<CallToolResult, ErrorData> {
+    let base = if cfg!(debug_assertions) {
+        database::WS_MASTER_URL_LOCAL
+    } else {
+        database::WS_MASTER_URL
+    };
+    let url = database::websocket_url_with_room(base, device_id, "master");
+    let payload = command.to_string();
+    match tcp_protocol::tunnel::send_oneshot_ws_text(&url, &payload, std::time::Duration::from_secs(20)).await {
+        Ok(Some(reply)) => {
+            let value: serde_json::Value =
+                serde_json::from_str(&reply).unwrap_or_else(|_| serde_json::json!({ "raw": reply }));
+            Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({ "device_id": device_id, "reply": value }),
+            )
+            .map_err(to_internal)?]))
+        }
+        Ok(None) => Err(to_internal(format!(
+            "no HID injector '{device_id}' answered in the relay room (powered on and joined Wi-Fi?)"
+        ))),
+        Err(e) => Err(to_internal(format!("relay call to '{device_id}' failed: {e}"))),
+    }
 }
 
 // ─── Server handler ────────────────────────────────────────────────────────────
@@ -12186,6 +12330,21 @@ small text; a full-resolution screenshot is a large image every time you look.
 
 Never type passwords, card numbers or other credentials with `desktop_type` — hand those to the
 technician instead.
+
+=== USB HID Injector (bench keyboard/mouse for machines with no agent) ===
+A shop ESP32-S3 that presents as a USB keyboard + absolute mouse to whatever its USB-OTG port is
+plugged into — for BIOS setup, Windows OOBE or WinPE, where no Mastertech client exists yet. It is
+reached over the relay by its room id (`device_id`, default HID-DEV); it is NOT a `connected_client`
+and takes no `connection_string`.
+
+  hid_status (read-only) → hid_arm → hid_type / hid_key / hid_click / hid_mouse_move / hid_macro → hid_disarm
+
+**It types into whatever the injector's cable is physically plugged into — you cannot see that from
+here.** Confirm with a human which machine the injector drives before arming. It boots disarmed and
+refuses injection until `hid_arm`; `hid_status` shows `armed` and whether a USB host is connected.
+`hid_key` chords look like `ctrl+alt+del`, `F2`, `win+r`, `enter`; `hid_mouse_move` x/y are 0..32767
+across the target's primary screen. `hid_disarm` / `hid_release` are safety actions and are not gated.
+Never inject passwords or card numbers — hand those to the technician.
 
 === Local Scripts Execution (admin machine only — do NOT use for QC on a customer's computer) ===
 For the machine running this MCP server, prefer the dedicated script tools below

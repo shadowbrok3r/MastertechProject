@@ -93,6 +93,15 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "cancel_task_schedule",
     "post_ticket_brief",
     "route_part",
+    "hid_status",
+    "hid_arm",
+    "hid_disarm",
+    "hid_release",
+    "hid_type",
+    "hid_key",
+    "hid_click",
+    "hid_mouse_move",
+    "hid_macro",
 ];
 
 /// Tools of a session with no machine in scope: records only; `MTECH_CODEX_GENERAL_TOOLS` replaces the list.
@@ -128,6 +137,15 @@ pub const GENERAL_TOOLS: &[&str] = &[
     "cancel_task_schedule",
     "post_ticket_brief",
     "route_part",
+    "hid_status",
+    "hid_arm",
+    "hid_disarm",
+    "hid_release",
+    "hid_type",
+    "hid_key",
+    "hid_click",
+    "hid_mouse_move",
+    "hid_macro",
 ];
 
 /// Tools a technician must approve each time; `MTECH_CODEX_PROMPT_TOOLS` replaces the list.
@@ -145,6 +163,12 @@ pub const PROMPT_TOOLS: &[&str] = &[
     "notify_user",
     "schedule_task",
     "route_part",
+    "hid_arm",
+    "hid_type",
+    "hid_key",
+    "hid_click",
+    "hid_mouse_move",
+    "hid_macro",
 ];
 
 /// Assistant tools and the argument naming the person they act on.

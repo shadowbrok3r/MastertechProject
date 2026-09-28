@@ -121,6 +121,67 @@ pub async fn send_oneshot_ws_binary(
     Ok(reply)
 }
 
+/// Relay control notices carried as `Text` on the room channel, told apart from a JSON reply.
+fn is_relay_notice(text: &str) -> bool {
+    !text.trim_start().starts_with('{')
+}
+
+/// Join a room as `role=master`, send one JSON line, and return the first JSON reply.
+///
+/// Skips the relay's own `Text` notices (`MASTER_CONNECTED`, `CLIENT_CONNECTED`, …).
+/// `NO_AGENT_IN_ROOM` resolves to `Ok(None)` — no peer joined the room. Connect + send
+/// are bounded by [`ONESHOT_CONNECT_TIMEOUT`]; the reply wait by `reply_window`.
+pub async fn send_oneshot_ws_text(
+    url: &str,
+    payload: &str,
+    reply_window: Duration,
+) -> Result<Option<String>, tungstenite::Error> {
+    let mut ws = tokio::time::timeout(ONESHOT_CONNECT_TIMEOUT, async {
+        let (mut ws, _resp) = tokio_tungstenite::connect_async(url).await?;
+        ws.send(Message::Text(payload.to_string().into())).await?;
+        ws.flush().await?;
+        Ok::<_, tungstenite::Error>(ws)
+    })
+    .await
+    .map_err(|_| {
+        tungstenite::Error::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("relay one-shot did not connect within {ONESHOT_CONNECT_TIMEOUT:?}"),
+        ))
+    })??;
+
+    let reply = tokio::time::timeout(reply_window, async {
+        while let Some(msg) = ws.next().await {
+            match msg {
+                Ok(Message::Text(t)) => {
+                    let t = t.as_str();
+                    if t.trim() == "NO_AGENT_IN_ROOM" {
+                        return Ok(None);
+                    }
+                    if !is_relay_notice(t) {
+                        return Ok(Some(t.to_string()));
+                    }
+                }
+                Ok(Message::Binary(b)) => {
+                    if let Ok(s) = std::str::from_utf8(&b) {
+                        if !is_relay_notice(s) {
+                            return Ok(Some(s.to_string()));
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
+    })
+    .await
+    .unwrap_or(Ok(None));
+
+    let _ = ws.close(None).await;
+    reply
+}
+
 /// `AsyncRead + AsyncWrite` over a tokio-tungstenite WebSocket.
 pub struct WsByteStream<S> {
     ws: WebSocketStream<S>,
