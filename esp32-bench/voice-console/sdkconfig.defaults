@@ -9,5 +9,12 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 # Wi-Fi runs over the onboard ESP32-C6 via esp_hosted + esp_wifi_remote (both in
 # Cargo.toml). Waveshare's own P4 example uses their default (SDIO) config with no
 # custom pins, so nothing board-specific is needed here. The C6 must run the
-# esp_hosted slave firmware (Waveshare ships it). SPIRAM (octal/hex + speed) is
-# board-specific; add it when audio needs it.
+# esp_hosted slave firmware (Waveshare ships it).
+
+# 32MB PSRAM; frees internal RAM and holds the 720x720 framebuffer.
+# Values from Waveshare's P4 examples (11_esp_brookesia_phone).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y

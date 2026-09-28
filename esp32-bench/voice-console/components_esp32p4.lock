@@ -13,6 +13,16 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.1.6
+  espressif/es8311:
+    component_hash: 46b3117250344bb03f143d5e2becf81cfb111679fbd7b95cefc2d302d36cc393
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4,<6.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.0~1
   espressif/esp_hosted:
     component_hash: f1792f36ef9a637adf2faa2662f3c4500b07f3d2ba65c25f3ed4824490ba59f9
     dependencies:
@@ -82,9 +92,10 @@ dependencies:
       type: idf
     version: 5.3.3
 direct_dependencies:
+- espressif/es8311
 - espressif/esp_hosted
 - espressif/esp_websocket_client
 - espressif/esp_wifi_remote
-manifest_hash: 131441d0f72c4f4adab20c77c7962529b0eb9d8a148515488f112057b50e4392
+manifest_hash: 2c6f359a7fb51a80f21a8bd83877d3223581f2004a6a19a2235ffed0fc44ff1e
 target: esp32p4
 version: 2.0.0

@@ -31,6 +31,13 @@ remote_component = { name = "espressif/esp_hosted", version = "*" }
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_wifi_remote", version = "*" }
 
+# ES8311 codec driver + the local audio_shim (I2S/codec bring-up) it wraps.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/es8311", version = "^1.0.0" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/audio_shim"]
+
 [profile.release]
 opt-level = "s"
 lto = true

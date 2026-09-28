@@ -1,7 +1,9 @@
 //! ESP32-P4 bench voice console — milestone 1: join Wi-Fi (via the onboard C6) and
 //! prove a relay round-trip. Audio (ES8311 I2S) and the 720x720 touch UI come later.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -32,6 +34,42 @@ const RELAY_BASE: &str = match option_env!("VOICE_RELAY_URL") {
     None => "wss://socket.master-tech.app/websocket",
 };
 
+const SAMPLE_RATE: u32 = 16000;
+
+extern "C" {
+    fn audio_init() -> i32;
+    fn audio_write(buf: *const u8, len: usize) -> i32;
+    fn audio_read(buf: *mut u8, len: usize) -> i32;
+    fn audio_set_amp(on: i32);
+}
+
+/// Plays a 440 Hz tone for `ms` to the speaker.
+fn play_tone(ms: u32) {
+    let n = (SAMPLE_RATE * ms / 1000) as usize;
+    let mut pcm = Vec::<u8>::with_capacity(n * 2);
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let s = (t * 440.0 * std::f32::consts::TAU).sin() * 9000.0;
+        pcm.extend_from_slice(&(s as i16).to_le_bytes());
+    }
+    unsafe {
+        audio_set_amp(1);
+        audio_write(pcm.as_ptr(), pcm.len());
+    }
+}
+
+/// Mic→speaker loopback until `run` clears.
+fn echo_loop(run: Arc<AtomicBool>) {
+    let mut buf = [0u8; 2048];
+    unsafe { audio_set_amp(1) };
+    while run.load(Ordering::Relaxed) {
+        let n = unsafe { audio_read(buf.as_mut_ptr(), buf.len()) };
+        if n > 0 {
+            unsafe { audio_write(buf.as_ptr(), n as usize) };
+        }
+    }
+}
+
 fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -56,6 +94,12 @@ fn main() -> Result<()> {
         on_ws_event(event, &tx)
     })?;
 
+    match unsafe { audio_init() } {
+        0 => log::info!("audio ready (es8311, 16 kHz)"),
+        e => log::warn!("audio_init failed: {e}"),
+    }
+    let echo = Arc::new(AtomicBool::new(false));
+
     loop {
         let Ok(line) = rx.recv() else {
             log::error!("event channel closed; exiting");
@@ -66,14 +110,33 @@ fn main() -> Result<()> {
                 log::info!("relay control: {}", part.trim());
                 continue;
             }
-            let reply = format!(
-                r#"{{"ok":true,"result":{{"role":"voice-console","firmware":"{}"}}}}"#,
-                env!("CARGO_PKG_VERSION")
-            );
+            let reply = handle_command(part, &echo);
             if let Err(e) = client.send(FrameType::Text(false), reply.as_bytes()) {
                 log::warn!("relay send failed: {e}");
             }
         }
+    }
+}
+
+/// Runs a JSON command and returns the reply line.
+fn handle_command(cmd: &str, echo: &Arc<AtomicBool>) -> String {
+    if cmd.contains("\"beep\"") {
+        play_tone(400);
+        r#"{"ok":true,"result":{"beeped":true}}"#.to_string()
+    } else if cmd.contains("echo_on") {
+        if !echo.swap(true, Ordering::Relaxed) {
+            let run = echo.clone();
+            let _ = std::thread::Builder::new().stack_size(16384).spawn(move || echo_loop(run));
+        }
+        r#"{"ok":true,"result":{"echo":true}}"#.to_string()
+    } else if cmd.contains("echo_off") {
+        echo.store(false, Ordering::Relaxed);
+        r#"{"ok":true,"result":{"echo":false}}"#.to_string()
+    } else {
+        format!(
+            r#"{{"ok":true,"result":{{"role":"voice-console","firmware":"{}"}}}}"#,
+            env!("CARGO_PKG_VERSION")
+        )
     }
 }
 
