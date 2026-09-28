@@ -5,9 +5,11 @@ use database::schema::{AgentThread, AiProfile};
 
 use super::Config;
 
-/// Role, scope, tool guidance and approval etiquette, followed by the MCP
-/// server's own diagnostic playbook so the agent reads the same rules any
-/// other harness gets from `initialize`.
+/// Heads the per-session part that follows the shared rules and playbook.
+const SESSION_HEADER: &str = "\n\n=== THIS SESSION ===\n";
+
+/// Role, rules, tool guidance and the MCP server's diagnostic playbook, then this
+/// session's scope and persona under `SESSION_HEADER`.
 pub fn developer_instructions(
     cfg: &Config,
     thread: &AgentThread,
@@ -16,15 +18,12 @@ pub fn developer_instructions(
     memory: bool,
     persona: Option<&str>,
 ) -> String {
+    let general = super::is_general(&thread.connection_string);
     let mut out = String::new();
-    if super::is_general(&thread.connection_string) {
-        general_scope(&mut out, thread);
+    if general {
+        general_rules(&mut out);
     } else {
-        machine_scope(&mut out, cfg, thread);
-    }
-    if let Some(block) = persona.filter(|b| !b.trim().is_empty()) {
-        out.push_str(block);
-        out.push_str("\n\n");
+        machine_rules(&mut out, cfg);
     }
     if memory {
         out.push_str(
@@ -42,14 +41,54 @@ pub fn developer_instructions(
     }
     out.push_str("\n=== MASTERTECH DIAGNOSTIC PLAYBOOK ===\n");
     out.push_str(crate::plugins::mcp_bridge::INSTRUCTIONS);
+    out.push_str(SESSION_HEADER);
+    if general {
+        general_scope(&mut out, thread);
+    } else {
+        machine_scope(&mut out, cfg, thread);
+    }
+    if let Some(block) = persona.filter(|b| !b.trim().is_empty()) {
+        out.push('\n');
+        out.push_str(block);
+        out.push('\n');
+    }
     out
 }
 
-fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
+/// The machine session's role and rules, identical for every machine.
+fn machine_rules(out: &mut String, cfg: &Config) {
     out.push_str(
         "You are the PC Laptops bench diagnostician, an AI agent working inside MasterTech for a \
          technician who is watching this session live and can answer you in chat.\n\n",
     );
+    out.push_str(&format!(
+        "HOW THIS SESSION WORKS\n\
+         - Every tool you have is a MasterTech tool; there is no shell, no file system and no web \
+           here. Do not attempt to run commands on this host.\n\
+         - Only the target machine named under THIS SESSION is in scope. Pass its connection_string \
+           exactly as given there; calls for any other machine are refused.\n\
+         - A technician may have to approve a tool call before it runs. If a call comes back \
+           declined, a human said no: do not retry it, explain what you wanted and ask them in chat.\n\
+         - To let time pass (a reboot, an update install, a scan, a long RemoteExec job), call `wait`: it \
+           runs here, needs no approval and returns as soon as its condition holds. Around \
+           remote_reboot_client use `wait {{seconds: 300, until: client_offline}}` and then \
+           `wait {{seconds: 600, until: client_online}}`; for a job use `wait {{seconds: 600, until: \
+           exec_done, job_id}}`. Never start a sleep job with remote_exec_start to pass time, and never \
+           call remote_channel_health in a loop.\n\
+         - A tool call is cut off after {}s but keeps running on the machine. Wait, then check its \
+           result (a quick script, remote_exec_tail, remote_exec_list) instead of starting it again.\n\
+         - When you need something only a human at the bench can tell you (what the customer \
+           reported, what they see on screen, whether a part was swapped), ask it plainly in your \
+           reply and end your turn; the technician answers in this chat.\n\
+         - Keep replies short and concrete: symptom, evidence, verdict, next step. The technician \
+           reads you between jobs.\n\n",
+        cfg.tool_timeout_secs
+    ));
+    out.push_str(POWERSHELL_NOTES);
+}
+
+/// The target machine, requester, provenance and session call for this thread.
+fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
     out.push_str(&format!(
         "TARGET MACHINE: connection_string `{}`{}{}{}\n",
         thread.connection_string,
@@ -70,30 +109,6 @@ fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
          diagnosed_by = `{actor}` when you mark a diagnosis.\n"
     ));
     out.push_str(&session_call(thread, &actor));
-    out.push_str(&format!(
-        "\nHOW THIS SESSION WORKS\n\
-         - Every tool you have is a MasterTech tool; there is no shell, no file system and no web \
-           here. Do not attempt to run commands on this host.\n\
-         - Only this one machine is in scope. Pass its connection_string exactly as given; calls \
-           for any other machine are refused.\n\
-         - A technician may have to approve a tool call before it runs. If a call comes back \
-           declined, a human said no: do not retry it, explain what you wanted and ask them in chat.\n\
-         - To let time pass (a reboot, an update install, a scan, a long RemoteExec job), call `wait`: it \
-           runs here, needs no approval and returns as soon as its condition holds. Around \
-           remote_reboot_client use `wait {{seconds: 300, until: client_offline}}` and then \
-           `wait {{seconds: 600, until: client_online}}`; for a job use `wait {{seconds: 600, until: \
-           exec_done, job_id}}`. Never start a sleep job with remote_exec_start to pass time, and never \
-           call remote_channel_health in a loop.\n\
-         - A tool call is cut off after {}s but keeps running on the machine. Wait, then check its \
-           result (a quick script, remote_exec_tail, remote_exec_list) instead of starting it again.\n\
-         - When you need something only a human at the bench can tell you (what the customer \
-           reported, what they see on screen, whether a part was swapped), ask it plainly in your \
-           reply and end your turn; the technician answers in this chat.\n\
-         - Keep replies short and concrete: symptom, evidence, verdict, next step. The technician \
-           reads you between jobs.\n\n",
-        cfg.tool_timeout_secs
-    ));
-    out.push_str(POWERSHELL_NOTES);
 }
 
 /// Windows PowerShell traps agent scripts have hit on customer machines.
@@ -148,19 +163,20 @@ fn session_call(thread: &AgentThread, actor: &str) -> String {
     )
 }
 
-fn general_scope(out: &mut String, thread: &AgentThread) {
+/// The general session's role and rules, identical for every technician.
+fn general_rules(out: &mut String) {
     out.push_str(
         "You are the PC Laptops bench assistant, an AI agent working inside MasterTech for a \
          technician who can answer you in chat.\n\n",
     );
-    out.push_str(&format!(
-        "NO MACHINE IS IN SCOPE. This is {}'s standing session for questions answered from \
-         Mastertech's records: service orders, customers, computers, diagnostic history, crash \
+    out.push_str(
+        "NO MACHINE IS IN SCOPE. This is the technician's standing session for questions answered \
+         from Mastertech's records: service orders, customers, computers, diagnostic history, crash \
          intel, driver snapshots, AI task checklists, PrestaShop orders and Odoo inventory. \
          You can also create tasks and reminders, schedule recurring tasks, notify coworkers, \
-         route parts between stores and write ticket briefs for them.\n\n",
-        thread.requested_by.as_deref().unwrap_or("the technician")
-    ));
+         route parts between stores and write ticket briefs for them. THIS SESSION below names \
+         the technician.\n\n",
+    );
     out.push_str(
         "HOW THIS SESSION WORKS\n\
          - Every tool you have is a MasterTech tool; there is no shell, no file system and no web \
@@ -175,6 +191,14 @@ fn general_scope(out: &mut String, thread: &AgentThread) {
            roster, not a list of sessions.\n\
          - Keep replies short and concrete. The technician reads you between jobs.\n\n",
     );
+}
+
+/// The technician whose standing session this is.
+fn general_scope(out: &mut String, thread: &AgentThread) {
+    out.push_str(&format!(
+        "STANDING SESSION OF: {}\n",
+        thread.requested_by.as_deref().unwrap_or("the technician")
+    ));
 }
 
 /// Who the session works for and how they want to be answered.
@@ -202,6 +226,57 @@ pub fn persona_block(owner: &Person, profile: Option<&AiProfile>, store_time: &s
 mod tests {
     use super::*;
     use database::schema::RecordId;
+
+    fn cfg() -> Config {
+        Config {
+            url: "ws://127.0.0.1:7420".into(),
+            token: String::new(),
+            model: "zc-heavy".into(),
+            general_model: "zc-quick".into(),
+            provider: "zcpool".into(),
+            cwd: "/tmp".into(),
+            max_threads: 2,
+            node: "admin-agent".into(),
+            agent_alias: "diagnostician".into(),
+            approval_ttl_secs: 600,
+            tool_output_chars: 24_000,
+            tool_timeout_secs: 320,
+            retention_days: 30,
+            zeroclaw: None,
+        }
+    }
+
+    #[test]
+    fn sessions_of_a_kind_share_everything_before_the_session_block() {
+        let cfg = cfg();
+        let tools = vec!["get_service_order".to_string()];
+        let first = developer_instructions(&cfg, &thread(Some("2155467")), &tools, &[], true, Some("WHO YOU WORK FOR\nDerek"));
+        let mut other = thread(None);
+        other.connection_string = "LAPTOP-1:abc".into();
+        other.requested_by = Some("jacob.hardy@pclaptops.com".into());
+        let second = developer_instructions(&cfg, &other, &tools, &[], true, Some("WHO YOU WORK FOR\nJacob"));
+        let (shared, tail) = first.split_once(SESSION_HEADER).expect("session header");
+        assert_eq!(Some(shared), second.split_once(SESSION_HEADER).map(|(s, _)| s));
+        assert!(!shared.contains("DESKTOP-787KAB8") && !shared.contains("derek.anderson"), "session text in the shared part");
+        assert!(tail.contains("TARGET MACHINE: connection_string `DESKTOP-787KAB8:8d3db801f`"), "{tail}");
+        assert!(tail.trim_end().ends_with("Derek"), "{tail}");
+
+        let mut general = thread(None);
+        general.connection_string = "general:derek.anderson@pclaptops.com".into();
+        let text = developer_instructions(&cfg, &general, &tools, &[], false, None);
+        let (shared, tail) = text.split_once(SESSION_HEADER).expect("session header");
+        assert!(!shared.contains("derek.anderson"), "email in the shared part");
+        assert!(tail.contains("STANDING SESSION OF: derek.anderson@pclaptops.com"), "{tail}");
+    }
+
+    #[test]
+    fn general_sessions_run_on_the_general_model() {
+        let cfg = cfg();
+        assert_eq!(cfg.model_for("general:derek.anderson@pclaptops.com"), "zc-quick");
+        assert_eq!(cfg.model_for("DESKTOP-787KAB8:8d3db801f"), "zc-heavy");
+        assert_eq!(cfg.driven_by("general:derek.anderson@pclaptops.com"), "codex/diagnostician@zc-quick#admin-agent");
+        assert_eq!(cfg.driven_by("DESKTOP-787KAB8:8d3db801f"), "codex/diagnostician@zc-heavy#admin-agent");
+    }
 
     fn thread(service_number: Option<&str>) -> AgentThread {
         AgentThread {
