@@ -43,6 +43,28 @@ fn synthesize(text: &str, out_wav: &str) -> Result<()> {
     Ok(())
 }
 
+/// Opens a session and returns finished agent messages as they land, finalizing on idle.
+async fn stream_reply(cs: &str, tech: Option<&str>, text: &str, timeout_secs: u64) -> Result<String> {
+    use database::agent_chat::{poll_reply, send, ReplyState};
+    let sent = send(cs, tech, None, None, text).await?;
+    let mut last = String::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        match poll_reply(&sent.thread, sent.after_seq).await? {
+            ReplyState::Done(final_text) => return Ok(final_text),
+            ReplyState::Waiting(Some(msg)) if msg != last => {
+                log::info!("chunk: {msg}");
+                last = msg;
+            }
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            bail!("agent did not finish within {timeout_secs}s");
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -59,8 +81,9 @@ async fn main() -> Result<()> {
         bail!("empty transcript");
     }
 
-    // Unique per call so send() opens a fresh session instead of messaging an
-    // existing thread (the guest session cannot write turns to another's thread).
+    // Guest opens a fresh thread per utterance (it cannot write turns to an
+    // existing thread); a tech record-user could reuse general:<email> for a warm
+    // prompt cache.
     let who = tech.as_deref().unwrap_or("guest");
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -68,7 +91,12 @@ async fn main() -> Result<()> {
         .unwrap_or(0);
     let cs = format!("general:voice:{who}:{nonce}");
     let timeout_secs: u64 = env_or("VB_TIMEOUT", "600").parse().unwrap_or(600);
-    let reply = database::agent_chat::ask(&cs, tech.as_deref(), &transcript, Duration::from_secs(timeout_secs)).await?;
+
+    let prompt = format!(
+        "Voice mode: reply in one or two short spoken sentences for text-to-speech; use tools only if necessary.\n\n{transcript}"
+    );
+
+    let reply = stream_reply(&cs, tech.as_deref(), &prompt, timeout_secs).await?;
     log::info!("ASSISTANT: {reply}");
 
     synthesize(&reply, &out_wav)?;

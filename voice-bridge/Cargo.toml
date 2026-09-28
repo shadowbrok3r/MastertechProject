@@ -6,7 +6,7 @@ description = "Bench voice console server pipeline: STT (whisper.cpp) -> Mastert
 
 [dependencies]
 database = { path = "../database" }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 anyhow.workspace = true
 log.workspace = true
 env_logger = "0.11"
