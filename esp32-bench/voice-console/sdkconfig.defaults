@@ -1,0 +1,13 @@
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_FREERTOS_HZ=1000
+
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+
+# Wi-Fi runs over the onboard ESP32-C6 via esp_hosted + esp_wifi_remote (both in
+# Cargo.toml). Waveshare's own P4 example uses their default (SDIO) config with no
+# custom pins, so nothing board-specific is needed here. The C6 must run the
+# esp_hosted slave firmware (Waveshare ships it). SPIRAM (octal/hex + speed) is
+# board-specific; add it when audio needs it.
