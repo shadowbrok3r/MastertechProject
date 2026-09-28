@@ -49,7 +49,10 @@ pub async fn dispatch(req: AssistRequest) {
     let Some(cfg) = config() else { return };
     match AssistRequest::claim(&req.id).await {
         Ok(true) => {}
-        Ok(false) => return,
+        Ok(false) => {
+            log::info!("codex: request {} was no longer pending; not claimed", req.id.key_string());
+            return;
+        }
         Err(e) => {
             log::warn!("codex: claim failed for {}: {e}", req.id.key_string());
             return;

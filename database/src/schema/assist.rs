@@ -212,7 +212,7 @@ impl AssistRequest {
             )
             .bind(("id", id.clone()))
             .await?;
-        let claimed: Vec<RecordId> = res.take(0).unwrap_or_default();
+        let claimed: Vec<RecordId> = res.take(0)?;
         Ok(!claimed.is_empty())
     }
 
