@@ -66,6 +66,7 @@ pub mod zeroclaw_gateway;
 pub mod task_schedule;
 pub mod assistant;
 pub mod morning_brief;
+pub mod fleet_intel;
 
 pub use task::*;
 pub use task_note::*;

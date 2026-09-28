@@ -2007,6 +2007,14 @@ pub struct CrashIntelSignatureParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct FleetPatternCheckParams {
+    #[schemars(description = "Web Console connection_string of the machine at intake. Its computer, model and latest check-in notes are resolved from it.")]
+    pub connection_string: String,
+    #[schemars(description = "Max similar same-model cases to return (default 5)")]
+    pub max_cases: Option<usize>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct CrashVerdictRecordParams {
     #[schemars(description = "Bugcheck code — '0x133', '133', or 'DPC_WATCHDOG_VIOLATION (133)'")]
     pub bugcheck_code: String,
@@ -8373,6 +8381,29 @@ impl PluginToolProvider {
                 p.bugcheck_code, p.module
             ))])),
         }
+    }
+
+    #[tool(
+        name = "fleet_pattern_check",
+        description = "Seen-before check for a machine at intake: prior crashes of the same signature elsewhere in the fleet (with any recorded verdict/fix), and resolved cases on the same model ranked by shared crash and shared complaint words. Read-only. Pass the connection_string; the computer, model and latest check-in notes resolve from it. Returns model_key/model_label, crash_hits and similar_cases, and a rendered 'brief' line (empty when nothing matches)."
+    )]
+    async fn fleet_pattern_check(
+        &self,
+        Parameters(p): Parameters<FleetPatternCheckParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let max_cases = p.max_cases.unwrap_or(database::schema::fleet_intel::DEFAULT_MAX_CASES);
+        let m = database::schema::fleet_intel::fleet_pattern_check(&p.connection_string, max_cases)
+            .await
+            .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
+            "model_key": m.model_key,
+            "model_label": m.model_label,
+            "has_signal": m.has_signal(),
+            "brief": m.render(),
+            "crash_hits": m.crash_hits,
+            "similar_cases": m.similar_cases,
+        }))
+        .map_err(to_internal)?]))
     }
 
     #[tool(
