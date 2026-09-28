@@ -39,6 +39,14 @@ static NOTICES: Lazy<Mutex<HashMap<String, Vec<String>>>> =
 /// Notices kept per client while nothing drains them; the oldest go first.
 const MAX_NOTICES_PER_CLIENT: usize = 50;
 
+/// Run after a batch records at least one sighting, with the client's connection string and computer.
+static AFTER_INGEST: std::sync::OnceLock<fn(String, Option<RecordId>)> = std::sync::OnceLock::new();
+
+/// Registers the callback run after a batch records sightings; the first registration wins.
+pub fn set_after_ingest(hook: fn(String, Option<RecordId>)) {
+    let _ = AFTER_INGEST.set(hook);
+}
+
 /// True for dump-decode (cdb `!analyze`) results worth ingesting.
 pub fn is_dump_analysis_result(plugin_id: &str, tool_name: &str) -> bool {
     plugin_id == DUMP_DECODE_PLUGIN_ID && ANALYZE_TOOLS.contains(&tool_name)
@@ -322,6 +330,9 @@ fn spawn_ingest(
             );
             if let Ok(mut map) = LATEST_INGESTS.lock() {
                 map.insert(connection_string.clone(), ingests);
+            }
+            if let Some(hook) = AFTER_INGEST.get() {
+                hook(connection_string.clone(), links.computer.clone());
             }
         }
 

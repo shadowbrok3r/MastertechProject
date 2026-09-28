@@ -279,6 +279,7 @@ pub async fn run(mcp_http: bool) -> anyhow::Result<()> {
         Arc::new(std::sync::RwLock::new(mgr))
     };
 
+    crate::plugins::crash_intel_hooks::set_after_ingest(fleet_notice::recheck_after_ingest);
     tokio::spawn(run_session_engine());
     codex::require_system_session().await;
     spawn_codex_broker(manager.clone());

@@ -11,6 +11,9 @@ const RECHECK_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
 
 static LAST_CHECK: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Serializes checks so a re-check reads the note an in-flight check posts.
+static RUN_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// `MTECH_FLEET_NOTICE=0` turns the notice off.
 fn enabled() -> bool {
     std::env::var("MTECH_FLEET_NOTICE").map(|v| v.trim() != "0").unwrap_or(true)
@@ -29,12 +32,23 @@ fn due(connection_string: &str) -> bool {
     }
 }
 
+/// Re-checks a machine after new crash sightings, ignoring the recheck window.
+pub fn recheck_after_ingest(connection_string: String, computer: Option<RecordId>) {
+    if let Ok(mut last) = LAST_CHECK.lock() {
+        last.remove(&connection_string);
+    }
+    tokio::spawn(async move {
+        notice_for(&connection_string, computer.as_ref()).await;
+    });
+}
+
 /// Checks the fleet for a connecting machine; silent unless a strong match is new to its ticket.
 pub async fn notice_for(connection_string: &str, computer: Option<&RecordId>) {
     let Some(computer) = computer else { return };
     if !enabled() || !due(connection_string) {
         return;
     }
+    let _serial = RUN_LOCK.lock().await;
     if let Err(e) = notice(connection_string, computer).await {
         log::warn!("fleet notice: {connection_string}: {e}");
     }
