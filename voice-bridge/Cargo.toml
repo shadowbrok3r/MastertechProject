@@ -1,0 +1,12 @@
+[package]
+name = "voice-bridge"
+version = "0.1.0"
+edition = "2024"
+description = "Bench voice console server pipeline: STT (whisper.cpp) -> Mastertech assistant -> TTS (Piper)"
+
+[dependencies]
+database = { path = "../database" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+anyhow.workspace = true
+log.workspace = true
+env_logger = "0.11"

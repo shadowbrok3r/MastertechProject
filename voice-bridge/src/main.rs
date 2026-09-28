@@ -1,0 +1,70 @@
+//! Server voice pipeline: STT (whisper.cpp) -> the tech's Mastertech assistant
+//! (`database::agent_chat::ask`, the Ctrl+K path) -> TTS (Piper). Stand-in CLI:
+//! `voice-bridge <input.wav> [tech_email]`; a WAV in, a spoken reply WAV out.
+
+use std::io::Write;
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use anyhow::{bail, Context, Result};
+
+fn env_or(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn transcribe(wav: &str) -> Result<String> {
+    let bin = env_or("WHISPER_BIN", "/home/shadowbroker/voice/whisper.cpp/build/bin/whisper-cli");
+    let model = env_or("WHISPER_MODEL", "/home/shadowbroker/voice/whisper.cpp/models/ggml-base.en.bin");
+    let prefix = "/tmp/vb_stt";
+    let status = Command::new(&bin)
+        .args(["-m", &model, "-f", wav, "-nt", "-np", "-otxt", "-of", prefix])
+        .status()
+        .with_context(|| format!("running {bin}"))?;
+    if !status.success() {
+        bail!("whisper-cli failed: {status}");
+    }
+    let text = std::fs::read_to_string(format!("{prefix}.txt"))?.trim().to_string();
+    Ok(text)
+}
+
+fn synthesize(text: &str, out_wav: &str) -> Result<()> {
+    let bin = env_or("PIPER_BIN", "/home/shadowbroker/voice/piper/piper/piper");
+    let voice = env_or("PIPER_VOICE", "/home/shadowbroker/voice/piper/voices/en_US-lessac-medium.onnx");
+    let mut child = Command::new(&bin)
+        .args(["--model", &voice, "--output_file", out_wav])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .with_context(|| format!("running {bin}"))?;
+    child.stdin.take().context("piper stdin")?.write_all(text.as_bytes())?;
+    if !child.wait()?.success() {
+        bail!("piper failed");
+    }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::init();
+    let mut args = std::env::args().skip(1);
+    let in_wav = args.next().context("usage: voice-bridge <input.wav> [tech_email]")?;
+    let tech = args.next();
+    let out_wav = env_or("VB_OUT", "/tmp/vb_reply.wav");
+
+    database::init_database().await?;
+
+    let transcript = transcribe(&in_wav)?;
+    log::info!("STT: {transcript}");
+    if transcript.is_empty() {
+        bail!("empty transcript");
+    }
+
+    let cs = database::schema::general_connection(tech.as_deref().unwrap_or("guest"));
+    let reply = database::agent_chat::ask(&cs, tech.as_deref(), &transcript, Duration::from_secs(180)).await?;
+    log::info!("ASSISTANT: {reply}");
+
+    synthesize(&reply, &out_wav)?;
+    log::info!("TTS -> {out_wav}");
+    println!("{reply}");
+    Ok(())
+}
