@@ -9,7 +9,10 @@
 //!
 //! Skips (does not fail) when no key is configured, so it's safe in CI.
 
-use database::xbm::XbmClient;
+use database::xbm::{
+    CecLabelMode, CommentVisibility, CommentsQuery, ConfigRef, Oa3InjectionQuery, RmaReport,
+    XbmClient, XbmError,
+};
 
 fn client_or_skip() -> Option<XbmClient> {
     let c = XbmClient::from_env();
@@ -153,4 +156,207 @@ async fn order_backend_lookup_round_trip() {
             summary.reference, summary.customer_name, summary.lookup_input()
         );
     }
+}
+
+/// Decode failures, transport errors and 400s; other refusals are printed only.
+#[derive(Default)]
+struct Probes {
+    failures: Vec<String>,
+}
+
+impl Probes {
+    fn check<T: std::fmt::Display>(&mut self, label: &str, result: Result<T, XbmError>) {
+        match result {
+            Ok(summary) => eprintln!("  ok       {label:<44} {summary}"),
+            Err(e @ XbmError::Api { status, .. }) if status != 400 => {
+                eprintln!("  refused  {label:<44} {e}")
+            }
+            Err(e) => {
+                eprintln!("  FAIL     {label:<44} {e}");
+                self.failures.push(format!("{label}: {e}"));
+            }
+        }
+    }
+}
+
+fn shape(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            format!("{{{}}}", keys.join(", "))
+        }
+        other => other.to_string().chars().take(60).collect(),
+    }
+}
+
+/// Read-only calls; the CEC label runs in `DryRun`, which writes no snapshot.
+#[tokio::test]
+#[ignore = "hits the live build-mgmt API; run with --ignored"]
+async fn new_read_endpoints_decode() {
+    let Some(client) = client_or_skip() else {
+        return;
+    };
+    let mut probes = Probes::default();
+
+    probes.check(
+        "GET /statuses",
+        client.statuses().await.map(|p| {
+            let retired = p.statuses.iter().filter(|s| s.retired).count();
+            let ordered = p.statuses.iter().filter(|s| s.display_order > 0).count();
+            format!(
+                "{} statuses, {retired} retired, {ordered} ordered",
+                p.statuses.len()
+            )
+        }),
+    );
+    probes.check(
+        "GET /staff?permission=qc.perform",
+        client
+            .staff_with_permission("qc.perform", Some(true))
+            .await
+            .map(|p| format!("{} holders", p.staff.len())),
+    );
+    probes.check(
+        "GET /app-versions?name=OA3InjectionWrapper",
+        client
+            .app_version("OA3InjectionWrapper")
+            .await
+            .map(|v| format!("{} retired={}", v.version, v.retired)),
+    );
+    probes.check(
+        "GET /skus/resolve?sku=LAP/BB/165070TI",
+        client
+            .resolve_sku("LAP/BB/165070TI")
+            .await
+            .map(|r| match r {
+                Some(r) => format!("{:?} build={}", r.product_title, r.build.is_some()),
+                None => "sku_not_found".to_string(),
+            }),
+    );
+    probes.check(
+        "GET /oa3/injection-log?limit=3",
+        client
+            .oa3_injections(Oa3InjectionQuery {
+                limit: Some(3),
+                ..Default::default()
+            })
+            .await
+            .map(|p| format!("{} rows", p.injections.len())),
+    );
+    probes.check(
+        "GET /corp-deals",
+        client.corp_deals(None, None).await.map(|v| shape(&v)),
+    );
+    probes.check("GET /roles", client.roles(None).await.map(|v| shape(&v)));
+    probes.check(
+        "GET /rma/reports/credit-not-debited",
+        client
+            .rma_report(RmaReport::CreditNotDebited)
+            .await
+            .map(|v| shape(&v)),
+    );
+    probes.check(
+        "GET /rma/dwell-sweep",
+        client.rma_dwell_preview().await.map(|v| shape(&v)),
+    );
+    probes.check(
+        "GET /balance-invoices?limit=3",
+        client.balance_invoices(Some(3)).await.map(|v| shape(&v)),
+    );
+
+    let queue = client
+        .orders(&[], None, None)
+        .await
+        .expect("GET /orders failed");
+    let named = || queue.orders.iter().filter(|o| o.name.starts_with('#'));
+    let Some(first) = named()
+        .find(|o| o.build_serial.as_deref().is_some_and(|s| !s.is_empty()))
+        .or_else(|| named().next())
+    else {
+        eprintln!("xbm_live: no #-named order for the order-scoped probes");
+        assert!(probes.failures.is_empty(), "{:#?}", probes.failures);
+        return;
+    };
+    let number = first.name.trim_start_matches('#');
+    let resolved = client
+        .resolve(number)
+        .await
+        .expect("GET /orders/resolve failed");
+    eprintln!("xbm_live: order-scoped probes on {}", first.name);
+
+    probes.check(
+        "GET /oa3/attach",
+        client
+            .oa3_attach_target(number, resolved.config_id.as_deref())
+            .await
+            .map(|t| {
+                format!(
+                    "{} os lines, injected={}",
+                    t.os_lines.len(),
+                    t.already_injected
+                )
+            }),
+    );
+    probes.check(
+        "GET /orders/{id}/service",
+        client
+            .service_record(&resolved.order_gid)
+            .await
+            .map(|r| format!("device={:?}", r.details.device_name)),
+    );
+    probes.check(
+        "GET /orders/{id}/comments?visibility=internal",
+        client
+            .comments_with(
+                &resolved.order_gid,
+                CommentsQuery {
+                    limit: Some(1),
+                    visibility: Some(CommentVisibility::Internal),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map(|p| format!("{} comments", p.comments.len())),
+    );
+
+    // Build-scoped probes on the Xidax store, using the guide's documented build-sheet pair.
+    let xidax = XbmClient::from_env().for_shop("");
+    match xidax.resolve("3840-53147").await {
+        Ok(pair) => {
+            if let Some(config_id) = pair.config_id.as_deref() {
+                probes.check(
+                    "GET /orders/{id}?configId= (xidax)",
+                    xidax
+                        .order_detail_for_config(&pair.order_gid, ConfigRef::Id(config_id))
+                        .await
+                        .map(|d| {
+                            let active = d.configs.iter().filter(|c| c.active).count();
+                            format!(
+                                "{} lines, {} configs ({active} active)",
+                                d.line_items.len(),
+                                d.configs.len()
+                            )
+                        }),
+                );
+            }
+            probes.check(
+                "GET /builds/cec-label?dry=1 (xidax)",
+                xidax
+                    .cec_label("3840-53147", CecLabelMode::DryRun)
+                    .await
+                    .map(|l| {
+                        format!(
+                            "{:?} complete={} missing={}",
+                            l.cec_model,
+                            l.cec_complete,
+                            l.cec_missing.len()
+                        )
+                    }),
+            );
+        }
+        Err(e) => eprintln!("  skipped  xidax build-scoped probes: {e}"),
+    }
+
+    assert!(probes.failures.is_empty(), "{:#?}", probes.failures);
 }
