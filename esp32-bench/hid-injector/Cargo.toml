@@ -26,6 +26,12 @@ embuild = { version = "0.33", features = ["espidf"] }
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_websocket_client", version = ">=1.2.0" }
 
+# TinyUSB with the HID device class for the USB keyboard + mouse. Pinned to 1.x:
+# esp-idf-sys 0.36's bindings reference headers (tinyusb_types.h, tusb_tasks.h)
+# that esp_tinyusb 2.x removed.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_tinyusb", version = ">=1.7.0,<2.0.0" }
+
 [profile.release]
 opt-level = "s"
 lto = true

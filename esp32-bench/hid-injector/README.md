@@ -2,14 +2,22 @@
 
 Rust / `esp-idf-svc` firmware for the ESP32-S3 DevKitC-1. Presents as a USB keyboard + absolute mouse to a target PC and takes commands from Mastertech over the relay. See `../../docs/ESP32_BENCH_HARDWARE_PLAN.md` for the full plan.
 
-Status: **step 1** — Wi-Fi + relay room round-trip + arm-gated JSON command dispatch. USB HID report emission is step 2 (injection commands currently reply `usb hid backend not built yet`).
+Status: **step 2** — Wi-Fi + relay round-trip, arm-gated dispatch, and a TinyUSB composite **keyboard + absolute mouse**. Builds/enumerates (VID 0x303A / PID 0x4004); live keystroke/click injection is not yet verified on a target host.
 
 ## Layout
 
 - `src/protocol.rs` — JSON request/response types. No ESP deps; host-testable.
-- `src/hid.rs` — arm state and command dispatch. No ESP deps; host-testable.
-- `src/device.rs` — Wi-Fi join + relay WebSocket client (compiled only for `target_os = "espidf"`).
+- `src/keymap.rs` — ASCII→HID usage and chord parsing. No ESP deps; host-testable.
+- `src/hid.rs` — arm state, dispatch, and the `Hid` backend trait. No ESP deps; host-testable.
+- `src/usb.rs` — TinyUSB composite keyboard + absolute mouse `Hid` backend (`target_os = "espidf"`).
+- `src/device.rs` — installs USB, joins Wi-Fi, holds the relay socket (`target_os = "espidf"`).
 - `src/main.rs` — target-gated entry point.
+
+## USB ports
+
+The DevKitC-1 has two USB connectors:
+- **UART (CH343 → COM port):** flashing and logs.
+- **USB-OTG (GPIO19/20, "USB"):** the HID data link — plug this into the target PC. USB init runs before Wi-Fi, so the device enumerates even with no network.
 
 ## Host tests (fast, no ESP-IDF)
 
@@ -35,7 +43,9 @@ cargo build --release
 
 First build downloads and compiles ESP-IDF v5.3.3 (~10 min). `.cargo/config.toml` sets the `xtensa-esp32s3-espidf` target, `ldproxy` linker and `build-std`.
 
-**`CARGO_WORKSPACE_DIR` is not optional here.** embuild derives the workspace root by walking a fixed number of levels up from `OUT_DIR`; with `CARGO_TARGET_DIR` at a drive root (`C:\hidt`) that lands on `C:\`, so esp-idf-sys reads empty `extra_components`, never fetches `esp_websocket_client`, and the build fails `unresolved import esp_idf_svc::ws::client`. Setting `CARGO_WORKSPACE_DIR` to this crate dir overrides the heuristic. (Alternatively, keep the target dir inside the crate — but that path is deep enough to hit MAX_PATH.)
+**`CARGO_WORKSPACE_DIR` is not optional here.** embuild derives the workspace root by walking a fixed number of levels up from `OUT_DIR`; with `CARGO_TARGET_DIR` at a drive root (`C:\hidt`) that lands on `C:\`, so esp-idf-sys reads empty `extra_components`, never fetches the remote components (`esp_websocket_client`, `esp_tinyusb`), and the build fails `unresolved import esp_idf_svc::ws::client`. Setting `CARGO_WORKSPACE_DIR` to this crate dir overrides the heuristic. (Alternatively, keep the target dir inside the crate — but that path is deep enough to hit MAX_PATH.)
+
+**TinyUSB build notes** (all handled in `Cargo.toml` / `.cargo/config.toml` / `sdkconfig.defaults`, listed so a version bump doesn't re-break them): `esp_tinyusb` is pinned `<2.0.0` because esp-idf-sys 0.36's bindings reference 1.x-only headers; `.cargo/config.toml` sets `BINDGEN_EXTRA_CLANG_ARGS=-DCFG_TUSB_OS_INC_PATH=freertos/` so bindgen resolves TinyUSB's `FreeRTOS.h`; and `CONFIG_TINYUSB_HID_COUNT=1` compiles the HID class in (the `tud_hid_n_*` symbols are hand-declared in `usb.rs`). Changing `extra_components` needs the esp-idf-sys build re-run — delete `<CARGO_TARGET_DIR>/<triple>/release/.fingerprint/esp-idf-sys-*` and rebuild.
 
 ### Device config (compile-time env, all optional)
 

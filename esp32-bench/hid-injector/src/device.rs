@@ -14,8 +14,9 @@ use esp_idf_svc::ws::client::{
     EspWebSocketClient, EspWebSocketClientConfig, FrameType, WebSocketEvent, WebSocketEventType,
 };
 
-use crate::hid::{dispatch, Injector};
+use crate::hid::Injector;
 use crate::protocol::{is_relay_control, Envelope, Response};
+use crate::usb::UsbHid;
 
 const WIFI_SSID: &str = match option_env!("HID_WIFI_SSID") {
     Some(v) => v,
@@ -42,6 +43,10 @@ pub fn run() -> Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
+    let usb = UsbHid::new()?;
+    log::info!("usb hid device installed");
+    let mut inj = Injector::new(usb);
+
     if WIFI_SSID.is_empty() {
         log::error!("no Wi-Fi configured; build with HID_WIFI_SSID and HID_WIFI_PASS set");
         loop {
@@ -61,7 +66,6 @@ pub fn run() -> Result<()> {
         on_ws_event(event, &tx)
     })?;
 
-    let mut inj = Injector::new();
     loop {
         let Ok(line) = rx.recv() else {
             log::error!("event channel closed; exiting");
@@ -73,7 +77,7 @@ pub fn run() -> Result<()> {
                 continue;
             }
             let resp = match serde_json::from_str::<Envelope>(part) {
-                Ok(env) => dispatch(env, &mut inj),
+                Ok(env) => inj.dispatch(env),
                 Err(e) => Response::err(None, format!("bad command json: {e}")),
             };
             if let Err(e) = client.send(FrameType::Text(false), resp.to_line().as_bytes()) {
@@ -143,7 +147,7 @@ fn on_ws_event(event: &Result<WebSocketEvent<'_>, EspIOError>, tx: &SyncSender<S
     }
 }
 
-fn handle_control(text: &str, inj: &mut Injector) {
+fn handle_control(text: &str, inj: &mut Injector<UsbHid>) {
     let text = text.trim();
     if text == "MASTER_DISCONNECTED" {
         inj.set_armed(false);

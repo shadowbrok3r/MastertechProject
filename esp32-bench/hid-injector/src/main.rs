@@ -5,10 +5,13 @@
 //! the toolchain, Wi-Fi and relay round-trip and gates injection behind an arm state.
 
 mod hid;
+mod keymap;
 mod protocol;
 
 #[cfg(target_os = "espidf")]
 mod device;
+#[cfg(target_os = "espidf")]
+mod usb;
 
 #[cfg(target_os = "espidf")]
 fn main() -> anyhow::Result<()> {

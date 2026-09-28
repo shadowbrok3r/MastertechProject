@@ -9,6 +9,9 @@ rustflags = ["--cfg", "espidf_time64"]
 [env]
 MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.3.3"
+# TinyUSB sets this via a CMake compile def the bindgen pass never sees, so its
+# osal header's `FreeRTOS.h` include fails to resolve without it.
+BINDGEN_EXTRA_CLANG_ARGS = { value = "-DCFG_TUSB_OS_INC_PATH=freertos/", force = true }
 
 [unstable]
 build-std = ["std", "panic_abort"]
