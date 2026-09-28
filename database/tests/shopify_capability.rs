@@ -15,7 +15,7 @@
 //! breaks, and the point of this file is the breakdown.
 
 use database::orders::ShopifyBackend;
-use database::xbm::{StaffAuthMethod, XbmClient};
+use database::xbm::{CommentsQuery, ConfigRef, ServicePatch, StaffAuthMethod, XbmClient};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Verdict {
@@ -169,10 +169,123 @@ async fn capability_matrix() {
         Err(e) => rows.push(row("Check-in / TUR sheet", "order detail", Verdict::Missing, e.to_string())),
     }
 
+    match xbm.service_record(&order_gid).await {
+        Ok(record) => {
+            let d = &record.details;
+            let filled = [
+                &d.device_name,
+                &d.device_mfg,
+                &d.device_model,
+                &d.device_serial,
+                &d.check_in_notes,
+                &d.intake_notes,
+            ]
+            .into_iter()
+            .filter(|v| !v.trim().is_empty())
+            .count();
+            rows.push(row(
+                "Check-in / TUR sheet",
+                "read the repair intake record",
+                Verdict::Works,
+                format!(
+                    "GET /service: {filled} of 6 intake fields set, password set={}",
+                    !d.device_password.is_empty()
+                ),
+            ));
+            if writes_enabled() {
+                // Rewrites one field with the value it already holds.
+                let patch = ServicePatch {
+                    check_in_notes: Some(d.check_in_notes.clone()),
+                    ..Default::default()
+                };
+                match xbm.update_service_record(&order_gid, &patch, None).await {
+                    Ok(_) => rows.push(row(
+                        "Check-in / TUR sheet",
+                        "save repair intake fields",
+                        Verdict::Works,
+                        "PATCH /service merged",
+                    )),
+                    Err(e) => rows.push(row(
+                        "Check-in / TUR sheet",
+                        "save repair intake fields",
+                        Verdict::Blocked,
+                        e.to_string(),
+                    )),
+                }
+            } else {
+                rows.push(row(
+                    "Check-in / TUR sheet",
+                    "save repair intake fields",
+                    Verdict::Skipped,
+                    "set CAPABILITY_WRITE=1",
+                ));
+            }
+        }
+        Err(e) => rows.push(row(
+            "Check-in / TUR sheet",
+            "read the repair intake record",
+            Verdict::Missing,
+            e.to_string(),
+        )),
+    }
+
     // ─── Notes / chats ───────────────────────────────────────────────────
     match xbm.comments(&order_gid, None, Some(50)).await {
         Ok(p) => rows.push(row("Notes / chats", "read the note history", Verdict::Works, format!("{} comments", p.comments.len()))),
         Err(e) => rows.push(row("Notes / chats", "read the note history", Verdict::Missing, e.to_string())),
+    }
+    let page = CommentsQuery {
+        limit: Some(2),
+        ..Default::default()
+    };
+    match xbm.comments_with(&order_gid, page).await {
+        Ok(first) => match first.next_before.as_deref() {
+            Some(cursor) => match xbm
+                .comments_with(
+                    &order_gid,
+                    CommentsQuery {
+                        before: Some(cursor),
+                        ..page
+                    },
+                )
+                .await
+            {
+                Ok(older) => rows.push(row(
+                    "Notes / chats",
+                    "page back through older notes",
+                    Verdict::Works,
+                    format!(
+                        "page 1={} page 2={}",
+                        first.comments.len(),
+                        older.comments.len()
+                    ),
+                )),
+                Err(e) => rows.push(row(
+                    "Notes / chats",
+                    "page back through older notes",
+                    Verdict::Missing,
+                    e.to_string(),
+                )),
+            },
+            None if first.comments.len() >= 2 => rows.push(row(
+                "Notes / chats",
+                "page back through older notes",
+                Verdict::Partial,
+                "full page but no nextBefore cursor",
+            )),
+            None => rows.push(row(
+                "Notes / chats",
+                "page back through older notes",
+                Verdict::Works,
+                "fits on one page",
+            )),
+        },
+        Err(e) => rows.push(row(
+            "Notes / chats",
+            "page back through older notes",
+            Verdict::Missing,
+            e.to_string(),
+        )),
     }
 
     if writes_enabled() {
@@ -336,6 +449,87 @@ async fn capability_matrix() {
         Err(e) => rows.push(row("Bench QC", "build-intake queue for the bench picker", Verdict::Missing, e.to_string())),
     }
 
+    match xbm.staff_with_permission("qc.perform", Some(true)).await {
+        Ok(s) => rows.push(row(
+            "Bench QC",
+            "technician picker limited to QC sign-off holders",
+            Verdict::Works,
+            format!("{} active staff hold qc.perform", s.staff.len()),
+        )),
+        Err(e) => rows.push(row(
+            "Bench QC",
+            "technician picker limited to QC sign-off holders",
+            Verdict::Missing,
+            e.to_string(),
+        )),
+    }
+    match xbm.statuses().await {
+        Ok(p) => {
+            let retired = p.statuses.iter().filter(|s| s.retired).count();
+            let ordered = p.statuses.iter().filter(|s| s.display_order > 0).count();
+            rows.push(row(
+                "Bench QC",
+                "status picker without retired statuses",
+                Verdict::Works,
+                format!(
+                    "{} statuses, {retired} retired, {ordered} with a pipeline position",
+                    p.statuses.len()
+                ),
+            ));
+        }
+        Err(e) => rows.push(row(
+            "Bench QC",
+            "status picker without retired statuses",
+            Verdict::Missing,
+            e.to_string(),
+        )),
+    }
+    match detail.as_ref().ok().and_then(|d| d.configs.first()) {
+        Some(config) => match xbm
+            .order_detail_for_config(&order_gid, ConfigRef::Gid(&config.gid))
+            .await
+        {
+            Ok(one) => rows.push(row(
+                "Bench QC",
+                "narrow a multi-build order to one machine",
+                Verdict::Works,
+                format!("{}: {} lines", config.build_name, one.line_items.len()),
+            )),
+            Err(e) => rows.push(row(
+                "Bench QC",
+                "narrow a multi-build order to one machine",
+                Verdict::Missing,
+                e.to_string(),
+            )),
+        },
+        None => rows.push(row(
+            "Bench QC",
+            "narrow a multi-build order to one machine",
+            Verdict::Skipped,
+            "probe order has no configurator builds",
+        )),
+    }
+    match xbm.resolve_sku("LAP/BB/165070TI").await {
+        Ok(Some(s)) => rows.push(row(
+            "Bench QC",
+            "name an Everest line from its bare SKU",
+            Verdict::Works,
+            format!("{:?} DMI profile={}", s.product_title, s.build.is_some()),
+        )),
+        Ok(None) => rows.push(row(
+            "Bench QC",
+            "name an Everest line from its bare SKU",
+            Verdict::Partial,
+            "sku_not_found",
+        )),
+        Err(e) => rows.push(row(
+            "Bench QC",
+            "name an Everest line from its bare SKU",
+            Verdict::Missing,
+            e.to_string(),
+        )),
+    }
+
     // ─── First run / OA3 ─────────────────────────────────────────────────
     match xbm.serial_history("1234").await {
         Ok(h) => rows.push(row(
@@ -353,6 +547,31 @@ async fn capability_matrix() {
         )),
         Err(e) => rows.push(row("First run / OA3 lookup", "find the original invoice from a hardware serial", Verdict::Missing, e.to_string())),
     }
+
+    match xbm.oa3_attach_target(&reference, None).await {
+        Ok(t) => rows.push(row(
+            "First run / OA3 lookup",
+            "Windows line on the order and any key already recorded",
+            Verdict::Works,
+            format!(
+                "{} Windows line(s), injected={}",
+                t.os_lines.len(),
+                t.already_injected
+            ),
+        )),
+        Err(e) => rows.push(row(
+            "First run / OA3 lookup",
+            "Windows line on the order and any key already recorded",
+            Verdict::Missing,
+            e.to_string(),
+        )),
+    }
+    rows.push(row(
+        "First run / OA3 lookup",
+        "record the injected key on the order",
+        Verdict::Skipped,
+        "POST /oa3/attach consumes a licence; never probed",
+    ));
 
     // ─── Report ──────────────────────────────────────────────────────────
     println!("\nShopify capability matrix — order {reference} on shop {}\n", shop());
