@@ -1,6 +1,6 @@
 //! assist_request statements against in-memory SurrealDB with the real table definition.
 
-use database::schema::assist::{CREATE_CONFIRMED_SQL, WITHDRAW_SQL};
+use database::schema::assist::{AUTO_NOTE_MAX, CREATE_CONFIRMED_SQL, TECH_NOTE_MAX, WITHDRAW_SQL};
 use database::schema::{random_record_id, AssistRequest, RecordId, ASSIST_REQUEST_TABLE};
 use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
@@ -70,6 +70,39 @@ async fn a_request_written_without_the_flag_reads_back_as_joining() {
         .expect("create statement");
 
     assert!(!read(&db, &id).await.fresh);
+}
+
+async fn accepts_note(db: &Surreal<Db>, id: &RecordId, trigger_source: &str, len: usize) -> bool {
+    db.query("CREATE $id CONTENT { connection_string: 'PC-1:abc', trigger_source: $trigger, status: 'pending', tech_note: $note }")
+        .bind(("id", id.clone()))
+        .bind(("trigger", trigger_source.to_string()))
+        .bind(("note", "n".repeat(len)))
+        .await
+        .expect("create")
+        .check()
+        .is_ok()
+}
+
+#[tokio::test]
+async fn only_an_auto_request_carries_a_note_past_the_technician_cap() {
+    let db = mem_db().await;
+    let key = |k: &str| RecordId::new(ASSIST_REQUEST_TABLE, k);
+    assert!(accepts_note(&db, &key("chat-at-cap"), "chat", TECH_NOTE_MAX).await);
+    assert!(!accepts_note(&db, &key("chat-over"), "chat", TECH_NOTE_MAX + 1).await);
+    assert!(!accepts_note(&db, &key("tur-over"), "tur_sheet", TECH_NOTE_MAX + 1).await);
+    assert!(!accepts_note(&db, &key("auto-over"), "auto", AUTO_NOTE_MAX + 1).await);
+
+    let id = key("auto-at-cap");
+    assert!(accepts_note(&db, &id, "auto", AUTO_NOTE_MAX).await);
+    let claimed: Vec<RecordId> = db
+        .query("UPDATE $id SET status = 'dispatched' WHERE status = 'pending' RETURN VALUE id")
+        .bind(("id", id.clone()))
+        .await
+        .expect("claim")
+        .take(0)
+        .expect("claimed ids");
+    assert_eq!(claimed, vec![id.clone()]);
+    assert_eq!(read(&db, &id).await.tech_note.map(|n| n.len()), Some(AUTO_NOTE_MAX));
 }
 
 async fn withdraw(db: &Surreal<Db>, id: &RecordId) -> Vec<RecordId> {

@@ -34,8 +34,10 @@ DEFINE FIELD service_order      ON assist_request TYPE none | record<service_ord
 DEFINE FIELD status             ON assist_request TYPE string DEFAULT 'pending'
     ASSERT $value IN ['pending', 'dispatched', 'completed', 'failed', 'declined'] PERMISSIONS FULL;
 DEFINE FIELD store              ON assist_request TYPE none | string PERMISSIONS FULL;
+-- 500 characters for a technician's note, 2000 for an automation ('auto') note.
 DEFINE FIELD tech_note          ON assist_request TYPE none | string
-    ASSERT $value == NONE OR string::len($value) <= 500 PERMISSIONS FULL;
+    ASSERT $value == NONE OR string::len($value) <= 500
+        OR (trigger_source == 'auto' AND string::len($value) <= 2000) PERMISSIONS FULL;
 DEFINE FIELD trigger_source     ON assist_request TYPE string DEFAULT 'tur_sheet'
     ASSERT $value IN ['auto', 'tur_sheet', 'chat'] PERMISSIONS FULL;
 
