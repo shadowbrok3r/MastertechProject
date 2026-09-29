@@ -255,16 +255,23 @@ jobs:
       - name: Download and Install Trunk
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.22.0-beta.1/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 
+      - name: Skip wasm-opt on pull requests
+        if: github.event_name == 'pull_request'
+        working-directory: ./MtechServer2.0
+        run: sed -i -E 's/data-wasm-opt="[^"]*"/data-wasm-opt="0"/g' index.html
+
       # `--locked` fails the build when Cargo.lock is stale.
       - name: Build with Trunk
         working-directory: ./MtechServer2.0
         run: ../trunk build --release --locked --config Trunk.toml
 
       - name: Pre-compress dist for nginx gzip_static
+        if: github.event_name != 'pull_request'
         working-directory: ./MtechServer2.0
         run: ../deploy/precompress.sh dist
 
       - name: Upload dist for the image build
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: mtechserver-dist
