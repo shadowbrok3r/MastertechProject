@@ -18,14 +18,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use std::sync::{Mutex, MutexGuard};
+
+use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::audio::{i16_from_le_bytes, i16_to_le_bytes, read_wav_mono, resample, write_wav_mono, BENCH_RATE};
-use crate::pipeline::{stream_reply, synthesize, transcribe, voice_prompt, Identity};
+use crate::audio::{
+    i16_from_le_bytes, i16_to_le_bytes, parse_wav_mono, read_wav_mono, resample, write_wav_mono, BENCH_RATE,
+};
+use crate::pipeline::{stream_reply, transcribe, voice_prompt, Identity};
+use crate::voices::{synthesize, ActiveVoice};
 
 /// Samples per outbound audio frame (~64 ms at 16 kHz).
 const FRAME_SAMPLES: usize = 1024;
@@ -36,6 +41,8 @@ const DISPLAY_MAX: usize = 1_200;
 const KEEPALIVE: Duration = Duration::from_secs(15);
 /// Longest gap between inbound frames (the relay pings every 10 s) before the socket counts as dead.
 const RELAY_SILENCE: Duration = Duration::from_secs(35);
+/// The board pings every 20 s; no frame for this long reads as offline.
+const BOARD_STALE: Duration = Duration::from_secs(45);
 
 fn master_base() -> &'static str {
     if cfg!(debug_assertions) { database::WS_MASTER_URL_LOCAL } else { database::WS_MASTER_URL }
@@ -121,16 +128,73 @@ impl Turn {
     }
 }
 
+/// What every board turn runs with.
+pub struct TurnContext {
+    pub id: Identity,
+    pub voice: Arc<ActiveVoice>,
+    pub timeout_secs: u64,
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Board presence and the live relay connection's outbound channel, for speech sent outside a turn.
+#[derive(Default)]
+pub struct BoardLink {
+    tx: Mutex<Option<mpsc::Sender<Message>>>,
+    last_seen: Mutex<Option<Instant>>,
+}
+
+impl BoardLink {
+    fn attach(&self, tx: &mpsc::Sender<Message>) {
+        *lock(&self.tx) = Some(tx.clone());
+    }
+
+    fn detach(&self, tx: &mpsc::Sender<Message>) {
+        let mut cur = lock(&self.tx);
+        if cur.as_ref().is_some_and(|c| c.same_channel(tx)) {
+            *cur = None;
+            *lock(&self.last_seen) = None;
+        }
+    }
+
+    fn seen(&self, present: bool) {
+        *lock(&self.last_seen) = present.then(Instant::now);
+    }
+
+    /// True while the board has sent a frame within [`BOARD_STALE`].
+    pub fn online(&self) -> bool {
+        lock(&self.last_seen).is_some_and(|t| t.elapsed() < BOARD_STALE)
+    }
+
+    /// Speaks `pcm16` (16 kHz) on the board with `text` on its display.
+    pub async fn speak(&self, text: &str, pcm16: &[i16]) -> Result<()> {
+        let tx = lock(&self.tx).clone().context("relay not connected")?;
+        send_speech(&tx, text, pcm16).await
+    }
+}
+
+/// Sends `tts_start` with `text`, the 16 kHz PCM frames, then `tts_end`.
+async fn send_speech(tx: &mpsc::Sender<Message>, text: &str, pcm16: &[i16]) -> Result<()> {
+    tx.send(text_frame("tts_start", &display_text(text))).await?;
+    for chunk in pcm16.chunks(FRAME_SAMPLES) {
+        tx.send(Message::Binary(i16_to_le_bytes(chunk).into())).await?;
+    }
+    tx.send(Message::Text(r#"{"cmd":"tts_end"}"#.into())).await?;
+    Ok(())
+}
+
 /// Joins `room` as master and serves utterances until interrupted, reconnecting on drop.
-pub async fn run_master(room: &str, id: Identity, timeout_secs: u64) -> Result<()> {
+pub async fn run_master(room: &str, ctx: TurnContext, board: Arc<BoardLink>) -> Result<()> {
     let url = database::websocket_url_with_room(master_base(), room, "master");
-    let id = Arc::new(id);
+    let ctx = Arc::new(ctx);
     log::info!("relay master joining room {room} at {}", master_base());
     loop {
         if let Err(e) = clear_master_slot(room).await {
             log::warn!("could not clear the master slot of {room}: {e}");
         }
-        if let Err(e) = serve_once(&url, Arc::clone(&id), timeout_secs).await {
+        if let Err(e) = serve_once(&url, &ctx, &board).await {
             log::warn!("relay session ended: {e}");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -160,7 +224,7 @@ async fn clear_master_slot(room: &str) -> Result<()> {
 }
 
 /// Serves one relay connection until it drops or goes silent.
-async fn serve_once(url: &str, id: Arc<Identity>, timeout_secs: u64) -> Result<()> {
+async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &BoardLink) -> Result<()> {
     let (ws, _resp) = tokio_tungstenite::connect_async(url).await?;
     let (sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::channel::<Message>(128);
@@ -175,118 +239,119 @@ async fn serve_once(url: &str, id: Arc<Identity>, timeout_secs: u64) -> Result<(
         let _ = sink.close().await;
     });
 
+    board.attach(&tx);
     let latest = Arc::new(AtomicU64::new(0));
     let mut capture: Option<Vec<i16>> = None;
     let mut watchdog = tokio::time::interval(Duration::from_secs(5));
     let mut last_inbound = Instant::now();
-    loop {
-        let msg = tokio::select! {
-            msg = stream.next() => match msg {
-                Some(msg) => msg?,
-                None => break,
-            },
-            _ = watchdog.tick() => {
-                if last_inbound.elapsed() >= RELAY_SILENCE {
-                    anyhow::bail!("relay silent for {}s", last_inbound.elapsed().as_secs());
-                }
-                continue;
-            }
-        };
-        last_inbound = Instant::now();
-        match msg {
-            Message::Text(t) => {
-                let t = t.as_str();
-                if t.trim() == "NO_AGENT_IN_ROOM" {
-                    continue;
-                }
-                if is_relay_notice(t) {
-                    log::info!("relay: {t}");
-                    if t.contains("CLIENT_DISCONNECTED") {
-                        capture = None;
+    let result: Result<()> = async {
+        loop {
+            let msg = tokio::select! {
+                msg = stream.next() => match msg {
+                    Some(msg) => msg?,
+                    None => return Ok(()),
+                },
+                _ = watchdog.tick() => {
+                    if last_inbound.elapsed() >= RELAY_SILENCE {
+                        anyhow::bail!("relay silent for {}s", last_inbound.elapsed().as_secs());
                     }
                     continue;
                 }
-                let v: Value = match serde_json::from_str(t) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        log::warn!("bad control json: {e}");
+            };
+            last_inbound = Instant::now();
+            match msg {
+                Message::Text(t) => {
+                    let t = t.as_str();
+                    if t.trim() == "NO_AGENT_IN_ROOM" {
+                        board.seen(false);
                         continue;
                     }
-                };
-                match v["cmd"].as_str() {
-                    Some("utt_start") => {
-                        latest.fetch_add(1, Ordering::AcqRel);
-                        capture = Some(Vec::new());
-                        log::info!("utt_start");
+                    if is_relay_notice(t) {
+                        log::info!("relay: {t}");
+                        if t.contains("CLIENT_DISCONNECTED") {
+                            capture = None;
+                            board.seen(false);
+                        } else if t.contains("CLIENT_CONNECTED") {
+                            board.seen(true);
+                        }
+                        continue;
                     }
-                    Some("utt_end") => {
-                        let pcm = capture.take().unwrap_or_default();
-                        let (peak, rms) = level(&pcm);
-                        log::info!(
-                            "utt_end: {} samples ({:.1}s), peak {peak}, rms {rms:.0}",
-                            pcm.len(),
-                            pcm.len() as f64 / f64::from(BENCH_RATE)
-                        );
-                        if pcm.len() < MIN_UTT_SAMPLES {
-                            let _ = tx.send(state_frame("idle")).await;
+                    board.seen(true);
+                    let v: Value = match serde_json::from_str(t) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::warn!("bad control json: {e}");
                             continue;
                         }
-                        let _ = tx.send(state_frame("thinking")).await;
-                        let turn = Turn {
-                            id: latest.load(Ordering::Acquire),
-                            latest: Arc::clone(&latest),
-                            tx: tx.clone(),
-                        };
-                        spawn_turn(Arc::clone(&id), turn, pcm, timeout_secs);
+                    };
+                    match v["cmd"].as_str() {
+                        Some("utt_start") => {
+                            latest.fetch_add(1, Ordering::AcqRel);
+                            capture = Some(Vec::new());
+                            log::info!("utt_start");
+                        }
+                        Some("utt_end") => {
+                            let pcm = capture.take().unwrap_or_default();
+                            let (peak, rms) = level(&pcm);
+                            log::info!(
+                                "utt_end: {} samples ({:.1}s), peak {peak}, rms {rms:.0}",
+                                pcm.len(),
+                                pcm.len() as f64 / f64::from(BENCH_RATE)
+                            );
+                            if pcm.len() < MIN_UTT_SAMPLES {
+                                let _ = tx.send(state_frame("idle")).await;
+                                continue;
+                            }
+                            let _ = tx.send(state_frame("thinking")).await;
+                            let turn = Turn {
+                                id: latest.load(Ordering::Acquire),
+                                latest: Arc::clone(&latest),
+                                tx: tx.clone(),
+                            };
+                            spawn_turn(Arc::clone(ctx), turn, pcm);
+                        }
+                        Some("ping") => {
+                            let _ = tx.send(Message::Text(r#"{"cmd":"pong"}"#.into())).await;
+                        }
+                        Some("pong") => {}
+                        other => log::warn!("unknown cmd {other:?}"),
                     }
-                    Some("ping") => {
-                        let _ = tx.send(Message::Text(r#"{"cmd":"pong"}"#.into())).await;
+                }
+                Message::Binary(b) => {
+                    board.seen(true);
+                    if let Some(buf) = capture.as_mut() {
+                        buf.extend(i16_from_le_bytes(&b));
                     }
-                    Some("pong") => {}
-                    other => log::warn!("unknown cmd {other:?}"),
                 }
-            }
-            Message::Binary(b) => {
-                if let Some(buf) = capture.as_mut() {
-                    buf.extend(i16_from_le_bytes(&b));
+                Message::Ping(p) => {
+                    let _ = tx.send(Message::Pong(p)).await;
                 }
+                Message::Close(_) => return Ok(()),
+                _ => {}
             }
-            Message::Ping(p) => {
-                let _ = tx.send(Message::Pong(p)).await;
-            }
-            Message::Close(_) => break,
-            _ => {}
         }
     }
-    drop(tx);
-    let _ = writer.await;
-    Ok(())
+    .await;
+    board.detach(&tx);
+    writer.abort();
+    result
 }
 
 /// Runs one turn off the read loop, then removes its temp files.
-fn spawn_turn(id: Arc<Identity>, turn: Turn, pcm: Vec<i16>, timeout_secs: u64) {
+fn spawn_turn(ctx: Arc<TurnContext>, turn: Turn, pcm: Vec<i16>) {
     tokio::spawn(async move {
-        let stamp = now_millis();
-        let in_wav = format!("/tmp/vb_utt_{stamp}.wav");
-        let out_wav = format!("/tmp/vb_reply_{stamp}.wav");
-        if let Err(e) = relay_turn(&id, &turn, &pcm, &in_wav, &out_wav, timeout_secs).await {
+        let in_wav = format!("/tmp/vb_utt_{}.wav", now_millis());
+        if let Err(e) = relay_turn(&ctx, &turn, &pcm, &in_wav).await {
             log::error!("turn {} failed: {e}", turn.id);
             turn.send(error_frame(&e.to_string())).await;
         }
-        for path in [format!("{in_wav}.stt.txt"), in_wav, out_wav] {
+        for path in [format!("{in_wav}.stt.txt"), in_wav] {
             let _ = std::fs::remove_file(path);
         }
     });
 }
 
-async fn relay_turn(
-    id: &Identity,
-    turn: &Turn,
-    pcm: &[i16],
-    in_wav: &str,
-    out_wav: &str,
-    timeout_secs: u64,
-) -> Result<()> {
+async fn relay_turn(ctx: &TurnContext, turn: &Turn, pcm: &[i16], in_wav: &str) -> Result<()> {
     write_wav_mono(in_wav, pcm, BENCH_RATE)?;
     let wav = in_wav.to_string();
     let transcript = tokio::task::spawn_blocking(move || transcribe(&wav)).await??;
@@ -301,27 +366,23 @@ async fn relay_turn(
         return Ok(());
     }
 
-    let (cs, prompt) = (id.connection_string(), voice_prompt(&transcript));
-    let reply = with_keepalive(turn, stream_reply(&cs, id.requested_by(), &prompt, timeout_secs)).await?;
-    log::info!("turn {} ASSISTANT: {reply}", turn.id);
+    let (cs, prompt) = (ctx.id.connection_string(), voice_prompt(&transcript));
+    let asked = Instant::now();
+    let reply = with_keepalive(turn, stream_reply(&cs, ctx.id.requested_by(), &prompt, ctx.timeout_secs)).await?;
+    log::info!("turn {} ASSISTANT ({:.1}s): {reply}", turn.id, asked.elapsed().as_secs_f32());
     if !turn.is_current() {
         log::info!("turn {} superseded", turn.id);
         return Ok(());
     }
 
-    let (text, out) = (reply.clone(), out_wav.to_string());
-    tokio::task::spawn_blocking(move || synthesize(&text, &out)).await??;
-    let (rate, samples) = read_wav_mono(out_wav)?;
+    let (text, voice) = (reply.clone(), ctx.voice.get());
+    let wav = tokio::task::spawn_blocking(move || synthesize(&text, &voice)).await??;
+    let (rate, samples) = parse_wav_mono(&wav)?;
     let pcm16 = resample(&samples, rate, BENCH_RATE);
-    if !turn.send(text_frame("tts_start", &display_text(&reply))).await {
+    if !turn.is_current() {
         return Ok(());
     }
-    for chunk in pcm16.chunks(FRAME_SAMPLES) {
-        if turn.tx.send(Message::Binary(i16_to_le_bytes(chunk).into())).await.is_err() {
-            return Ok(());
-        }
-    }
-    let _ = turn.tx.send(Message::Text(r#"{"cmd":"tts_end"}"#.into())).await;
+    send_speech(&turn.tx, &reply, &pcm16).await?;
     log::info!("turn {} sent reply: {} samples", turn.id, pcm16.len());
     Ok(())
 }

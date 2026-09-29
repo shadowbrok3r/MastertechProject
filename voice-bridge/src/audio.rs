@@ -46,6 +46,11 @@ pub fn write_wav_mono(path: &str, samples: &[i16], sample_rate: u32) -> Result<(
 pub fn read_wav_mono(path: &str) -> Result<(u32, Vec<i16>)> {
     let mut buf = Vec::new();
     std::fs::File::open(path)?.read_to_end(&mut buf)?;
+    parse_wav_mono(&buf)
+}
+
+/// Parses PCM16 WAV bytes into their sample rate and mono samples (channel 0 of any layout).
+pub fn parse_wav_mono(buf: &[u8]) -> Result<(u32, Vec<i16>)> {
     if buf.len() < 12 || &buf[0..4] != b"RIFF" || &buf[8..12] != b"WAVE" {
         bail!("not a RIFF/WAVE file");
     }

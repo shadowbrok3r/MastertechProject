@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Lab</title>
+<style>
+  :root {
+    --bg: #06060a;
+    --surface: #0f0f17;
+    --surface-2: #171722;
+    --border: #262637;
+    --text: #e7e7f2;
+    --muted: #9a9eb8;
+    --accent: #ff1493;
+    --accent-soft: rgba(255, 20, 147, 0.14);
+    --tertiary: #cba6f7;
+    --success: #a6e3a1;
+    --error: #f38ba8;
+    --radius: 14px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .hidden { display: none !important; }
+  h1, h2 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; }
+
+  header.top {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255, 20, 147, 0.08), transparent);
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand .sub { color: var(--muted); font-size: 13px; }
+  .status { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface); font-size: 13px; white-space: nowrap;
+  }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill.on i { background: var(--success); box-shadow: 0 0 8px var(--success); }
+  .pill.on { color: var(--success); }
+
+  .layout {
+    display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px;
+    max-width: 1180px; margin: 0 auto; padding: 20px 24px 40px;
+  }
+  .voices {
+    position: sticky; top: 20px; align-self: start; max-height: calc(100vh - 40px);
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px;
+  }
+  .voices-head { display: flex; justify-content: space-between; align-items: baseline; }
+  input[type=search], input[type=number], textarea {
+    width: 100%; color: var(--text); background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 12px; font: inherit;
+  }
+  input:focus-visible, textarea:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 2px; }
+  .group {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+    padding: 10px 6px 4px;
+  }
+  button {
+    font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 14px; cursor: pointer; transition: background 0.12s, border-color 0.12s;
+  }
+  button:hover:not(:disabled) { border-color: #3a3a52; background: #1d1d2a; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #ff3aa6; border-color: #ff3aa6; }
+  button.ghost { background: transparent; }
+  button.icon { padding: 6px 11px; font-size: 17px; line-height: 1; }
+  .voice {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%;
+    text-align: left; background: transparent; border-color: transparent; padding: 8px 10px;
+  }
+  .voice.sel { background: var(--accent-soft); border-color: rgba(255, 20, 147, 0.45); }
+  .voice.live .vn::before { content: "\25B6\00a0"; color: var(--accent); }
+  .tags { display: flex; gap: 4px; flex-shrink: 0; }
+  .tag {
+    font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--surface-2);
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .tag.board { color: var(--accent); border-color: rgba(255, 20, 147, 0.5); }
+
+  .stage { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+  .voice-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+  .voice-head h2 { font-size: 22px; }
+  .voice-head p { margin: 4px 0 0; }
+  .badge {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px; color: var(--accent);
+    border: 1px solid rgba(255, 20, 147, 0.5); background: var(--accent-soft); white-space: nowrap;
+  }
+  .speaker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .speaker label { color: var(--muted); margin-right: 4px; }
+  .speaker input { width: 90px; }
+  .field-label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+  textarea { resize: vertical; min-height: 84px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 18px; }
+  .chip { font-size: 12.5px; padding: 5px 10px; border-radius: 999px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip:hover:not(:disabled) { color: var(--text); }
+  .knobs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
+  .knob-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .knob-head output { color: var(--text); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .actions .ghost { margin-left: auto; }
+  .msg { min-height: 1.45em; margin: 12px 0 0; color: var(--muted); font-size: 13.5px; }
+  .msg.err { color: var(--error); }
+  .msg.ok { color: var(--success); }
+  .row-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .history.empty::after { content: "Nothing played yet."; color: var(--muted); font-size: 13px; }
+  .history li { display: flex; gap: 6px; }
+  .hist {
+    flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(110px, auto) auto minmax(0, 1fr);
+    gap: 12px; align-items: center; text-align: left; padding: 8px 12px;
+  }
+  .hist .ht { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist .hs { color: var(--tertiary); font-size: 12.5px; }
+
+  @media (max-width: 860px) {
+    header.top { padding: 14px 16px; }
+    .layout { grid-template-columns: minmax(0, 1fr); padding: 16px; gap: 16px; }
+    .voices { position: static; max-height: 46vh; }
+    .knobs { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .hist { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+    .actions .ghost { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>Voice Lab</h1>
+    <span class="sub">Piper voices for the bench console</span>
+  </div>
+  <div class="status">
+    <span id="board" class="pill"><i></i><span>Board offline</span></span>
+    <span id="boardVoice" class="pill">Board voice: -</span>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="voices">
+    <div class="voices-head"><h2>Voices</h2><span id="count" class="muted small"></span></div>
+    <input id="filter" type="search" placeholder="Filter voices" aria-label="Filter voices">
+    <div id="list" class="list" role="listbox" aria-label="Installed voices"></div>
+  </aside>
+
+  <section class="stage">
+    <div class="card">
+      <div class="voice-head">
+        <div>
+          <h2 id="vName">Loading voices...</h2>
+          <p id="vMeta" class="muted small"></p>
+        </div>
+        <span id="vBadge" class="badge hidden">Board voice</span>
+      </div>
+
+      <div id="speakerRow" class="speaker hidden">
+        <label for="speaker">Speaker</label>
+        <button id="spPrev" class="icon" aria-label="Previous speaker">&lsaquo;</button>
+        <input id="speaker" type="number" min="0" value="0">
+        <button id="spNext" class="icon" aria-label="Next speaker">&rsaquo;</button>
+        <button id="spRand">Random</button>
+        <span id="spName" class="muted mono small"></span>
+      </div>
+
+      <label class="field-label" for="text">Text</label>
+      <textarea id="text" maxlength="600" rows="3"></textarea>
+      <div id="presets" class="chips"></div>
+
+      <div class="knobs">
+        <div class="knob">
+          <div class="knob-head"><label for="pace">Pace</label><output id="paceOut" class="mono"></output></div>
+          <input id="pace" type="range" min="0.6" max="1.6" step="0.01" value="1">
+        </div>
+        <div class="knob">
+          <div class="knob-head"><label for="noise">Expressiveness</label><output id="noiseOut" class="mono"></output></div>
+          <input id="noise" type="range" min="0" max="1.2" step="0.01" value="0.667">
+        </div>
+        <div class="knob">
+          <div class="knob-head"><label for="noisew">Rhythm variation</label><output id="noisewOut" class="mono"></output></div>
+          <input id="noisew" type="range" min="0" max="1.2" step="0.01" value="0.8">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="playHere" class="primary">&#9654; Play here</button>
+        <button id="playBoard">Play on board</button>
+        <button id="useBoard">Use for board replies</button>
+        <button id="reset" class="ghost">Reset to defaults</button>
+      </div>
+      <p id="msg" class="msg" role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="card">
+      <div class="row-head">
+        <h2>Compare</h2>
+        <button id="compare">Play in every voice</button>
+      </div>
+      <p class="muted small" style="margin:0">Plays the text through each installed voice at its default settings, one after another.</p>
+    </div>
+
+    <div class="card">
+      <div class="row-head">
+        <h2>Recent</h2>
+        <button id="clearHist" class="ghost">Clear</button>
+      </div>
+      <ol id="history" class="history empty"></ol>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const PRESETS = [
+  "Hold the button and talk, then let go when you're done.",
+  "Ticket 2155144 is ready for pickup. The board was replaced and it passed a two hour stress test.",
+  "The CPU hit ninety eight degrees under load. I'd repaste it before it goes back out.",
+  "Memtest found errors in slot two. Swap that stick and run it again.",
+  "Got it. I added that to the service notes.",
+];
+const NAMES = {
+  libritts_r: "LibriTTS-R", hfc_female: "HFC Female", hfc_male: "HFC Male", l2arctic: "L2-ARCTIC",
+  vctk: "VCTK", semaine: "SEMAINE", jenny_dioco: "Jenny Dioco", northern_english_male: "Northern English Male",
+};
+
+let voices = [];
+let active = null;
+let sel = null;
+let history = [];
+let player = null;
+let comparing = false;
+let liveId = null;
+
+const pretty = (v) => NAMES[v.dataset] || v.dataset.split(/[_-]/).map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+const nameOf = (id) => { const v = voices.find((x) => x.id === id); return v ? pretty(v) : id; };
+const speed = (s) => (1 / s.length_scale).toFixed(2) + "×";
+
+function setMsg(text, kind) {
+  const m = $("msg");
+  m.textContent = text;
+  m.className = "msg" + (kind ? " " + kind : "");
+}
+
+function current() {
+  return {
+    voice: sel.id,
+    speaker: sel.speakers.length ? Math.max(0, Math.min(sel.speakers.length - 1, +$("speaker").value || 0)) : 0,
+    length_scale: +(1 / +$("pace").value).toFixed(3),
+    noise_scale: +$("noise").value,
+    noise_w: +$("noisew").value,
+  };
+}
+
+function defaultsOf(v) {
+  return { voice: v.id, speaker: 0, length_scale: v.length_scale, noise_scale: v.noise_scale, noise_w: v.noise_w };
+}
+
+function showKnobs() {
+  $("paceOut").textContent = (+$("pace").value).toFixed(2) + "×";
+  $("noiseOut").textContent = (+$("noise").value).toFixed(2);
+  $("noisewOut").textContent = (+$("noisew").value).toFixed(2);
+  $("spName").textContent = sel && sel.speakers.length ? sel.speakers[current().speaker] || "" : "";
+}
+
+function applySettings(s) {
+  $("pace").value = (1 / s.length_scale).toFixed(2);
+  $("noise").value = s.noise_scale;
+  $("noisew").value = s.noise_w;
+  $("speaker").value = s.speaker || 0;
+  showKnobs();
+}
+
+function select(id, settings) {
+  sel = voices.find((v) => v.id === id) || voices[0];
+  if (!sel) return;
+  const n = sel.speakers.length;
+  $("vName").textContent = pretty(sel);
+  $("vMeta").textContent = [
+    sel.region || sel.language,
+    sel.quality,
+    (sel.sample_rate / 1000).toFixed(2) + " kHz",
+    n ? n + " speakers" : "single speaker",
+    sel.id,
+  ].filter(Boolean).join("  ·  ");
+  $("speakerRow").classList.toggle("hidden", !n);
+  $("speaker").max = Math.max(0, n - 1);
+  applySettings(settings || defaultsOf(sel));
+  renderList();
+  renderActive();
+}
+
+function tag(parent, text, cls) {
+  const t = document.createElement("span");
+  t.className = "tag" + (cls ? " " + cls : "");
+  t.textContent = text;
+  parent.append(t);
+}
+
+function renderList() {
+  const q = $("filter").value.trim().toLowerCase();
+  const list = $("list");
+  list.replaceChildren();
+  const groups = new Map();
+  for (const v of voices) {
+    if (q && !(pretty(v) + " " + v.id + " " + v.region).toLowerCase().includes(q)) continue;
+    const key = v.region || v.language || "Other";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(v);
+  }
+  for (const [region, items] of groups) {
+    const h = document.createElement("div");
+    h.className = "group";
+    h.textContent = region;
+    list.append(h);
+    for (const v of items) {
+      const b = document.createElement("button");
+      const isSel = sel && v.id === sel.id;
+      b.className = "voice" + (isSel ? " sel" : "") + (liveId === v.id ? " live" : "");
+      b.setAttribute("role", "option");
+      b.setAttribute("aria-selected", isSel ? "true" : "false");
+      const name = document.createElement("span");
+      name.className = "vn";
+      name.textContent = pretty(v);
+      const tags = document.createElement("span");
+      tags.className = "tags";
+      if (active && v.id === active.voice) tag(tags, "board", "board");
+      if (v.speakers.length) tag(tags, v.speakers.length + " spk");
+      tag(tags, v.quality);
+      b.append(name, tags);
+      b.onclick = () => select(v.id, active && v.id === active.voice ? active : null);
+      list.append(b);
+    }
+  }
+  $("count").textContent = voices.length + " installed";
+}
+
+function renderActive() {
+  if (!active) return;
+  const who = nameOf(active.voice) + (active.speaker ? " #" + active.speaker : "");
+  $("boardVoice").textContent = "Board voice: " + who + " · " + speed(active);
+  $("vBadge").classList.toggle("hidden", !(sel && sel.id === active.voice));
+}
+
+function setBoard(online) {
+  const b = $("board");
+  b.classList.toggle("on", !!online);
+  b.lastElementChild.textContent = online ? "Board online" : "Board offline";
+}
+
+async function refresh(first) {
+  try {
+    const d = await (await fetch("/api/voices")).json();
+    voices = d.voices;
+    active = d.active;
+    setBoard(d.board_online);
+    if (first || !sel) {
+      if (!voices.length) { $("vName").textContent = "No voices installed"; return; }
+      select(active.voice, active);
+    } else {
+      sel = voices.find((v) => v.id === sel.id) || sel;
+      renderList();
+      renderActive();
+    }
+  } catch {
+    setBoard(false);
+  }
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r;
+}
+
+function playUrl(url) {
+  if (player) player.pause();
+  const a = new Audio(url);
+  player = a;
+  return new Promise((resolve) => {
+    a.onended = a.onpause = a.onerror = () => resolve();
+    a.play().catch(() => resolve());
+  });
+}
+
+function addHistory(item) {
+  history.unshift(item);
+  if (history.length > 12) URL.revokeObjectURL(history.pop().url);
+  renderHistory();
+}
+
+function renderHistory() {
+  const ol = $("history");
+  ol.replaceChildren();
+  for (const h of history) {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.className = "hist";
+    const n = document.createElement("span");
+    n.textContent = nameOf(h.s.voice) + (h.s.speaker ? " #" + h.s.speaker : "");
+    const s = document.createElement("span");
+    s.className = "hs mono";
+    s.textContent = speed(h.s) + "  " + h.s.noise_scale.toFixed(2) + "/" + h.s.noise_w.toFixed(2);
+    const t = document.createElement("span");
+    t.className = "ht muted";
+    t.textContent = h.text;
+    b.append(n, s, t);
+    b.title = "Replay";
+    b.onclick = () => playUrl(h.url);
+    const load = document.createElement("button");
+    load.className = "ghost";
+    load.textContent = "Load";
+    load.title = "Load these settings";
+    load.onclick = () => { $("text").value = h.text; select(h.s.voice, h.s); };
+    li.append(b, load);
+    ol.append(li);
+  }
+  ol.classList.toggle("empty", !history.length);
+}
+
+async function synth(s, text) {
+  const r = await post("/api/synth", { text, ...s });
+  const ms = r.headers.get("x-synth-ms");
+  const url = URL.createObjectURL(await r.blob());
+  addHistory({ url, s, text });
+  return { url, ms };
+}
+
+function busy(on) {
+  for (const id of ["playHere", "playBoard", "useBoard"]) $(id).disabled = on;
+}
+
+async function playHere() {
+  if (!sel) return;
+  busy(true);
+  setMsg("Rendering...");
+  try {
+    const { url, ms } = await synth(current(), $("text").value);
+    setMsg("Rendered in " + ms + " ms", "ok");
+    busy(false);
+    await playUrl(url);
+  } catch (e) {
+    setMsg(e.message, "err");
+  } finally {
+    busy(false);
+  }
+}
+
+async function playBoard() {
+  if (!sel) return;
+  busy(true);
+  setMsg("Sending to the board...");
+  try {
+    const d = await (await post("/api/play", { text: $("text").value, ...current() })).json();
+    setMsg("Playing on the board: " + d.seconds.toFixed(1) + " s of audio, rendered in " + d.ms + " ms", "ok");
+  } catch (e) {
+    setMsg(e.message, "err");
+  } finally {
+    busy(false);
+  }
+}
+
+async function useBoard() {
+  if (!sel) return;
+  busy(true);
+  try {
+    active = await (await post("/api/active", current())).json();
+    renderList();
+    renderActive();
+    setMsg("Board replies now use " + nameOf(active.voice) + (active.speaker ? " #" + active.speaker : "") + " at " + speed(active), "ok");
+  } catch (e) {
+    setMsg(e.message, "err");
+  } finally {
+    busy(false);
+  }
+}
+
+async function compare() {
+  if (comparing) {
+    comparing = false;
+    if (player) player.pause();
+    return;
+  }
+  comparing = true;
+  $("compare").textContent = "Stop";
+  const text = $("text").value;
+  try {
+    for (const v of voices) {
+      if (!comparing) break;
+      liveId = v.id;
+      renderList();
+      setMsg("Now playing: " + pretty(v));
+      const { url } = await synth(defaultsOf(v), text);
+      if (!comparing) break;
+      await playUrl(url);
+    }
+    setMsg(comparing ? "Compared " + voices.length + " voices" : "Stopped", "ok");
+  } catch (e) {
+    setMsg(e.message, "err");
+  }
+  comparing = false;
+  liveId = null;
+  $("compare").textContent = "Play in every voice";
+  renderList();
+}
+
+function stepSpeaker(delta) {
+  if (!sel || !sel.speakers.length) return;
+  const n = sel.speakers.length;
+  $("speaker").value = ((current().speaker + delta) % n + n) % n;
+  showKnobs();
+}
+
+for (const p of PRESETS) {
+  const c = document.createElement("button");
+  c.className = "chip";
+  c.textContent = p;
+  c.title = p;
+  c.onclick = () => { $("text").value = p; };
+  $("presets").append(c);
+}
+$("text").value = PRESETS[1];
+for (const id of ["pace", "noise", "noisew", "speaker"]) $(id).addEventListener("input", showKnobs);
+$("filter").addEventListener("input", renderList);
+$("playHere").onclick = playHere;
+$("playBoard").onclick = playBoard;
+$("useBoard").onclick = useBoard;
+$("reset").onclick = () => sel && applySettings(defaultsOf(sel));
+$("compare").onclick = compare;
+$("spPrev").onclick = () => stepSpeaker(-1);
+$("spNext").onclick = () => stepSpeaker(1);
+$("spRand").onclick = () => sel && stepSpeaker(1 + Math.floor(Math.random() * Math.max(1, sel.speakers.length - 1)));
+$("clearHist").onclick = () => { history.forEach((h) => URL.revokeObjectURL(h.url)); history = []; renderHistory(); };
+$("text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); playHere(); }
+});
+refresh(true);
+setInterval(() => refresh(false), 10000);
+</script>
+</body>
+</html>

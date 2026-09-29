@@ -1,8 +1,6 @@
-//! STT (whisper.cpp) -> Mastertech assistant (`agent_chat`) -> TTS (Piper),
-//! plus the voice identity that picks the connection string.
+//! STT (whisper.cpp), the Mastertech assistant turn (`agent_chat`) and the voice identity.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -85,23 +83,6 @@ pub fn transcribe(wav: &str) -> Result<String> {
     Ok(text)
 }
 
-pub fn synthesize(text: &str, out_wav: &str) -> Result<()> {
-    let bin = env_or("PIPER_BIN", "/home/shadowbroker/voice/piper/piper/piper");
-    let voice = env_or("PIPER_VOICE", "/home/shadowbroker/voice/piper/voices/en_US-lessac-medium.onnx");
-    let mut child = Command::new(&bin)
-        .args(["--model", &voice, "--output_file", out_wav])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()
-        .with_context(|| format!("running {bin}"))?;
-    let spoken: String = text.chars().filter(|c| !matches!(c, '*' | '`' | '#')).collect();
-    child.stdin.take().context("piper stdin")?.write_all(spoken.as_bytes())?;
-    if !child.wait()?.success() {
-        bail!("piper failed");
-    }
-    Ok(())
-}
-
 /// Opens a session and returns finished agent messages as they land, finalizing on idle.
 pub async fn stream_reply(cs: &str, tech: Option<&str>, text: &str, timeout_secs: u64) -> Result<String> {
     use database::agent_chat::{poll_reply, send, ReplyState};
@@ -140,7 +121,8 @@ pub async fn run_turn(id: &Identity, in_wav: &str, out_wav: &str, timeout_secs: 
     )
     .await?;
     log::info!("ASSISTANT: {reply}");
-    synthesize(&reply, out_wav)?;
+    let wav = crate::voices::synthesize(&reply, &crate::voices::ActiveVoice::load().get())?;
+    std::fs::write(out_wav, wav)?;
     log::info!("TTS -> {out_wav}");
     Ok(reply)
 }

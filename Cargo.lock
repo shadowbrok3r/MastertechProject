@@ -13146,10 +13146,12 @@ name = "voice-bridge"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "database",
  "env_logger",
  "futures",
  "log",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.28.0",
