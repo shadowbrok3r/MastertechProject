@@ -73,9 +73,9 @@ pub fn voice_prompt(transcript: &str) -> String {
 pub fn transcribe(wav: &str) -> Result<String> {
     let bin = env_or("WHISPER_BIN", "/home/shadowbroker/voice/whisper.cpp/build/bin/whisper-cli");
     let model = env_or("WHISPER_MODEL", "/home/shadowbroker/voice/whisper.cpp/models/ggml-base.en.bin");
-    let prefix = "/tmp/vb_stt";
+    let prefix = format!("{wav}.stt");
     let status = Command::new(&bin)
-        .args(["-m", &model, "-f", wav, "-nt", "-np", "-otxt", "-of", prefix])
+        .args(["-m", &model, "-f", wav, "-nt", "-np", "-otxt", "-of", &prefix])
         .status()
         .with_context(|| format!("running {bin}"))?;
     if !status.success() {
@@ -94,7 +94,8 @@ pub fn synthesize(text: &str, out_wav: &str) -> Result<()> {
         .stdout(Stdio::null())
         .spawn()
         .with_context(|| format!("running {bin}"))?;
-    child.stdin.take().context("piper stdin")?.write_all(text.as_bytes())?;
+    let spoken: String = text.chars().filter(|c| !matches!(c, '*' | '`' | '#')).collect();
+    child.stdin.take().context("piper stdin")?.write_all(spoken.as_bytes())?;
     if !child.wait()?.success() {
         bail!("piper failed");
     }
