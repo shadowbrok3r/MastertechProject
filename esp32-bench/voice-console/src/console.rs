@@ -46,10 +46,9 @@ pub fn mic_loop(capture: Arc<AtomicBool>, out: SyncSender<Outgoing>) {
             std::thread::sleep(Duration::from_millis(10));
             continue;
         }
-        if out.send(Outgoing::Text(r#"{"cmd":"utt_start"}"#)).is_err() {
-            return;
-        }
-        while capture.load(Ordering::Acquire) {
+        ffi::mic_capture(true);
+        let started = out.send(Outgoing::Text(r#"{"cmd":"utt_start"}"#)).is_ok();
+        while started && capture.load(Ordering::Acquire) {
             let mut buf = vec![0u8; MIC_CHUNK];
             let n = ffi::mic_read(&mut buf);
             if n == 0 {
@@ -57,10 +56,11 @@ pub fn mic_loop(capture: Arc<AtomicBool>, out: SyncSender<Outgoing>) {
             }
             buf.truncate(n);
             if out.send(Outgoing::Audio(buf)).is_err() {
-                return;
+                break;
             }
         }
-        if out.send(Outgoing::Text(r#"{"cmd":"utt_end"}"#)).is_err() {
+        ffi::mic_capture(false);
+        if !started || out.send(Outgoing::Text(r#"{"cmd":"utt_end"}"#)).is_err() {
             return;
         }
     }
@@ -97,12 +97,14 @@ fn play_tone(ms: u32) {
 fn echo_loop(run: Arc<AtomicBool>) {
     let mut buf = [0u8; MIC_CHUNK];
     ffi::set_amp(true);
+    ffi::mic_capture(true);
     while run.load(Ordering::Relaxed) {
         let n = ffi::mic_read(&mut buf);
         if n > 0 {
             ffi::speaker_write(&buf[..n]);
         }
     }
+    ffi::mic_capture(false);
 }
 
 pub struct Console {

@@ -1,6 +1,9 @@
 #include "display_shim.h"
+#include "audio_shim.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "esp_ldo_regulator.h"
+#include "esp_lcd_io_i2c.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
@@ -11,16 +14,20 @@
 #include "lvgl.h"
 
 // MasterTech TUI palette (Deep Pink default): near-black bg, hot-pink accent.
-#define COL_BG       0x06060A
-#define COL_SURFACE  0x313244
-#define COL_TEXT     0xCDD6F4
-#define COL_MUTED    0xBAC2DE
-#define COL_ACCENT   0xFF1493
-#define COL_TERTIARY 0xCBA6F7
-#define COL_SUCCESS  0xA6E3A1
+#define COL_BG           0x06060A
+#define COL_SURFACE      0x313244
+#define COL_TEXT         0xCDD6F4
+#define COL_MUTED        0xBAC2DE
+#define COL_ACCENT       0xFF1493
+#define COL_ACCENT_DIM   0x5A0A36
+#define COL_TERTIARY     0xCBA6F7
+#define COL_TERTIARY_DIM 0x463A60
 
 #define PIN_TOUCH_RST 23
-#define I2C_PORT 0
+#define TOUCH_SCL_HZ 400000
+#ifndef ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP
+#define ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP 0x14
+#endif
 
 #define LCD_H 720
 #define LCD_V 720
@@ -81,6 +88,10 @@ static lv_obj_t *s_status;
 static lv_obj_t *s_transcript;
 static lv_obj_t *s_reply_box;
 static lv_obj_t *s_reply;
+static lv_obj_t *s_wave[2];
+static lv_chart_series_t *s_wave_ser[2];
+static lv_obj_t *s_bars[2];
+static lv_chart_series_t *s_bars_ser[2];
 static esp_lcd_touch_handle_t s_touch;
 static volatile int s_ptt;
 
@@ -99,6 +110,59 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, 
     lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
     return l;
+}
+
+// Transparent, borderless, unpadded, non-scrolling, touch-transparent.
+static void frameless(lv_obj_t *o) {
+    lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(o, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(o, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+}
+
+// One mic's panel: name, live waveform, spectrum bars.
+static void mic_panel(lv_obj_t *parent, int idx, const char *name, uint32_t color, uint32_t dim) {
+    lv_obj_t *p = lv_obj_create(parent);
+    frameless(p);
+    lv_obj_set_size(p, 332, 196);
+    lv_obj_align(p, idx ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_color(p, lv_color_hex(COL_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(p, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_set_style_radius(p, 14, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(p, 10, LV_PART_MAIN);
+
+    lv_obj_t *l = label(p, &lv_font_montserrat_20, color, name);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 2, 0);
+
+    lv_obj_t *w = lv_chart_create(p);
+    frameless(w);
+    lv_obj_set_size(w, 312, 66);
+    lv_obj_align(w, LV_ALIGN_TOP_MID, 0, 28);
+    lv_chart_set_type(w, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(w, UI_WAVE_POINTS);
+    lv_chart_set_range(w, LV_CHART_AXIS_PRIMARY_Y, -100, 100);
+    lv_chart_set_div_line_count(w, 0, 0);
+    lv_obj_set_style_line_width(w, 2, LV_PART_ITEMS);
+    lv_obj_set_style_width(w, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_height(w, 0, LV_PART_INDICATOR);
+    s_wave_ser[idx] = lv_chart_add_series(w, lv_color_hex(color), LV_CHART_AXIS_PRIMARY_Y);
+    s_wave[idx] = w;
+
+    lv_obj_t *b = lv_chart_create(p);
+    frameless(b);
+    lv_obj_set_size(b, 312, 80);
+    lv_obj_align(b, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_chart_set_type(b, LV_CHART_TYPE_BAR);
+    lv_chart_set_point_count(b, UI_BANDS);
+    lv_chart_set_range(b, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
+    lv_chart_set_div_line_count(b, 0, 0);
+    lv_obj_set_style_pad_column(b, 5, LV_PART_MAIN);
+    lv_obj_set_style_radius(b, 3, LV_PART_ITEMS);
+    lv_obj_set_style_bg_grad_dir(b, LV_GRAD_DIR_VER, LV_PART_ITEMS);
+    lv_obj_set_style_bg_grad_color(b, lv_color_hex(dim), LV_PART_ITEMS);
+    s_bars_ser[idx] = lv_chart_add_series(b, lv_color_hex(color), LV_CHART_AXIS_PRIMARY_Y);
+    s_bars[idx] = b;
 }
 
 int ui_start(void) {
@@ -125,23 +189,27 @@ int ui_start(void) {
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *title = label(scr, &lv_font_montserrat_48, COL_ACCENT, "MasterTech");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 36);
-
-    lv_obj_t *sub = label(scr, &lv_font_montserrat_20, COL_MUTED, "voice console");
-    lv_obj_align_to(sub, title, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
 
     s_status = label(scr, &lv_font_montserrat_26, COL_MUTED, "Starting...");
-    lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 140);
+    lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 80);
+
+    lv_obj_t *viz = lv_obj_create(scr);
+    frameless(viz);
+    lv_obj_set_size(viz, 680, 196);
+    lv_obj_align(viz, LV_ALIGN_TOP_MID, 0, 120);
+    mic_panel(viz, 0, "MIC 1", COL_ACCENT, COL_ACCENT_DIM);
+    mic_panel(viz, 1, "MIC 2", COL_TERTIARY, COL_TERTIARY_DIM);
 
     s_transcript = label(scr, &lv_font_montserrat_20, COL_MUTED, "");
     lv_label_set_long_mode(s_transcript, LV_LABEL_LONG_DOT);
     lv_obj_set_size(s_transcript, 640, 50);
     lv_obj_set_style_text_align(s_transcript, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(s_transcript, LV_ALIGN_TOP_MID, 0, 186);
+    lv_obj_align(s_transcript, LV_ALIGN_TOP_MID, 0, 326);
 
     s_reply_box = lv_obj_create(scr);
-    lv_obj_set_size(s_reply_box, 660, 290);
-    lv_obj_align(s_reply_box, LV_ALIGN_TOP_MID, 0, 244);
+    lv_obj_set_size(s_reply_box, 660, 170);
+    lv_obj_align(s_reply_box, LV_ALIGN_TOP_MID, 0, 382);
     lv_obj_set_style_bg_opa(s_reply_box, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_reply_box, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_reply_box, 0, LV_PART_MAIN);
@@ -152,8 +220,8 @@ int ui_start(void) {
     lv_obj_set_width(s_reply, 640);
 
     lv_obj_t *btn = lv_button_create(scr);
-    lv_obj_set_size(btn, 420, 120);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -40);
+    lv_obj_set_size(btn, 420, 112);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -28);
     lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(btn, lv_color_hex(COL_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_color(btn, lv_color_hex(COL_TERTIARY), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -189,11 +257,36 @@ void ui_set_reply(const char *text) {
     lvgl_port_unlock();
 }
 
+void ui_viz_update(const int16_t *wave1, const int16_t *wave2, const uint8_t *bars1, const uint8_t *bars2) {
+    if (!s_wave[0] || !lvgl_port_lock(0)) return;
+    const int16_t *waves[2] = { wave1, wave2 };
+    const uint8_t *bars[2] = { bars1, bars2 };
+    for (int m = 0; m < 2; m++) {
+        int32_t *wy = lv_chart_get_y_array(s_wave[m], s_wave_ser[m]);
+        for (int i = 0; i < UI_WAVE_POINTS; i++) {
+            wy[i] = waves[m][i];
+        }
+        lv_chart_refresh(s_wave[m]);
+        int32_t *by = lv_chart_get_y_array(s_bars[m], s_bars_ser[m]);
+        for (int i = 0; i < UI_BANDS; i++) {
+            by[i] = bars[m][i];
+        }
+        lv_chart_refresh(s_bars[m]);
+    }
+    lvgl_port_unlock();
+}
+
 int ui_attach_touch(void) {
+    i2c_master_bus_handle_t bus = audio_i2c_bus();
+    if (!bus) return -4;
     esp_lcd_panel_io_handle_t tio = NULL;
     esp_lcd_panel_io_i2c_config_t tio_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-    tio_cfg.scl_speed_hz = 0;  // legacy i2c driver rejects a per-device speed
-    if (esp_lcd_new_panel_io_i2c_v1(I2C_PORT, &tio_cfg, &tio) != ESP_OK) return -1;
+    tio_cfg.scl_speed_hz = TOUCH_SCL_HZ;
+    if (i2c_master_probe(bus, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, 100) != ESP_OK &&
+        i2c_master_probe(bus, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, 100) == ESP_OK) {
+        tio_cfg.dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
+    }
+    if (esp_lcd_new_panel_io_i2c_v2(bus, &tio_cfg, &tio) != ESP_OK) return -1;
     esp_lcd_touch_config_t tcfg = {
         .x_max = LCD_H,
         .y_max = LCD_V,

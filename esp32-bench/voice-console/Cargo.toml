@@ -12,10 +12,14 @@ resolver = "2"
 # 0.53 (hal 0.47 / sys 0.38) for esp32p4 support; esp-idf-svc 0.51's hal 0.45.2
 # miscompiles for the P4 (Xtensa `_frxt_setup_switch`, no `Core::Core1`).
 [dependencies]
-esp-idf-svc = "0.53"
 log = "0.4"
 anyhow = "1"
 serde_json = "1"
+microfft = "0.6"
+
+# Compiled only for the on-device target; host builds test the pure DSP.
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-svc = "0.53"
 
 [build-dependencies]
 embuild = { version = "0.33", features = ["espidf"] }
@@ -32,9 +36,9 @@ remote_component = { name = "espressif/esp_hosted", version = "*" }
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_wifi_remote", version = "*" }
 
-# ES8311 codec driver + the local audio_shim (I2S/codec bring-up) it wraps.
+# ES8311 speaker + ES7210 dual-mic codecs (the board's factory audio stack); audio_shim wraps it.
 [[package.metadata.esp-idf-sys.extra_components]]
-remote_component = { name = "espressif/es8311", version = "^1.0.0" }
+remote_component = { name = "espressif/esp_codec_dev", version = "~1.6.2" }
 
 # ST7703 MIPI-DSI panel driver + LVGL port; the local display_shim wraps them.
 [[package.metadata.esp-idf-sys.extra_components]]
@@ -47,7 +51,7 @@ remote_component = { name = "espressif/esp_lvgl_port", version = "==2.5.0" }
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "lvgl/lvgl", version = "9.2.0" }
 
-# GT911 capacitive touch (shares I2C0 with the ES8311, legacy driver).
+# GT911 capacitive touch (on the codecs' i2c_master bus).
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_lcd_touch_gt911", version = "^1.1" }
 
