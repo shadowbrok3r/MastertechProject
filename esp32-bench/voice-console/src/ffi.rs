@@ -2,6 +2,7 @@
 
 use std::ffi::{c_char, CString};
 
+use crate::endpoint::Frame;
 use crate::viz;
 
 // UI_WAVE_POINTS and UI_BANDS in display_shim.h; audio_shim's tap holds 1024 samples.
@@ -14,6 +15,10 @@ extern "C" {
     fn audio_set_amp(on: i32);
     fn audio_capture(on: i32);
     fn audio_tap_latest(mic1: *mut i16, mic2: *mut i16, n: usize);
+    fn audio_sr_init() -> i32;
+    fn audio_wake_take() -> i32;
+    fn audio_level_frame(db: *mut f32, speech: *mut i32) -> i32;
+    fn audio_set_volume(level: i32);
     fn audio_play_begin();
     fn audio_play_push(buf: *const u8, len: usize) -> i32;
     fn audio_play_end();
@@ -27,6 +32,11 @@ extern "C" {
     fn ui_set_transcript(text: *const c_char);
     fn ui_set_reply(text: *const c_char);
     fn ui_viz_update(wave1: *const i16, wave2: *const i16, bars1: *const u8, bars2: *const u8);
+    fn ui_show_approval(text: *const c_char, hint: *const c_char, can_approve: i32);
+    fn ui_hide_approval();
+    fn ui_approval_choice() -> i32;
+    fn ui_set_volume(level: i32);
+    fn ui_volume_poll(released: *mut i32) -> i32;
 }
 
 /// MasterTech TUI palette (Deep Pink default), as 0xRRGGBB.
@@ -36,6 +46,7 @@ pub mod color {
     pub const TERTIARY: u32 = 0xCBA6F7;
     pub const SUCCESS: u32 = 0xA6E3A1;
     pub const ERROR: u32 = 0xF38BA8;
+    pub const WARN: u32 = 0xF9E2AF;
 }
 
 fn check(code: i32) -> Result<(), i32> {
@@ -92,6 +103,55 @@ pub fn viz_update(
     bars2: &[u8; viz::BANDS],
 ) {
     unsafe { ui_viz_update(wave1.as_ptr(), wave2.as_ptr(), bars1.as_ptr(), bars2.as_ptr()) }
+}
+
+/// Starts esp-sr's wake word and voice activity detection.
+pub fn init_wake() -> Result<(), i32> {
+    check(unsafe { audio_sr_init() })
+}
+
+/// True once per detected wake word.
+pub fn wake_heard() -> bool {
+    unsafe { audio_wake_take() != 0 }
+}
+
+/// The oldest queued 32 ms mic level frame.
+pub fn level_frame() -> Option<Frame> {
+    let (mut db, mut speech) = (0f32, 0i32);
+    (unsafe { audio_level_frame(&mut db, &mut speech) } != 0).then_some(Frame { db, speech: speech != 0 })
+}
+
+pub fn set_speaker_volume(level: u8) {
+    unsafe { audio_set_volume(i32::from(level)) }
+}
+
+pub fn show_volume(level: u8) {
+    unsafe { ui_set_volume(i32::from(level)) }
+}
+
+/// The volume slider's newest value and whether it was released since the last poll.
+pub fn volume_poll() -> Option<(u8, bool)> {
+    let mut released = 0;
+    let level = unsafe { ui_volume_poll(&mut released) };
+    u8::try_from(level).ok().map(|l| (l.min(100), released != 0))
+}
+
+pub fn show_approval(text: &str, hint: &str, can_approve: bool) {
+    let (text, hint) = (c_text(text), c_text(hint));
+    unsafe { ui_show_approval(text.as_ptr(), hint.as_ptr(), i32::from(can_approve)) }
+}
+
+pub fn hide_approval() {
+    unsafe { ui_hide_approval() }
+}
+
+/// A tap on the approval card: `Some(true)` approve, `Some(false)` deny or skip.
+pub fn approval_choice() -> Option<bool> {
+    match unsafe { ui_approval_choice() } {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
 }
 
 pub fn play_begin() {

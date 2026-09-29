@@ -1,6 +1,5 @@
 //! Boot, Wi-Fi, the relay socket, and the mic and visualizer threads.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,8 +15,9 @@ use esp_idf_svc::ws::client::{
     EspWebSocketClient, EspWebSocketClientConfig, WebSocketEvent, WebSocketEventType,
 };
 
-use crate::console::{self, Console, Outgoing};
+use crate::console::{self, Console, Mic, Outgoing};
 use crate::ffi::{self, color};
+use crate::settings::Settings;
 use crate::viz;
 
 const WIFI_SSID: &str = match option_env!("VOICE_WIFI_SSID") {
@@ -41,6 +41,8 @@ const RELAY_BASE: &str = match option_env!("VOICE_RELAY_URL") {
 const TTS_START: &str = r#"{"cmd":"tts_start""#;
 const TTS_END: &str = r#"{"cmd":"tts_end""#;
 const VIZ_FRAME: Duration = Duration::from_millis(40);
+/// Associations without a DHCP lease before the chip restarts.
+const NO_LEASE_RESTART: u32 = 2;
 
 pub fn run() -> Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -58,10 +60,25 @@ pub fn run() -> Result<()> {
         Err(e) => log::warn!("display_init failed: {e}"),
     }
 
+    let nvs = EspDefaultNvsPartition::take()?;
+    let settings = Settings::open(nvs.clone())
+        .map_err(|e| log::warn!("settings unavailable: {e}"))
+        .ok();
+
     match ffi::init_audio() {
         Ok(()) => log::info!("audio ready (es8311 out, es7210 dual mic, 16 kHz)"),
         Err(e) => log::warn!("audio_init failed: {e}"),
     }
+    let wake = match ffi::init_wake() {
+        Ok(()) => {
+            log::info!("wake word ready (esp-sr afe)");
+            true
+        }
+        Err(e) => {
+            log::warn!("wake word unavailable ({e}); push-to-talk only");
+            false
+        }
+    };
     match ffi::attach_touch() {
         Ok(()) => log::info!("touch ready (gt911)"),
         Err(e) => log::warn!("ui_attach_touch failed: {e}"),
@@ -79,11 +96,11 @@ pub fn run() -> Result<()> {
         }
     }
     ffi::set_status("Joining Wi-Fi...", color::MUTED);
-    let _wifi = connect_wifi()?;
+    let _wifi = connect_wifi(nvs)?;
     ffi::set_status("Connecting...", color::MUTED);
     log::info!("joining relay room {DEVICE_ID}");
 
-    let capture = Arc::new(AtomicBool::new(false));
+    let mic = Arc::new(Mic::default());
     let (inbox_tx, inbox_rx) = sync_channel::<String>(16);
     let uri = format!("{RELAY_BASE}?room_id={DEVICE_ID}&role=client");
     let config = EspWebSocketClientConfig {
@@ -92,20 +109,20 @@ pub fn run() -> Result<()> {
         reconnect_timeout_ms: Duration::from_secs(3),
         ..Default::default()
     };
-    let cb_capture = capture.clone();
+    let cb_mic = mic.clone();
     let client = EspWebSocketClient::new(&uri, &config, Duration::from_secs(10), move |event| {
-        on_ws_event(event, &inbox_tx, &cb_capture)
+        on_ws_event(event, &inbox_tx, &cb_mic)
     })?;
     console::log_heap();
 
     let (out_tx, out_rx) = sync_channel::<Outgoing>(8);
-    let mic_capture = capture.clone();
+    let loop_mic = mic.clone();
     std::thread::Builder::new()
         .name("mic".into())
         .stack_size(4096)
-        .spawn(move || console::mic_loop(mic_capture, out_tx))?;
+        .spawn(move || console::mic_loop(loop_mic, out_tx))?;
 
-    Console::new(client, inbox_rx, out_rx, capture).run()
+    Console::new(client, inbox_rx, out_rx, mic, settings, wake).run()
 }
 
 /// Feeds the per-mic waveform and spectrum panels.
@@ -124,10 +141,9 @@ fn viz_loop() {
     }
 }
 
-fn connect_wifi() -> Result<BlockingWifi<EspWifi<'static>>> {
+fn connect_wifi(nvs: EspDefaultNvsPartition) -> Result<BlockingWifi<EspWifi<'static>>> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
-    let nvs = EspDefaultNvsPartition::take()?;
     let mut wifi = BlockingWifi::wrap(
         EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?,
         sys_loop,
@@ -145,16 +161,25 @@ fn connect_wifi() -> Result<BlockingWifi<EspWifi<'static>>> {
     }))?;
     wifi.start()?;
     let mut delay = Duration::from_secs(2);
+    let mut no_lease = 0;
     loop {
-        match wifi.connect().and_then(|_| wifi.wait_netif_up()) {
-            Ok(()) => break,
-            Err(e) => {
-                log::warn!("wifi connect to {WIFI_SSID} failed: {e}; retrying in {delay:?}");
-                let _ = wifi.disconnect();
-                std::thread::sleep(delay);
-                delay = (delay * 2).min(Duration::from_secs(60));
-            }
+        match wifi.connect() {
+            Ok(()) => match wifi.wait_netif_up() {
+                Ok(()) => break,
+                Err(e) => {
+                    no_lease += 1;
+                    if no_lease >= NO_LEASE_RESTART {
+                        log::error!("associated {no_lease} times without a DHCP lease; restarting");
+                        esp_idf_svc::hal::reset::restart();
+                    }
+                    log::warn!("no DHCP lease on {WIFI_SSID}: {e}; retrying in {delay:?}");
+                }
+            },
+            Err(e) => log::warn!("wifi connect to {WIFI_SSID} failed: {e}; retrying in {delay:?}"),
         }
+        let _ = wifi.disconnect();
+        std::thread::sleep(delay);
+        delay = (delay * 2).min(Duration::from_secs(60));
     }
     match wifi.wifi().sta_netif().get_ip_info() {
         Ok(info) => log::info!("wifi up on {WIFI_SSID}, ip {}", info.ip),
@@ -166,7 +191,7 @@ fn connect_wifi() -> Result<BlockingWifi<EspWifi<'static>>> {
 fn on_ws_event(
     event: &Result<WebSocketEvent<'_>, EspIOError>,
     inbox: &SyncSender<String>,
-    capture: &AtomicBool,
+    mic: &Mic,
 ) {
     let Ok(event) = event else { return };
     match &event.event_type {
@@ -180,7 +205,7 @@ fn on_ws_event(
         }
         WebSocketEventType::Text(t) => {
             // Starts and ends playback in callback order with the PCM frames.
-            if t.starts_with(TTS_START) && !capture.load(Ordering::Acquire) {
+            if t.starts_with(TTS_START) && !mic.capturing() {
                 ffi::play_begin();
             } else if t.starts_with(TTS_END) {
                 ffi::play_end();

@@ -14,6 +14,15 @@ void ui_set_status(const char *text, uint32_t color);  // status line, color 0xR
 void ui_set_transcript(const char *text);              // what the tech said
 void ui_set_reply(const char *text);                   // the assistant's reply
 
+// Approval card over the reply area; the Approve button shows only when `can_approve`.
+void ui_show_approval(const char *text, const char *hint, int can_approve);
+void ui_hide_approval(void);
+int ui_approval_choice(void);  // -1 none, 0 deny/skip, 1 approve; each tap reads once
+
+// Volume slider, 0..100.
+void ui_set_volume(int level);
+int ui_volume_poll(int *final);  // -1 when unchanged; `final` is 1 once the slider is released
+
 // Per-mic visuals: waveform points in -100..100, spectrum bars in 0..100.
 #define UI_WAVE_POINTS 64
 #define UI_BANDS 16

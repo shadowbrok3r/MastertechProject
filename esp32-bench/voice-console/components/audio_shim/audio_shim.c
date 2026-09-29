@@ -5,11 +5,15 @@
 #include "driver/i2s_std.h"
 #include "driver/i2s_tdm.h"
 #include "driver/gpio.h"
+#include "esp_afe_sr_models.h"
+#include "esp_attr.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
+#include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -27,18 +31,29 @@
 #define SAMPLE_RATE 16000
 #define OUT_VOLUME 75
 #define MIC_GAIN_DB 30.0f
+#define REF_GAIN_DB 18.0f
 
-// ES7210 TDM slot order is MIC1, MIC3, MIC2, MIC4.
+// ES7210 TDM slot order is MIC1, MIC3, MIC2, MIC4; MIC3 carries the speaker reference.
 #define TDM_SLOTS 4
 #define SLOT_MIC1 0
+#define SLOT_REF 1
 #define SLOT_MIC2 2
+// AFE input: two mics, then the playback reference.
+#define AFE_FORMAT "MMR"
+#define AFE_CHANNELS 3
+// Silence that ends a VAD speech run.
+#define VAD_END_MS 700
 // 16 ms of 16 kHz frames per read.
 #define CAP_FRAMES 256
+#define CAP_BYTES (CAP_FRAMES * TDM_SLOTS * sizeof(int16_t))
 // Per-mic tap length; a power of two.
 #define TAP_LEN 1024
 #define MIC_BUF_BYTES (64 * 1024)
 #define MIC_CHUNK 2048
 #define SLOT_REPORTS 30
+// 32 ms mic level frames, 2 s of them queued.
+#define LEVEL_FRAMES 512
+#define LEVEL_QUEUE 64
 
 // ~32 s of 16 kHz mono PCM16, held in PSRAM.
 #define PLAY_BUF_BYTES (1024 * 1024)
@@ -50,8 +65,12 @@ static i2s_chan_handle_t s_rx;
 static esp_codec_dev_handle_t s_out;
 static esp_codec_dev_handle_t s_in;
 
-static int16_t s_tap1[TAP_LEN];
-static int16_t s_tap2[TAP_LEN];
+// Heap-allocated in buffers_setup.
+static int16_t *s_tap1;
+static int16_t *s_tap2;
+static int16_t *s_cap;   // one read of TDM frames
+static int16_t *s_mono;  // MIC1 of that read
+static uint8_t *s_chunk; // one speaker write
 static uint32_t s_tap_pos;
 static portMUX_TYPE s_tap_lock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -65,6 +84,24 @@ static volatile int s_accept;  // pushes are queued
 static volatile int s_eos;     // the current reply has no more data
 static volatile int s_flush;   // queued audio is to be dropped
 static volatile int s_busy;    // a reply is queued or playing
+
+// Occupies TCM so no heap allocation, task stacks included, lands there.
+static TCM_DRAM_ATTR volatile uint8_t s_tcm_fill[0x1F80];
+
+static const esp_afe_sr_iface_t *s_afe;
+static esp_afe_sr_data_t *s_afe_data;
+static int16_t *s_feed;        // interleaved AFE input frames
+static int s_feed_frames;      // frames per AFE feed
+static int s_feed_fill;
+static volatile int s_wake;    // wake word heard; read once by audio_wake_take
+static volatile int s_speech;  // VAD reports speech
+
+typedef struct {
+    float db;
+    int32_t speech;
+} level_frame_t;
+
+static QueueHandle_t s_levels;
 
 static int i2c_setup(void) {
     i2c_master_bus_config_t cfg = {
@@ -201,9 +238,10 @@ static int codec_setup(void) {
         .sample_rate = SAMPLE_RATE,
     };
     if (esp_codec_dev_open(s_in, &in_fs) != ESP_CODEC_DEV_OK) return -8;
-    // Gain masks use physical MIC numbering: MIC1 and MIC2.
+    // Gain masks use physical MIC numbering: MIC1 and MIC2, then MIC3 for the reference.
     esp_codec_dev_set_in_channel_gain(
         s_in, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0) | ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), MIC_GAIN_DB);
+    esp_codec_dev_set_in_channel_gain(s_in, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), REF_GAIN_DB);
 
     esp_codec_dev_sample_info_t out_fs = { .bits_per_sample = 16, .channel = 1, .sample_rate = SAMPLE_RATE };
     if (esp_codec_dev_open(s_out, &out_fs) != ESP_CODEC_DEV_OK) return -9;
@@ -214,15 +252,30 @@ static int codec_setup(void) {
 // Reads the ES7210's four TDM slots into the per-mic tap and, while capturing, the mono mic stream.
 static void capture_task(void *arg) {
     (void)arg;
-    static int16_t frames[CAP_FRAMES * TDM_SLOTS];
-    static int16_t mono[CAP_FRAMES];
+    int16_t *frames = s_cap;
+    int16_t *mono = s_mono;
     int64_t sq[TDM_SLOTS] = { 0 };
     int counted = 0;
     int reports = 0;
+    int64_t level_sq = 0;
+    int level_n = 0;
     for (;;) {
-        if (esp_codec_dev_read(s_in, frames, sizeof frames) != ESP_CODEC_DEV_OK) {
+        if (esp_codec_dev_read(s_in, frames, CAP_BYTES) != ESP_CODEC_DEV_OK) {
             vTaskDelay(pdMS_TO_TICKS(5));
             continue;
+        }
+        for (int i = 0; i < CAP_FRAMES; i++) {
+            int32_t a = frames[i * TDM_SLOTS + SLOT_MIC1];
+            int32_t b = frames[i * TDM_SLOTS + SLOT_MIC2];
+            level_sq += (int64_t)a * a + (int64_t)b * b;
+        }
+        level_n += CAP_FRAMES;
+        if (level_n >= LEVEL_FRAMES) {
+            float power = (float)level_sq / (2.0f * level_n) / (32768.0f * 32768.0f);
+            level_frame_t f = { .db = 10.0f * log10f(power + 1e-10f), .speech = s_speech };
+            xQueueSend(s_levels, &f, 0);
+            level_sq = 0;
+            level_n = 0;
         }
         taskENTER_CRITICAL(&s_tap_lock);
         for (int i = 0; i < CAP_FRAMES; i++) {
@@ -235,7 +288,19 @@ static void capture_task(void *arg) {
             for (int i = 0; i < CAP_FRAMES; i++) {
                 mono[i] = frames[i * TDM_SLOTS + SLOT_MIC1];
             }
-            xStreamBufferSend(s_mic, mono, sizeof mono, 0);
+            xStreamBufferSend(s_mic, mono, CAP_FRAMES * sizeof(int16_t), 0);
+        }
+        if (s_afe_data) {
+            for (int i = 0; i < CAP_FRAMES; i++) {
+                int16_t *f = &s_feed[s_feed_fill * AFE_CHANNELS];
+                f[0] = frames[i * TDM_SLOTS + SLOT_MIC1];
+                f[1] = frames[i * TDM_SLOTS + SLOT_MIC2];
+                f[2] = frames[i * TDM_SLOTS + SLOT_REF];
+                if (++s_feed_fill == s_feed_frames) {
+                    s_afe->feed(s_afe_data, s_feed);
+                    s_feed_fill = 0;
+                }
+            }
         }
         // Per-slot RMS every 2 s for the first minute after boot.
         if (reports < SLOT_REPORTS) {
@@ -255,20 +320,39 @@ static void capture_task(void *arg) {
     }
 }
 
+// Reads AFE results: wake word detections and the VAD state.
+static void afe_task(void *arg) {
+    esp_afe_sr_data_t *data = arg;
+    int speech = 0;
+    for (;;) {
+        afe_fetch_result_t *res = s_afe->fetch(data);
+        if (!res || res->ret_value == ESP_FAIL) continue;
+        if (res->wakeup_state == WAKENET_DETECTED) {
+            ESP_LOGI(TAG, "wake word (model %d, word %d)", res->wakenet_model_index, res->wake_word_index);
+            s_wake = 1;
+        }
+        int now = res->vad_state == VAD_SPEECH;
+        if (now != speech) {
+            speech = now;
+            s_speech = now;
+        }
+    }
+}
+
 // Drains the reply stream buffer into the speaker.
 static void play_task(void *arg) {
     (void)arg;
-    static uint8_t chunk[PLAY_CHUNK];
+    uint8_t *chunk = s_chunk;
     for (;;) {
         if (s_flush) {
-            while (xStreamBufferReceive(s_play, chunk, sizeof chunk, 0) > 0) {
+            while (xStreamBufferReceive(s_play, chunk, PLAY_CHUNK, 0) > 0) {
             }
             s_flush = 0;
             s_eos = 0;
             s_busy = 0;
             continue;
         }
-        size_t n = xStreamBufferReceive(s_play, chunk, sizeof chunk, pdMS_TO_TICKS(20));
+        size_t n = xStreamBufferReceive(s_play, chunk, PLAY_CHUNK, pdMS_TO_TICKS(20));
         if (n > 0) {
             esp_codec_dev_write(s_out, chunk, (int)n);
         } else if (s_eos) {
@@ -281,10 +365,17 @@ static void play_task(void *arg) {
 static int buffers_setup(void) {
     uint8_t *play = heap_caps_malloc(PLAY_BUF_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     uint8_t *mic = heap_caps_malloc(MIC_BUF_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!play || !mic) return -1;
+    const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    s_tap1 = heap_caps_calloc(TAP_LEN, sizeof(int16_t), internal);
+    s_tap2 = heap_caps_calloc(TAP_LEN, sizeof(int16_t), internal);
+    s_cap = heap_caps_malloc(CAP_BYTES, internal);
+    s_mono = heap_caps_malloc(CAP_FRAMES * sizeof(int16_t), internal);
+    s_chunk = heap_caps_malloc(PLAY_CHUNK, internal);
+    if (!play || !mic || !s_tap1 || !s_tap2 || !s_cap || !s_mono || !s_chunk) return -1;
     s_play = xStreamBufferCreateStatic(PLAY_BUF_BYTES, 1, play, &s_play_ctl);
     s_mic = xStreamBufferCreateStatic(MIC_BUF_BYTES, MIC_CHUNK, mic, &s_mic_ctl);
-    return (s_play && s_mic) ? 0 : -2;
+    s_levels = xQueueCreateWithCaps(LEVEL_QUEUE, sizeof(level_frame_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return (s_play && s_mic && s_levels) ? 0 : -2;
 }
 
 void *audio_i2c_bus(void) {
@@ -296,6 +387,7 @@ void audio_set_amp(int on) {
 }
 
 int audio_init(void) {
+    s_tcm_fill[0] = 0;
     if (i2c_setup()) return -1;
     if (i2s_setup()) return -2;
     int rc = codec_setup();
@@ -307,6 +399,64 @@ int audio_init(void) {
     if (xTaskCreate(capture_task, "vc_mic", 4096, NULL, 7, NULL) != pdPASS) return -5;
     if (xTaskCreate(play_task, "vc_play", 3072, NULL, 5, NULL) != pdPASS) return -6;
     return 0;
+}
+
+int audio_sr_init(void) {
+    size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    srmodel_list_t *models = esp_srmodel_init("model");
+    if (!models || models->num == 0) {
+        ESP_LOGW(TAG, "no speech models in the \"model\" partition");
+        return -1;
+    }
+    afe_config_t *cfg = afe_config_init(AFE_FORMAT, models, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
+    if (!cfg) return -2;
+    cfg->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
+    cfg->afe_perferred_core = 1;
+    cfg->afe_perferred_priority = 5;
+    cfg->vad_min_noise_ms = VAD_END_MS;
+    const esp_afe_sr_iface_t *afe = esp_afe_handle_from_config(cfg);
+    esp_afe_sr_data_t *data = afe ? afe->create_from_config(cfg) : NULL;
+    afe_config_free(cfg);
+    if (!data) return -3;
+    int frames = afe->get_feed_chunksize(data);
+    int channels = afe->get_feed_channel_num(data);
+    if (channels != AFE_CHANNELS) {
+        ESP_LOGE(TAG, "AFE wants %d channels, not %d", channels, AFE_CHANNELS);
+        afe->destroy(data);
+        return -4;
+    }
+    s_feed = heap_caps_malloc((size_t)frames * AFE_CHANNELS * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_feed) return -5;
+    s_afe = afe;
+    s_feed_frames = frames;
+    if (xTaskCreatePinnedToCoreWithCaps(afe_task, "vc_afe", 8192, data, 5, NULL, 1,
+                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+        return -6;
+    }
+    s_afe_data = data;
+    ESP_LOGI(TAG, "afe ready: %u B internal ram used, %u B free, %u B largest block",
+             (unsigned)(internal_before - heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    return 0;
+}
+
+int audio_wake_take(void) {
+    int w = s_wake;
+    s_wake = 0;
+    return w;
+}
+
+int audio_level_frame(float *db, int *speech) {
+    level_frame_t f;
+    if (!s_levels || xQueueReceive(s_levels, &f, 0) != pdTRUE) return 0;
+    *db = f.db;
+    *speech = f.speech;
+    return 1;
+}
+
+void audio_set_volume(int level) {
+    if (s_out) esp_codec_dev_set_out_vol(s_out, level);
 }
 
 int audio_write(const void *buf, size_t len) {
@@ -328,6 +478,7 @@ void audio_capture(int on) {
 }
 
 void audio_tap_latest(int16_t *mic1, int16_t *mic2, size_t n) {
+    if (!s_tap1 || !s_tap2) return;
     if (n > TAP_LEN) n = TAP_LEN;
     taskENTER_CRITICAL(&s_tap_lock);
     uint32_t start = (s_tap_pos - (uint32_t)n) & (TAP_LEN - 1);

@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(target_os = "espidf"), allow(dead_code))]
 
+mod endpoint;
 mod viz;
 
 #[cfg(target_os = "espidf")]
@@ -10,6 +11,8 @@ mod console;
 mod device;
 #[cfg(target_os = "espidf")]
 mod ffi;
+#[cfg(target_os = "espidf")]
+mod settings;
 
 #[cfg(target_os = "espidf")]
 fn main() -> anyhow::Result<()> {

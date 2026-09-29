@@ -40,6 +40,10 @@ remote_component = { name = "espressif/esp_wifi_remote", version = "*" }
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_codec_dev", version = "~1.6.2" }
 
+# Wake word, echo cancellation and voice activity detection (AFE); models live in the "model" partition.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp-sr", version = "=2.1.5" }
+
 # ST7703 MIPI-DSI panel driver + LVGL port; the local display_shim wraps them.
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "waveshare/esp_lcd_st7703", version = "*" }

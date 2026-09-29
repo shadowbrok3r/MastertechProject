@@ -10,8 +10,11 @@
 #include "esp_lcd_st7703.h"
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_gt911.h"
+#include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "lvgl.h"
+
+#define TAG "display_shim"
 
 // MasterTech TUI palette (Deep Pink default): near-black bg, hot-pink accent.
 #define COL_BG           0x06060A
@@ -22,6 +25,9 @@
 #define COL_ACCENT_DIM   0x5A0A36
 #define COL_TERTIARY     0xCBA6F7
 #define COL_TERTIARY_DIM 0x463A60
+#define COL_SUCCESS      0xA6E3A1
+#define COL_ERROR        0xF38BA8
+#define COL_WARN         0xF9E2AF
 
 #define PIN_TOUCH_RST 23
 #define TOUCH_SCL_HZ 400000
@@ -92,8 +98,17 @@ static lv_obj_t *s_wave[2];
 static lv_chart_series_t *s_wave_ser[2];
 static lv_obj_t *s_bars[2];
 static lv_chart_series_t *s_bars_ser[2];
+static lv_obj_t *s_card;
+static lv_obj_t *s_card_text;
+static lv_obj_t *s_card_hint;
+static lv_obj_t *s_card_ok;
+static lv_obj_t *s_card_no_label;
+static lv_obj_t *s_vol;
 static esp_lcd_touch_handle_t s_touch;
 static volatile int s_ptt;
+static volatile int s_choice = -1;    // approval tap awaiting pickup: 0 deny, 1 approve
+static volatile int s_vol_level = -1; // slider value awaiting pickup
+static volatile int s_vol_final;      // the slider was released
 
 static void ptt_cb(lv_event_t *e) {
     lv_event_code_t code = lv_event_get_code(e);
@@ -101,6 +116,20 @@ static void ptt_cb(lv_event_t *e) {
         s_ptt = 1;
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         s_ptt = 0;
+    }
+}
+
+static void choice_cb(lv_event_t *e) {
+    s_choice = (int)(intptr_t)lv_event_get_user_data(e);
+}
+
+static void vol_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        s_vol_level = lv_slider_get_value(s_vol);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        s_vol_level = lv_slider_get_value(s_vol);
+        s_vol_final = 1;
     }
 }
 
@@ -165,6 +194,70 @@ static void mic_panel(lv_obj_t *parent, int idx, const char *name, uint32_t colo
     s_bars[idx] = b;
 }
 
+// Speaker icon and volume slider in the top-right corner.
+static void volume_control(lv_obj_t *scr) {
+    lv_obj_t *icon = label(scr, &lv_font_montserrat_26, COL_MUTED, LV_SYMBOL_VOLUME_MAX);
+    lv_obj_align(icon, LV_ALIGN_TOP_RIGHT, -232, 36);
+    s_vol = lv_slider_create(scr);
+    lv_obj_set_size(s_vol, 190, 12);
+    lv_obj_align(s_vol, LV_ALIGN_TOP_RIGHT, -28, 44);
+    lv_slider_set_range(s_vol, 0, 100);
+    lv_slider_set_value(s_vol, 75, LV_ANIM_OFF);
+    lv_obj_set_ext_click_area(s_vol, 24);
+    lv_obj_set_style_bg_color(s_vol, lv_color_hex(COL_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_vol, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_vol, lv_color_hex(COL_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_vol, lv_color_hex(COL_TEXT), LV_PART_KNOB);
+    lv_obj_set_style_pad_all(s_vol, 8, LV_PART_KNOB);
+    lv_obj_add_event_cb(s_vol, vol_cb, LV_EVENT_ALL, NULL);
+}
+
+static lv_obj_t *card_button(lv_obj_t *card, const char *text, uint32_t fill, uint32_t ink, int choice,
+                             lv_obj_t **label_out) {
+    lv_obj_t *b = lv_button_create(card);
+    lv_obj_set_size(b, 180, 56);
+    lv_obj_set_style_radius(b, 28, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(fill), LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(b, 0, LV_PART_MAIN);
+    lv_obj_t *l = label(b, &lv_font_montserrat_26, ink, text);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, choice_cb, LV_EVENT_CLICKED, (void *)(intptr_t)choice);
+    if (label_out) *label_out = l;
+    return b;
+}
+
+// Approval card over the reply area: request text, hint, Deny and Approve buttons.
+static void approval_card(lv_obj_t *scr) {
+    s_card = lv_obj_create(scr);
+    lv_obj_set_size(s_card, 660, 196);
+    lv_obj_align(s_card, LV_ALIGN_TOP_MID, 0, 374);
+    lv_obj_remove_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_card, lv_color_hex(COL_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_card, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_card, lv_color_hex(COL_WARN), LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_card, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_card, 16, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_card, 14, LV_PART_MAIN);
+
+    lv_obj_t *head = label(s_card, &lv_font_montserrat_20, COL_WARN, "Needs your OK");
+    lv_obj_align(head, LV_ALIGN_TOP_LEFT, 0, 0);
+    s_card_text = label(s_card, &lv_font_montserrat_26, COL_TEXT, "");
+    lv_label_set_long_mode(s_card_text, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(s_card_text, 628, 68);
+    lv_obj_align(s_card_text, LV_ALIGN_TOP_LEFT, 0, 28);
+    s_card_hint = label(s_card, &lv_font_montserrat_20, COL_MUTED, "");
+    lv_label_set_long_mode(s_card_hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_card_hint, 240);
+    lv_obj_align(s_card_hint, LV_ALIGN_BOTTOM_LEFT, 0, -8);
+    s_card_ok = card_button(s_card, "Approve", COL_SUCCESS, COL_BG, 1, NULL);
+    lv_obj_align(s_card_ok, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_t *no = card_button(s_card, "Deny", COL_SURFACE, COL_ERROR, 0, &s_card_no_label);
+    lv_obj_set_style_border_color(no, lv_color_hex(COL_ERROR), LV_PART_MAIN);
+    lv_obj_set_style_border_width(no, 2, LV_PART_MAIN);
+    lv_obj_align(no, LV_ALIGN_BOTTOM_RIGHT, -196, 0);
+    lv_obj_add_flag(s_card, LV_OBJ_FLAG_HIDDEN);
+}
+
 int ui_start(void) {
     lvgl_port_cfg_t pcfg = ESP_LVGL_PORT_INIT_CONFIG();
     if (lvgl_port_init(&pcfg) != ESP_OK) return -1;
@@ -189,7 +282,8 @@ int ui_start(void) {
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *title = label(scr, &lv_font_montserrat_48, COL_ACCENT, "MasterTech");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 24, 18);
+    volume_control(scr);
 
     s_status = label(scr, &lv_font_montserrat_26, COL_MUTED, "Starting...");
     lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 80);
@@ -218,6 +312,7 @@ int ui_start(void) {
     s_reply = label(s_reply_box, &lv_font_montserrat_26, COL_TEXT, "");
     lv_label_set_long_mode(s_reply, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_reply, 640);
+    approval_card(scr);
 
     lv_obj_t *btn = lv_button_create(scr);
     lv_obj_set_size(btn, 420, 112);
@@ -257,6 +352,51 @@ void ui_set_reply(const char *text) {
     lvgl_port_unlock();
 }
 
+void ui_show_approval(const char *text, const char *hint, int can_approve) {
+    if (!s_card || !lvgl_port_lock(0)) return;
+    lv_label_set_text(s_card_text, text);
+    lv_label_set_text(s_card_hint, hint);
+    lv_label_set_text(s_card_no_label, can_approve ? "Deny" : "Skip");
+    if (can_approve) {
+        lv_obj_remove_flag(s_card_ok, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_card_ok, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_add_flag(s_reply_box, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_card, LV_OBJ_FLAG_HIDDEN);
+    s_choice = -1;
+    lvgl_port_unlock();
+}
+
+void ui_hide_approval(void) {
+    if (!s_card || !lvgl_port_lock(0)) return;
+    lv_obj_add_flag(s_card, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_reply_box, LV_OBJ_FLAG_HIDDEN);
+    s_choice = -1;
+    lvgl_port_unlock();
+}
+
+int ui_approval_choice(void) {
+    int c = s_choice;
+    s_choice = -1;
+    return c;
+}
+
+void ui_set_volume(int level) {
+    if (!s_vol || !lvgl_port_lock(0)) return;
+    lv_slider_set_value(s_vol, level, LV_ANIM_OFF);
+    lvgl_port_unlock();
+}
+
+int ui_volume_poll(int *final) {
+    int v = s_vol_level;
+    if (v < 0) return -1;
+    s_vol_level = -1;
+    *final = s_vol_final;
+    s_vol_final = 0;
+    return v;
+}
+
 void ui_viz_update(const int16_t *wave1, const int16_t *wave2, const uint8_t *bars1, const uint8_t *bars2) {
     if (!s_wave[0] || !lvgl_port_lock(0)) return;
     const int16_t *waves[2] = { wave1, wave2 };
@@ -276,9 +416,8 @@ void ui_viz_update(const int16_t *wave1, const int16_t *wave2, const uint8_t *ba
     lvgl_port_unlock();
 }
 
-int ui_attach_touch(void) {
-    i2c_master_bus_handle_t bus = audio_i2c_bus();
-    if (!bus) return -4;
+// Opens the GT911 at whichever address answers, resetting it through `rst` unless NC.
+static int touch_open(i2c_master_bus_handle_t bus, gpio_num_t rst) {
     esp_lcd_panel_io_handle_t tio = NULL;
     esp_lcd_panel_io_i2c_config_t tio_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     tio_cfg.scl_speed_hz = TOUCH_SCL_HZ;
@@ -290,12 +429,28 @@ int ui_attach_touch(void) {
     esp_lcd_touch_config_t tcfg = {
         .x_max = LCD_H,
         .y_max = LCD_V,
-        .rst_gpio_num = PIN_TOUCH_RST,
+        .rst_gpio_num = rst,
         .int_gpio_num = GPIO_NUM_NC,
         .levels = { .reset = 0, .interrupt = 0 },
         .flags = { .swap_xy = 0, .mirror_x = 0, .mirror_y = 0 },
     };
-    if (esp_lcd_touch_new_i2c_gt911(tio, &tcfg, &s_touch) != ESP_OK) return -2;
+    if (esp_lcd_touch_new_i2c_gt911(tio, &tcfg, &s_touch) != ESP_OK) {
+        esp_lcd_panel_io_del(tio);
+        return -2;
+    }
+    return 0;
+}
+
+int ui_attach_touch(void) {
+    i2c_master_bus_handle_t bus = audio_i2c_bus();
+    if (!bus) return -4;
+    int rc = touch_open(bus, PIN_TOUCH_RST);
+    if (rc == -2) {
+        // Retries at the address the first attempt's reset latched, without another reset.
+        ESP_LOGW(TAG, "gt911 init failed; retrying at the latched address");
+        rc = touch_open(bus, GPIO_NUM_NC);
+    }
+    if (rc) return rc;
     lvgl_port_touch_cfg_t lt = { .disp = s_disp, .handle = s_touch };
     if (!lvgl_port_add_touch(&lt)) return -3;
     return 0;
