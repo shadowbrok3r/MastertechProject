@@ -16,6 +16,9 @@ pub const AGENT_THREAD_TABLE: &str = "agent_thread";
 pub const AGENT_THREAD_OPEN_STATUSES: [&str; 5] =
     ["queued", "starting", "idle", "running", "waiting_approval"];
 
+/// Open statuses of a thread that is working or waiting for a pool slot to start.
+pub const AGENT_THREAD_WORKING_STATUSES: [&str; 4] = ["queued", "starting", "running", "waiting_approval"];
+
 /// Threads of the signed-in technician: assigned to them, or asked for with their email.
 const SIGNED_IN_TECH_THREADS: &str =
     "$auth != NONE AND (assignee = $auth.id OR requested_by = $auth.email)";
@@ -328,6 +331,11 @@ impl AgentThread {
         )
     }
 
+    /// True while busy or queued for a pool slot.
+    pub fn is_working(&self) -> bool {
+        AGENT_THREAD_WORKING_STATUSES.contains(&self.status.as_str())
+    }
+
     /// The recorded activity; idle while no turn runs.
     pub fn activity(&self) -> AgentActivity {
         match self.status.as_str() {
@@ -499,6 +507,24 @@ impl AgentThread {
             .bind(("cs", connection_string.to_string()))
             .await?;
         let rows: Vec<Self> = res.take(0).unwrap_or_default();
+        Ok(rows.into_iter().next())
+    }
+
+    /// The newest working thread for a machine, other than `except`.
+    pub async fn working_for_connection(
+        connection_string: &str,
+        except: Option<&RecordId>,
+    ) -> anyhow::Result<Option<Self>> {
+        let mut res = db()
+            .query(
+                "SELECT * FROM agent_thread WHERE connection_string = $cs AND status IN $working \
+                 AND ($except = NONE OR id != $except) ORDER BY created_at DESC LIMIT 1",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .bind(("working", AGENT_THREAD_WORKING_STATUSES.map(String::from).to_vec()))
+            .bind(("except", except.cloned()))
+            .await?;
+        let rows: Vec<Self> = res.take(0)?;
         Ok(rows.into_iter().next())
     }
 
@@ -682,6 +708,23 @@ mod tests {
         row.activity = Some("writing".into());
         assert_eq!(row.activity(), AgentActivity::Idle);
         assert!(!row.is_busy());
+    }
+
+    #[test]
+    fn working_covers_busy_and_queued_threads_only() {
+        let mut row = thread(None, None);
+        for (status, working) in [
+            ("queued", true),
+            ("starting", true),
+            ("running", true),
+            ("waiting_approval", true),
+            ("idle", false),
+            ("closed", false),
+            ("failed", false),
+        ] {
+            row.status = status.into();
+            assert_eq!(row.is_working(), working, "{status}");
+        }
     }
 
     #[test]

@@ -42,6 +42,8 @@ pub enum RunnerCmd {
     },
     /// Frees the pool slot if the thread is idle; the thread stays open.
     Release,
+    /// Writes a transcript note from the broker.
+    Note(String),
 }
 
 /// Reconnect attempts before a thread is marked failed.
@@ -699,7 +701,7 @@ impl Runner {
             .chain(std::iter::from_fn(|| rx.try_recv().ok()))
             .filter_map(|cmd| match cmd {
                 RunnerCmd::Turn(turn) => Some(turn),
-                RunnerCmd::Stopped { .. } | RunnerCmd::Release => None,
+                RunnerCmd::Stopped { .. } | RunnerCmd::Release | RunnerCmd::Note(_) => None,
             })
             .collect();
         self.flush_all().await;
@@ -746,6 +748,10 @@ impl Runner {
             }
             RunnerCmd::Release if self.releasable() => Flow::Release,
             RunnerCmd::Release => Flow::Continue,
+            RunnerCmd::Note(text) => {
+                self.marker("other", &text, None).await;
+                Flow::Continue
+            }
         }
     }
 
@@ -1845,7 +1851,32 @@ impl Runner {
         }
     }
 
+    /// The machine's other working thread, when this idle thread would start work beside it.
+    async fn working_sibling(&self, kind: &str) -> Option<AgentThread> {
+        if !matches!(kind, "start" | "steer" | "queue")
+            || !self.busy.is_idle()
+            || super::is_general(&self.thread.connection_string)
+        {
+            return None;
+        }
+        AgentThread::working_for_connection(&self.thread.connection_string, Some(&self.thread.id))
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("codex: working-thread lookup failed for {}: {e}", self.thread.connection_string);
+                None
+            })
+    }
+
     async fn on_turn(&mut self, turn: AgentTurn) -> Flow {
+        if let Some(working) = self.working_sibling(&turn.kind).await {
+            let why = format!(
+                "Not sent: {}. Stop it or wait for it to finish.",
+                super::dispatch::working_elsewhere(&working)
+            );
+            let _ = AgentTurn::mark_failed(&turn.id, &why).await;
+            self.marker("error", &why, None).await;
+            return Flow::Continue;
+        }
         match turn.kind.as_str() {
             "start" | "steer" => {
                 self.stop_waits("the technician sent a message");
