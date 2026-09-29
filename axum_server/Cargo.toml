@@ -1,6 +1,6 @@
 [package]
 name = "axum_server"
-version = "4.8.6"
+version = "4.8.7"
 edition = "2024"
 
 [dependencies]

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "MasterTech"
-version = "4.8.6"
+version = "4.8.7"
 dependencies = [
  "anyhow",
  "arboard",
@@ -262,7 +262,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "admin-agent"
-version = "4.8.6"
+version = "4.8.7"
 dependencies = [
  "anyhow",
  "database",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "axum_server"
-version = "4.8.6"
+version = "4.8.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -3038,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "displays"
-version = "4.8.6"
+version = "4.8.7"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6707,7 +6707,7 @@ dependencies = [
 
 [[package]]
 name = "mtechserver"
-version = "4.8.6"
+version = "4.8.7"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -8442,7 +8442,7 @@ dependencies = [
 
 [[package]]
 name = "plugin_builder"
-version = "4.8.6"
+version = "4.8.7"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
