@@ -127,8 +127,6 @@ impl Age {
 pub(super) struct SessionFilter {
     working: bool,
     idle: bool,
-    /// Closed and failed sessions.
-    ended: bool,
     machine: bool,
     records: bool,
     voice: bool,
@@ -141,7 +139,6 @@ impl Default for SessionFilter {
         Self {
             working: true,
             idle: true,
-            ended: false,
             machine: true,
             records: true,
             voice: true,
@@ -152,17 +149,12 @@ impl Default for SessionFilter {
 }
 
 impl SessionFilter {
-    /// Lists closed and failed sessions too.
-    pub(super) fn include_closed(&mut self) {
-        self.ended = true;
-    }
-
-    /// Whether `thread` passes the status, kind, age and store filters, with ages read from `now`.
+    /// Whether `thread` passes the status, kind, age and store filters, with ages read from `now`; closed and failed sessions pass the status filter.
     pub(super) fn admits<Tz: TimeZone>(&self, thread: &AgentThread, now: &DateTime<Tz>) -> bool {
         let state = match SessionState::of(thread) {
             SessionState::Working => self.working,
             SessionState::Idle => self.idle,
-            SessionState::Ended => self.ended,
+            SessionState::Ended => true,
         };
         let recent = self
             .age
@@ -205,12 +197,8 @@ impl SessionFilter {
     /// The set filters in a few words, such as `Working · Voice · Today`.
     pub(super) fn summary(&self) -> String {
         let mut parts = Vec::new();
-        if !(self.working && self.idle && !self.ended) {
-            let states = [
-                (self.working, "Working"),
-                (self.idle, "Idle"),
-                (self.ended, "Closed"),
-            ];
+        if !(self.working && self.idle) {
+            let states = [(self.working, "Working"), (self.idle, "Idle")];
             push_chosen(&mut parts, &states, "no status");
         }
         if !(self.machine && self.records && self.voice) {
@@ -591,7 +579,6 @@ fn filter_menu(ui: &mut Ui, filter: &mut SessionFilter, by_tech: &mut bool, stor
             "Idle",
             "Open and waiting for a message",
         );
-        chip(ui, &mut filter.ended, "Closed", "Closed or failed");
     });
     caption(ui, "Kind");
     ui.horizontal_wrapped(|ui| {
@@ -749,7 +736,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn the_default_filter_lists_every_open_session() {
+    fn the_default_filter_admits_every_status() {
         let filter = SessionFilter::default();
         assert!(filter.is_default() && !filter.narrows());
         for cs in ["PC:1", "general:t@x.com", "general:voice:guest:1"] {
@@ -762,14 +749,10 @@ pub(super) mod tests {
                 "{cs}"
             );
             assert!(
-                !filter.admits(&thread("c", "closed", cs, None), &now()),
+                filter.admits(&thread("c", "closed", cs, None), &now()),
                 "{cs}"
             );
         }
-        let mut closed_too = SessionFilter::default();
-        closed_too.include_closed();
-        assert!(closed_too.admits(&thread("c", "failed", "PC:1", None), &now()));
-        assert!(!closed_too.is_default() && !closed_too.narrows());
     }
 
     #[test]
