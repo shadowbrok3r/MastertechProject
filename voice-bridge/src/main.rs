@@ -13,6 +13,7 @@
 //! signs in as that tech and reuses one warm `general:voice:<email>` thread;
 //! otherwise runs as guest with a fresh thread per utterance.
 
+mod assistant;
 mod audio;
 mod lab;
 mod pipeline;

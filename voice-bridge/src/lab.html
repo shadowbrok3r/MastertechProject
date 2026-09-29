@@ -49,6 +49,9 @@
   .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .pill.on i { background: var(--success); box-shadow: 0 0 8px var(--success); }
   .pill.on { color: var(--success); }
+  .vol { gap: 10px; color: var(--muted); }
+  .vol input { width: 120px; }
+  .vol output { color: var(--text); min-width: 2.2em; text-align: right; }
 
   .layout {
     display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px;
@@ -151,6 +154,10 @@
   <div class="status">
     <span id="board" class="pill"><i></i><span>Board offline</span></span>
     <span id="boardVoice" class="pill">Board voice: -</span>
+    <label class="pill vol" for="volume">Volume
+      <input id="volume" type="range" min="0" max="100" step="1" value="75" disabled>
+      <output id="volOut" class="mono">-</output>
+    </label>
   </div>
 </header>
 
@@ -362,6 +369,24 @@ function setBoard(online) {
   const b = $("board");
   b.classList.toggle("on", !!online);
   b.lastElementChild.textContent = online ? "Board online" : "Board offline";
+  $("volume").disabled = !online;
+}
+
+let volDragging = false;
+function showVolume(level) {
+  if (volDragging || level == null) return;
+  $("volume").value = level;
+  $("volOut").textContent = level;
+}
+
+async function setVolume() {
+  const level = +$("volume").value;
+  try {
+    await post("/api/volume", { level });
+    setMsg("Board volume set to " + level, "ok");
+  } catch (e) {
+    setMsg(e.message, "err");
+  }
 }
 
 async function refresh(first) {
@@ -370,6 +395,7 @@ async function refresh(first) {
     voices = d.voices;
     active = d.active;
     setBoard(d.board_online);
+    showVolume(d.volume);
     if (first || !sel) {
       if (!voices.length) { $("vName").textContent = "No voices installed"; return; }
       select(active.voice, active);
@@ -538,6 +564,8 @@ for (const p of PRESETS) {
 $("text").value = PRESETS[1];
 for (const id of ["pace", "noise", "noisew", "speaker"]) $(id).addEventListener("input", showKnobs);
 $("filter").addEventListener("input", renderList);
+$("volume").addEventListener("input", () => { volDragging = true; $("volOut").textContent = $("volume").value; });
+$("volume").addEventListener("change", () => { volDragging = false; setVolume(); });
 $("playHere").onclick = playHere;
 $("playBoard").onclick = playBoard;
 $("useBoard").onclick = useBoard;

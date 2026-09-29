@@ -2,34 +2,36 @@
 //! and the bridge as `role=master`; `websocket_server2` forwards frames verbatim.
 //!
 //! Wire protocol on the room:
-//! - board -> bridge: `{"cmd":"utt_start"}` (Text), raw PCM16LE 16 kHz mono
-//!   (Binary), `{"cmd":"utt_end"}` (Text); `{"cmd":"ping"}` is answered with
-//!   `{"cmd":"pong"}`.
-//! - bridge -> board: `{"cmd":"state","state":"thinking"}` (repeated while the turn
-//!   runs), `{"cmd":"transcript","text":"..."}`, then `{"cmd":"tts_start","text":"..."}`
-//!   (Text), PCM16LE 16 kHz mono (Binary), `{"cmd":"tts_end"}` (Text).
-//!   `{"cmd":"state","state":"idle"}` when nothing usable was heard;
-//!   `{"cmd":"error","error":"..."}` on failure.
+//! - board -> bridge: `{"cmd":"utt_start"}`, PCM16LE 16 kHz mono (Binary), `{"cmd":"utt_end"}`
+//!   (`"discard":true` when no speech followed the wake word or a tap cut it short; `end`,
+//!   `noise_db` and `gate_db` describe how it ended against the measured room noise);
+//!   `{"cmd":"decide","id":..,"allow":..}` for an approval; `{"cmd":"volume","level":..}` reports
+//!   the speaker volume; `{"cmd":"ping"}` is answered with `{"cmd":"pong"}`.
+//! - bridge -> board: `{"cmd":"state","state":"thinking"}` while a turn runs and `"idle"` when it
+//!   ends; `{"cmd":"transcript","text":..}`; speech segments of `{"cmd":"tts_start","text":..}`,
+//!   PCM16LE 16 kHz mono (Binary), `{"cmd":"reply","text":..}` as the text grows, `{"cmd":"tts_end"}`;
+//!   `{"cmd":"approval","id":..,"kind":..,"text":..,"voice":..}` and `{"cmd":"approval_done","id":..}`;
+//!   `{"cmd":"volume","level":..}`; `{"cmd":"error","error":..}` on failure.
 //!
-//! A new `utt_start` supersedes any turn still running; that turn's reply is dropped.
+//! A new `utt_start` supersedes any turn still running, unless an approval is pending: then the
+//! utterance answers it.
 
-use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use std::sync::{Mutex, MutexGuard};
-
 use anyhow::{Context, Result};
+use database::schema::{AgentApproval, AgentDecideOutcome, RecordId, RecordIdExt, AGENT_APPROVAL_TABLE};
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::assistant::{self, classify, voice_may_approve, Answer, TurnEvent};
 use crate::audio::{
     i16_from_le_bytes, i16_to_le_bytes, parse_wav_mono, read_wav_mono, resample, write_wav_mono, BENCH_RATE,
 };
-use crate::pipeline::{stream_reply, transcribe, voice_prompt, Identity};
+use crate::pipeline::{transcribe, voice_prompt, Identity};
 use crate::voices::{synthesize, ActiveVoice};
 
 /// Samples per outbound audio frame (~64 ms at 16 kHz).
@@ -64,16 +66,36 @@ fn now_millis() -> u128 {
         .unwrap_or(0)
 }
 
+fn frame(v: Value) -> Message {
+    Message::Text(v.to_string().into())
+}
+
 fn state_frame(state: &str) -> Message {
-    Message::Text(json!({ "cmd": "state", "state": state }).to_string().into())
+    frame(json!({ "cmd": "state", "state": state }))
 }
 
 fn text_frame(cmd: &str, text: &str) -> Message {
-    Message::Text(json!({ "cmd": cmd, "text": text }).to_string().into())
+    frame(json!({ "cmd": cmd, "text": text }))
 }
 
 fn error_frame(msg: &str) -> Message {
-    Message::Text(json!({ "cmd": "error", "error": msg }).to_string().into())
+    frame(json!({ "cmd": "error", "error": msg }))
+}
+
+fn tts_end_frame() -> Message {
+    frame(json!({ "cmd": "tts_end" }))
+}
+
+fn approval_frame(p: &PendingApproval) -> Message {
+    frame(json!({ "cmd": "approval", "id": p.key, "kind": p.kind, "text": display_text(&p.text), "voice": p.voice }))
+}
+
+fn approval_done_frame(key: &str) -> Message {
+    frame(json!({ "cmd": "approval_done", "id": key }))
+}
+
+fn volume_frame(level: u8) -> Message {
+    frame(json!({ "cmd": "volume", "level": level }))
 }
 
 /// Peak and RMS amplitude of `pcm`.
@@ -110,6 +132,63 @@ fn display_text(s: &str) -> String {
     out
 }
 
+/// The words shown and spoken for an approval: its first question, or its summary.
+fn approval_text(a: &AgentApproval) -> String {
+    let question = a
+        .questions
+        .as_ref()
+        .and_then(|q| q.get(0))
+        .and_then(|q| q.get("question").or_else(|| q.get("header")))
+        .and_then(Value::as_str);
+    match question {
+        Some(q) if a.kind == "question" => q.trim().to_string(),
+        _ if !a.summary.trim().is_empty() => a.summary.trim().to_string(),
+        _ => a.tool.clone().unwrap_or_else(|| a.kind.clone()),
+    }
+}
+
+fn approval_prompt(p: &PendingApproval) -> String {
+    match (p.kind.as_str(), p.voice) {
+        ("question", _) => p.text.clone(),
+        (_, true) => format!("I need your OK to {}. Say yes or no.", lowercase_first(&p.text)),
+        (_, false) => format!("I need your OK to {}. Tap approve on the screen to allow it.", lowercase_first(&p.text)),
+    }
+}
+
+fn lowercase_first(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map_or_else(String::new, |c| c.to_lowercase().chain(chars).collect())
+}
+
+/// Lowercase words of `s` joined by single spaces, padded with a space at each end.
+fn word_line(s: &str) -> String {
+    let words: String = s.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect();
+    format!(" {} ", words.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+/// Codex's answer shape, `{question id: [answer]}`, taking an option label when its words are spoken.
+fn answers_for(questions: Option<&Value>, transcript: &str) -> Value {
+    let spoken = transcript.trim().trim_end_matches(['.', '!', '?']).to_string();
+    let said = word_line(&spoken);
+    let mut out = serde_json::Map::new();
+    let list = questions.and_then(Value::as_array).cloned().unwrap_or_default();
+    if list.is_empty() {
+        out.insert("answer".into(), json!([spoken]));
+    }
+    for (n, q) in list.iter().enumerate() {
+        let qid = q.get("id").and_then(Value::as_str).map_or_else(|| format!("q{n}"), str::to_string);
+        let option = q
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|o| o.get("label").and_then(Value::as_str))
+            .find(|label| !word_line(label).trim().is_empty() && said.contains(&word_line(label)));
+        out.insert(qid, json!([option.map_or_else(|| spoken.clone(), str::to_string)]));
+    }
+    Value::Object(out)
+}
+
 /// One utterance's turn and the channel back to the board.
 struct Turn {
     id: u64,
@@ -135,15 +214,38 @@ pub struct TurnContext {
     pub timeout_secs: u64,
 }
 
+impl TurnContext {
+    /// Piper speech for `text` in the board's voice, as 16 kHz samples.
+    async fn render(&self, text: &str) -> Result<Vec<i16>> {
+        let (text, voice) = (text.to_string(), self.voice.get());
+        let wav = tokio::task::spawn_blocking(move || synthesize(&text, &voice)).await??;
+        let (rate, samples) = parse_wav_mono(&wav)?;
+        Ok(resample(&samples, rate, BENCH_RATE))
+    }
+}
+
+/// The approval the board is showing.
+#[derive(Clone, Debug)]
+struct PendingApproval {
+    key: String,
+    kind: String,
+    questions: Option<Value>,
+    /// Whether a spoken yes may approve it.
+    voice: bool,
+    text: String,
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Board presence and the live relay connection's outbound channel, for speech sent outside a turn.
+/// Board presence, its speaker volume, the approval it shows, and the live connection's outbound channel.
 #[derive(Default)]
 pub struct BoardLink {
     tx: Mutex<Option<mpsc::Sender<Message>>>,
     last_seen: Mutex<Option<Instant>>,
+    approval: Mutex<Option<PendingApproval>>,
+    volume: Mutex<Option<u8>>,
 }
 
 impl BoardLink {
@@ -168,6 +270,38 @@ impl BoardLink {
         lock(&self.last_seen).is_some_and(|t| t.elapsed() < BOARD_STALE)
     }
 
+    fn approval(&self) -> Option<PendingApproval> {
+        lock(&self.approval).clone()
+    }
+
+    fn set_approval(&self, p: PendingApproval) {
+        *lock(&self.approval) = Some(p);
+    }
+
+    fn clear_approval(&self, key: &str) {
+        let mut cur = lock(&self.approval);
+        if cur.as_ref().is_some_and(|p| p.key == key) {
+            *cur = None;
+        }
+    }
+
+    fn take_approval(&self) -> Option<PendingApproval> {
+        lock(&self.approval).take()
+    }
+
+    /// The board's last reported speaker volume (0-100).
+    pub fn volume(&self) -> Option<u8> {
+        *lock(&self.volume)
+    }
+
+    /// Sets the board's speaker volume (0-100).
+    pub async fn set_volume(&self, level: u8) -> Result<()> {
+        let tx = lock(&self.tx).clone().context("relay not connected")?;
+        tx.send(volume_frame(level)).await?;
+        *lock(&self.volume) = Some(level);
+        Ok(())
+    }
+
     /// Speaks `pcm16` (16 kHz) on the board with `text` on its display.
     pub async fn speak(&self, text: &str, pcm16: &[i16]) -> Result<()> {
         let tx = lock(&self.tx).clone().context("relay not connected")?;
@@ -181,7 +315,7 @@ async fn send_speech(tx: &mpsc::Sender<Message>, text: &str, pcm16: &[i16]) -> R
     for chunk in pcm16.chunks(FRAME_SAMPLES) {
         tx.send(Message::Binary(i16_to_le_bytes(chunk).into())).await?;
     }
-    tx.send(Message::Text(r#"{"cmd":"tts_end"}"#.into())).await?;
+    tx.send(tts_end_frame()).await?;
     Ok(())
 }
 
@@ -224,7 +358,7 @@ async fn clear_master_slot(room: &str) -> Result<()> {
 }
 
 /// Serves one relay connection until it drops or goes silent.
-async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &BoardLink) -> Result<()> {
+async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &Arc<BoardLink>) -> Result<()> {
     let (ws, _resp) = tokio_tungstenite::connect_async(url).await?;
     let (sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::channel::<Message>(128);
@@ -242,6 +376,7 @@ async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &BoardLink) -> Res
     board.attach(&tx);
     let latest = Arc::new(AtomicU64::new(0));
     let mut capture: Option<Vec<i16>> = None;
+    let mut answering = false;
     let mut watchdog = tokio::time::interval(Duration::from_secs(5));
     let mut last_inbound = Instant::now();
     let result: Result<()> = async {
@@ -286,29 +421,59 @@ async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &BoardLink) -> Res
                     };
                     match v["cmd"].as_str() {
                         Some("utt_start") => {
-                            latest.fetch_add(1, Ordering::AcqRel);
+                            answering = board.approval().is_some();
+                            if !answering {
+                                latest.fetch_add(1, Ordering::AcqRel);
+                            }
                             capture = Some(Vec::new());
-                            log::info!("utt_start");
+                            log::info!("utt_start{}", if answering { " (answering an approval)" } else { "" });
                         }
                         Some("utt_end") => {
                             let pcm = capture.take().unwrap_or_default();
                             let (peak, rms) = level(&pcm);
                             log::info!(
-                                "utt_end: {} samples ({:.1}s), peak {peak}, rms {rms:.0}",
+                                "utt_end: {} samples ({:.1}s), peak {peak}, rms {rms:.0}, end {}, room {} dB, gate {} dB",
                                 pcm.len(),
-                                pcm.len() as f64 / f64::from(BENCH_RATE)
+                                pcm.len() as f64 / f64::from(BENCH_RATE),
+                                v["end"].as_str().unwrap_or("?"),
+                                v["noise_db"],
+                                v["gate_db"],
                             );
-                            if pcm.len() < MIN_UTT_SAMPLES {
-                                let _ = tx.send(state_frame("idle")).await;
+                            let pending = board.approval().filter(|_| answering);
+                            if answering && pending.is_none() {
+                                log::info!("approval already resolved; dropping the answer");
+                                continue;
+                            }
+                            if pcm.len() < MIN_UTT_SAMPLES || v["discard"].as_bool() == Some(true) {
+                                let reply = pending.as_ref().map_or_else(|| state_frame("idle"), approval_frame);
+                                let _ = tx.send(reply).await;
                                 continue;
                             }
                             let _ = tx.send(state_frame("thinking")).await;
-                            let turn = Turn {
-                                id: latest.load(Ordering::Acquire),
-                                latest: Arc::clone(&latest),
-                                tx: tx.clone(),
+                            match pending {
+                                Some(p) => spawn_answer(Arc::clone(ctx), Arc::clone(board), tx.clone(), p, pcm),
+                                None => {
+                                    let turn = Turn {
+                                        id: latest.load(Ordering::Acquire),
+                                        latest: Arc::clone(&latest),
+                                        tx: tx.clone(),
+                                    };
+                                    spawn_turn(Arc::clone(ctx), Arc::clone(board), turn, pcm);
+                                }
+                            }
+                        }
+                        Some("decide") => {
+                            let (Some(key), Some(allow)) = (v["id"].as_str(), v["allow"].as_bool()) else {
+                                log::warn!("decide without id/allow: {t}");
+                                continue;
                             };
-                            spawn_turn(Arc::clone(ctx), turn, pcm);
+                            let (board, tx, key) = (Arc::clone(board), tx.clone(), key.to_string());
+                            tokio::spawn(async move { decide_tap(&board, &tx, &key, allow).await });
+                        }
+                        Some("volume") => {
+                            if let Some(level) = v["level"].as_u64() {
+                                *lock(&board.volume) = Some(level.min(100) as u8);
+                            }
                         }
                         Some("ping") => {
                             let _ = tx.send(Message::Text(r#"{"cmd":"pong"}"#.into())).await;
@@ -337,13 +502,43 @@ async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &BoardLink) -> Res
     result
 }
 
-/// Runs one turn off the read loop, then removes its temp files.
-fn spawn_turn(ctx: Arc<TurnContext>, turn: Turn, pcm: Vec<i16>) {
+/// Records a decision on approval `key` as the signed-in tech and updates the board.
+async fn decide(board: &BoardLink, tx: &mpsc::Sender<Message>, key: &str, status: &str, note: Option<String>, answers: Option<Value>) {
+    let outcome = AgentApproval::decide(&RecordId::new(AGENT_APPROVAL_TABLE, key), status, note, answers).await;
+    log::info!("approval {key} -> {status}: {outcome:?}");
+    match outcome {
+        Ok(AgentDecideOutcome::NotPermitted) => {
+            let _ = tx.send(error_frame("This tech can't decide that request")).await;
+        }
+        Err(e) => {
+            let _ = tx.send(error_frame(&format!("Could not record the decision: {e}"))).await;
+            return;
+        }
+        Ok(_) => {}
+    }
+    board.clear_approval(key);
+    let _ = tx.send(approval_done_frame(key)).await;
+    let _ = tx.send(state_frame("thinking")).await;
+}
+
+/// A tap on the board's approval card; questions can only be skipped by tap.
+async fn decide_tap(board: &BoardLink, tx: &mpsc::Sender<Message>, key: &str, allow: bool) {
+    let question = board.approval().is_some_and(|p| p.key == key && p.kind == "question");
+    let status = match (question, allow) {
+        (true, _) => "cancelled",
+        (false, true) => "accepted",
+        (false, false) => "declined",
+    };
+    decide(board, tx, key, status, None, None).await;
+}
+
+/// Transcribes an utterance spoken while an approval was pending and applies it as the answer.
+fn spawn_answer(ctx: Arc<TurnContext>, board: Arc<BoardLink>, tx: mpsc::Sender<Message>, p: PendingApproval, pcm: Vec<i16>) {
     tokio::spawn(async move {
-        let in_wav = format!("/tmp/vb_utt_{}.wav", now_millis());
-        if let Err(e) = relay_turn(&ctx, &turn, &pcm, &in_wav).await {
-            log::error!("turn {} failed: {e}", turn.id);
-            turn.send(error_frame(&e.to_string())).await;
+        let in_wav = format!("/tmp/vb_ans_{}.wav", now_millis());
+        if let Err(e) = answer(&ctx, &board, &tx, &p, &pcm, &in_wav).await {
+            log::error!("approval answer failed: {e}");
+            let _ = tx.send(error_frame(&e.to_string())).await;
         }
         for path in [format!("{in_wav}.stt.txt"), in_wav] {
             let _ = std::fs::remove_file(path);
@@ -351,7 +546,60 @@ fn spawn_turn(ctx: Arc<TurnContext>, turn: Turn, pcm: Vec<i16>) {
     });
 }
 
-async fn relay_turn(ctx: &TurnContext, turn: &Turn, pcm: &[i16], in_wav: &str) -> Result<()> {
+async fn answer(
+    ctx: &TurnContext,
+    board: &BoardLink,
+    tx: &mpsc::Sender<Message>,
+    p: &PendingApproval,
+    pcm: &[i16],
+    in_wav: &str,
+) -> Result<()> {
+    write_wav_mono(in_wav, pcm, BENCH_RATE)?;
+    let wav = in_wav.to_string();
+    let transcript = tokio::task::spawn_blocking(move || transcribe(&wav)).await??;
+    log::info!("approval {} answer: {transcript}", p.key);
+    if heard_nothing(&transcript) {
+        tx.send(text_frame("transcript", "(didn't catch that)")).await?;
+        tx.send(approval_frame(p)).await?;
+        return Ok(());
+    }
+    tx.send(text_frame("transcript", &display_text(&transcript))).await?;
+    match (p.kind == "question", classify(&transcript)) {
+        (true, Answer::No) => decide(board, tx, &p.key, "cancelled", None, None).await,
+        (true, _) => {
+            let answers = answers_for(p.questions.as_ref(), &transcript);
+            decide(board, tx, &p.key, "answered", None, Some(answers)).await;
+        }
+        (false, Answer::Yes) if p.voice => decide(board, tx, &p.key, "accepted", None, None).await,
+        (false, Answer::Yes) => {
+            let hint = "That one needs a tap on approve.";
+            send_speech(tx, hint, &ctx.render(hint).await?).await?;
+            tx.send(approval_frame(p)).await?;
+        }
+        (false, Answer::No) => decide(board, tx, &p.key, "declined", None, None).await,
+        (false, Answer::Other) => decide(board, tx, &p.key, "declined", Some(transcript), None).await,
+    }
+    Ok(())
+}
+
+/// Runs one turn off the read loop, then removes its temp files.
+fn spawn_turn(ctx: Arc<TurnContext>, board: Arc<BoardLink>, turn: Turn, pcm: Vec<i16>) {
+    tokio::spawn(async move {
+        let in_wav = format!("/tmp/vb_utt_{}.wav", now_millis());
+        if let Err(e) = relay_turn(&ctx, &board, &turn, &pcm, &in_wav).await {
+            log::error!("turn {} failed: {e}", turn.id);
+            turn.send(error_frame(&e.to_string())).await;
+        }
+        if let Some(p) = board.take_approval() {
+            turn.send(approval_done_frame(&p.key)).await;
+        }
+        for path in [format!("{in_wav}.stt.txt"), in_wav] {
+            let _ = std::fs::remove_file(path);
+        }
+    });
+}
+
+async fn relay_turn(ctx: &TurnContext, board: &BoardLink, turn: &Turn, pcm: &[i16], in_wav: &str) -> Result<()> {
     write_wav_mono(in_wav, pcm, BENCH_RATE)?;
     let wav = in_wav.to_string();
     let transcript = tokio::task::spawn_blocking(move || transcribe(&wav)).await??;
@@ -367,35 +615,101 @@ async fn relay_turn(ctx: &TurnContext, turn: &Turn, pcm: &[i16], in_wav: &str) -
     }
 
     let (cs, prompt) = (ctx.id.connection_string(), voice_prompt(&transcript));
+    let timeout = Duration::from_secs(ctx.timeout_secs);
+    let (events_tx, mut events) = mpsc::channel(64);
     let asked = Instant::now();
-    let reply = with_keepalive(turn, stream_reply(&cs, ctx.id.requested_by(), &prompt, ctx.timeout_secs)).await?;
+    let driver = assistant::drive(&cs, ctx.id.requested_by(), &prompt, timeout, &events_tx);
+    tokio::pin!(driver);
+    let mut speaker = Speaker::default();
+    let mut keepalive = tokio::time::interval(KEEPALIVE);
+    keepalive.tick().await;
+    let result = loop {
+        if !turn.is_current() {
+            log::info!("turn {} superseded", turn.id);
+            return Ok(());
+        }
+        tokio::select! {
+            r = &mut driver => break r,
+            Some(ev) = events.recv() => speaker.handle(ctx, board, turn, ev, asked).await?,
+            _ = keepalive.tick() => {
+                if !speaker.open {
+                    turn.send(state_frame("thinking")).await;
+                }
+            }
+        }
+    };
+    while let Ok(ev) = events.try_recv() {
+        speaker.handle(ctx, board, turn, ev, asked).await?;
+    }
+    let reply = result?;
     log::info!("turn {} ASSISTANT ({:.1}s): {reply}", turn.id, asked.elapsed().as_secs_f32());
-    if !turn.is_current() {
-        log::info!("turn {} superseded", turn.id);
-        return Ok(());
-    }
-
-    let (text, voice) = (reply.clone(), ctx.voice.get());
-    let wav = tokio::task::spawn_blocking(move || synthesize(&text, &voice)).await??;
-    let (rate, samples) = parse_wav_mono(&wav)?;
-    let pcm16 = resample(&samples, rate, BENCH_RATE);
-    if !turn.is_current() {
-        return Ok(());
-    }
-    send_speech(&turn.tx, &reply, &pcm16).await?;
-    log::info!("turn {} sent reply: {} samples", turn.id, pcm16.len());
+    speaker.close(turn).await;
+    turn.send(state_frame("idle")).await;
     Ok(())
 }
 
-/// Awaits `fut`, sending a `thinking` state every [`KEEPALIVE`] while the turn is current.
-async fn with_keepalive<T>(turn: &Turn, fut: impl Future<Output = Result<T>>) -> Result<T> {
-    tokio::pin!(fut);
-    loop {
-        tokio::select! {
-            r = &mut fut => return r,
-            _ = tokio::time::sleep(KEEPALIVE) => {
-                turn.send(state_frame("thinking")).await;
+/// The open speech segment of one turn on the board.
+#[derive(Default)]
+struct Speaker {
+    open: bool,
+    first_audio: bool,
+}
+
+impl Speaker {
+    async fn handle(&mut self, ctx: &TurnContext, board: &BoardLink, turn: &Turn, ev: TurnEvent, asked: Instant) -> Result<()> {
+        if !turn.is_current() {
+            return Ok(());
+        }
+        match ev {
+            TurnEvent::Speech { text, message, done } => {
+                if !text.trim().is_empty() {
+                    let pcm = ctx.render(&text).await?;
+                    let head = if self.open { "reply" } else { "tts_start" };
+                    if !turn.send(text_frame(head, &display_text(&message))).await {
+                        return Ok(());
+                    }
+                    self.open = true;
+                    if !self.first_audio {
+                        self.first_audio = true;
+                        log::info!("turn {} first speech after {:.1}s", turn.id, asked.elapsed().as_secs_f32());
+                    }
+                    for chunk in pcm.chunks(FRAME_SAMPLES) {
+                        if turn.tx.send(Message::Binary(i16_to_le_bytes(chunk).into())).await.is_err() {
+                            return Ok(());
+                        }
+                    }
+                }
+                if done {
+                    self.close(turn).await;
+                }
             }
+            TurnEvent::Approval(a) => {
+                self.close(turn).await;
+                let p = PendingApproval {
+                    key: a.id.key_string(),
+                    kind: a.kind.clone(),
+                    questions: a.questions.clone(),
+                    voice: voice_may_approve(&a),
+                    text: approval_text(&a),
+                };
+                log::info!("turn {} approval {} ({}): {}", turn.id, p.key, a.tool.as_deref().unwrap_or(&a.kind), p.text);
+                board.set_approval(p.clone());
+                turn.send(approval_frame(&p)).await;
+                let prompt = approval_prompt(&p);
+                send_speech(&turn.tx, &prompt, &ctx.render(&prompt).await?).await?;
+            }
+            TurnEvent::Resolved(key) => {
+                board.clear_approval(&key);
+                turn.send(approval_done_frame(&key)).await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn close(&mut self, turn: &Turn) {
+        if self.open {
+            self.open = false;
+            turn.send(tts_end_frame()).await;
         }
     }
 }
@@ -431,17 +745,16 @@ pub async fn run_sim_client(room: &str, wav: &str) -> Result<()> {
                 let v: Value = serde_json::from_str(t)?;
                 let text = v["text"].as_str().unwrap_or("");
                 match v["cmd"].as_str() {
-                    Some("state") if v["state"].as_str() == Some("idle") => {
-                        log::info!("bridge heard nothing usable");
-                        return Ok(());
-                    }
+                    Some("state") if v["state"].as_str() == Some("idle") => break,
                     Some("state") => log::info!("state: {}", v["state"].as_str().unwrap_or("")),
                     Some("transcript") => println!("TRANSCRIPT: {text}"),
                     Some("tts_start") => {
                         receiving = true;
                         println!("REPLY: {text}");
                     }
-                    Some("tts_end") => break,
+                    Some("reply") => println!("REPLY: {text}"),
+                    Some("tts_end") => receiving = false,
+                    Some("approval") => println!("APPROVAL: {text}"),
                     Some("error") => anyhow::bail!("bridge error: {}", v["error"].as_str().unwrap_or("")),
                     _ => {}
                 }
@@ -451,6 +764,10 @@ pub async fn run_sim_client(room: &str, wav: &str) -> Result<()> {
             Message::Close(_) => break,
             _ => {}
         }
+    }
+    if reply.is_empty() {
+        log::info!("bridge sent no speech");
+        return Ok(());
     }
     write_wav_mono(&out, &reply, BENCH_RATE)?;
     log::info!("sim-client wrote {} samples -> {out}", reply.len());
@@ -501,5 +818,31 @@ mod tests {
     #[test]
     fn level_of_empty_is_zero() {
         assert_eq!(level(&[]), (0, 0.0));
+    }
+
+    #[test]
+    fn spoken_answers_pick_a_matching_option() {
+        let questions = json!([{ "id": "store", "question": "Which store?", "options": [{ "label": "MUR" }, { "label": "WAR" }] }]);
+        assert_eq!(answers_for(Some(&questions), "The war store please."), json!({ "store": ["WAR"] }));
+        assert_eq!(answers_for(Some(&questions), "Denver."), json!({ "store": ["Denver"] }));
+        assert_eq!(answers_for(Some(&questions), "hardware"), json!({ "store": ["hardware"] }));
+    }
+
+    #[test]
+    fn answers_without_questions_use_the_generic_key() {
+        assert_eq!(answers_for(None, "Blue one!"), json!({ "answer": ["Blue one"] }));
+    }
+
+    #[test]
+    fn prompts_say_how_to_answer() {
+        let p = |voice| PendingApproval {
+            key: "k".into(),
+            kind: "tool_call".into(),
+            questions: None,
+            voice,
+            text: "Notify Jacob: \"ready\"".into(),
+        };
+        assert_eq!(approval_prompt(&p(true)), "I need your OK to notify Jacob: \"ready\". Say yes or no.");
+        assert!(approval_prompt(&p(false)).ends_with("Tap approve on the screen to allow it."));
     }
 }
