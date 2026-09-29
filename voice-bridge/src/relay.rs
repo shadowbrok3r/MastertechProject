@@ -16,7 +16,7 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
@@ -34,8 +34,8 @@ const MIN_UTT_SAMPLES: usize = 6_400;
 /// Longest text sent for the board's display.
 const DISPLAY_MAX: usize = 1_200;
 const KEEPALIVE: Duration = Duration::from_secs(15);
-/// Board probe cadence; a probe still unanswered at the next one triggers a rejoin.
-const PROBE_EVERY: Duration = Duration::from_secs(15);
+/// Longest gap between inbound frames (the relay pings every 10 s) before the socket counts as dead.
+const RELAY_SILENCE: Duration = Duration::from_secs(35);
 
 fn master_base() -> &'static str {
     if cfg!(debug_assertions) { database::WS_MASTER_URL_LOCAL } else { database::WS_MASTER_URL }
@@ -127,7 +127,10 @@ pub async fn run_master(room: &str, id: Identity, timeout_secs: u64) -> Result<(
     let id = Arc::new(id);
     log::info!("relay master joining room {room} at {}", master_base());
     loop {
-        if let Err(e) = serve_once(&url, room, Arc::clone(&id), timeout_secs).await {
+        if let Err(e) = clear_master_slot(room).await {
+            log::warn!("could not clear the master slot of {room}: {e}");
+        }
+        if let Err(e) = serve_once(&url, Arc::clone(&id), timeout_secs).await {
             log::warn!("relay session ended: {e}");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -135,8 +138,29 @@ pub async fn run_master(room: &str, id: Identity, timeout_secs: u64) -> Result<(
     }
 }
 
-/// Serves one relay connection; clears the master slot and returns when the board stops answering probes.
-async fn serve_once(url: &str, room: &str, id: Arc<Identity>, timeout_secs: u64) -> Result<()> {
+/// Evicts whatever socket holds `room`'s master slot, issuing `/remove` from a separate control room.
+async fn clear_master_slot(room: &str) -> Result<()> {
+    let ctl = database::websocket_url_with_room(master_base(), &format!("{room}-ctl"), "master");
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(&ctl).await?;
+    ws.send(Message::Text(format!("/remove {room} master").into())).await?;
+    let reply = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(msg) = ws.next().await {
+            if let Message::Text(t) = msg? {
+                if t.contains(room) {
+                    return Ok(t.to_string());
+                }
+            }
+        }
+        anyhow::bail!("control socket closed before the relay replied")
+    })
+    .await??;
+    log::info!("relay: {reply}");
+    let _ = ws.close(None).await;
+    Ok(())
+}
+
+/// Serves one relay connection until it drops or goes silent.
+async fn serve_once(url: &str, id: Arc<Identity>, timeout_secs: u64) -> Result<()> {
     let (ws, _resp) = tokio_tungstenite::connect_async(url).await?;
     let (sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::channel::<Message>(128);
@@ -153,31 +177,26 @@ async fn serve_once(url: &str, room: &str, id: Arc<Identity>, timeout_secs: u64)
 
     let latest = Arc::new(AtomicU64::new(0));
     let mut capture: Option<Vec<i16>> = None;
-    let mut probe = tokio::time::interval(PROBE_EVERY);
-    let mut probe_pending = false;
+    let mut watchdog = tokio::time::interval(Duration::from_secs(5));
+    let mut last_inbound = Instant::now();
     loop {
         let msg = tokio::select! {
             msg = stream.next() => match msg {
                 Some(msg) => msg?,
                 None => break,
             },
-            _ = probe.tick() => {
-                if probe_pending {
-                    log::warn!("board present but not answering; clearing the master slot to rejoin");
-                    let _ = tx.send(Message::Text(format!("/remove {room} master").into())).await;
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    anyhow::bail!("rejoining to register as the room's master");
+            _ = watchdog.tick() => {
+                if last_inbound.elapsed() >= RELAY_SILENCE {
+                    anyhow::bail!("relay silent for {}s", last_inbound.elapsed().as_secs());
                 }
-                probe_pending = true;
-                let _ = tx.send(Message::Text(r#"{"cmd":"ping"}"#.into())).await;
                 continue;
             }
         };
+        last_inbound = Instant::now();
         match msg {
             Message::Text(t) => {
                 let t = t.as_str();
                 if t.trim() == "NO_AGENT_IN_ROOM" {
-                    probe_pending = false;
                     continue;
                 }
                 if is_relay_notice(t) {
@@ -187,7 +206,6 @@ async fn serve_once(url: &str, room: &str, id: Arc<Identity>, timeout_secs: u64)
                     }
                     continue;
                 }
-                probe_pending = false;
                 let v: Value = match serde_json::from_str(t) {
                     Ok(v) => v,
                     Err(e) => {
@@ -229,7 +247,6 @@ async fn serve_once(url: &str, room: &str, id: Arc<Identity>, timeout_secs: u64)
                 }
             }
             Message::Binary(b) => {
-                probe_pending = false;
                 if let Some(buf) = capture.as_mut() {
                     buf.extend(i16_from_le_bytes(&b));
                 }
