@@ -233,6 +233,11 @@ jobs:
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          # Puts the newest installed LLVM on PATH when there is no plain `clang` for cc-rs.
+          if ! command -v clang >/dev/null; then
+            clang=$(ls /usr/lib/llvm-*/bin/clang 2>/dev/null | sort -V | tail -1 || true)
+            if [ -n "$clang" ]; then dirname "$clang" >> "$GITHUB_PATH"; fi
+          fi
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@nightly
