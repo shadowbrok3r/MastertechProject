@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub mod enhanced;
 #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
 mod live_transcript;
+mod session_list;
 
 pub type ImageType = (String, Bytes);
 

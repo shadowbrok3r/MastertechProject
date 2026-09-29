@@ -10,7 +10,7 @@ const REQUEST_NOTE_MAX: usize = 500;
 const POLL: Duration = Duration::from_secs(2);
 const OPEN_TIMEOUT: Duration = Duration::from_secs(90);
 const OPENER_TIMEOUT: Duration = Duration::from_secs(300);
-const OPENER: &str = "Open this session. My request follows as the next message.";
+const OPENER: &str = crate::schema::assist::OPENER_NOTE;
 
 /// A message delivered to a session: its thread, and the event seq the reply follows.
 #[derive(Debug, Clone)]

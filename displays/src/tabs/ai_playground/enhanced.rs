@@ -9,6 +9,7 @@ use crate::{
     ui_tools::list_row::{Lead, ListRow},
     PlatformSpawner, Spawner,
 };
+use super::session_list::{self, Roster, SessionFilter};
 
 use std::collections::HashMap;
 use chrono::{DateTime, Local, Utc};
@@ -30,7 +31,7 @@ const NOTICE_PREFIX: &str = icons::INFO;
 /// Longest first message an `assist_request` carries whole.
 const REQUEST_NOTE_MAX: usize = 500;
 /// First message of a session whose real first message goes in as a queued turn.
-const OPENER: &str = "Open this session. My request follows as the next message.";
+const OPENER: &str = database::schema::assist::OPENER_NOTE;
 /// Interval between reads of a followed assist request.
 const FOLLOW_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 /// How long a followed request keeps its chat's composer locked.
@@ -257,9 +258,18 @@ pub struct EnhancedAiPlayground {
     /// Session list search text.
     #[serde(skip)]
     list_filter: String,
-    /// Whether closed and failed agent sessions are listed.
+    /// Status, kind, age and store filters on the agent sessions.
     #[serde(skip)]
-    show_closed: bool,
+    session_filter: SessionFilter,
+    /// Whether agent sessions are grouped by technician.
+    #[serde(skip)]
+    group_by_tech: bool,
+    /// Technician groups collapsed in the session list.
+    #[serde(skip)]
+    collapsed_groups: std::collections::HashSet<String>,
+    /// User names for the session list; `None` until read after the index changes.
+    #[serde(skip)]
+    roster: Option<Roster>,
     /// The open agent session's transcript, streamed from `agent_event`.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     #[serde(skip)]
@@ -328,7 +338,10 @@ impl Default for EnhancedAiPlayground {
             viewer_id: None,
             show_everyone: false,
             list_filter: String::new(),
-            show_closed: false,
+            session_filter: SessionFilter::default(),
+            group_by_tech: true,
+            collapsed_groups: std::collections::HashSet::new(),
+            roster: None,
             #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             live: Default::default(),
         }
@@ -407,19 +420,20 @@ impl EnhancedAiPlayground {
         false
     }
 
-    /// Agent sessions for the list: closed ones only when asked for, then those matching the search.
-    fn listed_sessions(&self, index: &[AgentThread]) -> Vec<AgentThread> {
+    /// Agent sessions the filters admit and the search matches; the open session is listed whatever the filters.
+    fn listed_sessions<'a>(
+        &self,
+        index: &'a [AgentThread],
+        roster: &Roster,
+        now: &DateTime<Local>,
+    ) -> Vec<&'a AgentThread> {
         let needle = self.list_filter.trim().to_lowercase();
         index
             .iter()
-            .filter(|t| self.show_closed || t.is_open() || t.id.key_string() == self.selected_thread)
             .filter(|t| {
-                needle.is_empty()
-                    || [t.label(), t.requested_by.clone().unwrap_or_default(), t.connection_string.clone(), t.status.clone()]
-                        .iter()
-                        .any(|f| f.to_lowercase().contains(&needle))
+                t.id.key_string() == self.selected_thread || self.session_filter.admits(t, now)
             })
-            .cloned()
+            .filter(|t| session_list::mentions(t, roster, &needle))
             .collect()
     }
 
@@ -660,7 +674,7 @@ impl EnhancedAiPlayground {
                 (Some(r), Some(p)) => r.expand(8.0).contains(p),
                 _ => false,
             };
-            let open = !pinned && !resp.clicked() && (resp.hovered() || over_popup);
+            let open = !pinned && !resp.clicked() && (resp.hovered() || over_popup || session_list::filter_open(ui.ctx()));
 
             let mut pick = ThreadPick::default();
             let popup = Popup::from_response(&resp)
@@ -715,8 +729,8 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// The search box above the session list, with the closed-session toggle and, for a technician, the everyone toggle.
-    fn list_search(&mut self, ui: &mut Ui) {
+    /// The search box above the session list, with the filter button and, for a technician, the everyone toggle.
+    fn list_search(&mut self, ui: &mut Ui, stores: &[String]) {
         ui.horizontal(|ui| {
             let toggles = if self.viewer_root { 1.0 } else { 2.0 };
             let toggle_w = toggles * (ui.spacing().interact_size.y + ui.spacing().item_spacing.x);
@@ -725,8 +739,12 @@ impl EnhancedAiPlayground {
                     .hint_text(format!("{} Search", icons::SEARCH))
                     .desired_width((ui.available_width() - toggle_w).max(40.0)),
             );
-            let tip = if self.show_closed { "Hide closed sessions" } else { "Show closed sessions" };
-            ui.toggle_value(&mut self.show_closed, icons::ARCHIVE).on_hover_text(tip);
+            session_list::filter_button(
+                ui,
+                &mut self.session_filter,
+                &mut self.group_by_tech,
+                stores,
+            );
             if !self.viewer_root {
                 let tip = if self.show_everyone { "Show only your sessions" } else { "Show every technician's sessions" };
                 if ui.toggle_value(&mut self.show_everyone, icons::EVERYONE).on_hover_text(tip).changed() {
@@ -742,14 +760,17 @@ impl EnhancedAiPlayground {
         let agent_index = self.index_with_open_row();
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         let agent_index: Vec<AgentThread> = Vec::new();
-        self.list_search(ui);
-        let sessions = self.listed_sessions(&agent_index);
+        self.list_search(ui, &session_list::stores(&agent_index));
+        let roster = self.roster.take().unwrap_or_else(Roster::load);
+        let now = Local::now();
+        let sessions = self.listed_sessions(&agent_index, &roster, &now);
         let session_keys: std::collections::HashSet<String> = agent_index.iter().map(|t| t.id.key_string()).collect();
         let needle = self.list_filter.trim().to_lowercase();
+        let narrowed = self.session_filter.narrows();
         let chats: Vec<(String, String)> = self
             .listed_chats()
             .into_iter()
-            .filter(|id| !session_keys.contains(id))
+            .filter(|id| !session_keys.contains(id) && (!narrowed || *id == self.selected_thread))
             .map(|id| {
                 let title = self.thread_title(&id);
                 (id, title)
@@ -758,6 +779,12 @@ impl EnhancedAiPlayground {
             .collect();
         let selected = if self.zeroclaw_open() { String::new() } else { self.selected_thread.clone() };
         let searching = !needle.is_empty();
+        let filters = (!self.session_filter.is_default()).then(|| self.session_filter.summary());
+        let rows = RowContext {
+            selected: &selected,
+            now,
+            roster: &roster,
+        };
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         let (root, filter) = (self.viewer_root, self.list_filter.clone());
         ScrollArea::vertical()
@@ -766,7 +793,12 @@ impl EnhancedAiPlayground {
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 if chats.is_empty() && sessions.is_empty() {
-                    ui.label(RichText::new(if searching { "No matching chats" } else { "No chats yet" }).weak());
+                    let empty = match (searching, narrowed) {
+                        (true, _) => "No matching chats",
+                        (false, true) => "No sessions match the filters",
+                        (false, false) => "No chats yet",
+                    };
+                    ui.label(RichText::new(empty).weak());
                 }
                 for (id, title) in chats {
                     let row = ListRow::new(&title)
@@ -784,34 +816,42 @@ impl EnhancedAiPlayground {
                         }
                     });
                 }
-                if !sessions.is_empty() {
+                if !sessions.is_empty() || filters.is_some() {
                     ui.separator();
-                    ui.label(RichText::new("Agent sessions").weak().small());
-                }
-                for t in &sessions {
-                    let who = t.requested_by.as_deref().unwrap_or("unattributed");
-                    let key = t.id.key_string();
-                    let (icon, color, _) = agent_chat::status_chip(ui, &t.status);
-                    let lead = if agent_chat::is_active(t) { Lead::Spinner(Some(color)) } else { Lead::Icon(icon, Some(color)) };
-                    let line = format!("{}  ({})", t.label(), agent_chat::status_words(t));
-                    let row = ListRow::new(&line)
-                        .lead(lead)
-                        .selected(selected == key)
-                        .show(ui)
-                        .on_hover_text(format!("{}\n{who}\n{}", t.label(), t.connection_string));
-                    if row.clicked() {
-                        pick.picked = Some(key.clone());
+                    if sessions_header(ui, sessions.len(), filters.as_deref()) {
+                        self.session_filter = SessionFilter::default();
                     }
-                    row.context_menu(|ui| {
-                        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                            pick.rename = Some(key.clone());
-                            ui.close();
+                }
+                if self.group_by_tech {
+                    for group in session_list::group_by_tech(&sessions, &roster) {
+                        let open = searching || !self.collapsed_groups.contains(group.id());
+                        let shown = eframe::egui::CollapsingHeader::new(
+                            session_list::group_header(ui, &group),
+                        )
+                        .id_salt(("enhanced_ai_session_group", group.id()))
+                        .default_open(true)
+                        .open(Some(open))
+                        .show(ui, |ui| {
+                            for thread in &group.rows {
+                                session_row(ui, &rows, thread, false, pick);
+                            }
+                        });
+                        if shown.header_response.clicked() && !searching {
+                            let id = group.id();
+                            if !self.collapsed_groups.remove(id) {
+                                self.collapsed_groups.insert(id.to_string());
+                            }
                         }
-                        if t.is_open() && may_steer(t) && ui.button(format!("{} Close session", icons::CLOSE)).clicked() {
-                            pick.close = Some(key.clone());
-                            ui.close();
+                        if let Some(hint) = group.hint() {
+                            shown.header_response.on_hover_text(hint);
                         }
-                    });
+                    }
+                } else {
+                    let mut flat = sessions.clone();
+                    session_list::working_first(&mut flat);
+                    for thread in flat {
+                        session_row(ui, &rows, thread, true, pick);
+                    }
                 }
                 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
                 if root {
@@ -824,6 +864,7 @@ impl EnhancedAiPlayground {
                     }
                 }
             });
+        self.roster = Some(roster);
     }
 
     /// Opens the picked thread or ZeroClaw item, starting a rename first when one was asked for.
@@ -1690,6 +1731,7 @@ impl EnhancedAiPlayground {
 
         while let Ok(index) = self.agent_index_rx.try_recv() {
             self.agent_index = index;
+            self.roster = None;
         }
         let now = web_time::Instant::now();
         if self.last_index_poll.is_some_and(|t| now.duration_since(t) < EVERY) {
@@ -1735,7 +1777,7 @@ impl EnhancedAiPlayground {
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     pub fn open_session(&mut self, thread: &RecordId, is_open: bool) {
         if !is_open {
-            self.show_closed = true;
+            self.session_filter.include_closed();
         }
         self.last_index_poll = None;
         self.open_agent_thread(thread.key_string());
@@ -1950,6 +1992,80 @@ fn session_details(ui: &mut Ui, row: &AgentThread) {
 /// Whether the signed-in user is `row`'s technician or an active Root.
 fn may_steer(row: &AgentThread) -> bool {
     ApprovalViewer::signed_in().flatten().is_some_and(|v| v.may_steer(row.assignee.as_ref()))
+}
+
+/// What every session row in one frame shares.
+struct RowContext<'a> {
+    selected: &'a str,
+    now: DateTime<Local>,
+    roster: &'a Roster,
+}
+
+/// One agent session with its status lead, detail line and Rename / Close session menu; clicks land in `pick`.
+fn session_row(
+    ui: &mut Ui,
+    rows: &RowContext<'_>,
+    thread: &AgentThread,
+    show_tech: bool,
+    pick: &mut ThreadPick,
+) {
+    let key = thread.id.key_string();
+    let (icon, color, _) = agent_chat::status_chip(ui, &thread.status);
+    let lead = if agent_chat::is_active(thread) {
+        Lead::Spinner(Some(color))
+    } else {
+        Lead::Icon(icon, Some(color))
+    };
+    let title = thread.label();
+    let tech = rows.roster.tech_of(thread);
+    let detail = session_list::detail_line(thread, show_tech.then_some(tech.as_str()), &rows.now);
+    let row = ListRow::new(&title)
+        .lead(lead)
+        .detail(&detail)
+        .selected(rows.selected == key)
+        .show(ui)
+        .on_hover_ui(|ui| {
+            ui.label(session_list::hover_text(thread, &tech, &rows.now));
+        });
+    if row.clicked() {
+        pick.picked = Some(key.clone());
+    }
+    row.context_menu(|ui| {
+        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
+            pick.rename = Some(key.clone());
+            ui.close();
+        }
+        if thread.is_open()
+            && may_steer(thread)
+            && ui
+                .button(format!("{} Close session", icons::CLOSE))
+                .clicked()
+        {
+            pick.close = Some(key.clone());
+            ui.close();
+        }
+    });
+}
+
+/// The agent sessions caption with its count and, while `filters` names set filters, Clear; true when Clear was clicked.
+fn sessions_header(ui: &mut Ui, count: usize, filters: Option<&str>) -> bool {
+    let mut clear = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("Agent sessions  {count}"))
+                .weak()
+                .small(),
+        );
+        if let Some(summary) = filters {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                clear = ui
+                    .small_button(format!("{} Clear", icons::CLOSE))
+                    .on_hover_text(format!("Filtered: {summary}"))
+                    .clicked();
+            });
+        }
+    });
+    clear
 }
 
 /// A thread clicked or asked to be renamed in the session list.
@@ -2352,6 +2468,75 @@ mod tests {
         assert!(frame(vec![press(false)]), "a click pins the list");
         frame(vec![press(true)]);
         assert!(!frame(vec![press(false)]), "a second click unpins it");
+    }
+
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    #[test]
+    fn the_session_list_draws_grouped_flat_collapsed_and_filtered() {
+        use eframe::egui::{Context, RawInput, Rect, pos2, vec2};
+        use session_list::tests::thread;
+
+        let mut voice = thread("v", "idle", "general:voice:guest:1790000000000", None);
+        voice.title = Some("General \u{00b7} technician".into());
+        let mut busy = thread(
+            "b",
+            "running",
+            "JeffsComputer:663a3fd40",
+            Some("jacob.hardy@pclaptops.com"),
+        );
+        busy.service_number = Some("2155485".into());
+        busy.hostname = Some("JeffsComputer".into());
+        busy.store = Some("Orem".into());
+        let mut chat = EnhancedAiPlayground {
+            agent_index: vec![
+                voice,
+                busy,
+                thread("c", "closed", "general:t@x.com", Some("t@x.com")),
+            ],
+            ..Default::default()
+        };
+
+        let roster = Roster::default();
+        let now = Local::now();
+        let listed = |chat: &EnhancedAiPlayground| -> Vec<String> {
+            chat.listed_sessions(&chat.agent_index, &roster, &now)
+                .iter()
+                .map(|t| t.id.key_string())
+                .collect()
+        };
+        assert_eq!(
+            listed(&chat),
+            ["v", "b"],
+            "closed sessions are hidden by default"
+        );
+        chat.selected_thread = "c".into();
+        assert_eq!(
+            listed(&chat),
+            ["v", "b", "c"],
+            "the open session is listed whatever the filters"
+        );
+        chat.list_filter = "#2155485".into();
+        assert_eq!(listed(&chat), ["b"]);
+
+        let ctx = Context::default();
+        let draw = |chat: &mut EnhancedAiPlayground| {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(220.0, 500.0))),
+                ..Default::default()
+            };
+            let mut pick = ThreadPick::default();
+            let mut out = ctx.run_ui(input, |ui| chat.thread_rows(ui, 480.0, &mut pick));
+            out.textures_delta.clear();
+            assert!(pick.picked.is_none() && chat.roster.is_some());
+        };
+        chat.list_filter.clear();
+        draw(&mut chat);
+        chat.collapsed_groups.insert("unattributed".into());
+        draw(&mut chat);
+        chat.group_by_tech = false;
+        draw(&mut chat);
+        chat.session_filter.include_closed();
+        draw(&mut chat);
     }
 
     #[test]
