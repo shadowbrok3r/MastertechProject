@@ -88,3 +88,4 @@ flash-*.jsonl
 
 # ESP-IDF installer config; machine-specific local toolchain paths.
 eim_config.toml
+IDEAS.md
