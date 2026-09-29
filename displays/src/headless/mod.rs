@@ -34,6 +34,10 @@ const PUMP_MS: u64 = 100;
 const ROSTER_SECS: u64 = 10;
 /// Keepalive ping interval, matching the desktop console.
 const PING_SECS: u64 = 15;
+/// How long a connected session outside the roster stays open after the client last spoke.
+const QUIET_GRACE: Duration = Duration::from_secs(120);
+/// How long a session a tool asked for stays open outside the roster.
+const REQUEST_HOLD: Duration = Duration::from_secs(30 * 60);
 
 fn max_sessions() -> usize {
     std::env::var("MTECH_AGENT_MAX_SESSIONS")
@@ -49,6 +53,11 @@ struct Session {
     connection_string: String,
     computer: Option<database::schema::RecordId>,
     last_ping: std::time::Instant,
+    /// Connected since the transport's last `Opened`.
+    open: bool,
+    last_heard: std::time::Instant,
+    /// Kept open outside the roster until then; set when a tool asked for this session.
+    held_until: Option<std::time::Instant>,
 }
 
 impl Session {
@@ -56,6 +65,7 @@ impl Session {
         let transport = AdminTransport::dial(client)?;
         let connection_string = client.connection_string.clone();
         let inbox = crate::plugins::remote_egui_control::hub().register(connection_string.clone());
+        crate::plugins::remote_egui_control::hub().set_open(&connection_string, false);
         log::info!("headless: opened session -> {connection_string}");
         Some(Self {
             transport,
@@ -63,7 +73,27 @@ impl Session {
             connection_string,
             computer: client.computer.clone(),
             last_ping: std::time::Instant::now(),
+            open: false,
+            last_heard: std::time::Instant::now(),
+            held_until: None,
         })
+    }
+
+    /// Whether to keep the session while the roster leaves its client out.
+    fn keep_outside_roster(&self) -> bool {
+        (self.open && self.last_heard.elapsed() < QUIET_GRACE)
+            || self.held_until.is_some_and(|until| std::time::Instant::now() < until)
+    }
+
+    fn hold(&mut self) {
+        self.held_until = Some(std::time::Instant::now() + REQUEST_HOLD);
+    }
+
+    fn set_open(&mut self, open: bool) {
+        if self.open != open {
+            self.open = open;
+            crate::plugins::remote_egui_control::hub().set_open(&self.connection_string, open);
+        }
     }
 
     /// Drains MCP-bound bytes to the client and routes replies back.
@@ -79,15 +109,25 @@ impl Session {
             });
         }
         while let Some(event) = self.transport.poll_event() {
+            if !matches!(event, SessionEvent::Closed | SessionEvent::Error(_)) {
+                self.last_heard = std::time::Instant::now();
+            }
             match event {
                 SessionEvent::Cmd(cmd) => self.route(cmd),
                 SessionEvent::Binary(bin) => self.route_binary(&bin),
                 SessionEvent::Opened => {
                     log::info!("headless: {} opened", self.connection_string);
+                    self.set_open(true);
                     mark_connected(&self.connection_string);
                 }
-                SessionEvent::Closed => log::warn!("headless: {} closed", self.connection_string),
-                SessionEvent::Error(e) => log::warn!("headless: {} error: {e}", self.connection_string),
+                SessionEvent::Closed => {
+                    log::warn!("headless: {} closed", self.connection_string);
+                    self.set_open(false);
+                }
+                SessionEvent::Error(e) => {
+                    log::warn!("headless: {} error: {e}", self.connection_string);
+                    self.set_open(false);
+                }
                 SessionEvent::Text(_) => {}
             }
         }
@@ -230,21 +270,54 @@ async fn roster() -> Vec<database::schema::ConnectedClient> {
     }
 }
 
+/// The client row for `connection_string`, whatever its `connected` flag says.
+async fn client_row(connection_string: &str) -> Option<database::schema::ConnectedClient> {
+    let sql = "SELECT * FROM connected_client WHERE connection_string = $cs LIMIT 1";
+    match database::db().query(sql).bind(("cs", connection_string.to_string())).await {
+        Ok(mut res) => res.take::<Vec<database::schema::ConnectedClient>>(0).ok()?.into_iter().next(),
+        Err(e) => {
+            log::warn!("headless: client lookup for {connection_string} failed: {e}");
+            None
+        }
+    }
+}
+
+/// Opens or holds the sessions tools asked for, whether or not the roster lists their clients.
+async fn open_requested(sessions: &mut HashMap<String, Session>) {
+    for cs in crate::plugins::remote_egui_control::hub().take_requested() {
+        if let Some(session) = sessions.get_mut(&cs) {
+            session.hold();
+            continue;
+        }
+        let Some(client) = client_row(&cs).await else {
+            log::warn!("headless: a tool asked for {cs}, which has no connected_client row");
+            continue;
+        };
+        if let Some(mut session) = Session::open(&client) {
+            log::info!("headless: opened requested session -> {cs}");
+            session.hold();
+            sessions.insert(cs, session);
+        }
+    }
+}
+
 /// Runs the session pump until cancelled; never returns under normal operation.
 pub async fn run_session_engine() {
     let mut sessions: HashMap<String, Session> = HashMap::new();
     let mut last_roster = std::time::Instant::now() - Duration::from_secs(ROSTER_SECS);
     let toasts = crate::get_toast_receiver();
+    crate::plugins::remote_egui_control::hub().set_dialer();
 
     loop {
         while let Ok(toast) = toasts.try_recv() {
             log::info!("headless: {toast:?}");
         }
+        open_requested(&mut sessions).await;
         if last_roster.elapsed() >= Duration::from_secs(ROSTER_SECS) {
             last_roster = std::time::Instant::now();
             let clients = roster().await;
             let live: Vec<String> = clients.iter().map(|c| c.connection_string.clone()).collect();
-            sessions.retain(|cs, s| live.contains(cs) && !s.transport.is_closed());
+            sessions.retain(|cs, s| !s.transport.is_closed() && (live.contains(cs) || s.keep_outside_roster()));
             for client in clients {
                 if client.connection_string.is_empty() || sessions.contains_key(&client.connection_string) {
                     continue;
