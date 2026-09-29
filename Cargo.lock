@@ -13148,8 +13148,11 @@ dependencies = [
  "anyhow",
  "database",
  "env_logger",
+ "futures",
  "log",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite 0.28.0",
 ]
 
 [[package]]
