@@ -2667,6 +2667,37 @@ fn script_line(def: &crate::scripts::catalog::ScriptDef, detail: bool) -> String
     line
 }
 
+/// How long a remote tool waits for the session engine to reach a client.
+const SESSION_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Waits for an open admin session to the client, asking this process's session engine to dial one when it runs.
+async fn await_admin_session(connection_string: &str) -> Result<(), ErrorData> {
+    let hub = super::remote_egui_control::hub();
+    if hub.is_ready(connection_string) {
+        return Ok(());
+    }
+    let no_session = super::remote_egui_control::no_session(connection_string);
+    if !hub.has_dialer() {
+        return Err(to_internal(no_session));
+    }
+    let started = std::time::Instant::now();
+    let mut asked: Option<std::time::Instant> = None;
+    while started.elapsed() < SESSION_WAIT {
+        if asked.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(5)) {
+            hub.request_session(connection_string);
+            asked = Some(std::time::Instant::now());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if hub.is_ready(connection_string) {
+            return Ok(());
+        }
+    }
+    Err(to_internal(format!(
+        "{no_session} (it did not answer within {}s; check remote_channel_health, or ask the technician whether Mastertech is still running there)",
+        SESSION_WAIT.as_secs()
+    )))
+}
+
 /// Refuses a stress run while another on the same machine is still inside its budget.
 fn refuse_if_stress_busy(connection_string: &str) -> Result<(), ErrorData> {
     match super::remote_script_notify::stress_busy(connection_string) {
@@ -2706,6 +2737,7 @@ async fn execute_one_remote_script(
     if stress {
         refuse_if_stress_busy(&p.connection_string)?;
     }
+    await_admin_session(&p.connection_string).await?;
 
     let cmd = Cmd::RunRemoteScripts {
         scripts: vec![crate::RemoteScriptItem {
@@ -2979,6 +3011,7 @@ async fn execute_remote_stress_plan(
         ));
     }
     refuse_if_stress_busy(&connection_string)?;
+    await_admin_session(&connection_string).await?;
     let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
         .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
 
@@ -3419,6 +3452,7 @@ async fn remote_exec_roundtrip(
 ) -> Result<serde_json::Value, ErrorData> {
     const DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
+    await_admin_session(connection_string).await?;
     let request_id = format!("rex-{}", uuid::Uuid::new_v4());
     let cmd = make_cmd(request_id.clone());
     let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
@@ -5121,7 +5155,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "remote_egui_list_targets",
-        description = "List connection_string values for remote clients that currently have an active admin Web Console WebSocket session. MCP can only inject remote egui input for these targets."
+        description = "List connection_string values for remote clients that currently have an admin session in this process (the broker keeps one per connected client; a desktop admin opens one per console). MCP can only inject remote egui input for these targets."
     )]
     async fn remote_egui_list_targets(
         &self,
@@ -5130,7 +5164,7 @@ impl PluginToolProvider {
         let targets = super::remote_egui_control::hub().list_targets();
         Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
             "targets": targets,
-            "note": "Connect from Web Console first. Use remote_egui_list_widget_anchors + click_anchor when the remote app registers anchors; else perform_steps.",
+            "note": "A client missing here is offline or restarting (or, on a desktop admin, its console is not open). Use remote_egui_list_widget_anchors + click_anchor when the remote app registers anchors; else perform_steps.",
         }))
         .map_err(to_internal)?]))
     }
@@ -5151,12 +5185,7 @@ impl PluginToolProvider {
         let terminal_mode = p.terminal_mode.unwrap_or(false);
 
         let hub = super::remote_egui_control::hub();
-        if !hub.list_targets().iter().any(|t| t == &cs) {
-            return Err(to_internal(format!(
-                "no admin Web Console session for '{cs}' — connect from Web Console first \
-                 (remote_egui_list_targets lists reachable clients)"
-            )));
-        }
+        await_admin_session(&cs).await?;
 
         let cmd = crate::Cmd::RebootSystem { persist_mastertech, terminal_mode };
         bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
@@ -5248,6 +5277,7 @@ impl PluginToolProvider {
         };
 
         // Admin WS session + egui frame stream freshness.
+        let _ = await_admin_session(&cs).await;
         let session_present = hub.list_targets().iter().any(|t| t == &cs);
         let frame_stream = match hub.get_last_frame_meta(&cs) {
             Some(meta) => {
@@ -5335,7 +5365,7 @@ impl PluginToolProvider {
         let frames_fresh = frame_stream["staleness_ms"].as_u64().map(|s| s < 15_000).unwrap_or(false);
 
         let (verdict, advice) = if !session_present {
-            ("no_session", "No admin Web Console WS session for this connection_string. Connect from Web Console first; remote tools cannot reach this client at all.")
+            ("no_session", "No admin session to this client: Mastertech there is offline, restarting or has crashed (or, on a desktop admin, its console is not open). Remote tools cannot reach it until it reconnects; ask the technician whether Mastertech is still running.")
         } else if scripts_ok && plugin_ok {
             ("healthy", "All round-trip channels respond. Safe to run remote scripts, plugin tools, and stress suites.")
         } else if frames_fresh {
@@ -6048,6 +6078,7 @@ impl PluginToolProvider {
         };
         let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
             .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+        await_admin_session(&p.connection_string).await?;
 
         // Register the ack waiter before sending so the result can't race past us.
         let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<(bool, String)>();
@@ -6095,7 +6126,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "call_remote_plugin_tool",
-        description = "Call an MCP tool on a remote client's plugin over the admin WebSocket session. The call is proxied: admin → remote client → PluginManager → plugin's handle_mcp_call → result back. Requires an active Web Console session and a deployed plugin on the remote."
+        description = "Call an MCP tool on a remote client's plugin over the admin session. The call is proxied: admin → remote client → PluginManager → plugin's handle_mcp_call → result back. Requires a deployed plugin on the remote; a client that is restarting gets up to 20 s to reconnect."
     )]
     async fn call_remote_plugin_tool(
         &self,
@@ -6116,6 +6147,7 @@ impl PluginToolProvider {
         // (MCP-level start_call is fired by the `call_tool` interceptor on
         // the `ServerHandler` impl — no per-tool hook needed here.)
         let _ = args_json; // consumed by `cmd` above
+        await_admin_session(&p.connection_string).await?;
 
         let rx = register_pending_request(request_id.clone());
         // RAII: registry slot evaporates on any exit path (Ok, Err,
@@ -11183,7 +11215,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "scripts_run_remote",
-        description = "Run a named script on a REMOTE Mastertech client connected via the admin Web Console. For persisted stress tests use category 'StressTests' with any catalog entry ('GPU Stress Test', 'QC Benchmark', or any 'Stress: …' single) — every entry persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component on the client via stress-runner. Do NOT use call_remote_plugin_tool burn_cpu/burn_memory/burn_disk for persisted stress tests. Returns stress_test_persistence verification after StressTests scripts."
+        description = "Run a named script on a REMOTE connected Mastertech client. For persisted stress tests use category 'StressTests' with any catalog entry ('GPU Stress Test', 'QC Benchmark', or any 'Stress: …' single) — every entry persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component on the client via stress-runner. Do NOT use call_remote_plugin_tool burn_cpu/burn_memory/burn_disk for persisted stress tests. Returns stress_test_persistence verification after StressTests scripts."
     )]
     async fn scripts_run_remote(
         &self,
@@ -11195,7 +11227,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "stress_scenario_run_remote",
-        description = "Run a CUSTOM staged stress scenario on a REMOTE Mastertech client connected via the admin Web Console (mirror of stress_scenario_run, but pushed to the client over the same transport as scripts_run_remote). Compose any sequence of stress-kit stressors with per-stage durations; the client persists stress_test_run + stress_test_event + stress_test_metric + hardware_component via stress-runner, linked to service_order. Caps: 16 stages, 1800s/stage, 7200s total. service_number is REQUIRED. Blocks until the scenario finishes; returns success, per-run logs, and stress_test_persistence verification."
+        description = "Run a CUSTOM staged stress scenario on a REMOTE connected Mastertech client (mirror of stress_scenario_run, but pushed to the client over the same transport as scripts_run_remote). Compose any sequence of stress-kit stressors with per-stage durations; the client persists stress_test_run + stress_test_event + stress_test_metric + hardware_component via stress-runner, linked to service_order. Caps: 16 stages, 1800s/stage, 7200s total. service_number is REQUIRED. Blocks until the scenario finishes; returns success, per-run logs, and stress_test_persistence verification."
     )]
     async fn stress_scenario_run_remote(
         &self,
@@ -12355,7 +12387,7 @@ back synchronously.
 ⚠️  CRITICAL — LOCAL vs. REMOTE DISTINCTION:
   scripts_run  → executes on the ADMIN machine (the machine running Mastertech/MCP).
                  NEVER use this to run QC steps on a customer's computer.
-  scripts_run_remote → executes on a REMOTE CLIENT connected via the admin Web Console.
+  scripts_run_remote → executes on a REMOTE connected CLIENT.
                  ALWAYS use this when running QC, Tuneup, or any activation script
                  on a customer's machine. Requires connection_string from
                  remote_egui_list_targets.
@@ -12524,7 +12556,7 @@ query_surrealdb is READ-ONLY and always will be. To write, use surrealql_execute
 - surrealql_execute blocks up to wait_secs (default 90, max 240 — a longer block trips the MCP idle timeout). If nobody decides in that window you get a request_id; poll it with surrealql_approval_status, which is also what executes the statement once approved. Requests expire 15 minutes after submission.
 - DENIED means a human refused. Do not resubmit the same statement — address the objection or ask the user. Approval is single-shot: an executed request cannot be re-run, so a failed statement needs a NEW request.
 
-=== Remote egui (operator must connect Web Console to a client first) ===
+=== Remote egui (the client needs an admin session: the broker keeps one per connected client) ===
 Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
 - nav.menu.view — click to open the View menu (top bar).
 - nav.tab.<slug> — tab row inside View menu. Slug = tab label lowercased with non-alphanumeric → '_', trim '_' (e.g. KOTH → nav.tab.koth; TUR Sheet → nav.tab.tur_sheet; File Browser 📂 → nav.tab.file_browser). Tab anchors exist only while View menu is open: click nav.menu.view, sleep ~400–500ms, then click nav.tab.* .

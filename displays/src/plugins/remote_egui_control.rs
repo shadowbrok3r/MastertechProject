@@ -5,7 +5,8 @@
 //! here so tools can inject [`EguiInputEvent`](super::remote::EguiInputEvent) over the same binary
 //! path as the inline/pop-out viewer (`EGUI_INPUT_TAG` + bincode).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crossbeam::channel::{Receiver, Sender};
@@ -52,12 +53,18 @@ struct HubInner {
     last_anchors: HashMap<String, Vec<WidgetAnchor>>,
     /// Last MCP-injected pointer position in host screen space (for admin overlay).
     last_injected_pointer: HashMap<String, (f32, f32)>,
+    /// Session state a session engine reports; a registered target without an entry counts as open.
+    open: HashMap<String, bool>,
+    /// Connection strings a tool asked the session engine to dial.
+    requested: HashSet<String>,
 }
 
 /// Shared registry: MCP tools enqueue; admin [`WebSocketClient`](crate::tabs::admin_console::client_interface::WebSocketClient) drains each frame.
 #[derive(Clone)]
 pub struct RemoteEguiControlHub {
     inner: Arc<Mutex<HubInner>>,
+    /// Set when this process runs a session engine that dials requested sessions.
+    dialer: Arc<AtomicBool>,
 }
 
 impl Default for RemoteEguiControlHub {
@@ -68,7 +75,10 @@ impl Default for RemoteEguiControlHub {
                 last_frame: HashMap::new(),
                 last_anchors: HashMap::new(),
                 last_injected_pointer: HashMap::new(),
+                open: HashMap::new(),
+                requested: HashSet::new(),
             })),
+            dialer: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -96,6 +106,40 @@ impl RemoteEguiControlHub {
         g.last_frame.remove(connection_string);
         g.last_anchors.remove(connection_string);
         g.last_injected_pointer.remove(connection_string);
+        g.open.remove(connection_string);
+    }
+
+    /// Marks this process as running a session engine that dials requested sessions.
+    pub fn set_dialer(&self) {
+        self.dialer.store(true, Ordering::Relaxed);
+    }
+
+    pub fn has_dialer(&self) -> bool {
+        self.dialer.load(Ordering::Relaxed)
+    }
+
+    /// Asks the session engine to open a session to `connection_string`.
+    pub fn request_session(&self, connection_string: &str) {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        g.requested.insert(connection_string.to_string());
+    }
+
+    /// Drains the connection strings tools asked the session engine to dial.
+    pub fn take_requested(&self) -> Vec<String> {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        g.requested.drain().collect()
+    }
+
+    /// Records whether the session engine's transport to `connection_string` is connected.
+    pub fn set_open(&self, connection_string: &str, open: bool) {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        g.open.insert(connection_string.to_string(), open);
+    }
+
+    /// True when a session to `connection_string` is registered and not known to be disconnected.
+    pub fn is_ready(&self, connection_string: &str) -> bool {
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        g.targets.contains_key(connection_string) && g.open.get(connection_string) != Some(&false)
     }
 
     /// Called when a tagged egui frame arrives from the remote client (WebSocket task).
@@ -151,12 +195,7 @@ impl RemoteEguiControlHub {
         self.maybe_note_pointer_for_event(connection_string, &event);
         let bin = encode_tagged_input(&event)?;
         let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = g.targets.get(connection_string).ok_or_else(|| {
-            format!(
-                "no active admin WebSocket session for connection_string {:?}; connect from Web Console first",
-                connection_string
-            )
-        })?;
+        let tx = g.targets.get(connection_string).ok_or_else(|| no_session(connection_string))?;
         tx.try_send(bin)
             .map_err(|e| format!("remote egui queue full or disconnected: {e}"))
     }
@@ -182,12 +221,7 @@ impl RemoteEguiControlHub {
             self.maybe_note_pointer_for_event(connection_string, ev);
         }
         let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = g.targets.get(connection_string).ok_or_else(|| {
-            format!(
-                "no active admin WebSocket session for connection_string {:?}; connect from Web Console first",
-                connection_string
-            )
-        })?;
+        let tx = g.targets.get(connection_string).ok_or_else(|| no_session(connection_string))?;
         for ev in events {
             let bin = encode_tagged_input(ev)?;
             tx.try_send(bin)
@@ -207,14 +241,18 @@ impl RemoteEguiControlHub {
         data: Vec<u8>,
     ) -> Result<(), String> {
         let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = g.targets.get(connection_string).ok_or_else(|| {
-            format!(
-                "no active admin WebSocket session for {:?}; connect from Web Console first",
-                connection_string
-            )
-        })?;
+        let tx = g.targets.get(connection_string).ok_or_else(|| no_session(connection_string))?;
         tx.try_send(data)
             .map_err(|e| format!("remote command queue full or disconnected: {e}"))
+    }
+}
+
+/// The error a send to a client without an admin session returns.
+pub fn no_session(connection_string: &str) -> String {
+    if HUB.has_dialer() {
+        format!("no admin session to {connection_string:?} is open; the client is offline, restarting or has crashed")
+    } else {
+        format!("no admin session to {connection_string:?} is open; open its console in Mastertech, or the client is offline")
     }
 }
 
