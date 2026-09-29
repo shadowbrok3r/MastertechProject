@@ -52,6 +52,7 @@ fn synthesize(text: &str, out_wav: &str) -> Result<()> {
 async fn stream_reply(cs: &str, tech: Option<&str>, text: &str, timeout_secs: u64) -> Result<String> {
     use database::agent_chat::{poll_reply, send, ReplyState};
     let sent = send(cs, tech, None, None, text).await?;
+    log::info!("thread {:?} (after_seq {})", sent.thread, sent.after_seq);
     let mut last = String::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
