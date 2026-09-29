@@ -325,25 +325,37 @@ impl<'a> Prestashop<'a> {
             .await?;
         let status = response.status();
         let body = response.text().await?;
+        Self::decode_list_response(&url, status, &body, response_key)
+    }
 
+    /// Decodes a list response body into the rows under `response_key`.
+    fn decode_list_response<T>(
+        url: &str,
+        status: reqwest::StatusCode,
+        body: &str,
+        response_key: &str,
+    ) -> anyhow::Result<Vec<T>, anyhow::Error>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
         // Prestashop answers a list query that matched nothing with 404 on some resources.
         if status == reqwest::StatusCode::NOT_FOUND {
             return Ok(vec![]);
         }
         if !status.is_success() {
-            anyhow::bail!("GET {url} -> HTTP {status}: {}", truncate_body(&body));
+            anyhow::bail!("GET {url} -> HTTP {status}: {}", truncate_body(body));
         }
-        if let Some(error) = xml::first_prestashop_error(&body) {
+        if let Some(error) = xml::first_prestashop_error(body) {
             anyhow::bail!("GET {url} -> Prestashop error: {error}");
         }
         if body.trim().is_empty() {
             return Ok(vec![]);
         }
 
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
+        let value: Value = serde_json::from_str(body).map_err(|e| {
             anyhow::anyhow!(
                 "GET {url} -> HTTP {status}, body is not JSON ({e}): {}",
-                truncate_body(&body)
+                truncate_body(body)
             )
         })?;
 
@@ -1519,5 +1531,25 @@ mod tests {
         assert!(query.contains("filter[id_customer]=41633"), "in {query}");
         assert!(query.contains("output_format=JSON"), "in {query}");
         assert!(query.contains("display=full"), "in {query}");
+    }
+
+    /// `/order_serial?display=full` body shape as the live store answers it.
+    const ORDER_SERIALS_BODY: &str = r#"{"order_serials":[
+        {"id":234500001,"id_order_serial":"234500001","id_order":"2150001","id_order_detail":"3220001","id_order_config":"0","id_product":"4261","serial_number":"TESTSERIAL0001","date_created":"2026-09-28 17:50:12","id_odoo_sl":"0"},
+        {"id":234500002,"id_order_serial":"234500002","id_order":"2150002","id_order_detail":"3220002","id_order_config":"0","id_product":"16570","serial_number":"TESTSERIAL0002","date_created":"2026-09-28 17:07:39","id_odoo_sl":"0"}
+    ]}"#;
+
+    #[test]
+    fn order_serial_rows_decode_under_the_plural_key() {
+        let rows: Vec<OrderSerialEntry> = Prestashop::decode_list_response(
+            "order_serial",
+            reqwest::StatusCode::OK,
+            ORDER_SERIALS_BODY,
+            "order_serials",
+        )
+        .unwrap();
+
+        let ids: Vec<&str> = rows.iter().map(|r| r.id_order.as_str()).collect();
+        assert_eq!(ids, ["2150001", "2150002"]);
     }
 }
