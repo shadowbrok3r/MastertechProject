@@ -101,7 +101,12 @@ fn verdict_summary(ingest: &CrashIngest) -> Option<String> {
     ))
 }
 
-async fn log_finding(session_ref: &RecordId, ingest: &CrashIngest, tool_name: &str) {
+async fn log_finding(
+    session_ref: &RecordId,
+    ingest: &CrashIngest,
+    plugin_id: &str,
+    tool_name: &str,
+) {
     let title = format!(
         "Crash signature {} {}",
         ingest.signature.bugcheck_code, ingest.signature.module
@@ -133,7 +138,7 @@ async fn log_finding(session_ref: &RecordId, ingest: &CrashIngest, tool_name: &s
         detail,
         data: serde_json::to_value(ingest).ok(),
         plugins_used: vec![PluginUsageRef {
-            plugin_id: DUMP_DECODE_PLUGIN_ID.to_string(),
+            plugin_id: plugin_id.to_string(),
             tool_name: tool_name.to_string(),
         }],
         ..Default::default()
@@ -147,6 +152,7 @@ async fn log_finding(session_ref: &RecordId, ingest: &CrashIngest, tool_name: &s
 pub fn ingest_dump_decode_result(
     connection_string: String,
     computer: Option<RecordId>,
+    plugin_id: String,
     tool_name: String,
     result_json: String,
 ) {
@@ -165,7 +171,7 @@ pub fn ingest_dump_decode_result(
     } else {
         "minidump"
     };
-    spawn_ingest(connection_string, computer, tool_name, dump_kind, crashes);
+    spawn_ingest(connection_string, computer, plugin_id, tool_name, dump_kind, crashes);
 }
 
 /// Parse a dump-triage (PAGEDU64) payload — native remote analysis, local
@@ -175,6 +181,7 @@ pub fn ingest_dump_decode_result(
 pub fn ingest_kernel_triage_result(
     connection_string: String,
     computer: Option<RecordId>,
+    plugin_id: String,
     tool_name: String,
     result_json: String,
 ) {
@@ -185,7 +192,7 @@ pub fn ingest_kernel_triage_result(
     if crashes.is_empty() {
         return;
     }
-    spawn_ingest(connection_string, computer, tool_name, "minidump", crashes);
+    spawn_ingest(connection_string, computer, plugin_id, tool_name, "minidump", crashes);
 }
 
 /// GPU/UE crash-artifact collector plugin.
@@ -200,6 +207,7 @@ pub fn is_gpu_crash_result(plugin_id: &str, tool_name: &str) -> bool {
 pub fn ingest_gpu_crash_result(
     connection_string: String,
     computer: Option<RecordId>,
+    plugin_id: String,
     tool_name: String,
     result_json: String,
 ) {
@@ -210,7 +218,7 @@ pub fn ingest_gpu_crash_result(
     if crashes.is_empty() {
         return;
     }
-    spawn_ingest(connection_string, computer, tool_name, GPU_DUMP_KIND, crashes);
+    spawn_ingest(connection_string, computer, plugin_id, tool_name, GPU_DUMP_KIND, crashes);
 }
 
 /// Session/task/computer linkage resolved for new crash sightings.
@@ -256,6 +264,7 @@ pub async fn resolve_sighting_links(
 fn spawn_ingest(
     connection_string: String,
     computer: Option<RecordId>,
+    plugin_id: String,
     tool_name: String,
     default_dump_kind: &str,
     crashes: Vec<ParsedCrash>,
@@ -299,7 +308,7 @@ fn spawn_ingest(
                         );
                     }
                     if let Some(session_ref) = links.session_ref.as_ref() {
-                        log_finding(session_ref, &ingest, &tool_name).await;
+                        log_finding(session_ref, &ingest, &plugin_id, &tool_name).await;
                     }
                     ingests.push(ingest);
                 }

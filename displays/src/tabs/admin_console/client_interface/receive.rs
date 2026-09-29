@@ -344,6 +344,7 @@ impl WebSocketClient {
                                                 crate::plugins::crash_intel_hooks::ingest_dump_decode_result(
                                                     self.client.connection_string.clone(),
                                                     self.client.computer.clone(),
+                                                    plugin_id.clone(),
                                                     tool_name.clone(),
                                                     result_json.clone(),
                                                 );
@@ -353,6 +354,7 @@ impl WebSocketClient {
                                                 crate::plugins::crash_intel_hooks::ingest_kernel_triage_result(
                                                     self.client.connection_string.clone(),
                                                     self.client.computer.clone(),
+                                                    plugin_id.clone(),
                                                     tool_name.clone(),
                                                     result_json.clone(),
                                                 );
@@ -362,6 +364,7 @@ impl WebSocketClient {
                                                 crate::plugins::crash_intel_hooks::ingest_gpu_crash_result(
                                                     self.client.connection_string.clone(),
                                                     self.client.computer.clone(),
+                                                    plugin_id.clone(),
                                                     tool_name.clone(),
                                                     result_json.clone(),
                                                 );
@@ -1141,6 +1144,7 @@ impl WebSocketClient {
                             crate::plugins::crash_intel_hooks::ingest_dump_decode_result(
                                 self.client.connection_string.clone(),
                                 self.client.computer.clone(),
+                                plugin_id.clone(),
                                 tool_name.clone(),
                                 result_json.clone(),
                             );
@@ -1150,6 +1154,7 @@ impl WebSocketClient {
                             crate::plugins::crash_intel_hooks::ingest_kernel_triage_result(
                                 self.client.connection_string.clone(),
                                 self.client.computer.clone(),
+                                plugin_id.clone(),
                                 tool_name.clone(),
                                 result_json.clone(),
                             );
@@ -1159,6 +1164,7 @@ impl WebSocketClient {
                             crate::plugins::crash_intel_hooks::ingest_gpu_crash_result(
                                 self.client.connection_string.clone(),
                                 self.client.computer.clone(),
+                                plugin_id.clone(),
                                 tool_name.clone(),
                                 result_json.clone(),
                             );

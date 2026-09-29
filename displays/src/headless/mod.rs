@@ -193,12 +193,13 @@ impl Session {
         use crate::plugins::{crash_intel_hooks as crash, driver_intel_hooks as drivers};
         let (cs, computer) = (self.connection_string.clone(), self.computer.clone());
         let (tool, json) = (tool_name.to_string(), result_json.to_string());
+        let pid = plugin_id.to_string();
         if crash::is_dump_analysis_result(plugin_id, tool_name) {
-            crash::ingest_dump_decode_result(cs, computer, tool, json);
+            crash::ingest_dump_decode_result(cs, computer, pid, tool, json);
         } else if crash::is_kernel_triage_result(plugin_id, tool_name) {
-            crash::ingest_kernel_triage_result(cs, computer, tool, json);
+            crash::ingest_kernel_triage_result(cs, computer, pid, tool, json);
         } else if crash::is_gpu_crash_result(plugin_id, tool_name) {
-            crash::ingest_gpu_crash_result(cs, computer, tool, json);
+            crash::ingest_gpu_crash_result(cs, computer, pid, tool, json);
         } else if drivers::is_driver_snapshot_result(plugin_id, tool_name) {
             drivers::ingest_driver_snapshot(cs, computer, json);
         }
