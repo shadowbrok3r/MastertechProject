@@ -139,7 +139,7 @@ pub async fn get_order_from_prestashop_payload(serial: &str) -> anyhow::Result<c
     let mut query: HashMap<&str, &str> = HashMap::new();
     query.insert("filter[serial_number]", serial);
     query.insert("output_format", "JSON");
-    let order_serials: Vec<crate::schema::prestashop::OrderSerialEntry> = api_call.request_resources_checked("order_serial", query.clone()).await?;
+    let order_serials: Vec<crate::schema::prestashop::OrderSerialEntry> = api_call.request_resources_checked_as("order_serial", "order_serials", query.clone()).await?;
     let id_order = order_serials
         .get(0)
         .ok_or_else(|| anyhow::anyhow!("No id_order found"))?

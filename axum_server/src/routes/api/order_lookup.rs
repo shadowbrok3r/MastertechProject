@@ -166,7 +166,7 @@ async fn prestashop_serial_to_order(serial: &str) -> Option<String> {
     query.insert("output_format", "JSON");
     let rows: Vec<OrderSerialEntry> = tokio::time::timeout(
         LEG_TIMEOUT,
-        api.request_resources_checked("order_serial", query),
+        api.request_resources_checked_as("order_serial", "order_serials", query),
     )
     .await
     .ok()?

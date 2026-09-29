@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::schema::everest::request_everest_header_by_docnum;
 use crate::schema::prestashop::{
-    CustomerMessage, CustomerThread, Employee, Order, OrderSerial, Prestashop, order_write,
+    CustomerMessage, CustomerThread, Employee, Order, OrderSerialEntry, Prestashop, order_write,
 };
 use crate::{PRESTASHOP_API_URL_WASM, PRESTASHOP_AUTH_URL};
 
@@ -53,8 +53,8 @@ impl PrestashopBackend {
         let mut params = HashMap::new();
         params.insert("filter[serial_number]", filter.as_str());
         params.insert("output_format", "JSON");
-        let serials: Vec<OrderSerial> = api
-            .request_resources_checked("order_serial", params)
+        let serials: Vec<OrderSerialEntry> = api
+            .request_resources_checked_as("order_serial", "order_serials", params)
             .await
             .unwrap_or_default();
         let id_order = serials
