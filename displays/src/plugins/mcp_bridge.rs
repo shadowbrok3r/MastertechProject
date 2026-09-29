@@ -1715,6 +1715,8 @@ pub struct PublishPluginParams {
     pub tags: Option<Vec<String>>,
     #[schemars(description = "Whether to store the Rust source code alongside the WASM binary (default: true)")]
     pub store_source: Option<bool>,
+    #[schemars(description = "Plugin author (default: keep the author already stored for this plugin)")]
+    pub author: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -6473,6 +6475,7 @@ impl PluginToolProvider {
             name,
             description: p.description.clone(),
             version: version.clone(),
+            author: p.author.clone(),
             tools: tools_json,
             tags: p.tags.clone().unwrap_or_default(),
             wasm_bucket_path: wasm_path.clone(),
@@ -11971,14 +11974,7 @@ When using `query_surrealdb` for plugin work, the ONLY valid tables are:
 **There is NO `client_plugin` table.** A query against it returns "The table 'client_plugin' does not exist". If you wanted "plugins installed on a connected client", call `list_plugins` against the remote MCP via `call_remote_plugin_tool` or read `plugin_registry` for what's been published.
 
 === Known Plugins in Registry ===
-Always check search_plugins before building new plugins. Current registry (as of last sync):
-- **com.mastertech.hw-diag** ("HW Diagnostics") — system_info, bsod_events, critical_events, whea_errors, disk_health, reliability_records, tdr_gpu_events, driver_errors, disk_errors, wer_hardware, list_software, uninstall_armoury_crate, uninstall_ryzen_master, download_ddu, check_ddu_status, find_ryzen_master, remove_ryzen_master_remnants, analyze_minidumps, night_light_status, display_connections, **webroot_license**, **sas_license** (CPS / Webroot + SuperAntiSpyware activation and days-remaining when those tools are published on the remote build). Use for GPU/display/BSOD/crash/Night Light diagnostics and CPS license checks.
-- **com.mastertech.repair** ("System Repair") — dism_restore_health, sfc_scannow, uninstall_superantispyware, chkdsk_schedule, run_command (arbitrary PowerShell). Use for Windows system file repair.
-- **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. **Do NOT use burn_cpu / burn_memory / burn_disk / burn_combined / stress_and_monitor for persisted stress tests** — they do not write stress_test_run / stress_test_event / hardware_component rows. Use scripts_run_remote with category 'StressTests' (e.g. 'GPU Stress Test', 'QC Benchmark', 'Stress: CPU') instead.
-- **com.mastertech.status-reporter** — status_report (returns UTC clock from remote host, confirms plugin is live). Lightweight connectivity test.
-- **com.mastertech.driver-fetch** ("TechDB Driver Fetch") — list_techdb_models, list_model_drivers, fetch_model_path, audio_power_crash_check, install_senary_audio, audio_power_mitigation, schedule_restart, cancel_restart. Automates the OPK Driver / BIOS Server workflow below (mount + list + robocopy + install) so you don't `run_command` it by hand every time. See "OPK Driver / BIOS Server" for what it does and when to reach for it. **IMPORTANT:** its tool args must be passed as a bare string (e.g. `"GX5HRXG"` or `"GX5HRXG:AMD_HawkPoint_GX_IDL_IDG\3.AUDIO"`), NOT a JSON object — `call_plugin_tool`/`call_remote_plugin_tool`'s `args` channel currently double-encodes objects into a string the WASM side can't read as key/value (same root cause as the `run_command` args-drop issue on `com.mastertech.repair`; a source fix has been written for this — see "args double-encoding fix" below — but it needs a rebuild+restart of the admin app to take effect; until then, no-arg and bare-string tool designs are the working pattern). **install_senary_audio / any installer-launching tool can legitimately take several minutes** — a timed-out call does NOT mean it's hung; re-check `audio_power_crash_check`'s `acp_services` field for a newly-created `*.Svc` service before assuming failure, and do NOT re-invoke the same install tool while a prior call may still be in flight (the MCP client layer has been observed to auto-retry on its own shorter timeout even while the admin app's 300s internal deadline is still legitimately running, causing duplicate dispatch of the same installer).
-
-When in doubt, call search_plugins with relevant keywords — the registry is the source of truth.
+The registry is the source of truth and changes over time, so do NOT rely on a hardcoded list here. Call `list_registry_plugins` for the full catalog (id, name, description, tags, tools) or `search_plugins <keywords>` to find one by symptom area, before building anything new. Notable entries: hw-diag (GPU/display/BSOD/crash + CPS license), repair (Windows system-file repair), diagnostics, dump-decode (cdb `!analyze` deep pass), dump-triage, gpu-dumps (UE/Aftermath), driverstore (DriverStore snapshot/rollback), driver-fetch (OPK TechDB/BiosLove share), screenshot, xworm-remnant-scan, uefi-diag (firmware-only). For persisted stress tests use `scripts_run_remote` category 'StressTests', never a plugin's in-process burn tools.
 
 === OPK Driver / BIOS Server (PC Laptops internal — QC builds & driver remediation) ===
 The OPK server hosts the canonical drivers + BIOS updates for every laptop/desktop PC Laptops sells.

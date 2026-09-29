@@ -35,6 +35,7 @@
 //! | `host_fill_clock_json` | `(ptr: i32, max_len: i32) -> i32` | Writes UTC clock JSON into guest memory; returns byte length (≤ max_len) |
 //! | `host_get_hostname` | `(ptr: i32, max_len: i32) -> i32` | Writes hostname into guest memory; returns byte length |
 //! | `host_run_command` | `(cmd_ptr, cmd_len, out_ptr, out_max) -> i32` | Run a shell command (PowerShell on Windows, sh on Linux); writes stdout into guest memory; returns byte length |
+//! | `host_run_command_v2` | `(cmd_ptr, cmd_len, timeout_ms, out_ptr, out_max) -> i32` | Run a shell command with a timeout; writes a JSON `{stdout,stderr,exit,truncated,timed_out}` envelope; returns byte length |
 
 use super::{MastertechPlugin, PluginEvent, PluginHost, PluginToolDescriptor};
 use once_cell::sync::Lazy;
@@ -60,6 +61,122 @@ fn intern_string(s: String) -> &'static str {
     let leaked: &'static str = Box::leak(s.into_boxed_str());
     set.insert(leaked);
     leaked
+}
+
+/// Runs a shell command, killing it if it outlives `timeout_ms` (0 = no limit).
+/// Returns (stdout, stderr, exit_code, timed_out); stdout/stderr are drained
+/// concurrently so a full pipe never deadlocks the wait.
+fn run_command_with_timeout(cmd: &str, timeout_ms: u64) -> (Vec<u8>, Vec<u8>, Option<i32>, bool) {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "windows")]
+    let spawned = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("powershell")
+            .creation_flags(0x0800_0000)
+            .args(["-NoProfile", "-NonInteractive", "-Command", cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let spawned = std::process::Command::new("sh")
+        .args(["-c", cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => return (Vec::new(), format!("spawn failed: {e}").into_bytes(), None, false),
+    };
+
+    let out_reader = child.stdout.take().map(|mut r| {
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = r.read_to_end(&mut b);
+            b
+        })
+    });
+    let err_reader = child.stderr.take().map(|mut r| {
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = r.read_to_end(&mut b);
+            b
+        })
+    });
+
+    let mut timed_out = false;
+    let deadline = (timeout_ms > 0).then(|| Instant::now() + Duration::from_millis(timeout_ms));
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) => {
+                if deadline.is_some_and(|d| Instant::now() >= d) {
+                    let _ = child.kill();
+                    timed_out = true;
+                    break child.wait().ok();
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => break None,
+        }
+    };
+
+    let stdout = out_reader.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
+    (stdout, stderr, status.and_then(|s| s.code()), timed_out)
+}
+
+/// Serializes a command result as a JSON envelope that fits in `cap` bytes.
+/// Only the payload strings are trimmed (stdout first, then stderr); the
+/// object stays valid JSON and sets `truncated` when trimming occurred.
+fn command_envelope_json(
+    stdout: &[u8],
+    stderr: &[u8],
+    exit: Option<i32>,
+    timed_out: bool,
+    cap: usize,
+) -> String {
+    let so = String::from_utf8_lossy(stdout);
+    let se = String::from_utf8_lossy(stderr);
+    let build = |o: &str, e: &str, truncated: bool| {
+        serde_json::json!({
+            "stdout": o,
+            "stderr": e,
+            "exit": exit,
+            "truncated": truncated,
+            "timed_out": timed_out,
+        })
+        .to_string()
+    };
+
+    let full = build(&so, &se, false);
+    if cap == 0 || full.len() <= cap {
+        return full;
+    }
+
+    let floor = |s: &str, target: usize| -> String {
+        let mut end = target.min(s.len());
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s[..end].to_string()
+    };
+
+    let overflow = full.len() - cap;
+    let so_trimmed = floor(&so, so.len().saturating_sub(overflow + 64));
+    let env = build(&so_trimmed, &se, true);
+    if env.len() <= cap {
+        return env;
+    }
+    let env = build(&so_trimmed, "", true);
+    if env.len() <= cap {
+        return env;
+    }
+    build("", "", true)
 }
 
 // ─── Packed pointer helpers ────────────────────────────────────────────────────
@@ -309,6 +426,41 @@ impl WasmPlugin {
                 },
             )
             .map_err(|e| format!("host_run_command link failed: {e}"))?;
+
+        linker
+            .func_wrap(
+                "env",
+                "host_run_command_v2",
+                |mut caller: wasmtime::Caller<'_, WasmPluginState>,
+                 cmd_ptr: i32, cmd_len: i32, timeout_ms: i32,
+                 out_ptr: i32, out_max: i32| -> i32 {
+                    let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
+                        return 0;
+                    };
+                    let data = mem.data(&caller);
+                    let cmd_str = match data
+                        .get(cmd_ptr as usize..(cmd_ptr as usize + cmd_len as usize))
+                        .and_then(|s| std::str::from_utf8(s).ok())
+                    {
+                        Some(s) => s.to_string(),
+                        None => return 0,
+                    };
+
+                    log::info!("[WASM {}] host_run_command_v2: {}", caller.data().plugin_id, cmd_str);
+                    let (stdout, stderr, exit, timed_out) =
+                        run_command_with_timeout(&cmd_str, timeout_ms.max(0) as u64);
+
+                    let cap = out_max.max(0) as usize;
+                    let envelope = command_envelope_json(&stdout, &stderr, exit, timed_out, cap);
+                    let bytes = envelope.as_bytes();
+                    let n = bytes.len().min(cap);
+                    if mem.write(&mut caller, out_ptr as usize, &bytes[..n]).is_err() {
+                        return 0;
+                    }
+                    n as i32
+                },
+            )
+            .map_err(|e| format!("host_run_command_v2 link failed: {e}"))?;
 
         // ── Plugin UI host imports ────────────────────────────────────────────
 

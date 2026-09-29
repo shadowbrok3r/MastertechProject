@@ -114,6 +114,10 @@ pub struct PublishRequest {
     pub author: Option<String>,
     #[serde(default)]
     pub source_code: Option<String>,
+    #[serde(default)]
+    pub abi_version: Option<u32>,
+    #[serde(default)]
+    pub fingerprint: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -282,6 +286,8 @@ async fn publish_job(
         tags: req.tags,
         wasm_bucket_path: Some(bucket_path.clone()),
         source_code: req.source_code,
+        abi_version: req.abi_version,
+        fingerprint: req.fingerprint,
         ..Default::default()
     };
     let source_stored = entry.source_code.is_some();

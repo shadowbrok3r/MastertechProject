@@ -5,6 +5,27 @@
 const DEFAULT_CMD_CAP: usize = 1024 * 1024;
 const SMALL_BUF: usize = 256;
 
+/// Default per-command timeout for [`run_command_v2`], below the host's 60 s
+/// dispatch watchdog so a hung command returns a `timed_out` result first.
+pub const DEFAULT_CMD_TIMEOUT_MS: u64 = 45_000;
+
+/// Structured result of [`run_command_v2`]: stdout and stderr are separate, the
+/// process exit code is preserved, and truncation/timeout are explicit rather
+/// than silent. Deserialized from the host's `host_run_command_v2` envelope.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct CommandOutput {
+    #[serde(default)]
+    pub stdout: String,
+    #[serde(default)]
+    pub stderr: String,
+    #[serde(default)]
+    pub exit: Option<i32>,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub timed_out: bool,
+}
+
 #[cfg(target_arch = "wasm32")]
 mod imports {
     unsafe extern "C" {
@@ -14,6 +35,13 @@ mod imports {
         pub fn host_fill_clock_json(ptr: i32, max_len: i32) -> i32;
         pub fn host_get_hostname(ptr: i32, max_len: i32) -> i32;
         pub fn host_run_command(cmd_ptr: i32, cmd_len: i32, out_ptr: i32, out_max: i32) -> i32;
+        pub fn host_run_command_v2(
+            cmd_ptr: i32,
+            cmd_len: i32,
+            timeout_ms: i32,
+            out_ptr: i32,
+            out_max: i32,
+        ) -> i32;
         pub fn host_ui_log(ptr: i32, len: i32);
         pub fn host_ui_clear();
     }
@@ -47,6 +75,39 @@ pub fn run_command_capped(cmd: &str, cap: usize) -> String {
     }
     buf.truncate(n as usize);
     String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Runs a host command with a timeout, returning stdout/stderr/exit split out.
+/// `cap` bounds the returned envelope; oversized output sets `truncated`.
+#[cfg(target_arch = "wasm32")]
+pub fn run_command_v2(cmd: &str, timeout_ms: u64, cap: usize) -> CommandOutput {
+    let mut buf = vec![0u8; cap.max(64)];
+    let n = unsafe {
+        imports::host_run_command_v2(
+            cmd.as_ptr() as i32,
+            cmd.len() as i32,
+            timeout_ms.min(i32::MAX as u64) as i32,
+            buf.as_mut_ptr() as i32,
+            buf.len() as i32,
+        )
+    };
+    if n <= 0 {
+        return CommandOutput {
+            stderr: "host_run_command_v2 returned no data".to_string(),
+            ..Default::default()
+        };
+    }
+    buf.truncate(n as usize);
+    serde_json::from_slice(&buf).unwrap_or_else(|e| CommandOutput {
+        stderr: format!("host_run_command_v2 envelope parse failed: {e}"),
+        ..Default::default()
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_command_v2(_cmd: &str, _timeout_ms: u64, _cap: usize) -> CommandOutput {
+    let _ = DEFAULT_CMD_TIMEOUT_MS;
+    CommandOutput::default()
 }
 
 #[cfg(target_arch = "wasm32")]

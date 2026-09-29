@@ -116,9 +116,16 @@ impl PluginRegistryEntry {
 
     /// Upsert a plugin registry entry — uses plugin_id as the record key so duplicates
     /// are impossible and lookups are O(1).
+    /// Keeps the stored `created_at`, and the stored `author` when `entry.author` is `None`.
     pub async fn upsert(entry: &Self) -> anyhow::Result<()> {
         let rid = RecordId::new(super::PLUGIN_REGISTRY_TABLE, entry.plugin_id.clone());
         let mut e = entry.clone();
+        if let Some(existing) = Self::get_by_plugin_id(&entry.plugin_id).await? {
+            e.created_at = existing.created_at;
+            if e.author.is_none() {
+                e.author = existing.author;
+            }
+        }
         e.id = rid.clone();
         e.updated_at = chrono::Utc::now().into();
         let _: Option<Self> = db().upsert(rid).content(e).await?;
