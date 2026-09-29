@@ -2,7 +2,7 @@
 # A new table with no rows, so nothing needs a backfill.
 id = "20260929210000__agent_thread_archive"
 name = "agent_thread_archive"
-state = "planned"
+state = "completed"
 source_schema_hash = "30e0dde026f2a3710f224ccb97a9a04027c9608b637396ba7d01438a8240e48c"
 target_schema_hash = "438b29191cb5e656f5e88b846436e453c4537c8de9af25d1b7d6d6ac88bc1a40"
 compatibility = "phased"
