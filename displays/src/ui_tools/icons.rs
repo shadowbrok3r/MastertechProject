@@ -24,3 +24,6 @@ pub const MORNING_BRIEF: &str = p::SUN_HORIZON;
 pub const SCHEDULE: &str = p::CALENDAR_CHECK;
 pub const COMMAND_BAR: &str = p::COMMAND;
 pub const AI_BRIEF: &str = p::SPARKLE;
+pub const FILTER: &str = p::FUNNEL_SIMPLE;
+pub const VOICE: &str = p::MICROPHONE;
+pub const RECORDS: &str = p::DATABASE;

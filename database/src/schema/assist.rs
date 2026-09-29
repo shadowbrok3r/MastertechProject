@@ -16,6 +16,8 @@ pub const ASSIST_REQUEST_TABLE: &str = "assist_request";
 pub const TECH_NOTE_MAX: usize = 500;
 /// Longest `tech_note` an `auto` request holds, as the schema asserts.
 pub const AUTO_NOTE_MAX: usize = 2000;
+/// Note of a request whose real first message follows as a queued turn.
+pub const OPENER_NOTE: &str = "Open this session. My request follows as the next message.";
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct AssistRequest {

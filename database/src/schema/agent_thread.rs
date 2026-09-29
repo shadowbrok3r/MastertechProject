@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::assist::{AssistRequest, OPENER_NOTE};
 use super::{Datetime, RecordId, SurrealValue};
 use crate::db;
 
@@ -25,6 +26,9 @@ const SIGNED_IN_TECH_THREADS: &str =
 
 /// Longest title a rename stores, in characters.
 const TITLE_MAX_CHARS: usize = 80;
+
+/// Paragraph the voice console puts ahead of every spoken question.
+const VOICE_PREAMBLE: &str = "Voice mode:";
 
 /// Fills the unset service order, customer and service number of `$cs`'s open threads on `$sn` or none.
 pub const ADOPT_THREAD_LINKS_SQL: &str = "UPDATE agent_thread SET service_order = service_order ?? $so, \
@@ -62,6 +66,70 @@ pub fn compact_tokens(n: i64) -> String {
 pub fn clean_title(raw: &str) -> Option<String> {
     let line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     (!line.is_empty()).then(|| line.chars().take(TITLE_MAX_CHARS).collect())
+}
+
+/// Title of the session `req` opens: its first message for a voice or records session, else its machine.
+pub fn session_title(req: &AssistRequest) -> Option<String> {
+    if !is_general(&req.connection_string) {
+        return match (&req.service_number, &req.hostname) {
+            (Some(sn), Some(host)) => Some(format!("#{sn} {host}")),
+            (Some(sn), None) => Some(format!("#{sn}")),
+            (None, Some(host)) => Some(host.clone()),
+            (None, None) => None,
+        };
+    }
+    let asked = req
+        .tech_note
+        .as_deref()
+        .filter(|_| req.trigger_source != "auto")
+        .and_then(first_message);
+    Some(match asked {
+        Some(text) if is_voice(&req.connection_string) => {
+            bounded_title(&format!("Voice \u{00b7} {text}"))
+        }
+        Some(text) => bounded_title(&text),
+        None => format!(
+            "General \u{00b7} {}",
+            req.requested_by.as_deref().unwrap_or("technician")
+        ),
+    })
+}
+
+/// A request note as one line without the voice preamble, `[…]` context lines, code or backticks; `None` when blank or the opener.
+fn first_message(note: &str) -> Option<String> {
+    let note = note.trim();
+    let body = match note.split_once("\n\n") {
+        Some((first, rest)) if first.starts_with(VOICE_PREAMBLE) => rest,
+        None if note.starts_with(VOICE_PREAMBLE) => "",
+        _ => note,
+    };
+    let prose = body
+        .split("```")
+        .next()
+        .unwrap_or_default()
+        .replace('`', "");
+    let text = prose
+        .lines()
+        .filter(|line| !is_context_line(line))
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!text.is_empty() && text != OPENER_NOTE).then_some(text)
+}
+
+/// A whole line in brackets, such as the command bar's `[Viewing task …]`.
+fn is_context_line(line: &str) -> bool {
+    let line = line.trim();
+    line.starts_with('[') && line.ends_with(']')
+}
+
+/// `title` cut to [`TITLE_MAX_CHARS`] characters, ending in an ellipsis when cut.
+fn bounded_title(title: &str) -> String {
+    if title.chars().count() <= TITLE_MAX_CHARS {
+        return title.to_string();
+    }
+    let cut: String = title.chars().take(TITLE_MAX_CHARS - 1).collect();
+    format!("{}\u{2026}", cut.trim_end())
 }
 
 /// What a thread's agent is doing, as the broker last recorded it in `agent_thread.activity`.
@@ -282,6 +350,11 @@ pub fn general_connection(email: &str) -> String {
 /// A session with no machine in scope: records-only tools, no remote actions.
 pub fn is_general(connection_string: &str) -> bool {
     connection_string.starts_with("general:")
+}
+
+/// A voice-console session: `general:voice:<email>`, or `general:voice:<guest>:<ms>` per utterance.
+pub fn is_voice(connection_string: &str) -> bool {
+    connection_string.starts_with("general:voice:")
 }
 
 impl AgentThread {
@@ -742,6 +815,154 @@ mod tests {
             clean_title(&"x".repeat(200)).map(|t| t.chars().count()),
             Some(TITLE_MAX_CHARS)
         );
+    }
+
+    const VOICE_NOTE: &str = "Voice mode: reply in one or two short spoken sentences for text-to-speech; \
+         use tools only if necessary.\n\nWhat is the difference between an SSD and hard drive?";
+
+    fn request(
+        connection_string: &str,
+        requested_by: Option<&str>,
+        note: Option<&str>,
+    ) -> AssistRequest {
+        AssistRequest {
+            id: RecordId::new("assist_request", "r"),
+            status: "dispatched".into(),
+            trigger_source: "chat".into(),
+            machine_confirmed: false,
+            connection_string: connection_string.into(),
+            hostname: None,
+            service_number: None,
+            service_order: None,
+            computer: None,
+            customer: None,
+            requested_by: requested_by.map(str::to_string),
+            store: None,
+            tech_note: note.map(str::to_string),
+            agent: None,
+            dispatch_error: None,
+            agent_thread: None,
+            fresh: false,
+            filed_access: Some("user".into()),
+        }
+    }
+
+    #[test]
+    fn a_voice_session_is_titled_by_its_question() {
+        let req = request("general:voice:guest:1790000000000", None, Some(VOICE_NOTE));
+        assert_eq!(
+            session_title(&req).as_deref(),
+            Some("Voice \u{00b7} What is the difference between an SSD and hard drive?")
+        );
+        assert!(is_voice(&req.connection_string) && is_general(&req.connection_string));
+        assert!(!is_voice("general:logan.lees@pclaptops.com"));
+        assert!(!is_voice("JeffsComputer:663a3fd40"));
+    }
+
+    #[test]
+    fn a_records_session_is_titled_by_its_first_message_on_one_line() {
+        let tech = "jacob.hardy@pclaptops.com";
+        let cs = general_connection(tech);
+        let title = |note: &str| session_title(&request(&cs, Some(tech), Some(note)));
+        assert_eq!(
+            title("  What parts were\n ordered   for SO 2155485?  ").as_deref(),
+            Some("What parts were ordered for SO 2155485?")
+        );
+        let with_context = "[Viewing task \"JeffsComputer\", service 2155485, task id t1]\n\
+            [Focused client PC-1:ab12]\nIs the warranty still active?";
+        assert_eq!(
+            title(with_context).as_deref(),
+            Some("Is the warranty still active?")
+        );
+        let with_code = "Why does `sfc` fail here?\n```log\nerror 0x80070005\n```";
+        assert_eq!(title(with_code).as_deref(), Some("Why does sfc fail here?"));
+        let mentions_voice = "Check the mic.\n\nVoice mode: is it on?";
+        assert_eq!(
+            title(mentions_voice).as_deref(),
+            Some("Check the mic. Voice mode: is it on?")
+        );
+    }
+
+    #[test]
+    fn a_session_without_a_usable_first_message_keeps_the_general_title() {
+        let cs = general_connection("t@x.com");
+        for note in [
+            None,
+            Some("  \n "),
+            Some(OPENER_NOTE),
+            Some("Voice mode: reply briefly."),
+            Some("```\ncode only\n```"),
+        ] {
+            assert_eq!(
+                session_title(&request(&cs, Some("t@x.com"), note)).as_deref(),
+                Some("General \u{00b7} t@x.com"),
+                "{note:?}"
+            );
+        }
+        let guest = request(
+            "general:voice:guest:1790000000000",
+            None,
+            Some("Voice mode: reply briefly.\n\n  "),
+        );
+        assert_eq!(
+            session_title(&guest).as_deref(),
+            Some("General \u{00b7} technician")
+        );
+        let mut auto = request(&cs, Some("t@x.com"), Some("Summarize the waiting queue"));
+        auto.trigger_source = "auto".into();
+        assert_eq!(
+            session_title(&auto).as_deref(),
+            Some("General \u{00b7} t@x.com")
+        );
+    }
+
+    #[test]
+    fn derived_titles_stay_within_the_title_limit() {
+        let long = format!(
+            "{VOICE_PREAMBLE} be brief.\n\n{}",
+            "why is the fan so loud ".repeat(10)
+        );
+        let title =
+            session_title(&request("general:voice:guest:1", None, Some(&long))).expect("a title");
+        assert!(title.chars().count() <= TITLE_MAX_CHARS, "{title}");
+        assert!(
+            title.starts_with("Voice \u{00b7} why is the fan so loud"),
+            "{title}"
+        );
+        assert!(
+            title.ends_with('\u{2026}') && !title.ends_with(" \u{2026}"),
+            "{title}"
+        );
+        let wide = "\u{00e9}t\u{00e9} ".repeat(60);
+        let title = session_title(&request("general:t@x.com", None, Some(&wide))).expect("a title");
+        assert_eq!(title.chars().count(), TITLE_MAX_CHARS);
+        let exact = "x".repeat(TITLE_MAX_CHARS);
+        assert_eq!(
+            session_title(&request("general:t@x.com", None, Some(&exact))),
+            Some(exact)
+        );
+    }
+
+    #[test]
+    fn machine_sessions_are_titled_by_service_number_and_host() {
+        let mut req = request(
+            "JeffsComputer:663a3fd40",
+            Some("t@x.com"),
+            Some("why is it slow"),
+        );
+        req.service_number = Some("2155485".into());
+        req.hostname = Some("JeffsComputer".into());
+        assert_eq!(
+            session_title(&req).as_deref(),
+            Some("#2155485 JeffsComputer")
+        );
+        req.hostname = None;
+        assert_eq!(session_title(&req).as_deref(), Some("#2155485"));
+        req.service_number = None;
+        req.hostname = Some("JeffsComputer".into());
+        assert_eq!(session_title(&req).as_deref(), Some("JeffsComputer"));
+        req.hostname = None;
+        assert_eq!(session_title(&req), None);
     }
 
     #[test]
