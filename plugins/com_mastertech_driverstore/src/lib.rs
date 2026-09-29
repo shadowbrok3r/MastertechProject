@@ -21,6 +21,8 @@ struct RollbackArgs {
     restore_path: String,
     /// Optional current published INF (oemXX.inf) to uninstall before restoring
     delete_published_name: Option<String>,
+    /// Must be true to run: this deletes the current driver package and reinstalls an export.
+    confirm: Option<bool>,
 }
 
 /// Enumerates exported rollback points and their sizes as compact JSON.
@@ -29,7 +31,8 @@ $root='C:\ProgramData\MTechDriverStore'
 if(-not (Test-Path $root)){ '{"exports":[]}'; exit }
 $rows = Get-ChildItem $root -Directory | ForEach-Object {
   $size = (Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum
-  [PSCustomObject]@{ name=$_.Name; path=$_.FullName; created=$_.CreationTime.ToString('s'); mb=[math]::Round(($size ?? 0)/1MB,1) }
+  $mb = if($size){ [math]::Round($size/1MB,1) } else { 0 }
+  [PSCustomObject]@{ name=$_.Name; path=$_.FullName; created=$_.CreationTime.ToString('s'); mb=$mb }
 }
 [PSCustomObject]@{ exports=@($rows) } | ConvertTo-Json -Depth 4 -Compress"##;
 
@@ -126,6 +129,11 @@ fn export_driver(a: ExportArgs) -> Result<serde_json::Value, SdkError> {
 
 /// Uninstalls the current package (optional) and reinstalls a prior export.
 fn rollback_driver(a: RollbackArgs) -> Result<serde_json::Value, SdkError> {
+    if a.confirm != Some(true) {
+        return Err(SdkError::invalid_args(
+            "rollback_driver is destructive (deletes the current driver package); pass confirm:true to proceed",
+        ));
+    }
     let Some(restore_path) = sanitize_arg(&a.restore_path, true) else {
         return Err(SdkError::invalid_args("restore_path is required"));
     };
@@ -156,7 +164,7 @@ fn rollback_driver(a: RollbackArgs) -> Result<serde_json::Value, SdkError> {
 mtech_plugin! {
     id: "com.mastertech.driverstore",
     name: "Driver Time Machine",
-    version: "0.1.0",
+    version: "0.2.0",
     heap: 2 * 1024 * 1024,
     tools: {
         /// Full DriverStore inventory via 'pnputil /enum-drivers'. Returns raw pnputil text for the admin console to parse and persist as a driver_snapshot row.

@@ -1,6 +1,6 @@
 [package]
-name = "com_mastertech_screenshot"
-version = "0.2.0"
+name = "com_mastertech_driver_fetch"
+version = "0.8.0"
 edition = "2024"
 
 [workspace]

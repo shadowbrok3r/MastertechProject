@@ -1,5 +1,5 @@
 [package]
-name = "com_mastertech_screenshot"
+name = "com_mastertech_diagnostics"
 version = "0.2.0"
 edition = "2024"
 

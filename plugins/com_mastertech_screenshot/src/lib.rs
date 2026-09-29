@@ -1,216 +1,127 @@
-//! Mastertech screenshot WASM plugin. Shells PowerShell captures, returns base64 PNG.
+//! Screenshot capture plugin (SDK port).
+//!
+//! Captures a Hyper-V VM console, a background window (PrintWindow), or the
+//! desktop, returning a base64 PNG the MCP bridge renders inline. Uses the
+//! host's structured command runner so an oversized capture is reported as an
+//! error rather than a silently truncated (corrupt) image, and makes the
+//! process DPI-aware so scaled displays are not cropped.
 
-const BUF: usize = 8 * 1024 * 1024;
-static mut HEAP: [u8; BUF] = [0; BUF];
-static mut HEAP_POS: usize = 0;
+use facet::Facet;
+use mtech_plugin_sdk::{host, mtech_plugin, SdkError};
+use serde::Deserialize;
 
-const OUT_CAP: i32 = 3 * 1024 * 1024;
+/// Cap on the base64 envelope; a ~4K PNG base64-encodes to a few MB.
+const CAP: usize = 12 * 1024 * 1024;
+const TIMEOUT_MS: u64 = 30_000;
 
-unsafe extern "C" {
-    fn host_run_command(cmd_ptr: i32, cmd_len: i32, out_ptr: i32, out_max: i32) -> i32;
+#[derive(Facet, Deserialize)]
+struct HyperVArgs {
+    /// VM ElementName.
+    vm_name: String,
+    /// Thumbnail width (default 320).
+    width: Option<u32>,
+    /// Thumbnail height (default 240).
+    height: Option<u32>,
 }
 
-fn align_up(pos: usize, align: usize) -> usize {
-    (pos + align - 1) & !(align - 1)
+#[derive(Facet, Deserialize)]
+struct WindowArgs {
+    /// Substring of the target window title.
+    title: String,
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn alloc(size: i32) -> i32 {
-    unsafe {
-        let size = size as usize;
-        if size == 0 {
-            return 1;
-        }
-        let p = align_up(HEAP_POS, 16);
-        if p + size > BUF {
-            return 0;
-        }
-        HEAP_POS = p + size;
-        (&raw mut HEAP).cast::<u8>().add(p) as i32
-    }
+#[derive(Facet, Deserialize)]
+struct DesktopArgs {
+    /// 0-based monitor index; omit for the whole virtual desktop.
+    monitor: Option<u32>,
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn dealloc(_ptr: i32, _size: i32) {}
-
-fn leak_bytes(slice: &[u8]) -> u64 {
-    unsafe {
-        let len = slice.len() as i32;
-        let ptr = alloc(len);
-        if ptr == 0 {
-            return 0;
-        }
-        std::ptr::copy_nonoverlapping(slice.as_ptr(), ptr as *mut u8, slice.len());
-        ((ptr as u64) << 32) | (len as u64 & 0xffff_ffff)
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn plugin_id() -> u64 {
-    leak_bytes(b"com.mastertech.screenshot")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn plugin_name() -> u64 {
-    leak_bytes(b"Screenshot Capture")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn plugin_version() -> u64 {
-    leak_bytes(b"0.1.0")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn on_load() {}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn on_unload() {}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn logic() {}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn ui_commands() -> u64 {
-    leak_bytes(b"[]")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn mcp_tools() -> u64 {
-    leak_bytes(
-        br#"[
-{"name":"capture_hyperv_vm","description":"Capture a Hyper-V VM console as a PNG via WMI GetVirtualSystemThumbnailImage. Works without guest Integration Components. Args: vm_name (required), width (default 320), height (default 240).","parameters_schema":{"type":"object","properties":{"vm_name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"}},"required":["vm_name"]}},
-{"name":"capture_window","description":"Capture the first top-level window whose title contains the given substring, as a PNG via PrintWindow (captures unfocused/background windows). Args: title (required).","parameters_schema":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}},
-{"name":"capture_desktop","description":"Capture the full virtual desktop, or a single monitor, as a PNG via CopyFromScreen. Args: monitor (optional 0-based index).","parameters_schema":{"type":"object","properties":{"monitor":{"type":"integer"}}}}
-]"#,
-    )
-}
-
-// Runs PowerShell via the host and returns trimmed stdout.
-fn run(cmd: &str) -> String {
-    let out_ptr = alloc(OUT_CAP);
-    if out_ptr == 0 {
-        return String::from("[error] out buffer alloc failed");
-    }
-    let n = unsafe { host_run_command(cmd.as_ptr() as i32, cmd.len() as i32, out_ptr, OUT_CAP) };
-    let n = n.max(0) as usize;
-    unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out_ptr as *const u8, n))
-            .unwrap_or("[error] non-utf8 output")
-            .trim()
-            .to_string()
-    }
-}
+const DPI_PRELUDE: &str = "Add-Type @'\nusing System;using System.Runtime.InteropServices;\npublic class Dpi { [DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware(); }\n'@\n[Dpi]::SetProcessDPIAware() | Out-Null;";
 
 fn ps_quote(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-fn ps_hyperv(vm: &str, w: i64, h: i64) -> String {
-    HYPERV_TPL
-        .replace("{VM}", &ps_quote(vm))
-        .replace("{W}", &w.to_string())
-        .replace("{H}", &h.to_string())
+/// Runs a capture command and returns the image object or an error object.
+fn capture(cmd: &str) -> serde_json::Value {
+    let out = host::run_command_v2(cmd, TIMEOUT_MS, CAP);
+    let b64 = out.stdout.trim();
+    if out.timed_out {
+        return serde_json::json!({ "error": "capture timed out" });
+    }
+    if out.truncated {
+        return serde_json::json!({ "error": "capture exceeded the size cap; image would be truncated" });
+    }
+    if b64.is_empty() {
+        let msg = if out.stderr.trim().is_empty() {
+            "empty capture output".to_string()
+        } else {
+            out.stderr.trim().to_string()
+        };
+        return serde_json::json!({ "error": msg });
+    }
+    if !out.stderr.trim().is_empty() {
+        return serde_json::json!({ "error": out.stderr.trim() });
+    }
+    serde_json::json!({ "image_base64": b64, "mime": "image/png" })
 }
 
-fn ps_window(title: &str) -> String {
-    WINDOW_TPL.replace("{TITLE}", &ps_quote(title))
+fn capture_hyperv_vm(a: HyperVArgs) -> Result<serde_json::Value, SdkError> {
+    if a.vm_name.trim().is_empty() {
+        return Err(SdkError::invalid_args("vm_name is required"));
+    }
+    let (w, h) = (a.width.unwrap_or(320).max(1), a.height.unwrap_or(240).max(1));
+    host::log(&format!("[screenshot] capture_hyperv_vm {}", a.vm_name));
+    let vm = ps_quote(a.vm_name.trim());
+    let cmd = format!(
+        r#"$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Drawing;$ns='root\virtualization\v2';$vm=Get-CimInstance -Namespace $ns -ClassName Msvm_ComputerSystem -Filter "ElementName='{vm}' AND Caption='Virtual Machine'";if(-not $vm){{throw 'vm not found'}};$settings=Get-CimAssociatedInstance -InputObject $vm -Association Msvm_SettingsDefineState -ResultClassName Msvm_VirtualSystemSettingData;$svc=Get-CimInstance -Namespace $ns -ClassName Msvm_VirtualSystemManagementService;$r=Invoke-CimMethod -InputObject $svc -MethodName GetVirtualSystemThumbnailImage -Arguments @{{WidthPixels=[uint16]{w};HeightPixels=[uint16]{h};TargetSystem=$settings}};if($r.ReturnValue -ne 0){{throw "thumbnail failed $($r.ReturnValue)"}};$img=$r.ImageData;if(-not $img){{throw 'no image data'}};$bmp=New-Object System.Drawing.Bitmap({w},{h},[System.Drawing.Imaging.PixelFormat]::Format16bppRgb565);$rect=New-Object System.Drawing.Rectangle(0,0,{w},{h});$bd=$bmp.LockBits($rect,[System.Drawing.Imaging.ImageLockMode]::WriteOnly,[System.Drawing.Imaging.PixelFormat]::Format16bppRgb565);[System.Runtime.InteropServices.Marshal]::Copy($img,0,$bd.Scan0,$img.Length);$bmp.UnlockBits($bd);$ms=New-Object System.IO.MemoryStream;$bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())"#
+    );
+    Ok(capture(&cmd))
 }
 
-fn ps_desktop(monitor: Option<i64>) -> String {
-    let bounds = match monitor {
-        Some(i) => format!(
-            "$s=[System.Windows.Forms.Screen]::AllScreens[{}].Bounds;",
-            i.max(0)
-        ),
-        None => "$s=[System.Windows.Forms.SystemInformation]::VirtualScreen;".to_string(),
-    };
-    DESKTOP_TPL.replace("{BOUNDS}", &bounds)
-}
-
-const HYPERV_TPL: &str = r#"$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Drawing;$ns='root\virtualization\v2';$vm=Get-CimInstance -Namespace $ns -ClassName Msvm_ComputerSystem -Filter "ElementName='{VM}' AND Caption='Virtual Machine'";if(-not $vm){throw 'vm not found'};$settings=Get-CimAssociatedInstance -InputObject $vm -Association Msvm_SettingsDefineState -ResultClassName Msvm_VirtualSystemSettingData;$svc=Get-CimInstance -Namespace $ns -ClassName Msvm_VirtualSystemManagementService;$r=Invoke-CimMethod -InputObject $svc -MethodName GetVirtualSystemThumbnailImage -Arguments @{WidthPixels=[uint16]{W};HeightPixels=[uint16]{H};TargetSystem=$settings};if($r.ReturnValue -ne 0){throw "thumbnail failed $($r.ReturnValue)"};$img=$r.ImageData;if(-not $img){throw 'no image data'};$bmp=New-Object System.Drawing.Bitmap({W},{H},[System.Drawing.Imaging.PixelFormat]::Format16bppRgb565);$rect=New-Object System.Drawing.Rectangle(0,0,{W},{H});$bd=$bmp.LockBits($rect,[System.Drawing.Imaging.ImageLockMode]::WriteOnly,[System.Drawing.Imaging.PixelFormat]::Format16bppRgb565);[System.Runtime.InteropServices.Marshal]::Copy($img,0,$bd.Scan0,$img.Length);$bmp.UnlockBits($bd);$ms=New-Object System.IO.MemoryStream;$bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())"#;
-
-const WINDOW_TPL: &str = r#"$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Drawing;Add-Type -TypeDefinition @'
+fn capture_window(a: WindowArgs) -> Result<serde_json::Value, SdkError> {
+    if a.title.trim().is_empty() {
+        return Err(SdkError::invalid_args("title is required"));
+    }
+    host::log(&format!("[screenshot] capture_window {}", a.title));
+    let title = ps_quote(a.title.trim());
+    let cmd = format!(
+        r#"$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Drawing;{DPI_PRELUDE}Add-Type -TypeDefinition @'
 using System;using System.Runtime.InteropServices;
-public class Win {
+public class Win {{
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr d,uint f);
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out RECT r);
- public struct RECT { public int L; public int T; public int R; public int B; }
-}
+ public struct RECT {{ public int L; public int T; public int R; public int B; }}
+}}
 '@
-$p=Get-Process|Where-Object {$_.MainWindowTitle -like '*{TITLE}*' -and $_.MainWindowHandle -ne 0}|Select-Object -First 1;if(-not $p){throw 'window not found'};$h=$p.MainWindowHandle;$r=New-Object Win+RECT;[Win]::GetWindowRect($h,[ref]$r)|Out-Null;$w=$r.R-$r.L;$ht=$r.B-$r.T;if($w -le 0 -or $ht -le 0){throw 'bad window rect'};$bmp=New-Object System.Drawing.Bitmap($w,$ht);$g=[System.Drawing.Graphics]::FromImage($bmp);$hdc=$g.GetHdc();[Win]::PrintWindow($h,$hdc,2)|Out-Null;$g.ReleaseHdc($hdc);$ms=New-Object System.IO.MemoryStream;$bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())"#;
-
-const DESKTOP_TPL: &str = r#"$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Drawing;Add-Type -AssemblyName System.Windows.Forms;{BOUNDS}$bmp=New-Object System.Drawing.Bitmap($s.Width,$s.Height);$g=[System.Drawing.Graphics]::FromImage($bmp);$g.CopyFromScreen($s.X,$s.Y,0,0,$bmp.Size);$ms=New-Object System.IO.MemoryStream;$bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())"#;
-
-fn arg_str(v: &serde_json::Value, k: &str) -> String {
-    v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+$p=Get-Process|Where-Object {{$_.MainWindowTitle -like '*{title}*' -and $_.MainWindowHandle -ne 0}}|Select-Object -First 1;if(-not $p){{throw 'window not found'}};$h=$p.MainWindowHandle;$r=New-Object Win+RECT;[Win]::GetWindowRect($h,[ref]$r)|Out-Null;$w=$r.R-$r.L;$ht=$r.B-$r.T;if($w -le 0 -or $ht -le 0){{throw 'bad window rect'}};$bmp=New-Object System.Drawing.Bitmap($w,$ht);$g=[System.Drawing.Graphics]::FromImage($bmp);$hdc=$g.GetHdc();[Win]::PrintWindow($h,$hdc,2)|Out-Null;$g.ReleaseHdc($hdc);$ms=New-Object System.IO.MemoryStream;$bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())"#
+    );
+    Ok(capture(&cmd))
 }
 
-fn arg_i64(v: &serde_json::Value, k: &str, d: i64) -> i64 {
-    v.get(k).and_then(|x| x.as_i64()).unwrap_or(d)
+fn capture_desktop(a: DesktopArgs) -> Result<serde_json::Value, SdkError> {
+    host::log("[screenshot] capture_desktop");
+    let bounds = match a.monitor {
+        Some(i) => format!("$s=[System.Windows.Forms.Screen]::AllScreens[{i}].Bounds;"),
+        None => "$s=[System.Windows.Forms.SystemInformation]::VirtualScreen;".to_string(),
+    };
+    let cmd = format!(
+        r#"$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Drawing;Add-Type -AssemblyName System.Windows.Forms;{DPI_PRELUDE}{bounds}$bmp=New-Object System.Drawing.Bitmap($s.Width,$s.Height);$g=[System.Drawing.Graphics]::FromImage($bmp);$g.CopyFromScreen($s.X,$s.Y,0,0,$bmp.Size);$ms=New-Object System.IO.MemoryStream;$bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())"#
+    );
+    Ok(capture(&cmd))
 }
 
-// Wraps a base64 PNG in the image envelope the MCP bridge turns into an image content block.
-fn envelope(b64: &str) -> u64 {
-    if b64.is_empty() || b64.contains("[stderr]") || b64.contains("[error]") {
-        let msg = if b64.is_empty() { "empty capture output" } else { b64 };
-        return leak_bytes(serde_json::json!({ "error": msg }).to_string().as_bytes());
+mtech_plugin! {
+    id: "com.mastertech.screenshot",
+    name: "Screenshot Capture",
+    version: "0.2.0",
+    heap: 32 * 1024 * 1024,
+    tools: {
+        /// Capture a Hyper-V VM console as a PNG via WMI GetVirtualSystemThumbnailImage (no guest Integration Components needed). Args: vm_name, width (default 320), height (default 240).
+        capture_hyperv_vm(HyperVArgs) => capture_hyperv_vm,
+        /// Capture the first top-level window whose title contains the substring, via PrintWindow (works on unfocused/background windows). DPI-aware.
+        capture_window(WindowArgs) => capture_window,
+        /// Capture the whole virtual desktop, or one monitor by 0-based index, via CopyFromScreen. DPI-aware.
+        capture_desktop(DesktopArgs) => capture_desktop,
     }
-    let result = serde_json::json!({ "image_base64": b64, "mime": "image/png" });
-    leak_bytes(result.to_string().as_bytes())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn handle_mcp_call(
-    tool_ptr: i32,
-    tool_len: i32,
-    args_ptr: i32,
-    args_len: i32,
-) -> u64 {
-    if tool_len <= 0 || tool_ptr <= 0 {
-        return leak_bytes(br#"{"error":"bad tool"}"#);
-    }
-    let tool = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(tool_ptr as *const u8, tool_len as usize))
-            .unwrap_or("")
-    };
-    let args_str = unsafe {
-        if args_len > 0 && args_ptr > 0 {
-            std::str::from_utf8(std::slice::from_raw_parts(args_ptr as *const u8, args_len as usize))
-                .unwrap_or("{}")
-        } else {
-            "{}"
-        }
-    };
-    let args: serde_json::Value = serde_json::from_str(args_str).unwrap_or(serde_json::Value::Null);
-
-    let packed = match tool {
-        "capture_hyperv_vm" => {
-            let vm = arg_str(&args, "vm_name");
-            if vm.is_empty() {
-                leak_bytes(br#"{"error":"vm_name required"}"#)
-            } else {
-                let w = arg_i64(&args, "width", 320);
-                let h = arg_i64(&args, "height", 240);
-                envelope(&run(&ps_hyperv(&vm, w, h)))
-            }
-        }
-        "capture_window" => {
-            let title = arg_str(&args, "title");
-            if title.is_empty() {
-                leak_bytes(br#"{"error":"title required"}"#)
-            } else {
-                envelope(&run(&ps_window(&title)))
-            }
-        }
-        "capture_desktop" => {
-            let mon = args.get("monitor").and_then(|x| x.as_i64());
-            envelope(&run(&ps_desktop(mon)))
-        }
-        _ => leak_bytes(br#"{"error":"unknown tool"}"#),
-    };
-
-    unsafe {
-        HEAP_POS = 0;
-    }
-    packed
 }
