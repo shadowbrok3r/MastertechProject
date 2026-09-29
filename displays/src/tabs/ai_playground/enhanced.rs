@@ -119,6 +119,13 @@ async fn await_session(
     }
 }
 
+/// One read of the agent index: the sessions listed and, when read, the ones the signed-in user archived.
+#[derive(Debug, Default)]
+struct AgentIndex {
+    threads: Vec<AgentThread>,
+    archived: Option<std::collections::HashSet<String>>,
+}
+
 /// The open agent chat's session row and queue, read together.
 struct AgentState {
     thread: String,
@@ -169,9 +176,9 @@ pub struct EnhancedAiPlayground {
     #[serde(skip)]
     agent_index: Vec<database::schema::AgentThread>,
     #[serde(skip)]
-    agent_index_tx: Sender<Vec<database::schema::AgentThread>>,
+    agent_index_tx: Sender<AgentIndex>,
     #[serde(skip)]
-    agent_index_rx: Receiver<Vec<database::schema::AgentThread>>,
+    agent_index_rx: Receiver<AgentIndex>,
     #[serde(skip)]
     last_index_poll: Option<web_time::Instant>,
     /// Threads showing a local echo of the tech's messages, whose user rows the poller skips.
@@ -270,6 +277,20 @@ pub struct EnhancedAiPlayground {
     /// User names for the session list; `None` until read after the index changes.
     #[serde(skip)]
     roster: Option<Roster>,
+    /// Agent sessions the signed-in user archived, by thread key, as last read.
+    #[serde(skip)]
+    archived: std::collections::HashSet<String>,
+    /// Archive changes sent but not yet written, by thread key: true to archive.
+    #[serde(skip)]
+    archive_pending: HashMap<String, bool>,
+    /// Finished archive writes: the thread keys, whether they were archived, and whether the write succeeded.
+    #[serde(skip)]
+    archive_done_tx: Sender<(Vec<String>, bool, bool)>,
+    #[serde(skip)]
+    archive_done_rx: Receiver<(Vec<String>, bool, bool)>,
+    /// Whether the list includes archived, closed and failed sessions.
+    #[serde(skip)]
+    show_archived: bool,
     /// The open agent session's transcript, streamed from `agent_event`.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     #[serde(skip)]
@@ -281,8 +302,8 @@ impl Default for EnhancedAiPlayground {
         let (response_tx, response_rx) = crossbeam::channel::unbounded::<ChatMessage>();
         let (load_tx, load_rx) = crossbeam::channel::unbounded::<Vec<LoadedThread>>();
         let (agent_flag_tx, agent_flag_rx) = crossbeam::channel::unbounded::<String>();
-        let (agent_index_tx, agent_index_rx) =
-            crossbeam::channel::unbounded::<Vec<database::schema::AgentThread>>();
+        let (agent_index_tx, agent_index_rx) = crossbeam::channel::unbounded::<AgentIndex>();
+        let (archive_done_tx, archive_done_rx) = crossbeam::channel::unbounded::<(Vec<String>, bool, bool)>();
         let (agent_switch_tx, agent_switch_rx) = crossbeam::channel::unbounded::<(String, String)>();
         let (state_tx, state_rx) = crossbeam::channel::unbounded::<AgentState>();
         let (taken_back_tx, taken_back_rx) = crossbeam::channel::unbounded::<(String, AgentTurn)>();
@@ -342,6 +363,11 @@ impl Default for EnhancedAiPlayground {
             group_by_tech: true,
             collapsed_groups: std::collections::HashSet::new(),
             roster: None,
+            archived: std::collections::HashSet::new(),
+            archive_pending: HashMap::new(),
+            archive_done_tx,
+            archive_done_rx,
+            show_archived: false,
             #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             live: Default::default(),
         }
@@ -420,7 +446,7 @@ impl EnhancedAiPlayground {
         false
     }
 
-    /// Agent sessions the filters admit and the search matches; the open session is listed whatever the filters.
+    /// Agent sessions the filters admit and the search matches, archived and closed ones only while shown; the open session is listed whatever the filters.
     fn listed_sessions<'a>(
         &self,
         index: &'a [AgentThread],
@@ -431,10 +457,64 @@ impl EnhancedAiPlayground {
         index
             .iter()
             .filter(|t| {
-                t.id.key_string() == self.selected_thread || self.session_filter.admits(t, now)
+                let key = t.id.key_string();
+                key == self.selected_thread
+                    || (self.session_filter.admits(t, now)
+                        && (self.show_archived || (t.is_open() && !self.is_archived(&key))))
             })
             .filter(|t| session_list::mentions(t, roster, &needle))
             .collect()
+    }
+
+    /// Whether the signed-in user archived the session `key`, counting changes not yet written.
+    fn is_archived(&self, key: &str) -> bool {
+        self.archive_pending.get(key).copied().unwrap_or_else(|| self.archived.contains(key))
+    }
+
+    /// Archives or unarchives the sessions `keys` for the signed-in user.
+    fn set_archived(&mut self, keys: Vec<String>, archive: bool) {
+        if keys.is_empty() {
+            return;
+        }
+        for key in &keys {
+            self.archive_pending.insert(key.clone(), archive);
+        }
+        let tx = self.archive_done_tx.clone();
+        PlatformSpawner::spawn(async move {
+            use database::schema::agent_thread_archive;
+            let threads: Vec<RecordId> = keys.iter().map(|k| RecordId::new("agent_thread", k.as_str())).collect();
+            let written = if archive {
+                agent_thread_archive::archive(&threads).await
+            } else {
+                agent_thread_archive::unarchive(&threads).await
+            };
+            if let Err(e) = &written {
+                log::warn!("session archive write failed: {e}");
+                let verb = if archive { "archive" } else { "unarchive" };
+                let _ = crate::get_toast_sender()
+                    .try_send(crate::ToastMessage::Error(format!("Could not {verb} the session: {e}")));
+            }
+            let _ = tx.send((keys, archive, written.is_ok()));
+        });
+    }
+
+    /// Settles finished archive writes and asks for a fresh index.
+    fn receive_archive_writes(&mut self) {
+        while let Ok((keys, archive, ok)) = self.archive_done_rx.try_recv() {
+            for key in keys {
+                self.archive_pending.remove(&key);
+                match (ok, archive) {
+                    (true, true) => {
+                        self.archived.insert(key);
+                    }
+                    (true, false) => {
+                        self.archived.remove(&key);
+                    }
+                    (false, _) => {}
+                }
+            }
+            self.last_index_poll = None;
+        }
     }
 
     /// Selects a placeholder chat titled `label` that opens the session its assist request gets.
@@ -729,10 +809,10 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// The search box above the session list, with the filter button and, for a technician, the everyone toggle.
-    fn list_search(&mut self, ui: &mut Ui, stores: &[String]) {
+    /// The search box above the session list, with the filter button, the archive toggle and, for a technician, the everyone toggle; `hidden` counts the archived and closed sessions.
+    fn list_search(&mut self, ui: &mut Ui, stores: &[String], hidden: usize) {
         ui.horizontal(|ui| {
-            let toggles = if self.viewer_root { 1.0 } else { 2.0 };
+            let toggles = if self.viewer_root { 2.0 } else { 3.0 };
             let toggle_w = toggles * (ui.spacing().interact_size.y + ui.spacing().item_spacing.x);
             ui.add(
                 TextEdit::singleline(&mut self.list_filter)
@@ -745,6 +825,12 @@ impl EnhancedAiPlayground {
                 &mut self.group_by_tech,
                 stores,
             );
+            let tip = if self.show_archived {
+                "Hide archived and closed sessions".to_string()
+            } else {
+                format!("Show archived and closed sessions ({hidden})")
+            };
+            ui.toggle_value(&mut self.show_archived, icons::ARCHIVE).on_hover_text(tip);
             if !self.viewer_root {
                 let tip = if self.show_everyone { "Show only your sessions" } else { "Show every technician's sessions" };
                 if ui.toggle_value(&mut self.show_everyone, icons::EVERYONE).on_hover_text(tip).changed() {
@@ -760,7 +846,17 @@ impl EnhancedAiPlayground {
         let agent_index = self.index_with_open_row();
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         let agent_index: Vec<AgentThread> = Vec::new();
-        self.list_search(ui, &session_list::stores(&agent_index));
+        self.receive_archive_writes();
+        let archived_now: std::collections::HashSet<String> = agent_index
+            .iter()
+            .map(|t| t.id.key_string())
+            .filter(|key| self.is_archived(key))
+            .collect();
+        let hidden = agent_index
+            .iter()
+            .filter(|t| !t.is_open() || archived_now.contains(&t.id.key_string()))
+            .count();
+        self.list_search(ui, &session_list::stores(&agent_index), hidden);
         let roster = self.roster.take().unwrap_or_else(Roster::load);
         let now = Local::now();
         let sessions = self.listed_sessions(&agent_index, &roster, &now);
@@ -784,6 +880,7 @@ impl EnhancedAiPlayground {
             selected: &selected,
             now,
             roster: &roster,
+            archived: &archived_now,
         };
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         let (root, filter) = (self.viewer_root, self.list_filter.clone());
@@ -836,6 +933,20 @@ impl EnhancedAiPlayground {
                                 session_row(ui, &rows, thread, false, pick);
                             }
                         });
+                        shown.header_response.context_menu(|ui| {
+                            let idle: Vec<String> = group
+                                .rows
+                                .iter()
+                                .filter(|t| t.is_open() && !t.is_working())
+                                .map(|t| t.id.key_string())
+                                .filter(|key| !archived_now.contains(key))
+                                .collect();
+                            let label = format!("{} Archive {} idle", icons::ARCHIVE, idle.len());
+                            if ui.add_enabled(!idle.is_empty(), eframe::egui::Button::new(label)).clicked() {
+                                pick.archive = Some((idle, true));
+                                ui.close();
+                            }
+                        });
                         if shown.header_response.clicked() && !searching {
                             let id = group.id();
                             if !self.collapsed_groups.remove(id) {
@@ -874,6 +985,9 @@ impl EnhancedAiPlayground {
             self.renaming = None;
             self.zeroclaw.select(item);
             return;
+        }
+        if let Some((keys, archive)) = pick.archive {
+            self.set_archived(keys, archive);
         }
         if let Some(key) = pick.close {
             self.ask_agent(&RecordId::new("agent_thread", key.as_str()), "close", String::new(), Vec::new());
@@ -1641,6 +1755,9 @@ impl EnhancedAiPlayground {
         self.last_state_poll = None;
         let tx = self.response_tx.clone();
         let (thread, tid) = (thread.clone(), thread.key_string());
+        if matches!(kind, "start" | "steer" | "queue") && self.is_archived(&tid) {
+            self.set_archived(vec![tid.clone()], false);
+        }
         PlatformSpawner::spawn(async move {
             if let Err(e) = AgentTurn::ask_with(&thread, kind, &text, &images).await {
                 let _ = tx.try_send(ChatMessage {
@@ -1730,7 +1847,10 @@ impl EnhancedAiPlayground {
         const EVERY: Duration = Duration::from_secs(15);
 
         while let Ok(index) = self.agent_index_rx.try_recv() {
-            self.agent_index = index;
+            self.agent_index = index.threads;
+            if let Some(archived) = index.archived {
+                self.archived = archived;
+            }
             self.roster = None;
         }
         let now = web_time::Instant::now();
@@ -1752,7 +1872,7 @@ impl EnhancedAiPlayground {
                 .is_some_and(|u| u.get_authorization() == UserAuthorization::Root);
             // A signed-out client lists nobody's sessions rather than everybody's.
             let Some(me) = me else {
-                let _ = tx.try_send(Vec::new());
+                let _ = tx.try_send(AgentIndex::default());
                 return;
             };
             let scope = (!root && !everyone).then(|| (me.get_email().to_string(), me.get_id()));
@@ -1766,18 +1886,25 @@ impl EnhancedAiPlayground {
                             })
                         })
                         .collect();
-                    let _ = tx.try_send(index);
+                    let archived = match database::schema::agent_thread_archive::archived_by_signed_in_user().await {
+                        Ok(ids) => Some(ids.iter().map(RecordIdExt::key_string).collect()),
+                        Err(e) => {
+                            log::debug!("poll_agent_index: archive: {e}");
+                            None
+                        }
+                    };
+                    let _ = tx.try_send(AgentIndex { threads: index, archived });
                 }
                 Err(e) => log::warn!("poll_agent_index: {e}"),
             }
         });
     }
 
-    /// Opens the agent session `thread`, listing closed sessions when it is no longer open.
+    /// Opens the agent session `thread`, listing archived and closed sessions when it is no longer open.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     pub fn open_session(&mut self, thread: &RecordId, is_open: bool) {
         if !is_open {
-            self.session_filter.include_closed();
+            self.show_archived = true;
         }
         self.last_index_poll = None;
         self.open_agent_thread(thread.key_string());
@@ -1999,9 +2126,11 @@ struct RowContext<'a> {
     selected: &'a str,
     now: DateTime<Local>,
     roster: &'a Roster,
+    /// Thread keys the signed-in user archived.
+    archived: &'a std::collections::HashSet<String>,
 }
 
-/// One agent session with its status lead, detail line and Rename / Close session menu; clicks land in `pick`.
+/// One agent session with its status lead, detail line, archive button and Rename / Archive / Close session menu; clicks land in `pick`.
 fn session_row(
     ui: &mut Ui,
     rows: &RowContext<'_>,
@@ -2018,21 +2147,33 @@ fn session_row(
     };
     let title = thread.label();
     let tech = rows.roster.tech_of(thread);
-    let detail = session_list::detail_line(thread, show_tech.then_some(tech.as_str()), &rows.now);
-    let row = ListRow::new(&title)
+    let archived = rows.archived.contains(&key);
+    let mut detail = session_list::detail_line(thread, show_tech.then_some(tech.as_str()), &rows.now);
+    if archived {
+        detail.push_str(" \u{00b7} Archived");
+    }
+    let (archive_icon, archive_word) = if archived { (icons::UNARCHIVE, "Unarchive") } else { (icons::ARCHIVE, "Archive") };
+    let (row, action) = ListRow::new(&title)
         .lead(lead)
         .detail(&detail)
         .selected(rows.selected == key)
-        .show(ui)
-        .on_hover_ui(|ui| {
-            ui.label(session_list::hover_text(thread, &tech, &rows.now));
-        });
-    if row.clicked() {
+        .action(archive_icon, archive_word)
+        .show_with_action(ui);
+    let row = row.on_hover_ui(|ui| {
+        ui.label(session_list::hover_text(thread, &tech, &rows.now));
+    });
+    if action.is_some_and(|button| button.clicked()) {
+        pick.archive = Some((vec![key.clone()], !archived));
+    } else if row.clicked() {
         pick.picked = Some(key.clone());
     }
     row.context_menu(|ui| {
         if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
             pick.rename = Some(key.clone());
+            ui.close();
+        }
+        if ui.button(format!("{archive_icon} {archive_word}")).clicked() {
+            pick.archive = Some((vec![key.clone()], !archived));
             ui.close();
         }
         if thread.is_open()
@@ -2075,6 +2216,8 @@ struct ThreadPick {
     rename: Option<String>,
     /// An agent session to close.
     close: Option<String>,
+    /// Agent sessions to archive (true) or unarchive (false).
+    archive: Option<(Vec<String>, bool)>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     zeroclaw: Option<crate::tabs::zeroclaw::ZeroClawPick>,
 }
@@ -2535,8 +2678,40 @@ mod tests {
         draw(&mut chat);
         chat.group_by_tech = false;
         draw(&mut chat);
-        chat.session_filter.include_closed();
+        chat.show_archived = true;
         draw(&mut chat);
+    }
+
+    #[test]
+    fn archived_sessions_leave_the_list_until_shown() {
+        use session_list::tests::thread;
+
+        let mut chat = EnhancedAiPlayground {
+            agent_index: vec![
+                thread("a", "idle", "PC-1:abc", Some("t@x.com")),
+                thread("b", "idle", "PC-2:def", Some("t@x.com")),
+                thread("c", "closed", "PC-3:ghi", Some("t@x.com")),
+            ],
+            ..Default::default()
+        };
+        chat.archived.insert("a".into());
+        let roster = Roster::default();
+        let now = Local::now();
+        let listed = |chat: &EnhancedAiPlayground| -> Vec<String> {
+            chat.listed_sessions(&chat.agent_index, &roster, &now)
+                .iter()
+                .map(|t| t.id.key_string())
+                .collect()
+        };
+        assert_eq!(listed(&chat), ["b"], "archived and closed sessions are hidden");
+        chat.archive_pending.insert("b".into(), true);
+        chat.archive_pending.insert("a".into(), false);
+        assert_eq!(listed(&chat), ["a"], "a change not yet written already applies");
+        chat.show_archived = true;
+        assert_eq!(listed(&chat), ["a", "b", "c"], "the archive toggle lists every session");
+        chat.show_archived = false;
+        chat.selected_thread = "c".into();
+        assert_eq!(listed(&chat), ["a", "c"], "the open session stays listed");
     }
 
     #[test]

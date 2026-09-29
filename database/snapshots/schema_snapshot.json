@@ -14,6 +14,10 @@
       "hash": "8f7ec7ef5e7745d9e41c35bf36aaa2d68694f80e379250ea0d2cfb7695d82b01"
     },
     {
+      "path": "database/schema/agent_thread_archive.surql",
+      "hash": "aba8b608d13b549b2e0f5ebc901af56650d0d680241b0648a8323d35a903c858"
+    },
+    {
       "path": "database/schema/agent_turn.surql",
       "hash": "523183bb5eaf115e8a44a4dc7db8a2cdfcd0a61b6e5c0b620d188e1260cec98f"
     },

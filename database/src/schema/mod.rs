@@ -58,6 +58,7 @@ pub mod business_calendar;
 pub mod roi;
 pub mod assist;
 pub mod agent_thread;
+pub mod agent_thread_archive;
 pub mod agent_event;
 pub mod agent_turn;
 pub mod agent_approval;

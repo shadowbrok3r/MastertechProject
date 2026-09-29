@@ -1,0 +1,32 @@
+# Per-user session archive: an agent_thread_archive row hides one session from one user's session list.
+# A new table with no rows, so nothing needs a backfill.
+id = "20260929210000__agent_thread_archive"
+name = "agent_thread_archive"
+state = "planned"
+source_schema_hash = "30e0dde026f2a3710f224ccb97a9a04027c9608b637396ba7d01438a8240e48c"
+target_schema_hash = "438b29191cb5e656f5e88b846436e453c4537c8de9af25d1b7d6d6ac88bc1a40"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_agent_thread_archive"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE agent_thread_archive TYPE NORMAL SCHEMAFULL
+    PERMISSIONS FOR select, delete WHERE $access = 'user' AND user = $auth.id,
+        FOR create WHERE $access = 'user' AND $auth.id != NONE AND user = $auth.id,
+        FOR update NONE;
+DEFINE FIELD thread      ON agent_thread_archive TYPE record<agent_thread>   PERMISSIONS FULL;
+DEFINE FIELD user        ON agent_thread_archive TYPE record<user> DEFAULT $auth.id PERMISSIONS FULL;
+DEFINE FIELD archived_at ON agent_thread_archive TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+DEFINE INDEX agent_thread_archive_user_idx ON agent_thread_archive FIELDS user;
+"""
+
+[[steps]]
+id = "drop_agent_thread_archive"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS agent_thread_archive;
+"""
