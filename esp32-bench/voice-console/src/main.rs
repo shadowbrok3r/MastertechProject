@@ -1,5 +1,8 @@
-//! ESP32-P4 bench voice console — milestone 1: join Wi-Fi (via the onboard C6) and
-//! prove a relay round-trip. Audio (ES8311 I2S) and the 720x720 touch UI come later.
+//! ESP32-P4 bench voice console: push-to-talk to the shop assistant through the relay
+//! room (voice-bridge on the master side), with the 720x720 touch UI and ES8311 audio.
+
+mod console;
+mod ffi;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
@@ -14,8 +17,11 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::esp_crt_bundle_attach;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use esp_idf_svc::ws::client::{
-    EspWebSocketClient, EspWebSocketClientConfig, FrameType, WebSocketEvent, WebSocketEventType,
+    EspWebSocketClient, EspWebSocketClientConfig, WebSocketEvent, WebSocketEventType,
 };
+
+use console::{Console, Outgoing};
+use ffi::color;
 
 const WIFI_SSID: &str = match option_env!("VOICE_WIFI_SSID") {
     Some(v) => v,
@@ -34,128 +40,69 @@ const RELAY_BASE: &str = match option_env!("VOICE_RELAY_URL") {
     None => "wss://socket.master-tech.app/websocket",
 };
 
-const SAMPLE_RATE: u32 = 16000;
-
-extern "C" {
-    fn audio_init() -> i32;
-    fn audio_write(buf: *const u8, len: usize) -> i32;
-    fn audio_read(buf: *mut u8, len: usize) -> i32;
-    fn audio_set_amp(on: i32);
-    fn display_init() -> i32;
-    fn ui_start() -> i32;
-    fn ui_attach_touch() -> i32;
-}
-
-/// Plays a 440 Hz tone for `ms` to the speaker.
-fn play_tone(ms: u32) {
-    let n = (SAMPLE_RATE * ms / 1000) as usize;
-    let mut pcm = Vec::<u8>::with_capacity(n * 2);
-    for i in 0..n {
-        let t = i as f32 / SAMPLE_RATE as f32;
-        let s = (t * 440.0 * std::f32::consts::TAU).sin() * 9000.0;
-        pcm.extend_from_slice(&(s as i16).to_le_bytes());
-    }
-    unsafe {
-        audio_set_amp(1);
-        audio_write(pcm.as_ptr(), pcm.len());
-    }
-}
-
-/// Mic→speaker loopback until `run` clears.
-fn echo_loop(run: Arc<AtomicBool>) {
-    let mut buf = [0u8; 2048];
-    unsafe { audio_set_amp(1) };
-    while run.load(Ordering::Relaxed) {
-        let n = unsafe { audio_read(buf.as_mut_ptr(), buf.len()) };
-        if n > 0 {
-            unsafe { audio_write(buf.as_ptr(), n as usize) };
-        }
-    }
-}
+/// Prefixes of voice-bridge's playback control frames.
+const TTS_START: &str = r#"{"cmd":"tts_start""#;
+const TTS_END: &str = r#"{"cmd":"tts_end""#;
 
 fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
     log::info!("voice-console {} starting; device_id={DEVICE_ID}", env!("CARGO_PKG_VERSION"));
 
-    match unsafe { display_init() } {
-        0 => {
+    match ffi::init_display() {
+        Ok(()) => {
             log::info!("display ready (st7703 720x720)");
-            match unsafe { ui_start() } {
-                0 => log::info!("ui started (lvgl)"),
-                e => log::warn!("ui_start failed: {e}"),
+            match ffi::start_ui() {
+                Ok(()) => log::info!("ui started (lvgl)"),
+                Err(e) => log::warn!("ui_start failed: {e}"),
             }
         }
-        e => log::warn!("display_init failed: {e}"),
+        Err(e) => log::warn!("display_init failed: {e}"),
     }
 
     if WIFI_SSID.is_empty() {
         log::error!("no Wi-Fi configured; build with VOICE_WIFI_SSID and VOICE_WIFI_PASS set");
+        ffi::set_status("No Wi-Fi configured", color::ERROR);
         loop {
             std::thread::sleep(Duration::from_secs(60));
         }
     }
+    ffi::set_status("Joining Wi-Fi...", color::MUTED);
     let _wifi = connect_wifi()?;
+    ffi::set_status("Connecting...", color::MUTED);
     log::info!("joining relay room {DEVICE_ID}");
 
-    let (tx, rx) = sync_channel::<String>(16);
+    let capture = Arc::new(AtomicBool::new(false));
+    let (inbox_tx, inbox_rx) = sync_channel::<String>(16);
     let uri = format!("{RELAY_BASE}?room_id={DEVICE_ID}&role=client");
     let config = EspWebSocketClientConfig {
         crt_bundle_attach: Some(esp_crt_bundle_attach),
+        buffer_size: 2048,
         ..Default::default()
     };
-    let mut client = EspWebSocketClient::new(&uri, &config, Duration::from_secs(10), move |event| {
-        on_ws_event(event, &tx)
+    let cb_capture = capture.clone();
+    let client = EspWebSocketClient::new(&uri, &config, Duration::from_secs(10), move |event| {
+        on_ws_event(event, &inbox_tx, &cb_capture)
     })?;
 
-    match unsafe { audio_init() } {
-        0 => log::info!("audio ready (es8311, 16 kHz)"),
-        e => log::warn!("audio_init failed: {e}"),
+    match ffi::init_audio() {
+        Ok(()) => log::info!("audio ready (es8311, 16 kHz)"),
+        Err(e) => log::warn!("audio_init failed: {e}"),
     }
-    match unsafe { ui_attach_touch() } {
-        0 => log::info!("touch ready (gt911)"),
-        e => log::warn!("ui_attach_touch failed: {e}"),
+    match ffi::attach_touch() {
+        Ok(()) => log::info!("touch ready (gt911)"),
+        Err(e) => log::warn!("ui_attach_touch failed: {e}"),
     }
-    let echo = Arc::new(AtomicBool::new(false));
+    console::log_heap();
 
-    loop {
-        let Ok(line) = rx.recv() else {
-            log::error!("event channel closed; exiting");
-            return Ok(());
-        };
-        for part in line.split('\n').filter(|s| !s.trim().is_empty()) {
-            if !part.trim_start().starts_with('{') {
-                log::info!("relay control: {}", part.trim());
-                continue;
-            }
-            let reply = handle_command(part, &echo);
-            if let Err(e) = client.send(FrameType::Text(false), reply.as_bytes()) {
-                log::warn!("relay send failed: {e}");
-            }
-        }
-    }
-}
+    let (out_tx, out_rx) = sync_channel::<Outgoing>(8);
+    let mic_capture = capture.clone();
+    std::thread::Builder::new()
+        .name("mic".into())
+        .stack_size(4096)
+        .spawn(move || console::mic_loop(mic_capture, out_tx))?;
 
-/// Runs a JSON command and returns the reply line.
-fn handle_command(cmd: &str, echo: &Arc<AtomicBool>) -> String {
-    if cmd.contains("\"beep\"") {
-        play_tone(400);
-        r#"{"ok":true,"result":{"beeped":true}}"#.to_string()
-    } else if cmd.contains("echo_on") {
-        if !echo.swap(true, Ordering::Relaxed) {
-            let run = echo.clone();
-            let _ = std::thread::Builder::new().stack_size(16384).spawn(move || echo_loop(run));
-        }
-        r#"{"ok":true,"result":{"echo":true}}"#.to_string()
-    } else if cmd.contains("echo_off") {
-        echo.store(false, Ordering::Relaxed);
-        r#"{"ok":true,"result":{"echo":false}}"#.to_string()
-    } else {
-        format!(
-            r#"{{"ok":true,"result":{{"role":"voice-console","firmware":"{}"}}}}"#,
-            env!("CARGO_PKG_VERSION")
-        )
-    }
+    Console::new(client, inbox_rx, out_rx, capture).run()
 }
 
 fn connect_wifi() -> Result<BlockingWifi<EspWifi<'static>>> {
@@ -197,19 +144,31 @@ fn connect_wifi() -> Result<BlockingWifi<EspWifi<'static>>> {
     Ok(wifi)
 }
 
-fn on_ws_event(event: &Result<WebSocketEvent<'_>, EspIOError>, tx: &SyncSender<String>) {
+fn on_ws_event(
+    event: &Result<WebSocketEvent<'_>, EspIOError>,
+    inbox: &SyncSender<String>,
+    capture: &AtomicBool,
+) {
     let Ok(event) = event else { return };
     match &event.event_type {
-        WebSocketEventType::Connected => log::info!("relay connected"),
-        WebSocketEventType::Disconnected => log::warn!("relay disconnected"),
+        WebSocketEventType::Connected => {
+            log::info!("relay connected");
+            let _ = inbox.try_send(console::WS_CONNECTED.to_string());
+        }
+        WebSocketEventType::Disconnected => {
+            log::warn!("relay disconnected");
+            let _ = inbox.try_send(console::WS_DISCONNECTED.to_string());
+        }
         WebSocketEventType::Text(t) => {
-            let _ = tx.try_send((*t).to_string());
-        }
-        WebSocketEventType::Binary(b) => {
-            if let Ok(s) = std::str::from_utf8(b) {
-                let _ = tx.try_send(s.to_string());
+            // Starts and ends playback in callback order with the PCM frames.
+            if t.starts_with(TTS_START) && !capture.load(Ordering::Acquire) {
+                ffi::play_begin();
+            } else if t.starts_with(TTS_END) {
+                ffi::play_end();
             }
+            let _ = inbox.try_send((*t).to_string());
         }
+        WebSocketEventType::Binary(pcm) => ffi::play_push(pcm),
         WebSocketEventType::Close(_) | WebSocketEventType::Closed => log::warn!("relay closed"),
         _ => {}
     }

@@ -78,15 +78,27 @@ void display_test_bars(void) {
 
 static lv_display_t *s_disp;
 static lv_obj_t *s_status;
+static lv_obj_t *s_transcript;
+static lv_obj_t *s_reply_box;
+static lv_obj_t *s_reply;
 static esp_lcd_touch_handle_t s_touch;
+static volatile int s_ptt;
 
-static void tap_cb(lv_event_t *e) {
-    (void)e;
-    static int n;
-    if (s_status) {
-        n++;
-        lv_label_set_text_fmt(s_status, "tap %d", n);
+static void ptt_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        s_ptt = 1;
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        s_ptt = 0;
     }
+}
+
+static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, const char *text) {
+    lv_obj_t *l = lv_label_create(parent);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
+    return l;
 }
 
 int ui_start(void) {
@@ -110,39 +122,71 @@ int ui_start(void) {
     if (!lvgl_port_lock(0)) return -3;
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), LV_PART_MAIN);
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "MasterTech");
-    lv_obj_set_style_text_color(title, lv_color_hex(COL_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_t *title = label(scr, &lv_font_montserrat_48, COL_ACCENT, "MasterTech");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 36);
 
-    lv_obj_t *sub = lv_label_create(scr);
-    lv_label_set_text(sub, "voice console");
-    lv_obj_set_style_text_color(sub, lv_color_hex(COL_MUTED), LV_PART_MAIN);
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_align_to(sub, title, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+    lv_obj_t *sub = label(scr, &lv_font_montserrat_20, COL_MUTED, "voice console");
+    lv_obj_align_to(sub, title, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
 
-    s_status = lv_label_create(scr);
-    lv_label_set_text(s_status, "idle");
-    lv_obj_set_style_text_color(s_status, lv_color_hex(COL_SUCCESS), LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_status, &lv_font_montserrat_26, LV_PART_MAIN);
-    lv_obj_center(s_status);
+    s_status = label(scr, &lv_font_montserrat_26, COL_MUTED, "Starting...");
+    lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 140);
+
+    s_transcript = label(scr, &lv_font_montserrat_20, COL_MUTED, "");
+    lv_label_set_long_mode(s_transcript, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(s_transcript, 640, 50);
+    lv_obj_set_style_text_align(s_transcript, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(s_transcript, LV_ALIGN_TOP_MID, 0, 186);
+
+    s_reply_box = lv_obj_create(scr);
+    lv_obj_set_size(s_reply_box, 660, 290);
+    lv_obj_align(s_reply_box, LV_ALIGN_TOP_MID, 0, 244);
+    lv_obj_set_style_bg_opa(s_reply_box, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_reply_box, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_reply_box, 0, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(s_reply_box, LV_DIR_VER);
+
+    s_reply = label(s_reply_box, &lv_font_montserrat_26, COL_TEXT, "");
+    lv_label_set_long_mode(s_reply, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_reply, 640);
 
     lv_obj_t *btn = lv_button_create(scr);
-    lv_obj_set_size(btn, 260, 96);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 140);
+    lv_obj_set_size(btn, 420, 120);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -40);
+    lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(btn, lv_color_hex(COL_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 16, LV_PART_MAIN);
-    lv_obj_t *btl = lv_label_create(btn);
-    lv_label_set_text(btl, "Tap to test");
-    lv_obj_set_style_text_color(btl, lv_color_hex(COL_BG), LV_PART_MAIN);
-    lv_obj_set_style_text_font(btl, &lv_font_montserrat_26, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(COL_TERTIARY), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_t *btl = label(btn, &lv_font_montserrat_26, COL_BG, "Hold to talk");
     lv_obj_center(btl);
-    lv_obj_add_event_cb(btn, tap_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn, ptt_cb, LV_EVENT_ALL, NULL);
 
     lvgl_port_unlock();
     return 0;
+}
+
+int ui_ptt_pressed(void) {
+    return s_ptt;
+}
+
+void ui_set_status(const char *text, uint32_t color) {
+    if (!s_status || !lvgl_port_lock(0)) return;
+    lv_label_set_text(s_status, text);
+    lv_obj_set_style_text_color(s_status, lv_color_hex(color), LV_PART_MAIN);
+    lvgl_port_unlock();
+}
+
+void ui_set_transcript(const char *text) {
+    if (!s_transcript || !lvgl_port_lock(0)) return;
+    lv_label_set_text(s_transcript, text);
+    lvgl_port_unlock();
+}
+
+void ui_set_reply(const char *text) {
+    if (!s_reply || !lvgl_port_lock(0)) return;
+    lv_label_set_text(s_reply, text);
+    lv_obj_scroll_to_y(s_reply_box, 0, LV_ANIM_OFF);
+    lvgl_port_unlock();
 }
 
 int ui_attach_touch(void) {

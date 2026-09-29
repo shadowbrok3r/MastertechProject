@@ -2,7 +2,9 @@
 #include "driver/i2c.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "es8311.h"
 
@@ -19,8 +21,19 @@
 #define SAMPLE_RATE 16000
 #define MCLK_MULT 384
 
+// ~32 s of 16 kHz mono PCM16, held in PSRAM.
+#define PLAY_BUF_BYTES (1024 * 1024)
+#define PLAY_CHUNK 2048
+
 static i2s_chan_handle_t s_tx;
 static i2s_chan_handle_t s_rx;
+
+static StreamBufferHandle_t s_play;
+static StaticStreamBuffer_t s_play_ctl;
+static volatile int s_accept;  // pushes are queued
+static volatile int s_eos;     // the current reply has no more data
+static volatile int s_flush;   // queued audio is to be dropped
+static volatile int s_busy;    // a reply is queued or playing
 
 static int i2c_setup(void) {
     i2c_config_t c = {
@@ -37,6 +50,7 @@ static int i2c_setup(void) {
 
 static int i2s_setup(void) {
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
+    cc.auto_clear = true;  // TX sends silence when starved
     if (i2s_new_channel(&cc, &s_tx, &s_rx) != ESP_OK) return -1;
     i2s_std_config_t std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
@@ -72,6 +86,40 @@ static int es8311_setup(void) {
     if (es8311_sample_frequency_config(h, SAMPLE_RATE * MCLK_MULT, SAMPLE_RATE) != ESP_OK) return -3;
     if (es8311_voice_volume_set(h, 75, NULL) != ESP_OK) return -4;
     if (es8311_microphone_config(h, false) != ESP_OK) return -5;
+    if (es8311_microphone_gain_set(h, ES8311_MIC_GAIN_18DB) != ESP_OK) return -6;
+    return 0;
+}
+
+// Drains the reply stream buffer into the speaker.
+static void play_task(void *arg) {
+    (void)arg;
+    static uint8_t chunk[PLAY_CHUNK];
+    for (;;) {
+        if (s_flush) {
+            while (xStreamBufferReceive(s_play, chunk, sizeof chunk, 0) > 0) {
+            }
+            s_flush = 0;
+            s_eos = 0;
+            s_busy = 0;
+            continue;
+        }
+        size_t n = xStreamBufferReceive(s_play, chunk, sizeof chunk, pdMS_TO_TICKS(20));
+        if (n > 0) {
+            size_t written = 0;
+            i2s_channel_write(s_tx, chunk, n, &written, portMAX_DELAY);
+        } else if (s_eos) {
+            s_eos = 0;
+            s_busy = 0;
+        }
+    }
+}
+
+static int play_setup(void) {
+    uint8_t *store = heap_caps_malloc(PLAY_BUF_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!store) return -1;
+    s_play = xStreamBufferCreateStatic(PLAY_BUF_BYTES, 1, store, &s_play_ctl);
+    if (!s_play) return -2;
+    if (xTaskCreate(play_task, "vc_play", 3072, NULL, 5, NULL) != pdPASS) return -3;
     return 0;
 }
 
@@ -86,6 +134,7 @@ int audio_init(void) {
     if (i2c_setup()) return -1;
     if (i2s_setup()) return -2;
     if (es8311_setup()) return -3;
+    if (play_setup()) return -4;
     return 0;
 }
 
@@ -99,4 +148,29 @@ int audio_read(void *buf, size_t len) {
     size_t got = 0;
     i2s_channel_read(s_rx, buf, len, &got, 1000 / portTICK_PERIOD_MS);
     return (int)got;
+}
+
+void audio_play_begin(void) {
+    s_eos = 0;
+    s_busy = 1;
+    s_accept = 1;
+}
+
+int audio_play_push(const void *buf, size_t len) {
+    if (!s_accept || !s_play) return 0;
+    return (int)xStreamBufferSend(s_play, buf, len, pdMS_TO_TICKS(2000));
+}
+
+void audio_play_end(void) {
+    s_accept = 0;
+    s_eos = 1;
+}
+
+void audio_play_stop(void) {
+    s_accept = 0;
+    s_flush = 1;
+}
+
+int audio_play_active(void) {
+    return s_busy;
 }
