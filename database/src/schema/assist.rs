@@ -12,6 +12,11 @@ use crate::db;
 
 pub const ASSIST_REQUEST_TABLE: &str = "assist_request";
 
+/// Longest `tech_note` a technician's request holds, as the schema asserts.
+pub const TECH_NOTE_MAX: usize = 500;
+/// Longest `tech_note` an `auto` request holds, as the schema asserts.
+pub const AUTO_NOTE_MAX: usize = 2000;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct AssistRequest {
     pub id: RecordId,
@@ -49,7 +54,7 @@ pub struct AssistRequest {
     #[serde(default)]
     #[surreal(default)]
     pub store: Option<String>,
-    /// Free text from the tech; untrusted, quoted when composed into a prompt.
+    /// A technician's free text, quoted as data in the prompt, or an `auto` request's instructions.
     #[serde(default)]
     #[surreal(default)]
     pub tech_note: Option<String>,
@@ -99,6 +104,11 @@ impl AssistRequest {
     /// Whether `requested_by` is vouched for: filed by a record user, a system user, or before the stamp existed.
     pub fn requester_is_verified(&self) -> bool {
         matches!(self.filed_access.as_deref(), None | Some("user") | Some("system"))
+    }
+
+    /// Whether `tech_note` is automation's text filed by a record or system user, and so reads as instructions.
+    pub fn note_is_instructions(&self) -> bool {
+        self.trigger_source == "auto" && matches!(self.filed_access.as_deref(), Some("user") | Some("system"))
     }
 
     /// Files a bench confirmation under the caller's `id`.
@@ -154,7 +164,7 @@ impl AssistRequest {
             .bind(("by", requested_by.map(str::to_string)))
             .bind(("store", store.map(str::to_string)))
             .bind(("sn", service_number.map(str::to_string)))
-            .bind(("note", tech_note.chars().take(500).collect::<String>()))
+            .bind(("note", tech_note.chars().take(TECH_NOTE_MAX).collect::<String>()))
             .bind(("fresh", fresh))
             .await?;
         let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
@@ -177,8 +187,9 @@ impl AssistRequest {
             .bind(("cs", connection_string.to_string()))
             .bind(("host", hostname))
             .bind(("by", requested_by.map(str::to_string)))
-            .bind(("note", tech_note.chars().take(2000).collect::<String>()))
-            .await?;
+            .bind(("note", tech_note.chars().take(AUTO_NOTE_MAX).collect::<String>()))
+            .await?
+            .check()?;
         let ids: Vec<RecordId> = res.take(0).unwrap_or_default();
         ids.into_iter().next().ok_or_else(|| anyhow::anyhow!("assist_request was not created"))
     }
@@ -201,7 +212,7 @@ impl AssistRequest {
             )
             .bind(("id", id.clone()))
             .await?;
-        let claimed: Vec<RecordId> = res.take(0).unwrap_or_default();
+        let claimed: Vec<RecordId> = res.take(0)?;
         Ok(!claimed.is_empty())
     }
 

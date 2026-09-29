@@ -1,5 +1,5 @@
 use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Key, Link, Order, Panel, RichText, ScrollArea, Spinner, TextEdit, Ui, Widget, scroll_area};
-use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
+use crate::tabs::stock::store_inventory_viewer::{BinClick, ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::tabs::stock::everest_lookup::{EverestItemRow, EverestItemViewer, EverestLookupResult, EverestOrder, OdooSerialHistory, lookup_everest_order, fetch_serial_movement, order_to_rows, order_totals, EverestRow, EverestCustomerSearchResult, EverestCustomerOrdersResult, search_everest_customers, fetch_customer_orders, lookup_everest_order_by_docnum, row_str, row_customer_name, row_cust_code, row_doc_no};
 use crate::tabs::stock::inventory_audit::{
     format_date_long, format_date_short, list_audits, load_audit, lookup_serials_in_odoo,
@@ -85,6 +85,10 @@ pub struct StockTable {
     inventory_serials_viewer: SerialsViewer,
     stock_quantity_viewer: StockQuantityViewer,
     stock_quantity_table: egui_data_table::DataTable<StockQuantityData>,
+    /// Company Stock bin breakdown for the clicked product.
+    bin_breakdown: Option<BinBreakdown>,
+    bins_click_channel: (Sender<BinClick>, Receiver<BinClick>),
+    bins_result_channel: (Sender<BinsResult>, Receiver<BinsResult>),
     // Cost breakdown
     cost_breakdown_viewer: CostBreakdownViewer,
     cost_breakdown_table: egui_data_table::DataTable<CostBreakdownData>,
@@ -212,6 +216,16 @@ pub struct StockTable {
     csv_import_channel: (Sender<Vec<String>>, Receiver<Vec<String>>),
 }
 
+/// `(product_id, bins)` from a live Odoo quant lookup.
+type BinsResult = (i32, Result<Vec<BinQuantity>, String>);
+
+/// One product's stock per location; `bins` is `None` while loading.
+struct BinBreakdown {
+    product_id: i32,
+    name: String,
+    bins: Option<Result<Vec<BinQuantity>, String>>,
+}
+
 #[derive(Default, PartialEq, Clone)]
 pub enum CustomerSearchType {
     #[default]
@@ -336,6 +350,13 @@ impl Default for StockTable {
         let history_result_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>) = crossbeam::channel::unbounded();
         let found_toggle_channel: (Sender<(RecordId, String, bool)>, Receiver<(RecordId, String, bool)>) = crossbeam::channel::unbounded();
         let csv_import_channel: (Sender<Vec<String>>, Receiver<Vec<String>>) = crossbeam::channel::unbounded();
+        let bins_click_channel: (Sender<BinClick>, Receiver<BinClick>) = crossbeam::channel::unbounded();
+        let bins_result_channel: (Sender<BinsResult>, Receiver<BinsResult>) = crossbeam::channel::unbounded();
+
+        let stock_quantity_viewer = StockQuantityViewer {
+            bins_click_tx: Some(bins_click_channel.0.clone()),
+            ..Default::default()
+        };
 
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -359,8 +380,11 @@ impl Default for StockTable {
             stock_selection: Default::default(), 
             inventory_serials_table: egui_data_table::DataTable::<SerialsData>::default(),
             inventory_serials_viewer,
-            stock_quantity_viewer: StockQuantityViewer::default(),
+            stock_quantity_viewer,
             stock_quantity_table: egui_data_table::DataTable::<StockQuantityData>::default(),
+            bin_breakdown: None,
+            bins_click_channel,
+            bins_result_channel,
             cost_breakdown_viewer: CostBreakdownViewer::default(),
             cost_breakdown_table: egui_data_table::DataTable::<CostBreakdownData>::default(),
             cost_order_id: String::new(),
@@ -1148,6 +1172,16 @@ impl StockTable {
                     .min_size(280.)
                     .show(ui, |ui| {
                         self.render_serial_history_panel(ui);
+                    });
+            }
+
+            if self.stock_selection == StockSelection::CompanyStock && self.bin_breakdown.is_some() {
+                Panel::right("company_stock_bins_panel")
+                    .resizable(true)
+                    .default_size(360.)
+                    .min_size(280.)
+                    .show(ui, |ui| {
+                        self.render_bin_breakdown_panel(ui);
                     });
             }
 
@@ -2211,6 +2245,90 @@ impl StockTable {
         });
     }
 
+    /// Opens the bin breakdown panel for a product and fetches its quants from Odoo.
+    fn request_bin_breakdown(&mut self, product_id: i32, name: String, ctx: &eframe::egui::Context) {
+        self.bin_breakdown = Some(BinBreakdown { product_id, name, bins: None });
+        let tx = self.bins_result_channel.0.clone();
+        let ctx = ctx.clone();
+        PlatformSpawner::spawn(async move {
+            let bins = fetch_product_bins(product_id).await.map_err(|e| format!("{e:#}"));
+            let _ = tx.try_send((product_id, bins));
+            ctx.request_repaint();
+        });
+    }
+
+    fn render_bin_breakdown_panel(&mut self, ui: &mut Ui) {
+        let Some(breakdown) = &self.bin_breakdown else { return };
+        let (product_id, name) = (breakdown.product_id, breakdown.name.clone());
+        let mut close = false;
+        let mut refresh = false;
+        ui.horizontal(|ui| {
+            ui.heading("Bin Breakdown");
+            close = ui.small_button(crate::ui_tools::icons::CLOSE).on_hover_text("Close").clicked();
+            refresh = ui.small_button(crate::ui_tools::icons::REFRESH).on_hover_text("Refresh").clicked();
+        });
+        if close {
+            self.bin_breakdown = None;
+            return;
+        }
+        if refresh {
+            self.request_bin_breakdown(product_id, name, ui.ctx());
+            return;
+        }
+        ui.label(RichText::new(&name).color(Color32::GRAY));
+
+        let Some(breakdown) = &self.bin_breakdown else { return };
+        let bins = match &breakdown.bins {
+            None => {
+                ui.add_space(10.);
+                ui.horizontal(|ui| {
+                    Spinner::new().size(16.).ui(ui);
+                    ui.label("Fetching Odoo stock...");
+                });
+                return;
+            }
+            Some(Err(e)) => {
+                ui.colored_label(ui.global_style().visuals.error_fg_color, e);
+                return;
+            }
+            Some(Ok(bins)) => bins,
+        };
+        ui.separator();
+        if bins.is_empty() {
+            ui.label(RichText::new("No stock in any location.").color(Color32::GRAY));
+            return;
+        }
+
+        let (warehouse_bins, other_bins) = bins.split_at(bins.iter().take_while(|b| b.warehouse).count());
+        let total = |bins: &[BinQuantity]| {
+            (bins.iter().map(|b| b.on_hand).sum::<f64>(), bins.iter().map(|b| b.reserved).sum::<f64>())
+        };
+        ScrollArea::vertical().show(ui, |ui| {
+            use egui_extras::{TableBuilder, Column as TblCol};
+            TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .column(TblCol::remainder().at_least(150.))
+                .column(TblCol::auto().at_least(60.))
+                .column(TblCol::auto().at_least(60.))
+                .header(20., |mut h| {
+                    h.col(|ui| { ui.strong("Location"); });
+                    h.col(|ui| { ui.strong("On Hand"); });
+                    h.col(|ui| { ui.strong("Reserved"); });
+                })
+                .body(|mut body| {
+                    for bin in warehouse_bins {
+                        bin_row(&mut body, bin, Some(Color32::LIGHT_GREEN));
+                    }
+                    total_row(&mut body, "Warehouse total", total(warehouse_bins), Some(Color32::LIGHT_GREEN));
+                    for bin in other_bins {
+                        bin_row(&mut body, bin, None);
+                    }
+                    total_row(&mut body, "Company total", total(bins), None);
+                });
+        });
+    }
+
     pub fn first_run(&mut self) {
         if self.first_run {
             self.first_run = false;
@@ -2361,17 +2479,26 @@ impl StockTable {
 
             let data: Vec<StockQuantityData> = stock_inf
                 .iter()
-                .map(|stock_data| {
-                    StockQuantityData(
-                        stock_data.display_name.clone(),
-                        stock_data.qty_available.clone(),
-                        stock_data.virtual_available.clone(),
-                        stock_data.standard_price.clone(),
-                        stock_data.list_price.clone(),
-                    )
+                .map(|stock_data| StockQuantityData {
+                    name: stock_data.display_name.clone(),
+                    available: stock_data.warehouse_available,
+                    virtual_available: stock_data.warehouse_virtual_available,
+                    std_price: stock_data.standard_price,
+                    list_price: stock_data.list_price,
+                    product_id: stock_data.product_variant_id.0,
+                    company_available: stock_data.qty_available,
                 })
                 .collect();
             self.stock_quantity_table.replace(data);
+        }
+
+        while let Ok((product_id, name)) = self.bins_click_channel.1.try_recv() {
+            self.request_bin_breakdown(product_id, name, ctx);
+        }
+        while let Ok((product_id, bins)) = self.bins_result_channel.1.try_recv() {
+            if let Some(breakdown) = self.bin_breakdown.as_mut().filter(|b| b.product_id == product_id) {
+                breakdown.bins = Some(bins);
+            }
         }
 
         // Handle cost breakdown data
@@ -2874,6 +3001,32 @@ impl StockTable {
                     });
             });
     }
+}
+
+fn tinted(text: impl Into<String>, color: Option<Color32>) -> RichText {
+    let text = RichText::new(text);
+    match color {
+        Some(color) => text.color(color),
+        None => text,
+    }
+}
+
+/// Bin Breakdown row for one location.
+fn bin_row(body: &mut egui_extras::TableBody<'_>, bin: &BinQuantity, color: Option<Color32>) {
+    body.row(20., |mut row| {
+        row.col(|ui| { ui.label(tinted(bin.location.as_str(), color)); });
+        row.col(|ui| { ui.label(tinted(format!("{}", bin.on_hand), color)); });
+        row.col(|ui| { ui.label(tinted(format!("{}", bin.reserved), color)); });
+    });
+}
+
+/// Bold Bin Breakdown row for an `(on_hand, reserved)` total.
+fn total_row(body: &mut egui_extras::TableBody<'_>, label: &str, (on_hand, reserved): (f64, f64), color: Option<Color32>) {
+    body.row(20., |mut row| {
+        row.col(|ui| { ui.label(tinted(label, color).strong()); });
+        row.col(|ui| { ui.label(tinted(format!("{on_hand}"), color).strong()); });
+        row.col(|ui| { ui.label(tinted(format!("{reserved}"), color).strong()); });
+    });
 }
 
 /// Storage key for a store's cached Systems In-Store rows.

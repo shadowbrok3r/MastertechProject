@@ -359,7 +359,7 @@ impl Runner {
         }
         json!({
             "cwd": self.cfg.cwd,
-            "model": self.cfg.model,
+            "model": self.cfg.model_for(&self.thread.connection_string),
             "modelProvider": self.cfg.provider,
             "approvalPolicy": "on-request",
             "sandbox": "read-only",

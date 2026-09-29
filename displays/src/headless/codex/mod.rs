@@ -38,6 +38,8 @@ pub struct Config {
     pub url: String,
     pub token: String,
     pub model: String,
+    /// Model for `general:` sessions; `model` when `MTECH_CODEX_GENERAL_MODEL` is unset.
+    pub general_model: String,
     pub provider: String,
     /// Working directory for threads on the codex host.
     pub cwd: String,
@@ -79,10 +81,12 @@ impl Config {
             Some(m) => log::info!("codex: ZeroClaw memory via {}", m.base()),
             None => log::warn!("codex: MTECH_ZC_GATEWAY/MTECH_ZC_TOKEN unset; sessions run without ZeroClaw memory"),
         }
+        let model = env_trimmed("MTECH_CODEX_MODEL").unwrap_or_else(|| "zc-heavy".to_string());
         Some(Self {
             url,
             token,
-            model: env_trimmed("MTECH_CODEX_MODEL").unwrap_or_else(|| "zc-heavy".to_string()),
+            general_model: env_trimmed("MTECH_CODEX_GENERAL_MODEL").unwrap_or_else(|| model.clone()),
+            model,
             provider: env_trimmed("MTECH_CODEX_PROVIDER").unwrap_or_else(|| "zcpool".to_string()),
             cwd: env_trimmed("MTECH_CODEX_CWD").unwrap_or_else(|| "/home/shadowbroker/zc-sessions".to_string()),
             max_threads: env_parse("MTECH_CODEX_MAX_THREADS", 2usize).max(1),
@@ -96,12 +100,17 @@ impl Config {
         })
     }
 
+    /// The model a thread on `connection_string` runs on.
+    pub fn model_for(&self, connection_string: &str) -> &str {
+        if is_general(connection_string) { &self.general_model } else { &self.model }
+    }
+
     /// `codex/<alias>@<model>#<node>`, in the provenance grammar the schema asserts.
-    pub fn driven_by(&self) -> String {
+    pub fn driven_by(&self, connection_string: &str) -> String {
         format!(
             "codex/{}@{}#{}",
             provenance_slug(&self.agent_alias, false),
-            provenance_slug(&self.model, true),
+            provenance_slug(self.model_for(connection_string), true),
             provenance_slug(&self.node, false)
         )
     }
@@ -161,6 +170,41 @@ pub async fn require_system_session() {
     );
 }
 
+/// Disables the broker when its database user may not write the agent tables.
+pub async fn require_write_role() {
+    let Ok(user) = std::env::var("MTECH_AGENT_USER") else { return };
+    let defined = database::db()
+        .query("RETURN (INFO FOR DB).users[$user]")
+        .bind(("user", user.clone()))
+        .await
+        .and_then(|mut r| r.take::<Option<String>>(0));
+    let definition = match defined {
+        Ok(Some(definition)) => definition,
+        Ok(None) => return,
+        Err(e) => {
+            log::warn!("codex: could not read database user {user}'s roles: {e}");
+            return;
+        }
+    };
+    if may_write(&definition) {
+        return;
+    }
+    REFUSED.store(true, std::sync::atomic::Ordering::Relaxed);
+    log::error!(
+        "codex: broker disabled: database user {user} is read-only, so every claim and new session would be \
+         filtered out; sign the broker in as an EDITOR or OWNER user"
+    );
+}
+
+/// Whether a `DEFINE USER … ROLES …` statement grants EDITOR or OWNER.
+fn may_write(definition: &str) -> bool {
+    definition
+        .split(" ROLES ")
+        .nth(1)
+        .map(|rest| rest.split(" DURATION").next().unwrap_or(rest))
+        .is_some_and(|roles| roles.split(',').any(|role| matches!(role.trim(), "EDITOR" | "OWNER")))
+}
+
 pub fn enabled() -> bool {
     config().is_some()
 }
@@ -215,8 +259,8 @@ pub fn spawn_codex_broker(manager: Arc<RwLock<PluginManager>>) {
     };
     let _ = MANAGER.set(manager);
     log::info!(
-        "codex: broker -> {} model {} provider {} (max {} threads, approvals expire after {}s)",
-        cfg.url, cfg.model, cfg.provider, cfg.max_threads, cfg.approval_ttl_secs
+        "codex: broker -> {} model {} (general sessions {}) provider {} (max {} threads, approvals expire after {}s)",
+        cfg.url, cfg.model, cfg.general_model, cfg.provider, cfg.max_threads, cfg.approval_ttl_secs
     );
     tokio::spawn(resume_open_threads(cfg.clone()));
     turns::spawn_turn_watcher(cfg.clone());
@@ -307,5 +351,21 @@ async fn queue_pump(cfg: Arc<Config>) {
             let _ = AgentThread::set_status(&thread.id, "starting", None).await;
             runner::spawn(cfg.clone(), thread, opening);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::may_write;
+
+    #[test]
+    fn only_editor_or_owner_users_may_run_the_broker() {
+        let viewer = "DEFINE USER mcp_agent ON DATABASE PASSHASH 'x' ROLES VIEWER DURATION FOR TOKEN 1w, FOR SESSION NONE";
+        let editor = "DEFINE USER admin_agent ON DATABASE PASSHASH 'x' PASSSCRAM 'y' ROLES EDITOR DURATION FOR TOKEN 1w, FOR SESSION NONE";
+        let several = "DEFINE USER ops ON DATABASE PASSHASH 'x' ROLES VIEWER, OWNER";
+        assert!(!may_write(viewer));
+        assert!(may_write(editor));
+        assert!(may_write(several));
+        assert!(!may_write("DEFINE USER nobody ON DATABASE PASSHASH 'x'"));
     }
 }

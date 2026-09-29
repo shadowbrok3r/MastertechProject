@@ -21,9 +21,9 @@ pub async fn start_for_connection(cfg: std::sync::Arc<super::Config>, connection
         service_order: None,
         computer: None,
         customer: None,
-        model: Some(cfg.model.clone()),
+        model: Some(cfg.model_for(connection_string).to_string()),
         provider: Some(cfg.provider.clone()),
-        driven_by: Some(cfg.driven_by()),
+        driven_by: Some(cfg.driven_by(connection_string)),
         tool_path: Some("dynamic".to_string()),
         broker_node: Some(cfg.node.clone()),
         title: hostname,
@@ -49,7 +49,10 @@ pub async fn dispatch(req: AssistRequest) {
     let Some(cfg) = config() else { return };
     match AssistRequest::claim(&req.id).await {
         Ok(true) => {}
-        Ok(false) => return,
+        Ok(false) => {
+            log::info!("codex: request {} was no longer pending; not claimed", req.id.key_string());
+            return;
+        }
         Err(e) => {
             log::warn!("codex: claim failed for {}: {e}", req.id.key_string());
             return;
@@ -58,7 +61,7 @@ pub async fn dispatch(req: AssistRequest) {
     let req = verified_requester(req);
     let opening = super::super::assist::compose_prompt(&req, &cfg.agent_actor());
 
-    // A request that is not fresh joins the machine's live thread when its requester may steer it.
+    // A non-fresh request joins the machine's live thread when its requester may steer it; a busy thread queues it.
     if !req.fresh {
         match AgentThread::active_for_connection(&req.connection_string).await {
             Ok(Some(existing)) if may_join(&existing, &req).await => {
@@ -69,7 +72,8 @@ pub async fn dispatch(req: AssistRequest) {
                     req.connection_string
                 );
                 let _ = AssistRequest::link_thread(&req.id, &existing.id).await;
-                if let Err(e) = AgentTurn::ask(&existing.id, "start", &opening).await {
+                let kind = if existing.is_busy() { "queue" } else { "start" };
+                if let Err(e) = AgentTurn::ask(&existing.id, kind, &opening).await {
                     log::warn!("codex: could not queue the joining turn: {e}");
                 }
                 return;
@@ -110,9 +114,9 @@ pub async fn dispatch(req: AssistRequest) {
         service_order: req.service_order.clone(),
         computer: req.computer.clone(),
         customer: req.customer.clone(),
-        model: Some(cfg.model.clone()),
+        model: Some(cfg.model_for(&req.connection_string).to_string()),
         provider: Some(cfg.provider.clone()),
-        driven_by: Some(cfg.driven_by()),
+        driven_by: Some(cfg.driven_by(&req.connection_string)),
         tool_path: Some("dynamic".to_string()),
         broker_node: Some(cfg.node.clone()),
         title,
