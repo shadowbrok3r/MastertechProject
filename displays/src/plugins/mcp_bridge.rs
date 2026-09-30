@@ -12532,6 +12532,8 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - get_customer_details — full customer record with linked service orders.
 - get_service_order — look up by service number (with computer + customer fetched).
 - search_service_orders — search by customer name, tech, service number.
+- service_order_status — one order's whole status in one call: customer, computer, PrestaShop state and placed time, service task, latest diagnosis, AI task. Partial spoken numbers resolve by their trailing digits.
+- orders_placed — orders PrestaShop took in on a day or range, by kind and store, in store time. service_order.created_at is only when MasterTech first loaded an order.
 - get_computer_details — full hardware record (CPU, GPU, RAM, drives, serials, programs).
 - search_prestashop_orders — search PrestaShop orders by reference, customer email, or customer name (email/name resolve the customer first, then their orders). count 0 means no orders; a tool error means the lookup failed.
 - search_odoo_inventory — search Odoo product catalog by part number or name.
@@ -12540,6 +12542,7 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 === Assistant: tasks, reminders, parts, briefs ===
 These act for the signed-in person, or the technician whose agent session is calling.
 - create_task — a to-do for someone now, optional due time. notify_user — an FYI popup now, no task.
+- list_tasks — a person's tasks, open by default, with the full open count and overdue flags.
 - schedule_task — a task delivered later (every=once + when) or on repeat (day = Mon-Sat, week + weekdays, month + month_day). list_task_schedules / cancel_task_schedule manage them; list before adding to avoid duplicates.
 - People resolve by email, full or first name; "me" is the requester. Non-Root users assign only within their own store and the tools refuse otherwise.
 - Times are store-local (America/Denver): "tomorrow 3pm", "friday", "2026-09-28 09:30", "in 2 hours". Every reply carries store_time_now.

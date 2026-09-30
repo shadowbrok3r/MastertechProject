@@ -34,6 +34,7 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "get_service_order",
     "search_service_orders",
     "service_order_status",
+    "orders_placed",
     "get_customer_details",
     "search_prestashop_orders",
     "search_odoo_inventory",
@@ -115,6 +116,7 @@ pub const GENERAL_TOOLS: &[&str] = &[
     "get_service_order",
     "search_service_orders",
     "service_order_status",
+    "orders_placed",
     "get_customer_details",
     "search_prestashop_orders",
     "search_odoo_inventory",
@@ -770,9 +772,16 @@ mod tests {
         assert!(p.gate_for("create_task", &json!({ "assignee": "sam.jones" }), false, &none, None).needs_human());
         assert_eq!(p.gate_for("route_part", &json!({ "part": "SSD" }), false, &none, Some(&me)), Gate::Run);
         assert!(p.gate_for("route_part", &json!({ "part": "SSD", "create_task": true }), false, &none, Some(&me)).needs_human());
-        for tool in ["post_ticket_brief", "list_task_schedules", "cancel_task_schedule", "list_tasks", "service_order_status"] {
+        for tool in [
+            "post_ticket_brief",
+            "list_task_schedules",
+            "cancel_task_schedule",
+            "list_tasks",
+            "service_order_status",
+            "orders_placed",
+        ] {
             assert_eq!(p.gate_for(tool, &json!({}), false, &none, Some(&me)), Gate::Run, "{tool}");
-            if matches!(tool, "list_tasks" | "service_order_status") {
+            if matches!(tool, "list_tasks" | "service_order_status" | "orders_placed") {
                 assert!(GENERAL_TOOLS.contains(&tool) && DIAGNOSTICIAN_TOOLS.contains(&tool), "{tool} must be offered");
             }
         }

@@ -1,11 +1,16 @@
-//! Read-only lookups sized for spoken answers: one service order's whole status, one person's task list.
+//! Read-only lookups sized for spoken answers: one service order's whole status, one person's task list,
+//! the orders PrestaShop took in over a day or range.
 
-use chrono::{DateTime, Utc};
+use std::collections::{BTreeMap, HashMap};
+
+use chrono::{DateTime, Datelike, Days, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::task_schedule::local_label;
-use super::{Datetime, RecordId, SurrealValue};
+use super::business_calendar::{STORE_TZ, parse_store_local};
+use super::prestashop::{Order, OrderState, OrderType, Prestashop};
+use super::task_schedule::{local_label, weekday_from_name};
+use super::{Datetime, RecordId, Store, SurrealValue};
 use crate::db;
 
 /// Longest free-text field a reply carries, in characters.
@@ -16,6 +21,15 @@ const MAX_MATCHES: usize = 5;
 const MIN_PARTIAL_DIGITS: usize = 4;
 /// Most tasks one list returns.
 pub const MAX_TASKS: u32 = 50;
+/// Longest range one placed-orders call covers, in days.
+pub const MAX_RANGE_DAYS: i64 = 31;
+/// Most orders a placed-orders reply lists one by one; its counts cover every order.
+const MAX_LISTED_ORDERS: usize = 60;
+/// PrestaShop `limit` for a placed-orders range.
+const PLACED_LIMIT: &str = "0,3000";
+const PLACED_DISPLAY: &str = "[id,reference,id_order_type,id_store,current_state,date_add]";
+/// Fewest digits a full service number has; shorter ones are never looked up by PrestaShop id.
+const FULL_NUMBER_DIGITS: usize = 7;
 
 const ORDER_BY_NUMBER_SQL: &str =
     "SELECT id, service_number, customer.name AS customer, created_at FROM service_order WHERE service_number == $sn";
@@ -26,7 +40,7 @@ const ORDERS_ENDING_SQL: &str = "SELECT id, service_number, customer.name AS cus
 const ORDER_STATUS_SQL: &str = "
 LET $sn = $order.service_number;
 LET $computer = $order.computer;
-SELECT service_number, created_at, tech, sales_rep, checkin_rep, ticket_total, checkin_notes,
+SELECT service_number, tech, sales_rep, checkin_rep, ticket_total, checkin_notes,
     customer.name AS customer, customer.phone_number AS phone,
     computer.hostname AS hostname, computer.device_model AS model, computer.product_name AS product
     FROM $order;
@@ -78,9 +92,6 @@ pub struct OrderHead {
     #[serde(default)]
     #[surreal(default)]
     pub service_number: Option<String>,
-    #[serde(default)]
-    #[surreal(default)]
-    pub created_at: Option<Datetime>,
     #[serde(default)]
     #[surreal(default)]
     pub tech: Option<String>,
@@ -222,6 +233,77 @@ pub struct TaskRow {
     pub assigned_by: Option<String>,
 }
 
+/// PrestaShop's side of an order: its kind and store, when it came in, and its state now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Placement {
+    pub number: String,
+    pub kind: &'static str,
+    pub store: String,
+    pub state: String,
+    pub placed: Option<DateTime<Utc>>,
+}
+
+impl Placement {
+    pub fn from_order(order: &Order) -> Self {
+        Self {
+            number: order.id.clone(),
+            kind: order_kind(&order.id_order_type),
+            store: store_code(&order.id_store),
+            state: OrderState::try_name_from_id_str(&order.current_state)
+                .map_or_else(|| format!("state {}", order.current_state), str::to_string),
+            placed: parse_store_local(&order.date_add).ok(),
+        }
+    }
+}
+
+fn order_kind(id: &str) -> &'static str {
+    match OrderType::try_from_id_str(id) {
+        Some(OrderType::ServiceOrder) => "service",
+        Some(OrderType::SalesOrder) => "sales",
+        Some(OrderType::RepairOrder) => "repair",
+        Some(OrderType::ReadyToRoll) => "ready_to_roll",
+        Some(OrderType::Bsd) => "bsd",
+        Some(OrderType::Rci) => "rci",
+        Some(OrderType::Unknown) | None => "other",
+    }
+}
+
+/// An order kind as `orders_placed` names it, or `None` for an unknown name.
+pub fn parse_kind(raw: &str) -> Option<&'static str> {
+    Some(match raw.trim().to_ascii_lowercase().replace([' ', '-'], "_").as_str() {
+        "service" | "services" => "service",
+        "sale" | "sales" => "sales",
+        "repair" | "repairs" => "repair",
+        "ready_to_roll" | "rtr" => "ready_to_roll",
+        "bsd" => "bsd",
+        "rci" => "rci",
+        _ => return None,
+    })
+}
+
+fn store_code(id: &str) -> String {
+    Store::try_from_presta_store_id(id).map_or_else(|| format!("store {id}"), |s| s.as_str().to_string())
+}
+
+/// The store-local date at `now`.
+pub fn store_today(now: DateTime<Utc>) -> NaiveDate {
+    now.with_timezone(&STORE_TZ).date_naive()
+}
+
+/// "today", "yesterday", a weekday name (its latest date up to today) or YYYY-MM-DD.
+pub fn parse_day(raw: &str, today: NaiveDate) -> Option<NaiveDate> {
+    let raw = raw.trim().to_ascii_lowercase();
+    match raw.as_str() {
+        "" | "today" => Some(today),
+        "yesterday" => today.pred_opt(),
+        _ => NaiveDate::parse_from_str(&raw, "%Y-%m-%d").ok().or_else(|| {
+            let day = weekday_from_name(&raw)?;
+            let back = (7 + today.weekday().num_days_from_monday() - day.num_days_from_monday()) % 7;
+            today.checked_sub_days(Days::new(u64::from(back)))
+        }),
+    }
+}
+
 /// The digits of a spoken service number: "SO-2155144" and "#2155144" both give "2155144".
 pub fn service_digits(raw: &str) -> String {
     raw.chars().filter(char::is_ascii_digit).collect()
@@ -266,7 +348,45 @@ pub async fn order_status(order: &RecordId, now: DateTime<Utc>) -> anyhow::Resul
     let tasks: Vec<OrderTask> = resp.take(3)?;
     let diagnoses: Vec<OrderDiagnosis> = resp.take(4)?;
     let ai_tasks: Vec<OrderAiTask> = resp.take(5)?;
-    Ok(head.into_iter().next().map(|head| order_status_json(&head, &tasks, &diagnoses, &ai_tasks, now)))
+    let Some(head) = head.into_iter().next() else {
+        return Ok(None);
+    };
+    let placed = match head.service_number.as_deref() {
+        Some(sn) => placement(sn).await.inspect_err(|e| log::warn!("PrestaShop order {sn}: {e:#}")).ok(),
+        None => None,
+    };
+    Ok(Some(order_status_json(&head, placed.as_ref(), &tasks, &diagnoses, &ai_tasks, now)))
+}
+
+/// PrestaShop's record of one order by its number.
+pub async fn placement(number: &str) -> anyhow::Result<Placement> {
+    let order: Order = Prestashop::default().request_subresources_by_id_wasm("orders", "order", number).await?;
+    Ok(Placement::from_order(&order))
+}
+
+/// PrestaShop's record of an order MasterTech has no row for; only full service numbers are tried.
+pub async fn placement_for_missing(raw: &str) -> Option<Placement> {
+    let digits = service_digits(raw);
+    if digits.len() < FULL_NUMBER_DIGITS {
+        return None;
+    }
+    placement(&digits).await.inspect_err(|e| log::info!("PrestaShop order {digits}: {e:#}")).ok()
+}
+
+/// Orders PrestaShop took in from `from` through `through` (store-local days), oldest first.
+pub async fn orders_placed(from: NaiveDate, through: NaiveDate) -> anyhow::Result<Vec<Placement>> {
+    let range = format!("[{from} 00:00:00,{through} 23:59:59]");
+    let mut api = Prestashop::default();
+    api.display = PLACED_DISPLAY;
+    let query = HashMap::from([
+        ("filter[date_add]", range.as_str()),
+        ("date", "1"),
+        ("sort", "[date_add_ASC]"),
+        ("limit", PLACED_LIMIT),
+        ("output_format", "JSON"),
+    ]);
+    let rows: Vec<Order> = api.request_resources_checked("orders", query).await?;
+    Ok(rows.iter().map(Placement::from_order).collect())
 }
 
 /// One person's tasks, oldest due first, and their full open count.
@@ -307,9 +427,18 @@ fn put(map: &mut Map<String, Value>, key: &str, value: Option<impl Into<Value>>)
     }
 }
 
+/// `kind`, `store`, `placed` and `order_state` from PrestaShop.
+fn put_placement(out: &mut Map<String, Value>, p: &Placement) {
+    put(out, "kind", Some(p.kind));
+    put(out, "store", Some(p.store.clone()));
+    put(out, "placed", p.placed.map(local_label));
+    put(out, "order_state", Some(p.state.clone()));
+}
+
 /// Compact status JSON; store-local times, empty fields left out.
 pub fn order_status_json(
     head: &OrderHead,
+    placed: Option<&Placement>,
     tasks: &[OrderTask],
     diagnoses: &[OrderDiagnosis],
     ai_tasks: &[OrderAiTask],
@@ -326,7 +455,9 @@ pub fn order_status_json(
     if !computer.is_empty() {
         out.insert("computer".into(), Value::Object(computer));
     }
-    put(&mut out, "checked_in", when(&head.created_at));
+    if let Some(p) = placed {
+        put_placement(&mut out, p);
+    }
     put(&mut out, "checked_in_by", text(&head.checkin_rep));
     put(&mut out, "tech", text(&head.tech));
     put(&mut out, "sales_rep", text(&head.sales_rep));
@@ -404,11 +535,84 @@ pub fn matches_json(matches: &[OrderMatch]) -> Value {
                 let mut o = Map::new();
                 put(&mut o, "service_number", m.service_number.clone());
                 put(&mut o, "customer", text(&m.customer));
-                put(&mut o, "checked_in", when(&m.created_at));
                 Value::Object(o)
             })
             .collect(),
     )
+}
+
+/// Status of an order only PrestaShop has.
+pub fn placement_json(p: &Placement) -> Value {
+    let mut out = Map::new();
+    put(&mut out, "service_number", Some(p.number.clone()));
+    put_placement(&mut out, p);
+    out.insert("in_mastertech".into(), Value::Bool(false));
+    out.insert(
+        "note".into(),
+        json!("PrestaShop has this order but MasterTech has not loaded it yet, so it has no task or diagnosis"),
+    );
+    Value::Object(out)
+}
+
+fn day_label(d: NaiveDate) -> String {
+    d.format("%a %b %-d").to_string()
+}
+
+/// Clock time alone within one day, else the full store-time label.
+fn placed_label(t: Option<DateTime<Utc>>, one_day: bool) -> Option<String> {
+    t.map(|t| if one_day { t.with_timezone(&STORE_TZ).format("%H:%M").to_string() } else { local_label(t) })
+}
+
+/// Orders placed over a range in store time: counts by kind, store and day, and each order while they fit.
+pub fn placed_json(from: NaiveDate, through: NaiveDate, orders: &[Placement]) -> Value {
+    let one_day = from == through;
+    let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut stores: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut days: BTreeMap<NaiveDate, usize> = BTreeMap::new();
+    for o in orders {
+        *kinds.entry(o.kind).or_default() += 1;
+        *stores.entry(o.store.as_str()).or_default() += 1;
+        if let Some(t) = o.placed {
+            *days.entry(store_today(t)).or_default() += 1;
+        }
+    }
+    let mut out = Map::new();
+    if one_day {
+        out.insert("day".into(), json!(day_label(from)));
+    } else {
+        out.insert("from".into(), json!(day_label(from)));
+        out.insert("through".into(), json!(day_label(through)));
+    }
+    out.insert("total".into(), json!(orders.len()));
+    out.insert("by_kind".into(), json!(kinds));
+    out.insert("by_store".into(), json!(stores));
+    if !one_day {
+        let by_day = days.iter().map(|(d, n)| json!({ "day": day_label(*d), "orders": n })).collect();
+        out.insert("by_day".into(), Value::Array(by_day));
+    }
+    put(&mut out, "first", orders.first().and_then(|o| placed_label(o.placed, one_day)));
+    put(&mut out, "last", orders.last().and_then(|o| placed_label(o.placed, one_day)));
+    if orders.len() <= MAX_LISTED_ORDERS {
+        let list = orders
+            .iter()
+            .map(|o| {
+                let mut m = Map::new();
+                put(&mut m, "number", Some(o.number.clone()));
+                put(&mut m, "kind", Some(o.kind));
+                put(&mut m, "store", Some(o.store.clone()));
+                put(&mut m, "placed", placed_label(o.placed, one_day));
+                put(&mut m, "state", Some(o.state.clone()));
+                Value::Object(m)
+            })
+            .collect();
+        out.insert("orders".into(), Value::Array(list));
+    } else {
+        out.insert(
+            "orders_omitted".into(),
+            json!(format!("more than {MAX_LISTED_ORDERS}; narrow by store, kind or day to list them")),
+        );
+    }
+    Value::Object(out)
 }
 
 /// A person's task list as compact JSON; `open` is the full open count, whatever the limit.
@@ -448,6 +652,21 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 9, 30, 20, 0, 0).unwrap()
     }
 
+    fn ps_order(id: &str, kind: &str, store: &str, state: &str, date_add: &str) -> Order {
+        Order {
+            id: id.into(),
+            id_order_type: kind.into(),
+            id_store: store.into(),
+            current_state: state.into(),
+            date_add: date_add.into(),
+            ..Default::default()
+        }
+    }
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
     fn order(sn: &str) -> OrderMatch {
         OrderMatch {
             id: RecordId::new("service_order", sn),
@@ -479,7 +698,6 @@ mod tests {
     fn status_json_uses_store_time_and_drops_empty_fields() {
         let head = OrderHead {
             service_number: Some("2155144".into()),
-            created_at: at(2026, 9, 23, 17),
             customer: Some("Andrea Brandon".into()),
             hostname: Some("Owner-PC".into()),
             checkin_notes: Some("x".repeat(1000)),
@@ -498,10 +716,13 @@ mod tests {
             current_theory: Some("EXPO profile instability".into()),
             ..Default::default()
         }];
-        let v = order_status_json(&head, &tasks, &diagnoses, &[], now());
+        let placed = Placement::from_order(&ps_order("2155144", "2", "8", "239", "2026-09-18 16:55:19"));
+        let v = order_status_json(&head, Some(&placed), &tasks, &diagnoses, &[], now());
         assert_eq!(v["customer"], "Andrea Brandon");
         assert_eq!(v["computer"]["hostname"], "Owner-PC");
-        assert!(v["checked_in"].as_str().unwrap().starts_with("Wed Sep 23 11:00"), "{}", v["checked_in"]);
+        assert_eq!(v["placed"], "Fri Sep 18 16:55");
+        assert_eq!((v["kind"].as_str(), v["store"].as_str()), (Some("service"), Some("LTN")));
+        assert_eq!(v["order_state"], "Accepted By Odoo");
         assert_eq!(v["checkin_notes"].as_str().unwrap().chars().count(), TEXT_MAX_CHARS);
         assert_eq!(v["service_tasks"][0]["overdue"], true);
         assert_eq!(v["diagnoses"][0]["theory"], "EXPO profile instability");
@@ -520,5 +741,54 @@ mod tests {
         assert_eq!(v["overdue_shown"], 1);
         assert_eq!(v["tasks"][0]["overdue"], true);
         assert!(v["tasks"][1].get("overdue").is_none());
+    }
+
+    #[test]
+    fn prestashop_times_read_as_store_time() {
+        let p = Placement::from_order(&ps_order("2155684", "14", "3", "999", "2026-09-30 14:37:48"));
+        assert_eq!(p.placed, Some(Utc.with_ymd_and_hms(2026, 9, 30, 20, 37, 48).unwrap()));
+        assert_eq!((p.kind, p.store.as_str(), p.state.as_str()), ("rci", "store 3", "state 999"));
+        assert_eq!(Placement::from_order(&ps_order("1", "2", "7", "29", "0000-00-00 00:00:00")).placed, None);
+    }
+
+    #[test]
+    fn days_resolve_in_store_time() {
+        let today = day(2026, 9, 30);
+        assert_eq!(parse_day("Today", today), Some(today));
+        assert_eq!(parse_day("yesterday", today), Some(day(2026, 9, 29)));
+        assert_eq!(parse_day("monday", today), Some(day(2026, 9, 28)));
+        assert_eq!(parse_day("wed", today), Some(today));
+        assert_eq!(parse_day("Thursday", today), Some(day(2026, 9, 24)));
+        assert_eq!(parse_day("2026-09-01", today), Some(day(2026, 9, 1)));
+        assert_eq!(parse_day("someday", today), None);
+        assert_eq!(store_today(Utc.with_ymd_and_hms(2026, 10, 1, 3, 0, 0).unwrap()), today);
+        assert_eq!(parse_kind(" Ready to roll"), Some("ready_to_roll"));
+        assert_eq!(parse_kind("sale"), Some("sales"));
+        assert_eq!(parse_kind("widgets"), None);
+    }
+
+    #[test]
+    fn placed_orders_count_by_kind_and_store() {
+        let orders: Vec<Placement> = [
+            ps_order("2155667", "2", "14", "36", "2026-09-30 10:09:14"),
+            ps_order("2155670", "1", "8", "4", "2026-09-30 10:44:58"),
+            ps_order("2155684", "2", "12", "29", "2026-09-30 14:37:48"),
+        ]
+        .iter()
+        .map(Placement::from_order)
+        .collect();
+        let today = day(2026, 9, 30);
+        let v = placed_json(today, today, &orders);
+        assert_eq!(v["day"], "Wed Sep 30");
+        assert_eq!(v["total"], 3);
+        assert_eq!((v["by_kind"]["service"].as_u64(), v["by_kind"]["sales"].as_u64()), (Some(2), Some(1)));
+        assert_eq!(v["by_store"]["ORE"], 1);
+        assert_eq!((v["first"].as_str(), v["last"].as_str()), (Some("10:09"), Some("14:37")));
+        assert_eq!(v["orders"][2]["state"], "Check-in Shelf");
+        assert!(v.get("by_day").is_none());
+
+        let week = placed_json(day(2026, 9, 28), today, &orders);
+        assert_eq!(week["by_day"][0]["orders"], 3);
+        assert_eq!(week["orders"][0]["placed"], "Wed Sep 30 10:09");
     }
 }
