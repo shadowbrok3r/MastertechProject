@@ -6,6 +6,7 @@ use database::schema::assistant::{
     clean_line, match_person, may_assign, open_task_counts, part_due, pick_sender, post_private_note, store_from_code,
 };
 use database::schema::business_calendar::{CLOSE_HOUR, OPEN_HOUR};
+use database::schema::order_status::{self, OrderLookup};
 use database::schema::odoo::parts::{self, RoutePlan};
 use database::schema::service_task::{find_service_task, normalize_service_number};
 use database::schema::task_schedule::{
@@ -201,6 +202,27 @@ pub struct CancelTaskScheduleParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ListTasksParams {
+    #[schemars(description = "Whose tasks: email, full or first name, or \"me\". Defaults to the requester.")]
+    #[serde(default)]
+    pub assignee: Option<String>,
+    #[schemars(description = "Include completed tasks too. Default false: open tasks only.")]
+    #[serde(default)]
+    pub include_completed: Option<bool>,
+    #[schemars(description = "Most tasks to list, 1 to 50, default 20. `open` is always the full open count.")]
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ServiceOrderStatusParams {
+    #[schemars(
+        description = "Service number, e.g. \"2155144\". A partial number, as speech often gives, is matched against the end of service numbers (\"155144\" finds 2155144)."
+    )]
+    pub service_number: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct PostTicketBriefParams {
     #[schemars(description = "Service number of the ticket.")]
     pub service_number: String,
@@ -382,6 +404,46 @@ impl PluginToolProvider {
             }),
             now,
         )
+    }
+
+    #[tool(
+        name = "list_tasks",
+        description = "List a person's tasks in one call: open ones by default, oldest due first, with the full open count, due times in store time and overdue flags. Use for \"what's on my plate\", \"do I have any tasks\" or \"what does Jacob have due\" instead of querying the task table."
+    )]
+    async fn list_tasks(&self, Parameters(p): Parameters<ListTasksParams>) -> Result<CallToolResult, ErrorData> {
+        let actor = self.assistant_actor().await?;
+        let (person, _) = self.resolve_assignee(&actor, p.assignee.as_deref()).await?;
+        let limit = p.limit.unwrap_or(20).clamp(1, order_status::MAX_TASKS);
+        let (open, rows) = order_status::tasks_for(&person.id, p.include_completed.unwrap_or(false), limit)
+            .await
+            .map_err(internal)?;
+        let now = Utc::now();
+        reply(order_status::tasks_json(&person.label(), open, &rows, now), now)
+    }
+
+    #[tool(
+        name = "service_order_status",
+        description = "One service order's whole status in one call: customer, computer, check-in notes, its service task (status, assignee, due), the latest diagnosis (status, theory, next step) and any AI task (checklist progress), in store time. Use for \"what's the status of order X\" instead of chaining get_service_order, search_diagnostics and get_ai_task_status. Partial numbers from speech resolve by their trailing digits; several matches come back as `matches` to ask about."
+    )]
+    async fn service_order_status(
+        &self,
+        Parameters(p): Parameters<ServiceOrderStatusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let now = Utc::now();
+        let found = match order_status::find_order(&p.service_number).await.map_err(internal)? {
+            OrderLookup::Found(order) => order_status::order_status(&order, now).await.map_err(internal)?,
+            OrderLookup::Several(matches) => {
+                return reply(
+                    json!({ "matches": order_status::matches_json(&matches), "note": "several orders end in these digits; ask which one" }),
+                    now,
+                );
+            }
+            OrderLookup::Missing => None,
+        };
+        match found {
+            Some(status) => reply(status, now),
+            None => reply(json!({ "found": false, "note": format!("no service order matches '{}'", p.service_number) }), now),
+        }
     }
 
     #[tool(
