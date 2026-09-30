@@ -84,18 +84,23 @@ fn m2o_id(v: Option<&Value>) -> Option<i64> {
     v.and_then(Value::as_array).and_then(|a| a.first()).and_then(Value::as_i64)
 }
 
-/// Domain matching every word in the name, or the whole query as internal reference or barcode.
-pub fn product_domain(query: &str) -> Value {
+/// Domain terms matching every word of `query` in the name, or the whole query in any of `fields`.
+pub fn name_or_fields_domain(query: &str, fields: &[&str]) -> Vec<Value> {
+    let query = query.trim();
     let words: Vec<&str> = query.split_whitespace().collect();
-    let mut domain: Vec<Value> = vec![json!("|"), json!("|")];
+    let mut domain: Vec<Value> = std::iter::repeat_n(json!("|"), fields.len()).collect();
     domain.extend(std::iter::repeat_n(json!("&"), words.len().saturating_sub(1)));
     domain.extend(words.iter().map(|w| json!(["name", "ilike", w])));
     if words.is_empty() {
-        domain.push(json!(["name", "ilike", query.trim()]));
+        domain.push(json!(["name", "ilike", query]));
     }
-    domain.push(json!(["default_code", "ilike", query.trim()]));
-    domain.push(json!(["barcode", "ilike", query.trim()]));
-    json!([domain])
+    domain.extend(fields.iter().map(|f| json!([f, "ilike", query])));
+    domain
+}
+
+/// Domain matching every word in the name, or the whole query as internal reference or barcode.
+pub fn product_domain(query: &str) -> Value {
+    json!([name_or_fields_domain(query, &["default_code", "barcode"])])
 }
 
 fn product_from_row(r: &Value) -> Option<Product> {

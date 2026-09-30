@@ -166,7 +166,7 @@ impl PrestashopOrderForm {
                     let tx = self.odoo_search_tx.clone();
                     PlatformSpawner::spawn(async move {
                         match search_odoo_products(&search).await {
-                            Ok(products) => { let _ = tx.try_send(products.result); },
+                            Ok(products) => { let _ = tx.try_send(products); },
                             Err(e) => log::error!("Error with searching odoo products: {e:?}"),
                         }
                     });
@@ -617,14 +617,14 @@ impl PrestashopOrderForm {
                         for product in self
                             .searched_products
                             .iter()
-                            .filter(|p| 
+                            .filter(|p|
                                 !p.default_code
-                                .to_lowercase()
-                                .ends_with("/xidax")
-                            ) 
+                                .as_deref()
+                                .is_some_and(|c| c.to_lowercase().ends_with("/xidax"))
+                            )
                         {
                             // ui.label(&product.name);
-                            ui.label(&product.default_code);
+                            ui.label(product.default_code.as_deref().unwrap_or(&product.name));
                             ui.label(product.qty_available.to_string());
                             ui.label(format!(" $ {:.2}", product.list_price));
                             ui.label(format!(" $ {:.2}", product.standard_price));
@@ -770,7 +770,7 @@ impl PrestashopOrderForm {
                         for product in self.added_products.iter() {
                             *total += product.list_price;
                             // ui.label(&product.name);
-                            ui.label(&product.default_code);
+                            ui.label(product.default_code.as_deref().unwrap_or(&product.name));
                             ui.label(product.qty_available.to_string());
                             ui.label(format!(" $ {:.2}", product.list_price));
                             ui.label(format!(" $ {:.2}", product.standard_price));

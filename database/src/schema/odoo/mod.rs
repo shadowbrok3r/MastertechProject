@@ -1,123 +1,41 @@
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-
-use crate::{ODOO_API_KEY, ODOO_DB, ODOO_JSONRPC_URL, ODOO_UID};
+use serde_json::{Value, json};
 
 pub mod inventory;
 pub mod parts;
 
-pub async fn search_odoo_products(search_term: &str) -> anyhow::Result<JsonRpcResponse, anyhow::Error> {
-    let client = Client::new();
-    let url = ODOO_JSONRPC_URL;
-    let db = ODOO_DB;
-    let uid: u32 = ODOO_UID.parse().map_err(|_| anyhow::anyhow!("ODOO_UID must be a decimal u32"))?;
-    let api_key = ODOO_API_KEY;
-    let model = "product.template";
-    let method = "search_read";
-    let domain = vec![
-        vec![
-            json!(["default_code", "ilike", search_term]),
-            json!(["product_variant_ids.default_code", "ilike", search_term]),
-            // json!(["name", "ilike", search_term])
-        ]
-    ];
+/// Templates a product search returns at most.
+const TEMPLATE_LIMIT: u32 = 5;
 
-    let fields = vec![
-        "product_variant_id",
-        "qty_available",
-        "display_name",
-        "virtual_available",
-        "list_price",
-        "standard_price",
-        "default_code",
-        "name"
-    ];
-    let limit = 5; // Replace with desired limit
+/// Domain matching every word in the name, or the whole query as internal reference, variant code or barcode.
+pub fn template_domain(query: &str) -> Value {
+    json!([parts::name_or_fields_domain(
+        query,
+        &["default_code", "product_variant_ids.default_code", "barcode"]
+    )])
+}
 
-    let result = call_odoo_api(
-        &client,
-        url,
-        db,
-        uid,
-        api_key,
-        model,
-        method,
-        domain,
-        fields,
-        limit,
+/// Product templates whose name has every word of `search_term`, or whose code, variant code or barcode contains it.
+pub async fn search_odoo_products(search_term: &str) -> anyhow::Result<Vec<ExtraInventoryData>> {
+    let rows = parts::search_read(
+        "product.template",
+        template_domain(search_term),
+        json!([
+            "product_variant_id",
+            "qty_available",
+            "display_name",
+            "virtual_available",
+            "list_price",
+            "standard_price",
+            "default_code",
+            "name"
+        ]),
+        Some(TEMPLATE_LIMIT),
     )
     .await?;
-
-    Ok(result)
-
-}
-
-pub async fn call_odoo_api(
-    client: &Client,
-    url: &str,
-    db: &str,
-    uid: u32,
-    api_key: &str,
-    model: &str,
-    method: &str,
-    domain: Vec<Vec<serde_json::Value>>,
-    fields: Vec<&str>,
-    limit: u32,
-) -> Result<JsonRpcResponse, reqwest::Error> {
-    let request = JsonRpcRequest {
-        jsonrpc: "2.0".to_string(),
-        method: "call".to_string(),
-        params: Params {
-            service: "object".to_string(),
-            method: "execute_kw".to_string(),
-            args: vec![
-                json!(db),
-                json!(uid),
-                json!(api_key),
-                json!(model),
-                json!(method),
-                json!(domain),
-                json!({
-                    "fields": fields,
-                    "limit": limit
-                }),
-            ],
-        },
-        id: 1,
-    };
-
-    let response = client
-        .post(url)
-        .json(&request)
-        .send()
-        .await?
-        .json::<JsonRpcResponse>()
-        .await?;
-
-    Ok(response)
-}
-
-
-#[derive(Serialize)]
-struct JsonRpcRequest {
-    jsonrpc: String,
-    method: String,
-    params: Params,
-    id: u32,
-}
-
-#[derive(Serialize)]
-struct Params {
-    service: String,
-    method: String,
-    args: Vec<serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-pub struct JsonRpcResponse {
-    pub jsonrpc: String,
-    pub result: Vec<ExtraInventoryData>
+    rows.into_iter()
+        .map(|row| serde_json::from_value(row).map_err(|e| anyhow::anyhow!("Odoo product.template row: {e}")))
+        .collect()
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -167,8 +85,17 @@ pub struct ExtraInventoryData {
     pub standard_price: f64,    // Monetary value (with decimals), so f64 is appropriate
     pub virtual_available: f64, // Quantities should remain as u64 for non-negative integers
     pub product_variant_id: ProductID,
-    pub default_code: String,
+    #[serde(default, deserialize_with = "false_as_none")]
+    pub default_code: Option<String>,
     pub name: String,
+}
+
+/// Odoo's `false` or a blank string for an empty char field becomes `None`.
+fn false_as_none<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    Ok(match Option::<BoolOrString>::deserialize(deserializer)? {
+        Some(BoolOrString::String(s)) if !s.trim().is_empty() => Some(s),
+        _ => None,
+    })
 }
 
 use serde::de::{Deserializer, MapAccess, Visitor};
@@ -257,5 +184,67 @@ impl<'de> Deserialize<'de> for BoolOrString {
         }
 
         deserializer.deserialize_any(BoolOrStringVisitor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// True when every `|`/`&` in a prefix-notation domain has two operands and one expression remains.
+    fn well_formed(domain: &Value) -> bool {
+        let mut depth = 0;
+        for term in domain[0].as_array().expect("positional domain").iter().rev() {
+            if matches!(term.as_str(), Some("|" | "&")) {
+                if depth < 2 {
+                    return false;
+                }
+                depth -= 1;
+            } else {
+                depth += 1;
+            }
+        }
+        depth == 1
+    }
+
+    #[test]
+    fn template_domain_ands_name_words_and_ors_codes() {
+        assert_eq!(
+            template_domain(" 1TB NVMe "),
+            json!([[
+                "|",
+                "|",
+                "|",
+                "&",
+                ["name", "ilike", "1TB"],
+                ["name", "ilike", "NVMe"],
+                ["default_code", "ilike", "1TB NVMe"],
+                ["product_variant_ids.default_code", "ilike", "1TB NVMe"],
+                ["barcode", "ilike", "1TB NVMe"]
+            ]])
+        );
+        for query in ["", "SSD", "1TB NVMe", "Samsung 990 Pro 2TB"] {
+            assert!(well_formed(&template_domain(query)), "malformed domain for {query:?}");
+        }
+    }
+
+    #[test]
+    fn default_code_false_or_blank_is_none() {
+        let row = |code: Value| {
+            json!({
+                "display_name": "Samsung 990 Pro 1TB NVMe",
+                "list_price": 129.99,
+                "qty_available": 3.0,
+                "standard_price": 88.5,
+                "virtual_available": 2.0,
+                "product_variant_id": [4411, "Samsung 990 Pro 1TB NVMe"],
+                "default_code": code,
+                "name": "Samsung 990 Pro 1TB NVMe"
+            })
+        };
+        let decode = |v: Value| serde_json::from_value::<ExtraInventoryData>(v).expect("row decodes");
+        assert_eq!(decode(row(json!(false))).default_code, None);
+        assert_eq!(decode(row(json!(" "))).default_code, None);
+        assert_eq!(decode(row(json!("MZ-V9P1T0"))).default_code.as_deref(), Some("MZ-V9P1T0"));
     }
 }
