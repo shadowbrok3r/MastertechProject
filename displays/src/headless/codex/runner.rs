@@ -2073,6 +2073,8 @@ fn item_text(kind: &str, item: &Value) -> String {
         "file_change" => "file changes".to_string(),
         _ => match item.get("type").and_then(Value::as_str) {
             Some("contextCompaction") => COMPACTED.to_string(),
+            // An update_plan item carries the checklist in `text`; render it, not the type name.
+            Some("plan") => item.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
             other => other.unwrap_or("").to_string(),
         },
     }
@@ -2258,7 +2260,11 @@ mod tests {
             ),
             COMPACTED
         );
-        assert_eq!(item_text("other", &json!({ "type": "plan" })), "plan");
+        assert_eq!(
+            item_text("other", &json!({ "type": "plan", "text": "- [x] step 1\n- [ ] step 2" })),
+            "- [x] step 1\n- [ ] step 2"
+        );
+        assert_eq!(item_text("other", &json!({ "type": "plan" })), "");
     }
 
     #[test]

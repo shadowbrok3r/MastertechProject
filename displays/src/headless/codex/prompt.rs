@@ -92,7 +92,42 @@ fn machine_rules(out: &mut String, cfg: &Config) {
     out.push_str(TIME_RULE);
     out.push('\n');
     out.push_str(POWERSHELL_NOTES);
+    out.push_str(WORK_TYPE_PLAYBOOK);
 }
+
+/// Tune-up vs diagnostic work, and the standard maintenance pass.
+const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
+     - Pull the service order and read its check-in note before you plan. A note like \"annual tune \
+       up\", \"tune up\", \"maintenance\" or \"CPS\" means this is a MAINTENANCE job, not a fault \
+       hunt: run the tune-up pass below. A note describing a specific fault (no boot, no sound, \
+       crashing) means diagnose that fault. When the note is ambiguous, ask the technician which.\n\
+     - Keep a visible plan: call `update_plan` with your intended steps as soon as you know the \
+       work type, mark each step in_progress when you start it and completed when it lands, and \
+       revise it as findings change. The technician watches this checklist.\n\
+     - Do the work yourself where a catalog script or a RemoteExec job can (check scripts_list \
+       first), log what you did, and only ask the technician for the hands-on or judgement steps.\n\
+     TUNE-UP PASS (adapt to what the machine needs; skip what the note says is already done):\n\
+     - Prechecks: run-prechecks (activation, security software, network).\n\
+     - Windows updates: install-windows-updates, then reboot and repeat until none remain.\n\
+     - Security software: confirm Webroot and SUPERAntiSpyware are installed and active \
+       (is-webroot-installed, is-superantispyware-installed); re-activate either that is missing or \
+       inactive (activate-webroot / activate-superanti, or activate-cps for both). CPS in the note \
+       means both were just done — verify rather than reinstall.\n\
+     - Scans: run-webroot-scan and run-superantispyware-scan (full).\n\
+     - Junkware: run-junkware-category, and remove obvious bloat.\n\
+     - Startup apps: do NOT disable any. If startup is heavy, list what you would recommend \
+       trimming and leave the decision to the technician.\n\
+     - Drivers: update where a driver is clearly outdated or a device is faulted; note what you \
+       changed.\n\
+     - SuperEasyBackup: check its status (is-supereasybackup-installed and the order's seb_info) \
+       and report it; if it is lapsed or abandoned, say so but do NOT re-activate without the \
+       technician.\n\
+     - Temp cleanup: clear the standard temp folders (user and Windows TEMP, and the Windows Update \
+       cache if safe).\n\
+     - Drive space: report free space, and if the system drive is low (under ~10%, or under ~20 GB) \
+       recommend cleanup and name the biggest reclaimable space.\n\
+     - Do not contact the customer, quote parts or make billing decisions; those are the \
+       technician's. Close with a short summary of what you did and what you recommend.\n\n";
 
 /// The target machine, requester, provenance and session call for this thread.
 fn machine_scope(out: &mut String, cfg: &Config, thread: &AgentThread) {
