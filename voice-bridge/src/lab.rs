@@ -51,6 +51,7 @@ pub async fn serve(addr: SocketAddr, voice: Arc<ActiveVoice>, board: Arc<BoardLi
         .route("/api/play", post(play))
         .route("/api/active", post(set_active))
         .route("/api/volume", post(set_volume))
+        .route("/api/restart", post(restart))
         .with_state(Lab { voice, board });
     let listener = tokio::net::TcpListener::bind(addr).await?;
     log::info!("voice lab listening on http://{addr}");
@@ -79,6 +80,15 @@ async fn set_volume(State(lab): State<Lab>, Json(req): Json<VolumeRequest>) -> R
     let level = req.level.min(100);
     lab.board.set_volume(level).await.map_err(failed)?;
     Ok(Json(json!({ "volume": level })))
+}
+
+async fn restart(State(lab): State<Lab>) -> Reply<Json<Value>> {
+    if !lab.board.online() {
+        return Err((StatusCode::CONFLICT, "the board is offline".into()));
+    }
+    lab.board.restart().await.map_err(failed)?;
+    log::info!("board restart requested from the lab");
+    Ok(Json(json!({ "restarting": true })))
 }
 
 /// The trimmed text, its WAV, and the synthesis time in ms.
