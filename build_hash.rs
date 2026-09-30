@@ -77,6 +77,27 @@ fn emit_build_hash() {
     println!("cargo:rerun-if-changed=src");
     // And whenever git's HEAD moves (commit, checkout, rebase) so the
     // git-short component stays correct without a manual touch.
-    println!("cargo:rerun-if-changed=../.git/HEAD");
-    println!("cargo:rerun-if-changed=../.git/index");
+    for file in git_head_files() {
+        println!("cargo:rerun-if-changed={file}");
+    }
+}
+
+/// Existing files that change when HEAD moves: HEAD, the branch ref it names, and packed-refs.
+fn git_head_files() -> Vec<String> {
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let mut files: Vec<String> = git(&["rev-parse", "--git-path", "HEAD"]).into_iter().collect();
+    if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        files.extend(git(&["rev-parse", "--git-path", &branch]));
+    }
+    files.extend(git(&["rev-parse", "--git-path", "packed-refs"]));
+    files.retain(|f| std::path::Path::new(f).exists());
+    files
 }
