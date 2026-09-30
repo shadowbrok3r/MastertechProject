@@ -17,6 +17,7 @@
 //! A new `utt_start` supersedes any turn still running, unless an approval is pending: then the
 //! utterance answers it.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -33,7 +34,7 @@ use crate::audio::{
     i16_from_le_bytes, i16_to_le_bytes, parse_wav_mono, read_wav_mono, resample, write_wav_mono, BENCH_RATE,
 };
 use crate::pipeline::{transcribe, voice_prompt, Identity};
-use crate::voices::{synthesize, ActiveVoice};
+use crate::voices::{synthesize, ActiveVoice, VoiceSettings};
 
 /// Samples per outbound audio frame (~64 ms at 16 kHz).
 const FRAME_SAMPLES: usize = 1024;
@@ -213,7 +214,12 @@ pub struct TurnContext {
     pub id: Identity,
     pub voice: Arc<ActiveVoice>,
     pub timeout_secs: u64,
+    pub acks: AckCache,
 }
+
+/// Rendered acknowledgements, each with the voice settings that rendered it.
+#[derive(Default)]
+pub struct AckCache(Mutex<HashMap<&'static str, (VoiceSettings, Vec<i16>)>>);
 
 impl TurnContext {
     /// Piper speech for `text` in the board's voice, as 16 kHz samples.
@@ -223,6 +229,27 @@ impl TurnContext {
         let (rate, samples) = parse_wav_mono(&wav)?;
         Ok(resample(&samples, rate, BENCH_RATE))
     }
+
+    /// The acknowledgement for turn `id` in the current voice, rendered once per voice.
+    async fn ack(&self, id: u64) -> Result<(&'static str, Vec<i16>)> {
+        let phrase = ack_phrase(id);
+        let voice = self.voice.get();
+        if let Some((rendered_with, pcm)) = lock(&self.acks.0).get(phrase) {
+            if *rendered_with == voice {
+                return Ok((phrase, pcm.clone()));
+            }
+        }
+        let pcm = self.render(phrase).await?;
+        lock(&self.acks.0).insert(phrase, (voice, pcm.clone()));
+        Ok((phrase, pcm))
+    }
+}
+
+/// Short spoken acknowledgements, rotated per turn.
+const ACKS: &[&str] = &["Let me check.", "One moment.", "On it."];
+
+fn ack_phrase(turn: u64) -> &'static str {
+    ACKS[(turn % ACKS.len() as u64) as usize]
 }
 
 /// The approval the board is showing.
@@ -623,6 +650,7 @@ fn spawn_turn(ctx: Arc<TurnContext>, board: Arc<BoardLink>, turn: Turn, pcm: Vec
 }
 
 async fn relay_turn(ctx: &TurnContext, board: &BoardLink, turn: &Turn, pcm: &[i16], in_wav: &str) -> Result<()> {
+    let heard = Instant::now();
     write_wav_mono(in_wav, pcm, BENCH_RATE)?;
     let wav = in_wav.to_string();
     let transcript = tokio::task::spawn_blocking(move || transcribe(&wav)).await??;
@@ -636,6 +664,12 @@ async fn relay_turn(ctx: &TurnContext, board: &BoardLink, turn: &Turn, pcm: &[i1
         log::info!("turn {} superseded", turn.id);
         return Ok(());
     }
+    let (phrase, ack) = ctx.ack(turn.id).await?;
+    if !(turn.is_current() && send_speech(&turn.tx, phrase, &ack).await.is_ok()) {
+        log::info!("turn {} superseded", turn.id);
+        return Ok(());
+    }
+    log::info!("turn {} acknowledged after {:.1}s", turn.id, heard.elapsed().as_secs_f32());
 
     let (cs, prompt) = (ctx.id.connection_string(), voice_prompt(&transcript));
     let timeout = Duration::from_secs(ctx.timeout_secs);
@@ -800,6 +834,12 @@ pub async fn run_sim_client(room: &str, wav: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acknowledgements_rotate_per_turn() {
+        assert_ne!(ack_phrase(1), ack_phrase(2));
+        assert_eq!(ack_phrase(1), ack_phrase(1 + ACKS.len() as u64));
+    }
 
     #[test]
     fn display_text_folds_typography_to_ascii() {

@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
                 id: Identity::init(None).await?,
                 voice: Arc::new(voices::ActiveVoice::load()),
                 timeout_secs,
+                acks: relay::AckCache::default(),
             };
             let board = Arc::new(relay::BoardLink::default());
             let addr: SocketAddr = env_or("VB_LAB_ADDR", "0.0.0.0:8765").parse().context("VB_LAB_ADDR")?;
