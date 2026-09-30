@@ -2320,7 +2320,7 @@ pub struct GetOutcomeRollupParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct SearchOdooInventoryParams {
-    #[schemars(description = "Product code or name to search for")]
+    #[schemars(description = "Words from the product name, or an internal reference, variant code or barcode")]
     pub query: String,
 }
 
@@ -9873,20 +9873,23 @@ matched, and an error when the lookup itself failed."
 
     #[tool(
         name = "search_odoo_inventory",
-        description = "Search Odoo product catalog by part number or product name."
+        description = "Search the Odoo product catalog by product name or part number. Matches \
+products whose name contains every word of the query, or whose internal reference, variant code or \
+barcode contains the whole query. Returns at most 5 products; count 0 means nothing matched, and a \
+tool error means the search itself failed."
     )]
     async fn search_odoo_inventory(
         &self,
         Parameters(p): Parameters<SearchOdooInventoryParams>,
     ) -> Result<CallToolResult, ErrorData> {
         match database::schema::odoo::search_odoo_products(&p.query).await {
-            Ok(resp) => Ok(CallToolResult::success(vec![ContentBlock::json(
-                serde_json::json!({ "count": resp.result.len(), "products": resp.result }),
+            Ok(products) => Ok(CallToolResult::success(vec![ContentBlock::json(
+                serde_json::json!({ "count": products.len(), "products": products }),
             )
             .map_err(to_internal)?])),
-            Err(e) => Ok(CallToolResult::success(vec![
-                ContentBlock::text(format!("Odoo search error: {e}"))
-            ])),
+            Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "Odoo product search failed: {e}"
+            ))])),
         }
     }
 
