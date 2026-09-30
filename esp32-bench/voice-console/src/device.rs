@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::reset::ResetReason;
 use esp_idf_svc::io::EspIOError;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::esp_crt_bundle_attach;
@@ -43,11 +44,16 @@ const TTS_END: &str = r#"{"cmd":"tts_end""#;
 const VIZ_FRAME: Duration = Duration::from_millis(40);
 /// Associations without a DHCP lease before the chip restarts.
 const NO_LEASE_RESTART: u32 = 2;
+const WIFI_CHECK: Duration = Duration::from_secs(5);
 
 pub fn run() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
-    log::info!("voice-console {} starting; device_id={DEVICE_ID}", env!("CARGO_PKG_VERSION"));
+    log::info!(
+        "voice-console {} starting; device_id={DEVICE_ID}, reset reason {:?}",
+        env!("CARGO_PKG_VERSION"),
+        ResetReason::get()
+    );
 
     match ffi::init_display() {
         Ok(()) => {
@@ -69,14 +75,19 @@ pub fn run() -> Result<()> {
         Ok(()) => log::info!("audio ready (es8311 out, es7210 dual mic, 16 kHz)"),
         Err(e) => log::warn!("audio_init failed: {e}"),
     }
-    let wake = match ffi::init_wake() {
-        Ok(()) => {
-            log::info!("wake word ready (esp-sr afe)");
-            true
-        }
-        Err(e) => {
-            log::warn!("wake word unavailable ({e}); push-to-talk only");
-            false
+    let wake = if !settings.as_ref().map_or(true, Settings::wake) {
+        log::info!("wake word turned off in settings; push-to-talk only");
+        false
+    } else {
+        match ffi::init_wake() {
+            Ok(()) => {
+                log::info!("wake word ready (esp-sr afe)");
+                true
+            }
+            Err(e) => {
+                log::warn!("wake word unavailable ({e}); push-to-talk only");
+                false
+            }
         }
     };
     match ffi::attach_touch() {
@@ -96,7 +107,11 @@ pub fn run() -> Result<()> {
         }
     }
     ffi::set_status("Joining Wi-Fi...", color::MUTED);
-    let _wifi = connect_wifi(nvs)?;
+    let wifi = connect_wifi(nvs)?;
+    std::thread::Builder::new()
+        .name("wifi".into())
+        .stack_size(5 * 1024)
+        .spawn(move || keep_wifi(wifi))?;
     ffi::set_status("Connecting...", color::MUTED);
     log::info!("joining relay room {DEVICE_ID}");
 
@@ -188,6 +203,22 @@ fn connect_wifi(nvs: EspDefaultNvsPartition) -> Result<BlockingWifi<EspWifi<'sta
     Ok(wifi)
 }
 
+/// Rejoins the access point whenever the station loses its link or address.
+fn keep_wifi(mut wifi: BlockingWifi<EspWifi<'static>>) {
+    loop {
+        std::thread::sleep(WIFI_CHECK);
+        if wifi.is_up().unwrap_or(false) {
+            continue;
+        }
+        log::warn!("wifi down; rejoining {WIFI_SSID}");
+        let _ = wifi.disconnect();
+        match wifi.connect().and_then(|()| wifi.wait_netif_up()) {
+            Ok(()) => log::info!("wifi back up on {WIFI_SSID}"),
+            Err(e) => log::warn!("wifi rejoin failed: {e}"),
+        }
+    }
+}
+
 fn on_ws_event(
     event: &Result<WebSocketEvent<'_>, EspIOError>,
     inbox: &SyncSender<String>,
@@ -213,7 +244,10 @@ fn on_ws_event(
             let _ = inbox.try_send((*t).to_string());
         }
         WebSocketEventType::Binary(pcm) => ffi::play_push(pcm),
-        WebSocketEventType::Close(_) | WebSocketEventType::Closed => log::warn!("relay closed"),
+        WebSocketEventType::Close(_) | WebSocketEventType::Closed => {
+            log::warn!("relay closed");
+            let _ = inbox.try_send(console::WS_DISCONNECTED.to_string());
+        }
         _ => {}
     }
 }

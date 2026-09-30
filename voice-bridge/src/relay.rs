@@ -4,7 +4,8 @@
 //! Wire protocol on the room:
 //! - board -> bridge: `{"cmd":"utt_start"}`, PCM16LE 16 kHz mono (Binary), `{"cmd":"utt_end"}`
 //!   (`"discard":true` when no speech followed the wake word or a tap cut it short; `end`,
-//!   `noise_db` and `gate_db` describe how it ended against the measured room noise);
+//!   `noise_db`, `gate_db` and `speech_db` describe how it ended against the measured room noise);
+//!   `{"cmd":"hello","firmware":..,"reset":..,"uptime_s":..}` on every connect;
 //!   `{"cmd":"decide","id":..,"allow":..}` for an approval; `{"cmd":"volume","level":..}` reports
 //!   the speaker volume; `{"cmd":"ping"}` is answered with `{"cmd":"pong"}`.
 //! - bridge -> board: `{"cmd":"state","state":"thinking"}` while a turn runs and `"idle"` when it
@@ -302,6 +303,20 @@ impl BoardLink {
         Ok(())
     }
 
+    /// Restarts the board's chip.
+    pub async fn restart(&self) -> Result<()> {
+        let tx = lock(&self.tx).clone().context("relay not connected")?;
+        tx.send(Message::Text(r#"{"cmd":"reboot"}"#.into())).await?;
+        Ok(())
+    }
+
+    /// Turns the board's wake word engine on or off; the board saves it and restarts.
+    pub async fn set_wake(&self, on: bool) -> Result<()> {
+        let tx = lock(&self.tx).clone().context("relay not connected")?;
+        tx.send(Message::Text(json!({ "cmd": "wake", "on": on }).to_string().into())).await?;
+        Ok(())
+    }
+
     /// Speaks `pcm16` (16 kHz) on the board with `text` on its display.
     pub async fn speak(&self, text: &str, pcm16: &[i16]) -> Result<()> {
         let tx = lock(&self.tx).clone().context("relay not connected")?;
@@ -432,12 +447,13 @@ async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &Arc<BoardLink>) -
                             let pcm = capture.take().unwrap_or_default();
                             let (peak, rms) = level(&pcm);
                             log::info!(
-                                "utt_end: {} samples ({:.1}s), peak {peak}, rms {rms:.0}, end {}, room {} dB, gate {} dB",
+                                "utt_end: {} samples ({:.1}s), peak {peak}, rms {rms:.0}, end {}, room {} dB, gate {} dB, speech {} dB",
                                 pcm.len(),
                                 pcm.len() as f64 / f64::from(BENCH_RATE),
                                 v["end"].as_str().unwrap_or("?"),
                                 v["noise_db"],
                                 v["gate_db"],
+                                v["speech_db"],
                             );
                             let pending = board.approval().filter(|_| answering);
                             if answering && pending.is_none() {
@@ -475,6 +491,13 @@ async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &Arc<BoardLink>) -
                                 *lock(&board.volume) = Some(level.min(100) as u8);
                             }
                         }
+                        Some("hello") => log::info!(
+                            "board hello: firmware {}, reset {}, up {} s, wake word {}",
+                            v["firmware"].as_str().unwrap_or("?"),
+                            v["reset"].as_str().unwrap_or("?"),
+                            v["uptime_s"],
+                            v["wake"],
+                        ),
                         Some("ping") => {
                             let _ = tx.send(Message::Text(r#"{"cmd":"pong"}"#.into())).await;
                         }

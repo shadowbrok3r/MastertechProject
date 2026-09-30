@@ -1,4 +1,5 @@
 #include "audio_shim.h"
+#include <inttypes.h>
 #include <math.h>
 #include <string.h>
 #include "driver/i2c_master.h"
@@ -102,6 +103,52 @@ typedef struct {
 } level_frame_t;
 
 static QueueHandle_t s_levels;
+
+// Guard words around each shim buffer to catch overruns.
+#define GUARD_WORDS 4
+#define GUARD_VALUE 0xA5C3E1F7u
+#define MAX_GUARDED 8
+
+typedef struct {
+    const char *name;
+    uint32_t *head;
+    size_t words;  // payload words between the guards
+} guarded_t;
+
+static guarded_t s_guarded[MAX_GUARDED];
+static int s_guarded_count;
+
+// Allocates `bytes` with guard words on both sides and records it for audio_guard_check.
+static void *guarded_alloc(const char *name, size_t bytes, uint32_t caps) {
+    size_t words = (bytes + 3) / 4;
+    uint32_t *head = heap_caps_malloc((words + 2 * GUARD_WORDS) * 4, caps);
+    if (!head || s_guarded_count == MAX_GUARDED) return NULL;
+    for (int i = 0; i < GUARD_WORDS; i++) {
+        head[i] = GUARD_VALUE;
+        head[GUARD_WORDS + words + i] = GUARD_VALUE;
+    }
+    memset(head + GUARD_WORDS, 0, words * 4);
+    s_guarded[s_guarded_count++] = (guarded_t){ .name = name, .head = head, .words = words };
+    ESP_LOGI(TAG, "buffer %s at %p, %u B", name, (void *)(head + GUARD_WORDS), (unsigned)bytes);
+    return head + GUARD_WORDS;
+}
+
+int audio_guard_check(void) {
+    int broken = 0;
+    for (int b = 0; b < s_guarded_count; b++) {
+        const guarded_t *g = &s_guarded[b];
+        for (int i = 0; i < GUARD_WORDS; i++) {
+            uint32_t before = g->head[i];
+            uint32_t after = g->head[GUARD_WORDS + g->words + i];
+            if (before != GUARD_VALUE || after != GUARD_VALUE) {
+                ESP_LOGE(TAG, "guard broken on %s word %d: before 0x%08" PRIx32 ", after 0x%08" PRIx32,
+                         g->name, i, before, after);
+                broken++;
+            }
+        }
+    }
+    return broken;
+}
 
 static int i2c_setup(void) {
     i2c_master_bus_config_t cfg = {
@@ -366,11 +413,11 @@ static int buffers_setup(void) {
     uint8_t *play = heap_caps_malloc(PLAY_BUF_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     uint8_t *mic = heap_caps_malloc(MIC_BUF_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-    s_tap1 = heap_caps_calloc(TAP_LEN, sizeof(int16_t), internal);
-    s_tap2 = heap_caps_calloc(TAP_LEN, sizeof(int16_t), internal);
-    s_cap = heap_caps_malloc(CAP_BYTES, internal);
-    s_mono = heap_caps_malloc(CAP_FRAMES * sizeof(int16_t), internal);
-    s_chunk = heap_caps_malloc(PLAY_CHUNK, internal);
+    s_tap1 = guarded_alloc("tap1", TAP_LEN * sizeof(int16_t), internal);
+    s_tap2 = guarded_alloc("tap2", TAP_LEN * sizeof(int16_t), internal);
+    s_cap = guarded_alloc("cap", CAP_BYTES, internal);
+    s_mono = guarded_alloc("mono", CAP_FRAMES * sizeof(int16_t), internal);
+    s_chunk = guarded_alloc("chunk", PLAY_CHUNK, internal);
     if (!play || !mic || !s_tap1 || !s_tap2 || !s_cap || !s_mono || !s_chunk) return -1;
     s_play = xStreamBufferCreateStatic(PLAY_BUF_BYTES, 1, play, &s_play_ctl);
     s_mic = xStreamBufferCreateStatic(MIC_BUF_BYTES, MIC_CHUNK, mic, &s_mic_ctl);
@@ -425,7 +472,7 @@ int audio_sr_init(void) {
         afe->destroy(data);
         return -4;
     }
-    s_feed = heap_caps_malloc((size_t)frames * AFE_CHANNELS * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_feed = guarded_alloc("feed", (size_t)frames * AFE_CHANNELS * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_feed) return -5;
     s_afe = afe;
     s_feed_frames = frames;

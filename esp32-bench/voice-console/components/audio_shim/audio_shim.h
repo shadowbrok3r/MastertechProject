@@ -20,6 +20,8 @@ int audio_sr_init(void);     // 0 on success; needs the "model" partition
 int audio_wake_take(void);   // 1 once per detected wake word
 // Pops the oldest 32 ms frame: MIC1+MIC2 level in dBFS and the VAD state; 0 when none is queued.
 int audio_level_frame(float *db, int *speech);
+// Logs and counts overwritten guard words around the shim's buffers.
+int audio_guard_check(void);
 
 void audio_set_volume(int level);  // speaker volume, 0..100
 

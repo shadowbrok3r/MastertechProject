@@ -12,6 +12,8 @@
 #include "esp_lcd_touch_gt911.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lvgl.h"
 
 #define TAG "display_shim"
@@ -31,6 +33,9 @@
 
 #define PIN_TOUCH_RST 23
 #define TOUCH_SCL_HZ 400000
+#define TOUCH_RETRIES 4
+// GT911 firmware start time after a reset.
+#define TOUCH_BOOT_MS 200
 #ifndef ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP
 #define ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP 0x14
 #endif
@@ -445,10 +450,11 @@ int ui_attach_touch(void) {
     i2c_master_bus_handle_t bus = audio_i2c_bus();
     if (!bus) return -4;
     int rc = touch_open(bus, PIN_TOUCH_RST);
-    if (rc == -2) {
-        // Retries at the address the first attempt's reset latched, without another reset.
-        ESP_LOGW(TAG, "gt911 init failed; retrying at the latched address");
-        rc = touch_open(bus, GPIO_NUM_NC);
+    // Retries after the controller boots: at the latched address, then with a fresh reset.
+    for (int attempt = 1; rc == -2 && attempt <= TOUCH_RETRIES; attempt++) {
+        ESP_LOGW(TAG, "gt911 init failed; retry %d of %d", attempt, TOUCH_RETRIES);
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_BOOT_MS));
+        rc = touch_open(bus, attempt % 2 ? GPIO_NUM_NC : PIN_TOUCH_RST);
     }
     if (rc) return rc;
     lvgl_port_touch_cfg_t lt = { .disp = s_disp, .handle = s_touch };
