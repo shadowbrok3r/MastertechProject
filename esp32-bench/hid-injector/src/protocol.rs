@@ -29,10 +29,18 @@ pub enum Request {
     },
     Combo { steps: Vec<Step> },
     ReleaseAll,
+    PayloadStore { name: String, steps: Vec<Step> },
+    PayloadRun { name: String },
+    PayloadList,
+    PayloadDelete { name: String },
+    ReadSerial {
+        #[serde(default)]
+        max_bytes: Option<usize>,
+    },
 }
 
 /// One step of a macro sequence.
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Step {
     Type { text: String },
@@ -132,6 +140,23 @@ mod tests {
         assert_eq!(steps.len(), 4);
         assert_eq!(steps[0], Step::Key { chord: "F2".into() });
         assert_eq!(steps[1], Step::Delay { ms: 50 });
+    }
+
+    #[test]
+    fn payload_commands_parse() {
+        let e = parse(r#"{"id":"p","cmd":"payload_store","name":"bios","steps":[{"op":"key","chord":"F2"},{"op":"delay","ms":40}]}"#);
+        let Request::PayloadStore { name, steps } = e.request else { panic!("store") };
+        assert_eq!(name, "bios");
+        assert_eq!(steps.len(), 2);
+        assert_eq!(parse(r#"{"cmd":"payload_run","name":"bios"}"#).request, Request::PayloadRun { name: "bios".into() });
+        assert_eq!(parse(r#"{"cmd":"payload_list"}"#).request, Request::PayloadList);
+        assert_eq!(parse(r#"{"cmd":"payload_delete","name":"bios"}"#).request, Request::PayloadDelete { name: "bios".into() });
+    }
+
+    #[test]
+    fn read_serial_max_bytes_optional() {
+        assert_eq!(parse(r#"{"cmd":"read_serial"}"#).request, Request::ReadSerial { max_bytes: None });
+        assert_eq!(parse(r#"{"cmd":"read_serial","max_bytes":256}"#).request, Request::ReadSerial { max_bytes: Some(256) });
     }
 
     #[test]
