@@ -9,4 +9,5 @@ pub mod reboot;
 pub mod registry;
 pub mod windows_update;
 pub mod drivers;
+pub mod qc_firmware;
 // pub mod nvme;

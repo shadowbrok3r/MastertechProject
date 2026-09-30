@@ -201,6 +201,9 @@ pub struct WebSocketClient {
     /// Crash Dumps page: this machine's crash history, signatures, and verdicts.
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     pub crash_dumps: tabs::crash_dump_viewer::CrashDumpViewer,
+    /// QC page: order items + serials, BIOS/firmware, and the driver check.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    pub qc_viewer: tabs::qc_viewer::QcViewer,
     pub home_page: HomePage,
     /// Whether the remote egui frame capture is actively streaming.
     pub egui_viewer_active: bool,
@@ -403,6 +406,8 @@ Get-WmiObject")
             fleet_intel: tabs::fleet_intel_viewer::FleetIntelViewer::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             crash_dumps: tabs::crash_dump_viewer::CrashDumpViewer::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            qc_viewer: tabs::qc_viewer::QcViewer::new(),
             home_page: HomePage::new(),
             egui_viewer_active: false,
             file_transfer_progress: None,

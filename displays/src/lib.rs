@@ -1097,6 +1097,46 @@ pub enum Cmd {
 
     /// Admin → client: start or stop the client's clipboard watcher.
     ClipboardSyncEnable { enabled: bool },
+
+    // --- QC firmware readings ---
+    //
+    // What `SystemInformation` does not carry: BIOS version/date, boot mode,
+    // Secure Boot, TPM and Windows activation. Ported from qc-app's
+    // `diagnostics::{SystemIdentity, FirmwareSecurity}` so the admin console's
+    // QC page shows the same firmware posture the bench app does.
+    /// Admin → client: read this machine's firmware and licensing posture.
+    GatherQcFirmware,
+
+    /// Client → admin: the readings. Every field is optional — a value the
+    /// client could not read stays `None` rather than reporting a wrong one.
+    QcFirmwareResponse(QcFirmware),
+}
+
+/// Firmware, licensing and SMBIOS identity for the QC page. All-`Option`
+/// because a reading that failed must be distinguishable from a real answer.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, Facet)]
+pub struct QcFirmware {
+    pub bios_version: Option<String>,
+    pub bios_date: Option<String>,
+    pub bios_vendor: Option<String>,
+    /// `"UEFI"` / `"Legacy"`, empty when it could not be determined.
+    pub boot_mode: String,
+    pub secure_boot_enabled: Option<bool>,
+    pub tpm_present: bool,
+    pub tpm_enabled: Option<bool>,
+    pub tpm_spec_version: Option<String>,
+    pub tpm_manufacturer: Option<String>,
+    pub windows_activated: Option<bool>,
+    /// Whether the firmware carries an OA3 (MSDM) key. The key itself is not
+    /// sent — the `computer` row already holds it and this is only a presence
+    /// signal for the QC page.
+    pub oa3_key_present: bool,
+    /// `Win32_BaseBoard.Product` — the key the driver catalog is looked up by.
+    pub baseboard_product: Option<String>,
+    pub system_serial: Option<String>,
+    pub board_serial: Option<String>,
+    /// PCI device codes for installed GPUs, for the catalog's display-driver lookup.
+    pub gpu_device_codes: Vec<String>,
 }
 
 /// `RemotePluginToolResult.plugin_id` the client answers `RequestTelemetrySnapshot` with.

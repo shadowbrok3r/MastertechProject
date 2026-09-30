@@ -10,6 +10,10 @@ description = "Operational tools for the Mastertech SurrealDB instance — audit
 name = "audit-references"
 path = "src/bin/audit_references.rs"
 
+[[bin]]
+name = "import-driver-catalog"
+path = "src/bin/import_driver_catalog.rs"
+
 [dependencies]
 database.workspace = true
 surrealdb.workspace = true
@@ -21,3 +25,6 @@ log.workspace = true
 tokio.workspace = true
 env_logger = "0.11"
 clap = { version = "4", features = ["derive"] }
+chrono.workspace = true
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+directories = "6.0.0"

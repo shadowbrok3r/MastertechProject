@@ -306,9 +306,10 @@ mod tests {
     // and ClipboardSyncEnable. Appended variants leave existing indices alone, but
     // a client older than the admin still cannot answer them — which is what the
     // handshake compares this value for.
+    // Bumped 2026-09-12: appended GatherQcFirmware and QcFirmwareResponse.
     #[test]
     fn cmd_shape_fp_pin() {
-        assert_eq!(*super::CMD_SHAPE_FP, 0x2061_9800_7fb2_052b);
+        assert_eq!(*super::CMD_SHAPE_FP, 0xb560_17be_0747_8699);
     }
 
     /// `Cmd` variant order as shipped. Bincode encodes a variant by its

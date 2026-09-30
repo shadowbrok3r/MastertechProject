@@ -2494,6 +2494,20 @@ impl TerminalWebsocketClient {
                 }
             }
 
+            Cmd::GatherQcFirmware => {
+                let firmware = crate::utilities::windows::qc_firmware::gather();
+                log::info!(
+                    "websockets -> qc firmware: bios={:?} secure_boot={:?} tpm={}",
+                    firmware.bios_version,
+                    firmware.secure_boot_enabled,
+                    firmware.tpm_present
+                );
+                let response = Cmd::QcFirmwareResponse(firmware);
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
             Cmd::ListRegistryKeys(path) => {
                 log::info!("websockets -> Listing registry keys: {}", path);
 

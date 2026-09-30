@@ -852,6 +852,34 @@ impl QcBackend {
     }
 }
 
+/// BIOS placeholder serials that aren't real (case-insensitive match).
+const PLACEHOLDER_SERIALS: &[&str] = &[
+    "to be filled by o.e.m.",
+    "default string",
+    "system serial number",
+    "base board serial number",
+    "none",
+    "n/a",
+    "not applicable",
+    "not specified",
+    "0",
+    "00000000",
+    "123456789",
+    "...",
+];
+
+/// True when a serial is empty, too short, or a known BIOS placeholder. A
+/// placeholder is shared by every unit of a model, so resolving an order from
+/// one would claim an arbitrary other machine's order.
+pub fn is_placeholder_serial(serial: &str) -> bool {
+    let s = serial.trim();
+    if s.len() < 4 {
+        return true;
+    }
+    let lower = s.to_lowercase();
+    PLACEHOLDER_SERIALS.iter().any(|p| lower == *p)
+}
+
 /// Try a set of hardware serials against both backends (Shopify first), first
 /// hit wins. Each backend yields `None` on miss or when unconfigured, so this
 /// is safe to call on any bench. Used to auto-prefill the order from the
@@ -859,7 +887,7 @@ impl QcBackend {
 pub async fn resolve_any(serials: &[String]) -> Option<OrderSummary> {
     let shopify = ShopifyBackend::from_env();
     let prestashop = PrestashopBackend::new();
-    for serial in serials.iter().filter(|s| !s.trim().is_empty()) {
+    for serial in serials.iter().filter(|s| !is_placeholder_serial(s)) {
         if let Ok(Some(summary)) = shopify.resolve_by_serial(serial).await {
             return Some(summary);
         }
@@ -873,6 +901,17 @@ pub async fn resolve_any(serials: &[String]) -> Option<OrderSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placeholder_serials_are_rejected() {
+        assert!(is_placeholder_serial("To Be Filled By O.E.M."));
+        assert!(is_placeholder_serial("Default string"));
+        assert!(is_placeholder_serial("0"));
+        assert!(is_placeholder_serial("   "));
+        assert!(is_placeholder_serial("abc"));
+        assert!(!is_placeholder_serial("SEED-967041"));
+        assert!(!is_placeholder_serial("PF2Z9X7K"));
+    }
 
     #[test]
     fn order_key_routing_matches_qcwizard() {

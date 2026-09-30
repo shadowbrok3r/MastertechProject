@@ -41,6 +41,9 @@ pub enum WsDisplayState {
     FleetIntel,
     /// Crash Dumps: this machine's own sightings, signatures, and verdicts.
     CrashDumps,
+    /// QC: order items + serials, BIOS/firmware posture, and the per-part
+    /// driver check against the fleet driver catalog.
+    Qc,
 }
 
 /// Sends one remote-desktop input event on the tagged binary path.
@@ -369,6 +372,16 @@ impl WebSocketClient {
                                 self.remote_scripts_viewer.loading = true;
                                 let _ = self.send_cmd_tx.try_send(Cmd::GetRemoteScriptList);
                             }
+                            ui.close();
+                        }
+                        if ui
+                            .button("QC")
+                            .on_hover_text(
+                                "Bench QC for this machine: the order's items and which have                                  serials attached, BIOS/Secure Boot/TPM posture, and a per-part                                  driver check against the fleet driver catalog",
+                            )
+                            .clicked()
+                        {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Qc);
                             ui.close();
                         }
                         if ui.button("Installed Programs").clicked() {
@@ -825,6 +838,19 @@ impl WebSocketClient {
                 #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
                 {
                     ui.label("Fleet Intel requires the native tokio build.");
+                }
+            },
+            WsDisplayState::Qc => {
+                #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+                {
+                    let client = self.client.clone();
+                    let cmd_tx = self.send_cmd_tx.clone();
+                    let sysinfo = self.resource_monitor.latest_sysinfo.clone();
+                    self.qc_viewer.display(ui, &client, sysinfo.as_ref(), &cmd_tx);
+                }
+                #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
+                {
+                    ui.label("QC requires the native tokio build.");
                 }
             },
             WsDisplayState::CrashDumps => {

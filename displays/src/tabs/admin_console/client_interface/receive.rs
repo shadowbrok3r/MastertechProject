@@ -1043,6 +1043,15 @@ impl WebSocketClient {
                                 products,
                             },
                         );
+                    } else if let Cmd::QcFirmwareResponse(firmware) = cmd {
+                        log::info!(
+                            "Received QC firmware for {} (bios {:?}, board {:?})",
+                            self.client.connection_string,
+                            firmware.bios_version,
+                            firmware.baseboard_product,
+                        );
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                        self.qc_viewer.set_firmware(firmware);
                     } else if let Cmd::StartupAppsResponse(apps) = cmd {
                         log::info!("Received {} startup apps", apps.len());
                         self.startup_apps_viewer.set_entries(apps);

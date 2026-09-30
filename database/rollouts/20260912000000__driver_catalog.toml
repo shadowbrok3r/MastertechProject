@@ -1,0 +1,116 @@
+# Fleet driver catalog — the canonical driver/BIOS a board or GPU should be
+# running, lifted out of qc-app's local `swift_driver.sqlite`.
+#
+# qc-app resolves driver and BIOS targets from a SQLite file that only exists on
+# a QC bench machine, so the admin console had no way to run the same check.
+# These tables hold the same lookup shape fleet-wide: SMBIOS baseboard product ->
+# catalog_baseboard -> catalog_package (one driver per part category) and
+# catalog_bios; PCI device code -> catalog_gpu_device -> catalog_driver.
+#
+# Purely additive: five new tables, no existing table touched, nothing
+# backfilled. Inert until `database-tools --bin import-driver-catalog` populates
+# them; until then the QC page's driver check reports "no catalog mapping".
+#
+# `product`, `file_name` and `code` carry UNIQUE indexes and are never written
+# blank — the importer drops such rows. One `''` in a UNIQUE index admits the
+# first write and silently rejects every later blank one.
+#
+# Indexes are defined after the fields they cover: a file is applied in order and
+# an index on a not-yet-defined field aborts the sync.
+id = "20260912000000__driver_catalog"
+name = "driver_catalog"
+state = "completed"
+source_schema_hash = "3680b82573c76dad20bfbaf29870e7d8fc8ae0e0cb1c628ef50e075b933b1c7f"
+target_schema_hash = "3680b82573c76dad20bfbaf29870e7d8fc8ae0e0cb1c628ef50e075b933b1c7f"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "define_catalog_driver"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE catalog_driver TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE file_name       ON catalog_driver TYPE string                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE url_download    ON catalog_driver TYPE none | string DEFAULT NONE    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE argument_string ON catalog_driver TYPE none | string DEFAULT NONE    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE file_type       ON catalog_driver TYPE string DEFAULT ''             PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE version         ON catalog_driver TYPE none | string DEFAULT NONE    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source_id       ON catalog_driver TYPE none | int DEFAULT NONE       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE imported_at     ON catalog_driver TYPE datetime DEFAULT time::now()  PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE cdrv_file_name  ON catalog_driver FIELDS file_name UNIQUE;
+"""
+
+[[steps]]
+id = "define_catalog_bios"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE catalog_bios TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE file_name    ON catalog_bios TYPE none | string DEFAULT NONE   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE url_webpage  ON catalog_bios TYPE string DEFAULT ''            PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE url_download ON catalog_bios TYPE none | string DEFAULT NONE   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source_id    ON catalog_bios TYPE none | int DEFAULT NONE      PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE imported_at  ON catalog_bios TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "define_catalog_package"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE catalog_package TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE chipset        ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE me             ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE graphics       ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE audio          ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE lan            ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE bluetooth      ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE wifi           ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE raid           ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE control_center ON catalog_package TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source_id      ON catalog_package TYPE none | int DEFAULT NONE                    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE imported_at    ON catalog_package TYPE datetime DEFAULT time::now()               PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "define_catalog_gpu_device"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE catalog_gpu_device TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE code        ON catalog_gpu_device TYPE string                                  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE device_name ON catalog_gpu_device TYPE string DEFAULT ''                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE vendor      ON catalog_gpu_device TYPE string DEFAULT ''                       PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driver      ON catalog_gpu_device TYPE none | record<catalog_driver> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source_id   ON catalog_gpu_device TYPE none | int DEFAULT NONE                  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE imported_at ON catalog_gpu_device TYPE datetime DEFAULT time::now()             PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE cgpu_code   ON catalog_gpu_device FIELDS code UNIQUE;
+"""
+
+[[steps]]
+id = "define_catalog_baseboard"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE TABLE OVERWRITE catalog_baseboard TYPE ANY SCHEMALESS PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE product      ON catalog_baseboard TYPE string                                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE manufacturer ON catalog_baseboard TYPE string DEFAULT ''                           PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE package      ON catalog_baseboard TYPE none | record<catalog_package> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE bios         ON catalog_baseboard TYPE none | record<catalog_bios> DEFAULT NONE    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE source_id    ON catalog_baseboard TYPE none | int DEFAULT NONE                     PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE imported_at  ON catalog_baseboard TYPE datetime DEFAULT time::now()                PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE cbb_product  ON catalog_baseboard FIELDS product UNIQUE;
+"""
+
+[[steps]]
+id = "drop_catalog_tables"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE TABLE IF EXISTS catalog_baseboard;
+REMOVE TABLE IF EXISTS catalog_gpu_device;
+REMOVE TABLE IF EXISTS catalog_package;
+REMOVE TABLE IF EXISTS catalog_bios;
+REMOVE TABLE IF EXISTS catalog_driver;
+"""
