@@ -190,11 +190,12 @@ impl CpuDieMonitor {
     }
 
     /// Package DTS plus one DTS read per logical core; a core whose sensor does
-    /// not answer stays `None` in its own slot.
+    /// not answer stays `None` in its own slot. The package read needs no
+    /// affinity and answers under load even when the per-core reads starve.
     fn read_intel(&self) -> Option<CpuDieThermal> {
         let msr = self.access.msr()?;
         let package_c =
-            dts_temp(msr.read_msr(IA32_PACKAGE_THERM_STATUS), self.tj_max).and_then(plausible_cpu_temp);
+            package_dts_temp(msr.read_msr(IA32_PACKAGE_THERM_STATUS), self.tj_max).and_then(plausible_cpu_temp);
         let count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
@@ -256,6 +257,14 @@ fn dts_temp(msr_value: Option<u64>, tj_max: u32) -> Option<f32> {
     }
     let readout = (eax >> 16) & 0x7F;
     Some(tj_max.saturating_sub(readout) as f32)
+}
+
+/// `TjMax - readout` from `IA32_PACKAGE_THERM_STATUS`, which has no reading-valid
+/// bit; readout is bits 22:16, and a zero readout is treated as no reading rather
+/// than a package sitting exactly at TjMax.
+fn package_dts_temp(msr_value: Option<u64>, tj_max: u32) -> Option<f32> {
+    let readout = (msr_value? as u32 >> 16) & 0x7F;
+    (readout != 0).then(|| tj_max.saturating_sub(readout) as f32)
 }
 
 /// Hottest plausible domain reading; `None` when none survives the limits.
@@ -348,6 +357,17 @@ mod tests {
             dts_temp(therm_status(0), 100).and_then(plausible_cpu_temp),
             Some(100.0)
         );
+    }
+
+    #[test]
+    fn package_temp_reads_without_a_valid_bit() {
+        // IA32_PACKAGE_THERM_STATUS has no valid bit, so a bare readout must decode.
+        assert_eq!(package_dts_temp(Some((30u32 << 16) as u64), 100), Some(70.0));
+        // The valid bit, when a part happens to set it, is ignored, not required.
+        assert_eq!(package_dts_temp(therm_status(30), 100), Some(70.0));
+        // A zero readout is absence, not a package sitting at TjMax.
+        assert_eq!(package_dts_temp(Some(0), 100), None);
+        assert_eq!(package_dts_temp(None, 100), None);
     }
 
     #[test]
