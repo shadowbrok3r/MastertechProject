@@ -181,7 +181,13 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let env_path = PathBuf::from(&manifest_dir).join("..").join(".env");
 
-    println!("cargo:rerun-if-changed={}", env_path.display());
+    // Watches .env only while it exists, and every injected key in the environment.
+    if env_path.exists() {
+        println!("cargo:rerun-if-changed={}", env_path.display());
+    }
+    for key in ALL_INJECT_KEYS {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
 
     let mut map = HashMap::<String, String>::new();
 
