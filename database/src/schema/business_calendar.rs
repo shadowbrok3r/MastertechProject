@@ -6,7 +6,7 @@
 //! days - a customer's machine fails on customer time - but anything measuring
 //! shop effort or shop-side paperwork belongs on this calendar.
 
-use chrono::{DateTime, Datelike, Duration, TimeZone, Utc, Weekday};
+use chrono::{DateTime, Datelike, Duration, NaiveDateTime, TimeZone, Utc, Weekday};
 use chrono_tz::America::Denver;
 use chrono_tz::Tz;
 
@@ -90,6 +90,16 @@ pub fn add_business_days(at: DateTime<Utc>, days: i64) -> DateTime<Utc> {
     cursor
 }
 
+/// Parses a store-local `YYYY-MM-DD HH:MM:SS` timestamp into UTC.
+pub fn parse_store_local(s: &str) -> anyhow::Result<DateTime<Utc>> {
+    let naive = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")?;
+    STORE_TZ
+        .from_local_datetime(&naive)
+        .earliest()
+        .map(|dt| dt.with_timezone(&Utc))
+        .ok_or_else(|| anyhow::anyhow!("{s} does not exist in {STORE_TZ}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +152,13 @@ mod tests {
         assert_eq!(business_seconds(a, a), 0);
         assert_eq!(business_seconds(a, a - Duration::hours(5)), 0);
         assert_eq!(open_days_between(a, a), 0);
+    }
+
+    #[test]
+    fn store_local_timestamps_convert_to_utc() {
+        assert_eq!(parse_store_local("2026-09-29 18:04:32").unwrap(), utc("2026-09-30T00:04:32Z"));
+        assert_eq!(parse_store_local("2026-01-15 09:00:00").unwrap(), utc("2026-01-15T16:00:00Z"));
+        assert!(parse_store_local("2026-03-08 02:30:00").is_err());
+        assert!(parse_store_local("").is_err());
     }
 }

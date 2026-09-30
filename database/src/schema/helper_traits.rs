@@ -5,7 +5,7 @@ use super::{
 use crate::{db, PlatformSpawner, Spawner, schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE, parse_msg_date, prestashop::{OrderState, OrderType, PrestashopId}}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use log::debug;
@@ -802,20 +802,10 @@ impl From<PrestashopPayload> for TaskPayload {
     }
 }
 
-pub fn convert_date_string(input: &str) -> Result<String, chrono::ParseError> {
-    // Define the input format as per the provided string.
-    let format = "%Y-%m-%d %H:%M:%S";
-
-    // Parse the input string into a NaiveDateTime (which doesn't include timezone information).
-    let naive_dt = NaiveDateTime::parse_from_str(input, format)?;
-
-    // Convert the NaiveDateTime to a DateTime<Utc> with the assumption that it is in UTC.
-    let datetime_utc = Utc.from_utc_datetime(&naive_dt);
-
-    // Format the DateTime<Utc> to the desired ISO 8601 string with milliseconds.
-    let result = datetime_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-
-    Ok(result)
+/// Converts a PrestaShop store-local timestamp to an RFC 3339 UTC string.
+pub fn convert_date_string(input: &str) -> Result<String> {
+    Ok(crate::schema::business_calendar::parse_store_local(input)?
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
 
 /// Parses the username from an email address

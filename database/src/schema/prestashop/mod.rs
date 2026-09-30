@@ -610,7 +610,7 @@ impl<'a> Prestashop<'a> {
         // Send HTTP POST request with the XML payload
         debug!("prestashop_schema -> Payload: {:?}", payload);
         let response_text = self.client
-            .post(format!("{PRESTASHOP_API_URL_WASM}/customer_threads"))
+            .post(format!("{PRESTASHOP_API_URL_WASM}/customer_threads?output_format=JSON"))
             .header("Content-type", "application/xml")
             .body(payload)
             .send()
@@ -619,30 +619,8 @@ impl<'a> Prestashop<'a> {
             .await?;
 
         debug!("prestashop_schema -> response text: {response_text:?}");
-        // Parse the XML response to extract values
-        let id = response_text
-            .split("<id><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></id>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+        parse_write_response(&response_text)
 
-        let date_add = response_text
-            .split("<date_add><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_add>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
-
-        let date_upd = response_text
-            .split("<date_upd><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_upd>").next())
-            .unwrap_or(""); // Optional field, so we handle it accordingly
-
-        Ok(super::helper_traits::PrestaResourceResponse {
-            date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
-            id: id.to_string(),
-            date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
-        })
     }
 
     pub async fn create_customer_message(
@@ -669,7 +647,7 @@ impl<'a> Prestashop<'a> {
         // Send HTTP POST request with the XML payload
         debug!("prestashop_schema -> Payload: {:?}", payload);
         let response_text = self.client
-            .post(format!("{PRESTASHOP_API_URL_WASM}/customer_messages"))
+            .post(format!("{PRESTASHOP_API_URL_WASM}/customer_messages?output_format=JSON"))
             .header("Content-type", "application/xml")
             .body(payload)
             .send()
@@ -678,30 +656,8 @@ impl<'a> Prestashop<'a> {
             .await?;
 
         debug!("prestashop_schema -> response text: {response_text:?}");
-        // Parse the XML response to extract values
-        let id = response_text
-            .split("<id><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></id>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+        parse_write_response(&response_text)
 
-        let date_add = response_text
-            .split("<date_add><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_add>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
-
-        let date_upd = response_text
-            .split("<date_upd><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_upd>").next())
-            .unwrap_or(""); // Optional field, so we handle it accordingly
-
-        Ok(super::helper_traits::PrestaResourceResponse {
-            date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
-            id: id.to_string(),
-            date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
-        })
     }
 
     pub async fn modify_customer_message(
@@ -729,7 +685,7 @@ impl<'a> Prestashop<'a> {
         // Send HTTP POST request with the XML payload
         debug!("prestashop_schema -> Payload: {:?}", payload);
         let response_text = self.client
-            .put(format!("{PRESTASHOP_API_URL_WASM}/customer_messages"))
+            .put(format!("{PRESTASHOP_API_URL_WASM}/customer_messages?output_format=JSON"))
             .header("Content-type", "application/xml")
             .body(payload)
             .send()
@@ -738,30 +694,8 @@ impl<'a> Prestashop<'a> {
             .await?;
 
         debug!("prestashop_schema -> response text: {response_text:?}");
-        // Parse the XML response to extract values
-        let id = response_text
-            .split("<id><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></id>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+        parse_write_response(&response_text)
 
-        let date_add = response_text
-            .split("<date_add><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_add>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
-
-        let date_upd = response_text
-            .split("<date_upd><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_upd>").next())
-            .unwrap_or(""); // Optional field, so we handle it accordingly
-
-        Ok(super::helper_traits::PrestaResourceResponse {
-            date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
-            id: id.to_string(),
-            date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
-        })
     }
 
     /// Raw whole-resource PUT. Crate-private on purpose: the PUT replaces the
@@ -1336,9 +1270,49 @@ impl PrestashopOrderType {
     ];
 }
 
+/// Reads `id`, `date_add` and `date_upd` from a JSON webservice write response.
+fn parse_write_response(body: &str) -> anyhow::Result<super::helper_traits::PrestaResourceResponse> {
+    let value: Value = serde_json::from_str(body)
+        .map_err(|e| anyhow::anyhow!("write response is not JSON ({e}): {body}"))?;
+    let resource = value
+        .as_object()
+        .filter(|root| !root.contains_key("errors") && !root.contains_key("error"))
+        .and_then(|root| root.values().next())
+        .ok_or_else(|| anyhow::anyhow!("write response has no resource: {body}"))?;
+    let id = match resource.get("id") {
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::String(s)) if !s.is_empty() => s.clone(),
+        _ => return Err(anyhow::anyhow!("write response has no id: {body}")),
+    };
+    let date = |key: &str| {
+        resource
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("write response has no {key}: {body}"))
+            .and_then(super::helper_traits::convert_date_string)
+    };
+    Ok(super::helper_traits::PrestaResourceResponse { id, date_add: date("date_add")?, date_upd: date("date_upd")? })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_response_parses_json_resource() {
+        let body = r#"{"customer_message":{"id":543769,"id_customer_thread":"118817","date_add":"2026-09-29 18:04:32","date_upd":"2026-09-29 18:04:32"}}"#;
+        let parsed = parse_write_response(body).unwrap();
+        assert_eq!(parsed.id, "543769");
+        assert_eq!(parsed.date_add, "2026-09-30T00:04:32Z");
+        assert_eq!(parsed.date_upd, "2026-09-30T00:04:32Z");
+    }
+
+    #[test]
+    fn write_response_rejects_proxy_errors() {
+        let body = r#"{"error":"upstream_not_json","detail":"<id><![CDATA[543769]]></id>"}"#;
+        assert!(parse_write_response(body).is_err());
+        assert!(parse_write_response("<?xml version=\"1.0\"?><prestashop/>").is_err());
+    }
 
     /// Returns the query string only, so a failure cannot print the credentialed base URL.
     fn query_string(resource: &str, params: HashMap<&str, &str>) -> String {

@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
-use database::schema::{ChatAction, ChatMessageType, ChatThread, RecordIdExt, UserMessage};
+use database::schema::{business_calendar::STORE_TZ, ChatAction, ChatMessageType, ChatThread, RecordIdExt, UserMessage};
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
 use std::{borrow::Cow, sync::Arc};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -325,7 +325,7 @@ impl UserChat {
 
                                 ui.add_space(5.);
 
-                                ui.label(RichText::new(item.created_at.format("%m/%d @ %I:%M%p").to_string()).weak());
+                                ui.label(RichText::new(item.created_at.with_timezone(&STORE_TZ).format("%m/%d @ %I:%M%p").to_string()).weak());
                             });
                         });
                     } else {
@@ -349,7 +349,7 @@ impl UserChat {
 
                             ui.add_space(5.);
                         
-                            ui.label(RichText::new(item.created_at.format("%m/%d @ %I:%M%p").to_string()).weak());
+                            ui.label(RichText::new(item.created_at.with_timezone(&STORE_TZ).format("%m/%d @ %I:%M%p").to_string()).weak());
 
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 ui.add_space(5.);

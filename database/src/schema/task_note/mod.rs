@@ -1,6 +1,6 @@
 use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, Datetime, LiveTaskPayload, Notification, Record, RecordId, RecordIdExt, SurrealValue, TASK_NOTE_TABLE}, db};
 use super::{helper_traits::PrestaResourceResponse, prestashop_schema::{self, Employee, Prestashop}, User};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -173,8 +173,9 @@ impl TaskNotePayload {
                     }
                 },
                 Err(e) => {
-                    log::error!("task_note/mod.rs -> handle_note_creation -> We probably already have a CustMessageID\nErr: {e:?}");
-
+                    log::error!("task_note/mod.rs -> handle_note_creation -> PrestaShop message failed, saving as a DB-only note: {e:?}");
+                    self.private = true;
+                    self.create_task_note_in_db().await?;
                 },
             }
         } else if id_customer_thread.is_empty() && self.service_number.is_none()
@@ -972,12 +973,9 @@ impl TaskNotePayload {
 }
 
 
-pub fn parse_msg_date(date_str: &str) -> Result<Datetime, chrono::ParseError> {
-    // Parse the string as a NaiveDateTime first
-    let naive_dt = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")?;
-    // Convert to DateTime<Utc> by assuming UTC timezone
-    let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
-    Ok(dt_utc.into())
+/// Parses a PrestaShop store-local timestamp.
+pub fn parse_msg_date(date_str: &str) -> anyhow::Result<Datetime> {
+    Ok(crate::schema::business_calendar::parse_store_local(date_str)?.into())
 }
 
 /// Names tagged `@name` in a note, skipping an `@` that follows a letter or digit.
