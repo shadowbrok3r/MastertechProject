@@ -73,7 +73,7 @@ pub fn run() -> Result<()> {
         };
         for part in line.split('\n').filter(|s| !s.trim().is_empty()) {
             if is_relay_control(part) {
-                handle_control(part, &mut inj);
+                handle_control(part);
                 continue;
             }
             let resp = match serde_json::from_str::<Envelope>(part) {
@@ -147,10 +147,6 @@ fn on_ws_event(event: &Result<WebSocketEvent<'_>, EspIOError>, tx: &SyncSender<S
     }
 }
 
-fn handle_control(text: &str, inj: &mut Injector<UsbHid>) {
-    let text = text.trim();
-    if text == "MASTER_DISCONNECTED" {
-        inj.set_armed(false);
-    }
-    log::info!("relay control: {text}");
+fn handle_control(text: &str) {
+    log::info!("relay control: {}", text.trim());
 }

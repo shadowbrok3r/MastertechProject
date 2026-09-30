@@ -1,8 +1,12 @@
 //! Injection state and command dispatch, routing to a [`Hid`] backend.
 
+use std::time::{Duration, Instant};
+
 use crate::payload::PayloadStore;
 use crate::protocol::{Button, Envelope, Request, Response, Step};
 use serde_json::json;
+
+const DEFAULT_ARM_TTL: Duration = Duration::from_secs(120);
 
 /// Emits USB HID reports. The device backend is TinyUSB; tests use a mock.
 pub trait Hid {
@@ -25,32 +29,45 @@ pub trait Hid {
 
 /// Arms injection and forwards commands to the backend. Boots disarmed.
 pub struct Injector<H: Hid> {
-    armed: bool,
+    armed_until: Option<Instant>,
     hid: H,
     store: PayloadStore,
 }
 
 impl<H: Hid> Injector<H> {
     pub fn new(hid: H) -> Self {
-        Self { armed: false, hid, store: PayloadStore::new() }
+        Self { armed_until: None, hid, store: PayloadStore::new() }
     }
 
-    #[allow(dead_code)]
     pub fn armed(&self) -> bool {
-        self.armed
+        self.armed_until.is_some_and(|t| Instant::now() < t)
     }
 
-    /// Arms or disarms injection; disarming drops any held reports.
+    fn arm_remaining_secs(&self) -> u64 {
+        self.armed_until
+            .and_then(|t| t.checked_duration_since(Instant::now()))
+            .map_or(0, |d| d.as_secs())
+    }
+
+    /// Arms injection for `ttl` seconds (default 120), refreshing the lease.
+    pub fn arm(&mut self, ttl_secs: Option<u64>) {
+        let ttl = ttl_secs.map_or(DEFAULT_ARM_TTL, Duration::from_secs);
+        self.armed_until = Some(Instant::now() + ttl);
+    }
+
+    /// Arms with the default lease, or disarms and drops any held reports.
     pub fn set_armed(&mut self, armed: bool) {
-        self.armed = armed;
-        if !armed {
+        if armed {
+            self.arm(None);
+        } else {
+            self.armed_until = None;
             self.hid.release_all();
         }
     }
 
     fn guard(&self) -> anyhow::Result<()> {
-        if !self.armed {
-            anyhow::bail!("injection disarmed; send {{\"cmd\":\"arm\"}} first");
+        if !self.armed() {
+            anyhow::bail!("injection disarmed or arm lease expired; send {{\"cmd\":\"arm\"}} first");
         }
         if !self.hid.ready() {
             anyhow::bail!("usb host not connected");
@@ -60,7 +77,8 @@ impl<H: Hid> Injector<H> {
 
     fn status(&self) -> serde_json::Value {
         json!({
-            "armed": self.armed,
+            "armed": self.armed(),
+            "arm_expires_in_secs": self.arm_remaining_secs(),
             "usb": if self.hid.ready() { "ready" } else { "not_connected" },
             "firmware": env!("CARGO_PKG_VERSION"),
             "capabilities": self.hid.capabilities(),
@@ -96,11 +114,11 @@ impl<H: Hid> Injector<H> {
     pub fn dispatch(&mut self, env: Envelope) -> Response {
         let id = env.id;
         match env.request {
-            Request::Ping => Response::ok(id, json!({ "pong": true, "armed": self.armed })),
+            Request::Ping => Response::ok(id, json!({ "pong": true, "armed": self.armed() })),
             Request::Status => Response::ok(id, self.status()),
-            Request::Arm => {
-                self.set_armed(true);
-                Response::ok(id, json!({ "armed": true }))
+            Request::Arm { ttl_secs } => {
+                self.arm(ttl_secs);
+                Response::ok(id, json!({ "armed": true, "arm_expires_in_secs": self.arm_remaining_secs() }))
             }
             Request::Disarm => {
                 self.set_armed(false);
@@ -268,6 +286,26 @@ mod tests {
         assert_eq!(v["armed"], true);
         assert_eq!(v["usb"], "ready");
         assert!(v["capabilities"].as_array().unwrap().iter().any(|c| c == "payload"));
+    }
+
+    #[test]
+    fn arm_survives_a_master_disconnect_but_expires_with_the_lease() {
+        let mut inj = armed_ready();
+        assert!(inj.armed());
+        inj.armed_until = Instant::now().checked_sub(Duration::from_secs(1));
+        assert!(!inj.armed());
+        let r = inj.dispatch(env(r#"{"cmd":"type","text":"x"}"#));
+        assert!(!r.ok);
+        assert!(r.error.unwrap().contains("lease expired"));
+    }
+
+    #[test]
+    fn arm_ttl_is_honored() {
+        let mut inj = Injector::new(MockHid { ready: true, ..Default::default() });
+        let r = inj.dispatch(env(r#"{"cmd":"arm","ttl_secs":30}"#));
+        assert!(r.ok);
+        let remaining = r.result.unwrap()["arm_expires_in_secs"].as_u64().unwrap();
+        assert!(remaining <= 30 && remaining >= 28);
     }
 
     #[test]

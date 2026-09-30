@@ -11768,10 +11768,14 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "hid_arm",
-        description = "Arm a bench USB HID injector so it will inject keystrokes/mouse into the machine its USB-OTG port is plugged into. Injection stays refused until armed. Approval-gated."
+        description = "Arm a bench USB HID injector so it will inject keystrokes/mouse into the machine its USB-OTG port is plugged into. Arm grants a lease (default 120s, override with ttl_secs) that survives the one-shot relay connection closing; it auto-disarms when the lease expires or on hid_disarm. Injection stays refused until armed. Approval-gated."
     )]
-    async fn hid_arm(&self, Parameters(p): Parameters<HidTargetParams>) -> Result<CallToolResult, ErrorData> {
-        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "arm" })).await
+    async fn hid_arm(&self, Parameters(p): Parameters<HidArmParams>) -> Result<CallToolResult, ErrorData> {
+        let mut cmd = serde_json::json!({ "cmd": "arm" });
+        if let Some(ttl) = p.ttl_secs {
+            cmd["ttl_secs"] = serde_json::json!(ttl);
+        }
+        hid_relay_call(&p.device_id, cmd).await
     }
 
     #[tool(
@@ -11884,6 +11888,13 @@ fn default_hid_device() -> String {
 pub struct HidTargetParams {
     #[serde(default = "default_hid_device")]
     pub device_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidArmParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub ttl_secs: Option<u64>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
