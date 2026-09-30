@@ -292,7 +292,8 @@ impl Runner {
                 Some(cmd) => me.on_cmd(cmd).await,
                 None => tokio::select! {
                     ev = events.recv() => match ev {
-                        Some(ev) => me.on_event(ev, &mut rx).await,
+                        Some(ev) if concerns(me.codex_thread_id.as_deref(), &ev) => me.on_event(ev, &mut rx).await,
+                        Some(_) => Flow::Continue,
                         None => Flow::Reconnect,
                     },
                     cmd = rx.recv() => match cmd {
@@ -1949,6 +1950,29 @@ enum Decision {
     Expired,
 }
 
+/// The codex thread `ev` names; empty when it names none.
+fn event_thread(ev: &Event) -> &str {
+    match ev {
+        Event::Text { thread_id, .. }
+        | Event::Reasoning { thread_id, .. }
+        | Event::CommandOutput { thread_id, .. }
+        | Event::Item { thread_id, .. }
+        | Event::Ask { thread_id, .. }
+        | Event::TurnStarted { thread_id }
+        | Event::TurnCompleted { thread_id }
+        | Event::Error { thread_id, .. }
+        | Event::TokenUsage { thread_id, .. } => thread_id.as_str(),
+        Event::Other { params, .. } => params.get("threadId").and_then(Value::as_str).unwrap_or(""),
+        Event::AskResolved { .. } => "",
+    }
+}
+
+/// Whether `ev` belongs to codex thread `own`; events naming no thread, or arriving before `own` is set, do.
+fn concerns(own: Option<&str>, ev: &Event) -> bool {
+    let named = event_thread(ev);
+    named.is_empty() || own.is_none_or(|own| own == named)
+}
+
 fn decision(status: &str) -> Decision {
     match status {
         "accepted" => Decision::Run { remember: false, approve_all: false },
@@ -2100,6 +2124,20 @@ fn find_record_key(text: &str, table: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_runner_ignores_events_of_other_codex_threads() {
+        let status = |thread: &str| Event::Other {
+            method: "thread/status/changed".into(),
+            params: json!({ "threadId": thread, "status": { "type": "active" } }),
+        };
+        assert!(concerns(Some("mine"), &status("mine")));
+        assert!(!concerns(Some("mine"), &status("theirs")), "another thread going active");
+        assert!(!concerns(Some("mine"), &Event::TurnStarted { thread_id: "theirs".into() }));
+        let closed = Event::Other { method: "connection/closed".into(), params: Value::Null };
+        assert!(concerns(Some("mine"), &closed), "an event naming no thread");
+        assert!(concerns(None, &status("theirs")), "a runner with no codex thread yet");
+    }
 
     fn decided(status: &str) -> AgentApproval {
         AgentApproval {
