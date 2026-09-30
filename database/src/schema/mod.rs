@@ -66,6 +66,7 @@ pub mod waiting_services;
 pub mod zeroclaw_gateway;
 pub mod task_schedule;
 pub mod assistant;
+pub mod order_status;
 pub mod morning_brief;
 
 pub use task::*;
