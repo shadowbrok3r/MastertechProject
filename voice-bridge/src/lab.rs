@@ -52,6 +52,7 @@ pub async fn serve(addr: SocketAddr, voice: Arc<ActiveVoice>, board: Arc<BoardLi
         .route("/api/active", post(set_active))
         .route("/api/volume", post(set_volume))
         .route("/api/restart", post(restart))
+        .route("/api/wake", post(set_wake))
         .with_state(Lab { voice, board });
     let listener = tokio::net::TcpListener::bind(addr).await?;
     log::info!("voice lab listening on http://{addr}");
@@ -89,6 +90,20 @@ async fn restart(State(lab): State<Lab>) -> Reply<Json<Value>> {
     lab.board.restart().await.map_err(failed)?;
     log::info!("board restart requested from the lab");
     Ok(Json(json!({ "restarting": true })))
+}
+
+#[derive(Deserialize)]
+struct WakeRequest {
+    on: bool,
+}
+
+async fn set_wake(State(lab): State<Lab>, Json(req): Json<WakeRequest>) -> Reply<Json<Value>> {
+    if !lab.board.online() {
+        return Err((StatusCode::CONFLICT, "the board is offline".into()));
+    }
+    lab.board.set_wake(req.on).await.map_err(failed)?;
+    log::info!("board wake word turned {} from the lab", if req.on { "on" } else { "off" });
+    Ok(Json(json!({ "wake": req.on, "restarting": true })))
 }
 
 /// The trimmed text, its WAV, and the synthesis time in ms.
