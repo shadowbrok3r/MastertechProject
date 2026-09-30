@@ -11828,6 +11828,50 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
     async fn hid_macro(&self, Parameters(p): Parameters<HidMacroParams>) -> Result<CallToolResult, ErrorData> {
         hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "combo", "steps": p.steps })).await
     }
+
+    #[tool(
+        name = "hid_payload_store",
+        description = "Stage a named payload on a bench USB HID injector: an ordered `steps` script (same {op,...} shape as hid_macro) kept on the device and run later by name with hid_payload_run, so it survives the target rebooting. Staging is allowed while disarmed; running still needs hid_arm. Approval-gated."
+    )]
+    async fn hid_payload_store(&self, Parameters(p): Parameters<HidPayloadStoreParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "payload_store", "name": p.name, "steps": p.steps })).await
+    }
+
+    #[tool(
+        name = "hid_payload_run",
+        description = "Run a payload previously staged with hid_payload_store on a bench USB HID injector, by name (must be armed). Approval-gated."
+    )]
+    async fn hid_payload_run(&self, Parameters(p): Parameters<HidPayloadNameParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "payload_run", "name": p.name })).await
+    }
+
+    #[tool(
+        name = "hid_payload_list",
+        description = "List the payloads staged on a bench USB HID injector (name + step count). Read-only."
+    )]
+    async fn hid_payload_list(&self, Parameters(p): Parameters<HidTargetParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "payload_list" })).await
+    }
+
+    #[tool(
+        name = "hid_payload_delete",
+        description = "Delete a staged payload from a bench USB HID injector by name. Approval-gated."
+    )]
+    async fn hid_payload_delete(&self, Parameters(p): Parameters<HidPayloadNameParams>) -> Result<CallToolResult, ErrorData> {
+        hid_relay_call(&p.device_id, serde_json::json!({ "cmd": "payload_delete", "name": p.name })).await
+    }
+
+    #[tool(
+        name = "hid_read_serial",
+        description = "Drain bytes captured on a bench USB HID injector's USB CDC serial endpoint (the target writes to it as a COM port). Returns the text and its length. Read-only. Requires a firmware build with the CDC endpoint wired; returns empty otherwise."
+    )]
+    async fn hid_read_serial(&self, Parameters(p): Parameters<HidReadSerialParams>) -> Result<CallToolResult, ErrorData> {
+        let mut cmd = serde_json::json!({ "cmd": "read_serial" });
+        if let Some(max) = p.max_bytes {
+            cmd["max_bytes"] = serde_json::json!(max);
+        }
+        hid_relay_call(&p.device_id, cmd).await
+    }
 }
 
 fn default_hid_device() -> String {
@@ -11874,6 +11918,28 @@ pub struct HidMacroParams {
     #[serde(default = "default_hid_device")]
     pub device_id: String,
     pub steps: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidPayloadStoreParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub name: String,
+    pub steps: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidPayloadNameParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub name: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct HidReadSerialParams {
+    #[serde(default = "default_hid_device")]
+    pub device_id: String,
+    pub max_bytes: Option<usize>,
 }
 
 /// Joins the injector's relay room as `role=master`, sends one JSON command, and returns its reply.

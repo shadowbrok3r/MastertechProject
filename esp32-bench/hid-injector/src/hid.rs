@@ -1,5 +1,6 @@
 //! Injection state and command dispatch, routing to a [`Hid`] backend.
 
+use crate::payload::PayloadStore;
 use crate::protocol::{Button, Envelope, Request, Response, Step};
 use serde_json::json;
 
@@ -12,17 +13,26 @@ pub trait Hid {
     fn release_all(&mut self);
     fn delay(&mut self, ms: u32);
     fn ready(&self) -> bool;
+    /// Drains up to `max` bytes captured on the USB CDC serial endpoint.
+    fn read_serial(&mut self, _max: usize) -> Vec<u8> {
+        Vec::new()
+    }
+    /// USB functions this backend exposes, reported by `status`.
+    fn capabilities(&self) -> Vec<&'static str> {
+        vec!["hid.keyboard", "hid.mouse", "payload"]
+    }
 }
 
 /// Arms injection and forwards commands to the backend. Boots disarmed.
 pub struct Injector<H: Hid> {
     armed: bool,
     hid: H,
+    store: PayloadStore,
 }
 
 impl<H: Hid> Injector<H> {
     pub fn new(hid: H) -> Self {
-        Self { armed: false, hid }
+        Self { armed: false, hid, store: PayloadStore::new() }
     }
 
     #[allow(dead_code)]
@@ -53,7 +63,16 @@ impl<H: Hid> Injector<H> {
             "armed": self.armed,
             "usb": if self.hid.ready() { "ready" } else { "not_connected" },
             "firmware": env!("CARGO_PKG_VERSION"),
+            "capabilities": self.hid.capabilities(),
+            "payloads": self.store.list(),
         })
+    }
+
+    fn run_steps(&mut self, steps: Vec<Step>) -> anyhow::Result<()> {
+        for step in steps {
+            self.run_step(step)?;
+        }
+        Ok(())
     }
 
     fn run_step(&mut self, step: Step) -> anyhow::Result<()> {
@@ -95,12 +114,25 @@ impl<H: Hid> Injector<H> {
             Request::Key { chord } => self.gated(id, |s| s.hid.key(&chord)),
             Request::MouseMove { x, y } => self.gated(id, |s| s.hid.mouse_move(x, y)),
             Request::Click { button } => self.gated(id, |s| s.hid.click(button)),
-            Request::Combo { steps } => self.gated(id, |s| {
-                for step in steps {
-                    s.run_step(step)?;
-                }
-                Ok(())
-            }),
+            Request::Combo { steps } => self.gated(id, |s| s.run_steps(steps)),
+            Request::PayloadStore { name, steps } => match self.store.put(name, steps) {
+                Ok(()) => Response::ok(id, json!({ "stored": true, "payloads": self.store.list() })),
+                Err(e) => Response::err(id, e),
+            },
+            Request::PayloadList => Response::ok(id, json!({ "payloads": self.store.list() })),
+            Request::PayloadDelete { name } => {
+                let removed = self.store.delete(&name);
+                Response::ok(id, json!({ "deleted": removed, "payloads": self.store.list() }))
+            }
+            Request::PayloadRun { name } => match self.store.steps(&name) {
+                Some(steps) => self.gated(id, |s| s.run_steps(steps)),
+                None => Response::err(id, format!("no payload named '{name}'")),
+            },
+            Request::ReadSerial { max_bytes } => {
+                let bytes = self.hid.read_serial(max_bytes.unwrap_or(4096));
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                Response::ok(id, json!({ "len": bytes.len(), "text": text }))
+            }
         }
     }
 
@@ -126,6 +158,7 @@ mod tests {
     struct MockHid {
         ready: bool,
         log: Vec<String>,
+        serial: Vec<u8>,
     }
 
     impl Hid for MockHid {
@@ -154,6 +187,10 @@ mod tests {
         fn ready(&self) -> bool {
             self.ready
         }
+        fn read_serial(&mut self, max: usize) -> Vec<u8> {
+            let n = self.serial.len().min(max);
+            self.serial.drain(..n).collect()
+        }
     }
 
     fn env(line: &str) -> Envelope {
@@ -161,7 +198,7 @@ mod tests {
     }
 
     fn armed_ready() -> Injector<MockHid> {
-        let mut inj = Injector::new(MockHid { ready: true, log: Vec::new() });
+        let mut inj = Injector::new(MockHid { ready: true, ..Default::default() });
         inj.set_armed(true);
         inj
     }
@@ -173,7 +210,7 @@ mod tests {
 
     #[test]
     fn injection_blocked_until_armed() {
-        let mut inj = Injector::new(MockHid { ready: true, log: Vec::new() });
+        let mut inj = Injector::new(MockHid { ready: true, ..Default::default() });
         let r = inj.dispatch(env(r#"{"cmd":"type","text":"hi"}"#));
         assert!(!r.ok);
         assert!(r.error.unwrap().contains("disarmed"));
@@ -181,7 +218,7 @@ mod tests {
 
     #[test]
     fn armed_but_no_usb_host_is_refused() {
-        let mut inj = Injector::new(MockHid { ready: false, log: Vec::new() });
+        let mut inj = Injector::new(MockHid { ready: false, ..Default::default() });
         inj.set_armed(true);
         let r = inj.dispatch(env(r#"{"cmd":"type","text":"hi"}"#));
         assert!(!r.ok);
@@ -217,7 +254,7 @@ mod tests {
 
     #[test]
     fn release_all_runs_while_disarmed() {
-        let mut inj = Injector::new(MockHid { ready: true, log: Vec::new() });
+        let mut inj = Injector::new(MockHid { ready: true, ..Default::default() });
         assert!(inj.dispatch(env(r#"{"cmd":"release_all"}"#)).ok);
         assert_eq!(inj.hid.log, vec!["release"]);
     }
@@ -230,5 +267,43 @@ mod tests {
         let v = r.result.unwrap();
         assert_eq!(v["armed"], true);
         assert_eq!(v["usb"], "ready");
+        assert!(v["capabilities"].as_array().unwrap().iter().any(|c| c == "payload"));
+    }
+
+    #[test]
+    fn payload_store_list_run_delete() {
+        let mut inj = armed_ready();
+        let stored = inj.dispatch(env(
+            r#"{"cmd":"payload_store","name":"bios","steps":[{"op":"key","chord":"F2"},{"op":"type","text":"x"}]}"#,
+        ));
+        assert!(stored.ok);
+        let list = inj.dispatch(env(r#"{"cmd":"payload_list"}"#));
+        assert_eq!(list.result.unwrap()["payloads"][0]["name"], "bios");
+
+        assert!(inj.dispatch(env(r#"{"cmd":"payload_run","name":"bios"}"#)).ok);
+        assert_eq!(inj.hid.log, vec!["key:F2", "type:x"]);
+
+        let del = inj.dispatch(env(r#"{"cmd":"payload_delete","name":"bios"}"#));
+        assert_eq!(del.result.unwrap()["deleted"], true);
+        assert!(!inj.dispatch(env(r#"{"cmd":"payload_run","name":"bios"}"#)).ok);
+    }
+
+    #[test]
+    fn payload_stores_while_disarmed_but_runs_only_armed() {
+        let mut inj = Injector::new(MockHid { ready: true, ..Default::default() });
+        assert!(inj.dispatch(env(r#"{"cmd":"payload_store","name":"p","steps":[{"op":"type","text":"a"}]}"#)).ok);
+        let r = inj.dispatch(env(r#"{"cmd":"payload_run","name":"p"}"#));
+        assert!(!r.ok);
+        assert!(r.error.unwrap().contains("disarmed"));
+    }
+
+    #[test]
+    fn read_serial_drains_captured_bytes() {
+        let mut inj = Injector::new(MockHid { ready: true, serial: b"log line\n".to_vec(), ..Default::default() });
+        let r = inj.dispatch(env(r#"{"cmd":"read_serial"}"#));
+        let v = r.result.unwrap();
+        assert_eq!(v["len"], 9);
+        assert_eq!(v["text"], "log line\n");
+        assert_eq!(inj.dispatch(env(r#"{"cmd":"read_serial"}"#)).result.unwrap()["len"], 0);
     }
 }

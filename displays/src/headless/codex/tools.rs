@@ -102,6 +102,11 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "hid_click",
     "hid_mouse_move",
     "hid_macro",
+    "hid_payload_store",
+    "hid_payload_run",
+    "hid_payload_list",
+    "hid_payload_delete",
+    "hid_read_serial",
 ];
 
 /// Tools of a session with no machine in scope: records only; `MTECH_CODEX_GENERAL_TOOLS` replaces the list.
@@ -146,6 +151,11 @@ pub const GENERAL_TOOLS: &[&str] = &[
     "hid_click",
     "hid_mouse_move",
     "hid_macro",
+    "hid_payload_store",
+    "hid_payload_run",
+    "hid_payload_list",
+    "hid_payload_delete",
+    "hid_read_serial",
 ];
 
 /// Tools a technician must approve each time; `MTECH_CODEX_PROMPT_TOOLS` replaces the list.
@@ -169,6 +179,9 @@ pub const PROMPT_TOOLS: &[&str] = &[
     "hid_click",
     "hid_mouse_move",
     "hid_macro",
+    "hid_payload_store",
+    "hid_payload_run",
+    "hid_payload_delete",
 ];
 
 /// Assistant tools and the argument naming the person they act on.

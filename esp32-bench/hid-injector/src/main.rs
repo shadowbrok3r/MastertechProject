@@ -6,6 +6,7 @@
 
 mod hid;
 mod keymap;
+mod payload;
 mod protocol;
 
 #[cfg(target_os = "espidf")]

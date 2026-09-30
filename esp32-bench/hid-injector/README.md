@@ -2,13 +2,26 @@
 
 Rust / `esp-idf-svc` firmware for the ESP32-S3 DevKitC-1. Presents as a USB keyboard + absolute mouse to a target PC and takes commands from Mastertech over the relay. See `../../docs/ESP32_BENCH_HARDWARE_PLAN.md` for the full plan.
 
-Status: **step 2** — Wi-Fi + relay round-trip, arm-gated dispatch, and a TinyUSB composite **keyboard + absolute mouse**. Builds/enumerates (VID 0x303A / PID 0x4004); live keystroke/click injection is not yet verified on a target host.
+Status: **step 2 + scriptable payloads (1b)** — Wi-Fi + relay round-trip, arm-gated dispatch, a TinyUSB composite **keyboard + absolute mouse**, and (v0.2.0) a named-payload store with `read_serial`. Builds/enumerates (VID 0x303A / PID 0x4004); keyboard/mouse injection live-verified 2026-09-28. The CDC serial endpoint behind `read_serial` is not wired yet (returns empty until `usb.rs` gains the CDC interface — bench work).
+
+## Payloads (v0.2.0)
+
+Stage an ordered step script on the device and run it by name, so it survives the target rebooting and needs no live drive:
+
+```
+{"cmd":"payload_store","name":"pull-dumps","steps":[{"op":"key","chord":"win+r"},{"op":"delay","ms":400},{"op":"type","text":"cmd\n"}]}
+{"cmd":"payload_run","name":"pull-dumps"}     {"cmd":"payload_list"}     {"cmd":"payload_delete","name":"pull-dumps"}
+{"cmd":"read_serial","max_bytes":4096}
+```
+
+Store is bounded (≤16 payloads, ≤512 steps each) and RAM-only (no NVS persistence yet). Staging works while disarmed; `payload_run` still needs `arm`. MCP side: `hid_payload_store` / `hid_payload_run` / `hid_payload_delete` (approval-gated), `hid_payload_list` / `hid_read_serial` (read-only). See `../../docs/ESP32_BENCH_HARDWARE_PLAN.md` "Project 1b" for the CDC/MSC read-back firmware still to do and the relay-auth blocker.
 
 ## Layout
 
 - `src/protocol.rs` — JSON request/response types. No ESP deps; host-testable.
 - `src/keymap.rs` — ASCII→HID usage and chord parsing. No ESP deps; host-testable.
-- `src/hid.rs` — arm state, dispatch, and the `Hid` backend trait. No ESP deps; host-testable.
+- `src/payload.rs` — bounded in-RAM named-payload store. No ESP deps; host-testable.
+- `src/hid.rs` — arm state, dispatch, payload run, and the `Hid` backend trait. No ESP deps; host-testable.
 - `src/usb.rs` — TinyUSB composite keyboard + absolute mouse `Hid` backend (`target_os = "espidf"`).
 - `src/device.rs` — installs USB, joins Wi-Fi, holds the relay socket (`target_os = "espidf"`).
 - `src/main.rs` — target-gated entry point.
