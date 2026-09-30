@@ -4,8 +4,9 @@ use crate::{
     },
     db,
 };
+use super::parse_msg_date;
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::collections::HashMap;
 use anyhow::Result;
 
@@ -421,12 +422,6 @@ impl TaskNote {
             .await?
             .take::<Vec<TaskNote>>(0)?)
     }
-}
-
-pub fn parse_msg_date(date_str: &str) -> Result<Datetime, chrono::ParseError> {
-    let naive_dt = chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")?;
-    let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
-    Ok(dt_utc.into())
 }
 
 /* 

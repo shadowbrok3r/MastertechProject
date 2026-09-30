@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Label, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, Ui, Widget};
-use database::{live_data::handle_live_delete, schema::{random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
+use database::{live_data::handle_live_delete, schema::{business_calendar::STORE_TZ, random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::SHORTCUT_ENTER;
 use crate::ui_tools::mention_handler::{mention_label_job, MentionHandler};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
@@ -637,7 +637,7 @@ impl ChatView {
 
                                     ui.add_space(5.);
 
-                                    ui.label(RichText::new(item.created_at.format("%m/%d @ %I:%M%p").to_string()).weak());
+                                    ui.label(RichText::new(item.created_at.with_timezone(&STORE_TZ).format("%m/%d @ %I:%M%p").to_string()).weak());
                                 });
                             });
                         } else {
@@ -657,7 +657,7 @@ impl ChatView {
 
                                 ui.add_space(5.);
                             
-                                ui.label(RichText::new(item.created_at.format("%m/%d @ %I:%M%p").to_string()).weak());
+                                ui.label(RichText::new(item.created_at.with_timezone(&STORE_TZ).format("%m/%d @ %I:%M%p").to_string()).weak());
 
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     ui.add_space(5.);
