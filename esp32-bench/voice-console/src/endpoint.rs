@@ -6,15 +6,13 @@ use std::collections::VecDeque;
 pub const FRAME_MS: u32 = 32;
 /// Newest frames kept out of the baseline, so a just-spoken wake word never counts as noise.
 const RECENT_FRAMES: usize = 47;
-/// Baseline window: 6 s of quiet frames older than the recent window.
-const BASELINE_FRAMES: usize = 188;
+/// Baseline window: 8 s of quiet frames older than the recent window.
+const BASELINE_FRAMES: usize = 250;
 const MIN_BASELINE_FRAMES: usize = 31;
-/// Speech must clear the room's median level by this much.
-const MIN_MARGIN_DB: f32 = 4.0;
-/// Speech must clear the room's loud moments (90th percentile) by this much.
-const PEAK_MARGIN_DB: f32 = 3.0;
-/// The gate stays this far below the talker's own level.
-const TALKER_HEADROOM_DB: f32 = 6.0;
+/// Speech must clear the room's median level by this much to start an utterance.
+const START_MARGIN_DB: f32 = 6.0;
+/// Once speech is heard, frames this far below its mean level count as silence.
+const HOLD_DROP_DB: f32 = 10.0;
 /// Lowest gate, for near-silent rooms.
 const QUIET_GATE_DB: f32 = -60.0;
 /// Frames this far over the gate count as speech even when the VAD disagrees.
@@ -42,14 +40,9 @@ pub struct Noise {
 }
 
 impl Noise {
-    /// Level a frame must reach to count as the talker, capped below `talker_db` when known.
-    pub fn gate(&self, talker_db: Option<f32>) -> f32 {
-        let floor = self.median_db + MIN_MARGIN_DB;
-        let mut gate = (self.p90_db + PEAK_MARGIN_DB).max(floor);
-        if let Some(talker) = talker_db {
-            gate = gate.min(talker - TALKER_HEADROOM_DB).max(floor);
-        }
-        gate.max(QUIET_GATE_DB)
+    /// Level a frame must reach to start an utterance.
+    pub fn gate(&self) -> f32 {
+        (self.median_db + START_MARGIN_DB).max(QUIET_GATE_DB)
     }
 }
 
@@ -80,20 +73,10 @@ impl NoiseBaseline {
         if self.quiet.len() < MIN_BASELINE_FRAMES {
             return None;
         }
-        let sorted = sorted(self.quiet.iter().copied());
+        let mut sorted: Vec<f32> = self.quiet.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
         Some(Noise { median_db: percentile(&sorted, 0.5), p90_db: percentile(&sorted, 0.9) })
     }
-
-    /// 80th-percentile level of the recent window: the wake word just spoken.
-    pub fn recent_db(&self) -> Option<f32> {
-        (self.recent.len() >= RECENT_FRAMES / 2).then(|| percentile(&sorted(self.recent.iter().map(|r| r.0)), 0.8))
-    }
-}
-
-fn sorted(levels: impl Iterator<Item = f32>) -> Vec<f32> {
-    let mut v: Vec<f32> = levels.collect();
-    v.sort_by(f32::total_cmp);
-    v
 }
 
 fn percentile(sorted: &[f32], p: f32) -> f32 {
@@ -149,7 +132,7 @@ impl Endpointer {
     }
 
     /// Mean level of the talker's frames, once heard.
-    pub fn talker_db(&self) -> Option<f32> {
+    pub fn speech_db(&self) -> Option<f32> {
         self.heard().then(|| self.speech_db_sum / (self.speech_ms / FRAME_MS) as f32)
     }
 
@@ -176,8 +159,14 @@ impl Endpointer {
         }
     }
 
+    /// The start gate, raised to `HOLD_DROP_DB` below the talker once heard.
+    fn current_gate(&self) -> Option<f32> {
+        let start = self.gate?;
+        Some(self.speech_db().map_or(start, |speech| start.max(speech - HOLD_DROP_DB)))
+    }
+
     fn voiced(&self, f: Frame) -> bool {
-        match self.gate {
+        match self.current_gate() {
             Some(gate) => f.db >= gate && (f.speech || f.db >= gate + STRONG_DB),
             None => f.speech,
         }
@@ -240,40 +229,46 @@ mod tests {
         let noise = b.noise().unwrap();
         assert!((noise.median_db + 55.0).abs() < 1.5, "median {}", noise.median_db);
         assert!(noise.p90_db < -53.0, "p90 {}", noise.p90_db);
-        assert!((b.recent_db().unwrap() + 30.0).abs() < 0.1);
     }
 
     #[test]
     fn baseline_follows_a_louder_room() {
-        let mut b = baseline_of(-55.0, 1.0, 6);
-        for i in 0..8 * 1000 / FRAME_MS as usize {
+        let mut b = baseline_of(-55.0, 1.0, 8);
+        for i in 0..10 * 1000 / FRAME_MS as usize {
             b.push(jitter(-40.0, 1.0, i), true);
         }
         assert!((b.noise().unwrap().median_db + 40.0).abs() < 1.5);
     }
 
     #[test]
-    fn quiet_room_gate_sits_above_the_noise() {
-        let noise = Noise { median_db: -55.0, p90_db: -53.0 };
-        assert_eq!(noise.gate(None), -50.0);
-        assert_eq!(noise.gate(Some(-30.0)), -50.0);
-        let silent = Noise { median_db: -75.0, p90_db: -73.0 };
-        assert_eq!(silent.gate(None), QUIET_GATE_DB);
+    fn gate_sits_above_the_room_median() {
+        assert_eq!(Noise { median_db: -55.0, p90_db: -30.0 }.gate(), -49.0);
+        assert_eq!(Noise { median_db: -75.0, p90_db: -73.0 }.gate(), QUIET_GATE_DB);
     }
 
     #[test]
-    fn loud_room_gate_stays_below_the_talker() {
-        let noise = Noise { median_db: -40.0, p90_db: -30.0 };
-        assert_eq!(noise.gate(None), -27.0);
-        assert_eq!(noise.gate(Some(-28.0)), -34.0);
-        // Never below the room's median plus margin, however quiet the talker.
-        assert_eq!(noise.gate(Some(-45.0)), -36.0);
+    fn talking_before_the_wake_word_does_not_raise_the_gate() {
+        // 20:12 UTC on 2026-09-29: speech in the window pushed the old p90-based gate to -31.7 dB.
+        let mut b = baseline_of(-55.0, 2.0, 6);
+        for i in 0..1_500 / FRAME_MS as usize {
+            b.push(jitter(-30.0, 3.0, i), true);
+        }
+        for _ in 0..RECENT_FRAMES {
+            b.push(-28.0, true);
+        }
+        let gate = b.noise().unwrap().gate();
+        assert!(gate < -47.0, "gate {gate}");
+        let mut ep = Endpointer::new(Some(gate));
+        let mut input = frames(1_600, -38.0, 7.0, true);
+        let spoken = span_ms(&input);
+        input.extend(frames(3_000, -55.0, 2.0, false));
+        assert_eq!(run(&mut ep, input), Some((End::Spoke, spoken + END_SILENCE_MS)));
     }
 
     #[test]
     fn ends_soon_after_the_talker_stops_despite_vad_hangover() {
         let noise = baseline_of(-55.0, 2.0, 6).noise().unwrap();
-        let mut ep = Endpointer::new(Some(noise.gate(None)));
+        let mut ep = Endpointer::new(Some(noise.gate()));
         let mut input = frames(1_500, -32.0, 4.0, true);
         let spoken = span_ms(&input);
         input.extend(frames(700, -55.0, 2.0, true));
@@ -283,13 +278,23 @@ mod tests {
 
     #[test]
     fn store_chatter_does_not_hold_the_utterance_open() {
-        let noise = baseline_of(-42.0, 4.0, 6).noise().unwrap();
-        let mut ep = Endpointer::new(Some(noise.gate(Some(-28.0))));
+        let noise = baseline_of(-42.0, 4.0, 8).noise().unwrap();
+        let mut ep = Endpointer::new(Some(noise.gate()));
         let mut input = frames(2_000, -28.0, 3.0, true);
         let spoken = span_ms(&input);
         input.extend(frames(10_000, -42.0, 4.0, true));
         assert_eq!(run(&mut ep, input), Some((End::Spoke, spoken + END_SILENCE_MS)));
-        assert!((ep.talker_db().unwrap() + 28.0).abs() < 1.5);
+        assert!((ep.speech_db().unwrap() + 28.0).abs() < 1.5);
+    }
+
+    #[test]
+    fn a_voice_behind_the_talker_does_not_hold_it_open() {
+        let noise = baseline_of(-55.0, 2.0, 8).noise().unwrap();
+        let mut ep = Endpointer::new(Some(noise.gate()));
+        let mut input = frames(2_000, -30.0, 3.0, true);
+        let spoken = span_ms(&input);
+        input.extend(frames(10_000, -45.0, 3.0, true));
+        assert_eq!(run(&mut ep, input), Some((End::Spoke, spoken + END_SILENCE_MS)));
     }
 
     #[test]
@@ -304,11 +309,11 @@ mod tests {
     #[test]
     fn a_wake_with_nothing_after_it_is_no_speech() {
         let noise = baseline_of(-50.0, 3.0, 6).noise().unwrap();
-        let mut ep = Endpointer::new(Some(noise.gate(None)));
+        let mut ep = Endpointer::new(Some(noise.gate()));
         let (end, ms) = run(&mut ep, frames(10_000, -50.0, 3.0, true)).unwrap();
         assert_eq!(end, End::NoSpeech);
         assert!((NO_SPEECH_MS..NO_SPEECH_MS + FRAME_MS).contains(&ms));
-        assert_eq!(ep.talker_db(), None);
+        assert_eq!(ep.speech_db(), None);
     }
 
     #[test]

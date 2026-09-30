@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
+use esp_idf_svc::hal::reset::{self, ResetReason};
 use esp_idf_svc::ws::client::{EspWebSocketClient, FrameType};
 use serde_json::{json, Value};
 
@@ -24,6 +25,8 @@ const MAX_TALK: Duration = Duration::from_secs(30);
 const MAX_VOICE_TALK: Duration = Duration::from_secs(17);
 const REPLY_WAIT: Duration = Duration::from_secs(60);
 const HEAP_LOG_EVERY: Duration = Duration::from_secs(60);
+/// Relay outage that restarts the chip.
+const RELAY_DOWN_RESTART: Duration = Duration::from_secs(300);
 const DEFAULT_VOLUME: u8 = 75;
 const UTT_START: &str = r#"{"cmd":"utt_start"}"#;
 const UTT_END: &str = r#"{"cmd":"utt_end"}"#;
@@ -180,14 +183,14 @@ pub struct Console {
     baseline: NoiseBaseline,
     /// Room noise when the current utterance started.
     utt_noise: Option<Noise>,
-    /// The tech's speech level in the last hands-free utterance.
-    talker_db: Option<f32>,
     turn_active: bool,
     approval: Option<Pending>,
     online: bool,
     last_bridge: Option<Instant>,
     last_ping: Option<Instant>,
     last_heap_log: Instant,
+    /// When the relay socket went down; `None` while it is up.
+    relay_down_since: Option<Instant>,
     await_release: bool,
 }
 
@@ -218,13 +221,13 @@ impl Console {
             endpoint: None,
             baseline: NoiseBaseline::default(),
             utt_noise: None,
-            talker_db: None,
             turn_active: false,
             approval: None,
             online: false,
             last_bridge: None,
             last_ping: None,
             last_heap_log: now,
+            relay_down_since: Some(now),
             await_release: false,
         }
     }
@@ -261,7 +264,7 @@ impl Console {
         let woke = self.wake && ffi::wake_heard();
         if woke && self.phase != Phase::Listening {
             log::info!("wake word");
-            self.start_voice(self.baseline.recent_db());
+            self.start_voice();
         }
         if let Some(allow) = ffi::approval_choice() {
             self.decide(allow);
@@ -314,19 +317,16 @@ impl Console {
         true
     }
 
-    /// Opens the mic hands-free, gated against the room noise; `talker_db` is the tech's level when known.
-    fn start_voice(&mut self, talker_db: Option<f32>) {
+    /// Opens the mic hands-free, gated against the room noise.
+    fn start_voice(&mut self) {
         if !self.start_talk() {
             return;
         }
-        let gate = self.utt_noise.map(|n| n.gate(talker_db));
+        let gate = self.utt_noise.map(|n| n.gate());
         match (self.utt_noise, gate) {
-            (Some(n), Some(g)) => log::info!(
-                "listening: room {:.1} dB (p90 {:.1}), talker {}, gate {g:.1} dB",
-                n.median_db,
-                n.p90_db,
-                talker_db.map_or("unknown".to_string(), |t| format!("{t:.1} dB")),
-            ),
+            (Some(n), Some(g)) => {
+                log::info!("listening: room {:.1} dB (p90 {:.1}), gate {g:.1} dB", n.median_db, n.p90_db)
+            }
             _ => log::info!("listening: no noise baseline yet, VAD only"),
         }
         self.endpoint = Some(Endpointer::new(gate));
@@ -334,15 +334,12 @@ impl Console {
 
     fn finish_voice(&mut self, end: End) {
         let Some(ep) = self.endpoint.take() else { return };
-        if let Some(talker) = ep.talker_db() {
-            self.talker_db = Some(talker);
-        }
         log::info!("utterance {}: {} ms, {} ms of speech", end.as_str(), ep.elapsed_ms(), ep.speech_ms());
-        self.end_talk(end == End::NoSpeech, end.as_str(), ep.gate());
+        self.end_talk(end == End::NoSpeech, end.as_str(), Some(&ep));
     }
 
     /// Ends the utterance; the bridge drops a discarded one and answers with the current state.
-    fn end_talk(&mut self, discard: bool, end: &str, gate: Option<f32>) {
+    fn end_talk(&mut self, discard: bool, end: &str, ep: Option<&Endpointer>) {
         let mut frame = json!({ "cmd": "utt_end", "end": end });
         if discard {
             frame["discard"] = true.into();
@@ -350,8 +347,11 @@ impl Console {
         if let Some(n) = self.utt_noise {
             frame["noise_db"] = tenths(n.median_db).into();
         }
-        if let Some(g) = gate {
+        if let Some(g) = ep.and_then(Endpointer::gate) {
             frame["gate_db"] = tenths(g).into();
+        }
+        if let Some(s) = ep.and_then(Endpointer::speech_db) {
+            frame["speech_db"] = tenths(s).into();
         }
         self.mic.close(frame.to_string());
         self.turn_active = true;
@@ -411,12 +411,34 @@ impl Console {
     fn on_notice(&mut self, notice: &str) {
         match notice {
             WS_CONNECTED | "MASTER_CONNECTED" => {
+                if notice == WS_CONNECTED {
+                    self.relay_down_since = None;
+                }
+                self.hello();
                 self.ping();
                 self.report_volume();
             }
-            WS_DISCONNECTED | "MASTER_DISCONNECTED" => self.set_online(false),
+            WS_DISCONNECTED | "MASTER_DISCONNECTED" => {
+                if notice == WS_DISCONNECTED {
+                    self.relay_down_since.get_or_insert_with(Instant::now);
+                }
+                self.set_online(false);
+            }
             other => log::info!("relay: {other}"),
         }
+    }
+
+    /// Tells the bridge why this boot started and how long it has run.
+    fn hello(&mut self) {
+        let uptime_s = unsafe { esp_idf_svc::sys::esp_timer_get_time() } / 1_000_000;
+        let frame = json!({
+            "cmd": "hello",
+            "firmware": env!("CARGO_PKG_VERSION"),
+            "reset": format!("{:?}", ResetReason::get()),
+            "uptime_s": uptime_s,
+        })
+        .to_string();
+        self.send_text(&frame);
     }
 
     fn on_json(&mut self, line: &str) {
@@ -564,6 +586,10 @@ impl Console {
                 self.echo.store(false, Ordering::Relaxed);
                 self.send_text(r#"{"ok":true,"result":{"echo":false}}"#);
             }
+            "reboot" => {
+                log::warn!("restart requested over the relay");
+                reset::restart();
+            }
             "status" => {
                 let reply = json!({
                     "ok": true,
@@ -598,7 +624,7 @@ impl Console {
                     if let Some(p) = self.approval.as_mut() {
                         p.listen = false;
                     }
-                    self.start_voice(self.talker_db);
+                    self.start_voice();
                 }
             }
             Phase::Thinking => {
@@ -615,11 +641,15 @@ impl Console {
         if self.online && self.last_bridge.map_or(true, |t| t.elapsed() >= BRIDGE_STALE) {
             self.set_online(false);
         }
+        if self.relay_down_since.is_some_and(|t| t.elapsed() >= RELAY_DOWN_RESTART) {
+            log::error!("relay unreachable for {RELAY_DOWN_RESTART:?}; restarting");
+            reset::restart();
+        }
         if self.last_heap_log.elapsed() >= HEAP_LOG_EVERY {
             self.last_heap_log = Instant::now();
             log_heap();
             if let Some(n) = self.baseline.noise() {
-                log::info!("room noise {:.1} dB (p90 {:.1}), gate {:.1} dB", n.median_db, n.p90_db, n.gate(self.talker_db));
+                log::info!("room noise {:.1} dB (p90 {:.1}), gate {:.1} dB", n.median_db, n.p90_db, n.gate());
             }
         }
     }
