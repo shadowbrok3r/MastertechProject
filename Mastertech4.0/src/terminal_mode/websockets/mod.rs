@@ -5048,13 +5048,24 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
     };
     let whea_status = whea_token(snap.whea_status());
     let (hvci, blocklist) = driver_protection_flags();
-    let detail = sensor_gap_detail(
-        package_status,
-        &missing_rails,
-        rails_silent,
-        whea_status,
-        &snap.access,
-    );
+    // An unpopulated snapshot means the shared sampler had not produced its first
+    // tick before the warmup elapsed (backend selection can wait on a driver), not
+    // that no backend exists; say so rather than report a false "no backend".
+    let populated = snap.is_populated();
+    let detail = if populated {
+        sensor_gap_detail(
+            package_status,
+            &missing_rails,
+            rails_silent,
+            whea_status,
+            &snap.access,
+        )
+    } else {
+        "The telemetry sampler has not produced its first reading yet (backend still \
+         starting). Call again with a longer warmup_ms before concluding sensors are \
+         unavailable."
+            .to_string()
+    };
 
     serde_json::json!({
         "captured_at_unix_ms": snap.captured_at_unix_ms,
@@ -5076,6 +5087,7 @@ async fn remote_telemetry_json(warmup: Duration) -> serde_json::Value {
         "whea_unavailable": snap.whea_unavailable,
         "tdr": snap.tdr,
         "sensor_availability": {
+            "sampler_warming": !populated,
             "cpu_package_temp": package_status,
             "voltage_rails": rails_status,
             "rails": per_rail,
