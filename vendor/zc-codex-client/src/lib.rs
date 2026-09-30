@@ -361,11 +361,23 @@ impl Client {
         input: Vec<Value>,
         model: Option<&str>,
     ) -> Result<Value> {
-        let mut params = json!({ "threadId": thread_id, "input": input });
-        if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
-            params["model"] = json!(m);
-        }
-        self.request("turn/steer", params).await
+        let turn_id = self
+            .active_turn(thread_id)
+            .await?
+            .ok_or_else(|| anyhow!("No active turn to steer."))?;
+        self.turn_steer_into(thread_id, &turn_id, input, model).await
+    }
+
+    /// `turn/steer` into `turn_id`, which the server refuses once that turn is no longer active.
+    pub async fn turn_steer_into(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        input: Vec<Value>,
+        model: Option<&str>,
+    ) -> Result<Value> {
+        self.request("turn/steer", steer_params(thread_id, turn_id, input, model))
+            .await
     }
 
     /// Redirect an in-flight turn. A user typing while the agent works should steer
@@ -374,34 +386,25 @@ impl Client {
         self.turn_steer_with_inputs(thread_id, vec![json!({ "type": "text", "text": text })]).await
     }
 
+    /// The thread's in-progress turn from `turn/started`, else from `thread/read`.
+    pub async fn active_turn(&self, thread_id: &str) -> Result<Option<String>> {
+        if let Some(id) = self.active_turns.lock().await.get(thread_id).cloned() {
+            return Ok(Some(id));
+        }
+        let snapshot = self
+            .request(
+                "thread/read",
+                json!({ "threadId": thread_id, "includeTurns": true }),
+            )
+            .await?;
+        Ok(in_progress_turn(&snapshot))
+    }
+
     pub async fn turn_interrupt(&self, thread_id: &str) -> Result<Value> {
-        let known_turn = self.active_turns.lock().await.get(thread_id).cloned();
-        let turn_id = match known_turn {
-            Some(id) => id,
-            None => {
-                // Reads the thread's in-progress turn when turn/started was missed.
-                let snapshot = self
-                    .request(
-                        "thread/read",
-                        json!({
-                            "threadId": thread_id, "includeTurns": true,
-                        }),
-                    )
-                    .await?;
-                snapshot
-                    .pointer("/thread/turns")
-                    .and_then(Value::as_array)
-                    .and_then(|turns| {
-                        turns
-                            .iter()
-                            .rev()
-                            .find(|turn| turn["status"] == "inProgress")
-                    })
-                    .and_then(|turn| turn["id"].as_str())
-                    .ok_or_else(|| anyhow!("No active turn to stop. Refresh the session."))?
-                    .to_string()
-            }
-        };
+        let turn_id = self
+            .active_turn(thread_id)
+            .await?
+            .ok_or_else(|| anyhow!("No active turn to stop. Refresh the session."))?;
         self.request(
             "turn/interrupt",
             json!({ "threadId": thread_id, "turnId": turn_id }),
@@ -560,6 +563,27 @@ fn context_tokens(usage: &Value) -> Option<u64> {
     Some(total.saturating_sub(reasoning))
 }
 
+/// `turn/steer` params; `expectedTurnId` is required.
+fn steer_params(thread_id: &str, turn_id: &str, input: Vec<Value>, model: Option<&str>) -> Value {
+    let mut params = json!({ "threadId": thread_id, "expectedTurnId": turn_id, "input": input });
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        params["model"] = json!(m);
+    }
+    params
+}
+
+/// The id of the last `inProgress` turn in a `thread/read` snapshot.
+fn in_progress_turn(snapshot: &Value) -> Option<String> {
+    snapshot
+        .pointer("/thread/turns")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|turn| turn["status"] == "inProgress")?["id"]
+        .as_str()
+        .map(str::to_string)
+}
+
 /// Decisions for `item/commandExecution/requestApproval` and
 /// `item/fileChange/requestApproval`.
 ///
@@ -586,8 +610,31 @@ pub mod decision {
 
 #[cfg(test)]
 mod tests {
-    use super::context_tokens;
+    use super::{context_tokens, in_progress_turn, steer_params};
     use serde_json::json;
+
+    #[test]
+    fn steer_params_name_the_turn_they_steer() {
+        let input = vec![json!({ "type": "text", "text": "hi" })];
+        let params = steer_params("th", "tu", input, None);
+        assert_eq!(params["threadId"], "th");
+        assert_eq!(params["expectedTurnId"], "tu");
+        assert_eq!(params["input"][0]["text"], "hi");
+        assert!(params.get("model").is_none());
+    }
+
+    #[test]
+    fn in_progress_turn_reads_the_last_running_turn() {
+        let snapshot = json!({ "thread": { "turns": [
+            { "id": "t1", "status": "completed" },
+            { "id": "t2", "status": "inProgress" },
+            { "id": "t3", "status": "interrupted" },
+        ] } });
+        assert_eq!(in_progress_turn(&snapshot).as_deref(), Some("t2"));
+        let idle = json!({ "thread": { "turns": [{ "id": "t1", "status": "completed" }] } });
+        assert_eq!(in_progress_turn(&idle), None);
+        assert_eq!(in_progress_turn(&json!({})), None);
+    }
 
     #[test]
     fn context_tokens_reads_the_last_request() {

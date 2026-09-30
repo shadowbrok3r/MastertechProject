@@ -1549,11 +1549,14 @@ impl Runner {
         kind: &str,
         input: Vec<Value>,
     ) -> Result<(), String> {
-        let steer = kind == "steer" && !self.busy.is_idle();
-        let sent = if steer {
-            self.client.turn_steer_with_inputs(thread_id, input).await
+        let running = if kind == "steer" && !self.busy.is_idle() {
+            self.client.active_turn(thread_id).await.map_err(|e| e.to_string())?
         } else {
-            self.client.turn_start_with_inputs(thread_id, input).await
+            None
+        };
+        let sent = match running {
+            Some(turn_id) => self.client.turn_steer_into(thread_id, &turn_id, input, None).await,
+            None => self.client.turn_start_with_inputs(thread_id, input).await,
         };
         sent.map_err(|e| e.to_string())?;
         if self.busy.is_idle() {
