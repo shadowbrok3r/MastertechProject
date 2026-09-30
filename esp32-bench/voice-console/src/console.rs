@@ -26,7 +26,10 @@ const MAX_VOICE_TALK: Duration = Duration::from_secs(17);
 const REPLY_WAIT: Duration = Duration::from_secs(60);
 const HEAP_LOG_EVERY: Duration = Duration::from_secs(60);
 /// Relay outage that restarts the chip.
-const RELAY_DOWN_RESTART: Duration = Duration::from_secs(300);
+const RELAY_DOWN_RESTART: Duration = Duration::from_secs(60);
+const MEMORY_CHECK_EVERY: Duration = Duration::from_secs(5);
+/// Task watchdog period; it resets the chip when the session loop or an idle task stalls this long.
+const WATCHDOG_MS: u32 = 30_000;
 const DEFAULT_VOLUME: u8 = 75;
 const UTT_START: &str = r#"{"cmd":"utt_start"}"#;
 const UTT_END: &str = r#"{"cmd":"utt_end"}"#;
@@ -127,6 +130,26 @@ pub fn log_heap() {
     log::info!("heap: internal {free} B free ({low} B low-water, {largest} B largest), psram {psram} B free");
 }
 
+/// Makes the task watchdog reset the chip and watch the calling thread.
+fn arm_watchdog() {
+    use esp_idf_svc::sys::{esp_task_wdt_add, esp_task_wdt_config_t, esp_task_wdt_reconfigure, ESP_OK};
+    let cfg = esp_task_wdt_config_t { timeout_ms: WATCHDOG_MS, idle_core_mask: 0b11, trigger_panic: true };
+    let (reconfigured, added) = unsafe { (esp_task_wdt_reconfigure(&cfg), esp_task_wdt_add(core::ptr::null_mut())) };
+    if reconfigured != ESP_OK as i32 || added != ESP_OK as i32 {
+        log::warn!("task watchdog setup failed ({reconfigured}, {added})");
+    }
+}
+
+/// Aborts, and so restarts, when the heap or the audio shim's guard words are corrupted.
+fn check_memory() {
+    let heap_ok = unsafe { esp_idf_svc::sys::heap_caps_check_integrity_all(true) };
+    let broken = ffi::broken_guards();
+    if !heap_ok || broken > 0 {
+        log::error!("memory corruption: heap intact {heap_ok}, {broken} guard words overwritten");
+        panic!("memory corruption");
+    }
+}
+
 /// `db` rounded to 0.1 dB for relay frames.
 fn tenths(db: f32) -> f64 {
     f64::from((db * 10.0).round()) / 10.0
@@ -191,6 +214,7 @@ pub struct Console {
     last_heap_log: Instant,
     /// When the relay socket went down; `None` while it is up.
     relay_down_since: Option<Instant>,
+    last_memory_check: Instant,
     await_release: bool,
 }
 
@@ -228,6 +252,7 @@ impl Console {
             last_ping: None,
             last_heap_log: now,
             relay_down_since: Some(now),
+            last_memory_check: now,
             await_release: false,
         }
     }
@@ -235,7 +260,9 @@ impl Console {
     /// Runs the session until the relay event channel closes.
     pub fn run(mut self) -> Result<()> {
         self.show_phase();
+        arm_watchdog();
         loop {
+            unsafe { esp_idf_svc::sys::esp_task_wdt_reset() };
             self.drain_levels();
             self.poll_input();
             match self.inbox.recv_timeout(Duration::from_millis(15)) {
@@ -436,6 +463,7 @@ impl Console {
             "firmware": env!("CARGO_PKG_VERSION"),
             "reset": format!("{:?}", ResetReason::get()),
             "uptime_s": uptime_s,
+            "wake": self.wake,
         })
         .to_string();
         self.send_text(&frame);
@@ -504,6 +532,14 @@ impl Console {
                     ffi::show_volume(self.volume);
                     self.store_volume();
                 }
+            }
+            "wake" => {
+                let on = v["on"].as_bool().unwrap_or(true);
+                if let Some(s) = self.settings.as_ref() {
+                    s.set_wake(on);
+                }
+                log::warn!("wake word turned {} over the relay; restarting", if on { "on" } else { "off" });
+                reset::restart();
             }
             "error" => {
                 self.mark_bridge();
@@ -644,6 +680,10 @@ impl Console {
         if self.relay_down_since.is_some_and(|t| t.elapsed() >= RELAY_DOWN_RESTART) {
             log::error!("relay unreachable for {RELAY_DOWN_RESTART:?}; restarting");
             reset::restart();
+        }
+        if self.last_memory_check.elapsed() >= MEMORY_CHECK_EVERY {
+            self.last_memory_check = Instant::now();
+            check_memory();
         }
         if self.last_heap_log.elapsed() >= HEAP_LOG_EVERY {
             self.last_heap_log = Instant::now();

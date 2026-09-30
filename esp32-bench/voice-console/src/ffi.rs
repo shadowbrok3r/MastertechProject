@@ -18,6 +18,7 @@ extern "C" {
     fn audio_sr_init() -> i32;
     fn audio_wake_take() -> i32;
     fn audio_level_frame(db: *mut f32, speech: *mut i32) -> i32;
+    fn audio_guard_check() -> i32;
     fn audio_set_volume(level: i32);
     fn audio_play_begin();
     fn audio_play_push(buf: *const u8, len: usize) -> i32;
@@ -119,6 +120,11 @@ pub fn wake_heard() -> bool {
 pub fn level_frame() -> Option<Frame> {
     let (mut db, mut speech) = (0f32, 0i32);
     (unsafe { audio_level_frame(&mut db, &mut speech) } != 0).then_some(Frame { db, speech: speech != 0 })
+}
+
+/// Overwritten guard words around the audio shim's buffers (each one is logged).
+pub fn broken_guards() -> i32 {
+    unsafe { audio_guard_check() }
 }
 
 pub fn set_speaker_volume(level: u8) {

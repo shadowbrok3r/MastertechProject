@@ -310,6 +310,13 @@ impl BoardLink {
         Ok(())
     }
 
+    /// Turns the board's wake word engine on or off; the board saves it and restarts.
+    pub async fn set_wake(&self, on: bool) -> Result<()> {
+        let tx = lock(&self.tx).clone().context("relay not connected")?;
+        tx.send(Message::Text(json!({ "cmd": "wake", "on": on }).to_string().into())).await?;
+        Ok(())
+    }
+
     /// Speaks `pcm16` (16 kHz) on the board with `text` on its display.
     pub async fn speak(&self, text: &str, pcm16: &[i16]) -> Result<()> {
         let tx = lock(&self.tx).clone().context("relay not connected")?;
@@ -485,10 +492,11 @@ async fn serve_once(url: &str, ctx: &Arc<TurnContext>, board: &Arc<BoardLink>) -
                             }
                         }
                         Some("hello") => log::info!(
-                            "board hello: firmware {}, reset {}, up {} s",
+                            "board hello: firmware {}, reset {}, up {} s, wake word {}",
                             v["firmware"].as_str().unwrap_or("?"),
                             v["reset"].as_str().unwrap_or("?"),
                             v["uptime_s"],
+                            v["wake"],
                         ),
                         Some("ping") => {
                             let _ = tx.send(Message::Text(r#"{"cmd":"pong"}"#.into())).await;

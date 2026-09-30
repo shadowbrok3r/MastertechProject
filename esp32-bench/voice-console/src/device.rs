@@ -75,14 +75,19 @@ pub fn run() -> Result<()> {
         Ok(()) => log::info!("audio ready (es8311 out, es7210 dual mic, 16 kHz)"),
         Err(e) => log::warn!("audio_init failed: {e}"),
     }
-    let wake = match ffi::init_wake() {
-        Ok(()) => {
-            log::info!("wake word ready (esp-sr afe)");
-            true
-        }
-        Err(e) => {
-            log::warn!("wake word unavailable ({e}); push-to-talk only");
-            false
+    let wake = if !settings.as_ref().map_or(true, Settings::wake) {
+        log::info!("wake word turned off in settings; push-to-talk only");
+        false
+    } else {
+        match ffi::init_wake() {
+            Ok(()) => {
+                log::info!("wake word ready (esp-sr afe)");
+                true
+            }
+            Err(e) => {
+                log::warn!("wake word unavailable ({e}); push-to-talk only");
+                false
+            }
         }
     };
     match ffi::attach_touch() {
@@ -239,7 +244,10 @@ fn on_ws_event(
             let _ = inbox.try_send((*t).to_string());
         }
         WebSocketEventType::Binary(pcm) => ffi::play_push(pcm),
-        WebSocketEventType::Close(_) | WebSocketEventType::Closed => log::warn!("relay closed"),
+        WebSocketEventType::Close(_) | WebSocketEventType::Closed => {
+            log::warn!("relay closed");
+            let _ = inbox.try_send(console::WS_DISCONNECTED.to_string());
+        }
         _ => {}
     }
 }
