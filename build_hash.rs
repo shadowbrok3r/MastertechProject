@@ -14,8 +14,7 @@
 // ```
 //
 // Hash format: `{git7}{dirty}.{ts6}`
-// - `git7` — `git rev-parse --short=7 HEAD`, else the first 7 chars of
-//   `$BUILD_GIT_SHA`, else `"nogit"`.
+// - `git7` — `git rev-parse --short=7 HEAD`, else `"nogit"`.
 // - `dirty` — single `d` if the working tree has uncommitted changes,
 //   empty otherwise. Lets you instantly see "I'm running an
 //   uncommitted local build."
@@ -25,11 +24,24 @@
 //   that share a version number.
 //
 // Example: `1a3f2b9d.e8a3c1` (10 chars + 6 chars = 17 chars total).
+//
+// With `$BUILD_GIT_SHA` set (CI, Docker) the hash is its first 7 chars alone.
 
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn emit_build_hash() {
+    println!("cargo:rerun-if-env-changed=BUILD_GIT_SHA");
+    if let Some(sha) = std::env::var("BUILD_GIT_SHA")
+        .ok()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+    {
+        let git_short: String = sha.chars().take(7).collect();
+        println!("cargo:rustc-env=BUILD_HASH={git_short}");
+        return;
+    }
+
     let git_short = Command::new("git")
         .args(["rev-parse", "--short=7", "HEAD"])
         .output()
@@ -37,14 +49,6 @@ fn emit_build_hash() {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            // Commit from CI when git is unavailable, as in Docker builds.
-            std::env::var("BUILD_GIT_SHA")
-                .ok()
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.chars().take(7).collect())
-        })
         .unwrap_or_else(|| "nogit".to_string());
 
     // `git status --porcelain` prints one line per modified/untracked
@@ -75,5 +79,4 @@ fn emit_build_hash() {
     // git-short component stays correct without a manual touch.
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/index");
-    println!("cargo:rerun-if-env-changed=BUILD_GIT_SHA");
 }
