@@ -2,7 +2,11 @@
 
 Rust / `esp-idf-svc` firmware for the ESP32-S3 DevKitC-1. Presents as a USB keyboard + absolute mouse to a target PC and takes commands from Mastertech over the relay. See `../../docs/ESP32_BENCH_HARDWARE_PLAN.md` for the full plan.
 
-Status: **step 2 + scriptable payloads (1b)** — Wi-Fi + relay round-trip, arm-gated dispatch, a TinyUSB composite **keyboard + absolute mouse**, and (v0.2.0) a named-payload store with `read_serial`. Builds/enumerates (VID 0x303A / PID 0x4004); keyboard/mouse injection live-verified 2026-09-28. The CDC serial endpoint behind `read_serial` is not wired yet (returns empty until `usb.rs` gains the CDC interface — bench work).
+Status: **step 2 + scriptable payloads (1b)** — Wi-Fi + relay round-trip, arm-gated dispatch, a TinyUSB composite **keyboard + absolute mouse**, and (v0.2.0) a named-payload store with `read_serial`. v0.3.0 gives `arm` a TTL lease (default 120s) so it survives the one-shot relay socket closing instead of disarming on every master disconnect. Builds/enumerates (VID 0x303A / PID 0x4004); keyboard/mouse injection live-verified 2026-09-28. The CDC serial endpoint behind `read_serial` is not wired yet (returns empty until `usb.rs` gains the CDC interface — bench work).
+
+## Arm lease (v0.3.0)
+
+`arm` grants a lease (default 120s, `{"cmd":"arm","ttl_secs":N}` to override) rather than a flag that a master disconnect clears. The device auto-disarms when the lease expires or on explicit `disarm`; a transient relay/master disconnect no longer disarms it. This is what lets the stateless one-shot MCP tools (`hid_arm` then `hid_type`/`hid_macro`/`hid_payload_run`, each a fresh relay connection) inject at all. `status` reports `arm_expires_in_secs`.
 
 ## Payloads (v0.2.0)
 

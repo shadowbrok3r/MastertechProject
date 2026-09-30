@@ -3,7 +3,7 @@
 
 [package]
 name = "hid-injector"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "ESP32-S3 USB HID injector — relay-reachable keyboard + mouse for bench machines"

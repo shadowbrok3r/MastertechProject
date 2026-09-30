@@ -18,7 +18,10 @@ pub struct Envelope {
 pub enum Request {
     Ping,
     Status,
-    Arm,
+    Arm {
+        #[serde(default)]
+        ttl_secs: Option<u64>,
+    },
     Disarm,
     Type { text: String },
     Key { chord: String },
@@ -115,7 +118,8 @@ mod tests {
 
     #[test]
     fn arm_disarm_release_parse() {
-        assert_eq!(parse(r#"{"cmd":"arm"}"#).request, Request::Arm);
+        assert_eq!(parse(r#"{"cmd":"arm"}"#).request, Request::Arm { ttl_secs: None });
+        assert_eq!(parse(r#"{"cmd":"arm","ttl_secs":60}"#).request, Request::Arm { ttl_secs: Some(60) });
         assert_eq!(parse(r#"{"cmd":"disarm"}"#).request, Request::Disarm);
         assert_eq!(parse(r#"{"cmd":"release_all"}"#).request, Request::ReleaseAll);
     }
