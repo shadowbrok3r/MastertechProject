@@ -223,6 +223,24 @@ pub struct ServiceOrderStatusParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct OrdersPlacedParams {
+    #[schemars(
+        description = "Store-local day: \"today\" (default), \"yesterday\", a weekday name for its latest date, or YYYY-MM-DD."
+    )]
+    #[serde(default)]
+    pub day: Option<String>,
+    #[schemars(description = "Last day of a range, in the same forms as `day`; a range covers at most 31 days.")]
+    #[serde(default)]
+    pub through: Option<String>,
+    #[schemars(description = "Only this store: RIV, LTN, MUR, SAN, ORE or WAR.")]
+    #[serde(default)]
+    pub store: Option<String>,
+    #[schemars(description = "Only this kind: service, sales, repair, rci, bsd or ready_to_roll.")]
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct PostTicketBriefParams {
     #[schemars(description = "Service number of the ticket.")]
     pub service_number: String,
@@ -423,7 +441,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "service_order_status",
-        description = "One service order's whole status in one call: customer, computer, check-in notes, its service task (status, assignee, due), the latest diagnosis (status, theory, next step) and any AI task (checklist progress), in store time. Use for \"what's the status of order X\" instead of chaining get_service_order, search_diagnostics and get_ai_task_status. Partial numbers from speech resolve by their trailing digits; several matches come back as `matches` to ask about."
+        description = "One service order's whole status in one call: customer, computer, check-in notes, PrestaShop's order state and when the order was placed (a service order's check-in), its service task (status, assignee, due), the latest diagnosis (status, theory, next step) and any AI task (checklist progress), in store time. Use for \"what's the status of order X\" instead of chaining get_service_order, search_diagnostics and get_ai_task_status. Partial numbers from speech resolve by their trailing digits; several matches come back as `matches` to ask about."
     )]
     async fn service_order_status(
         &self,
@@ -438,12 +456,53 @@ impl PluginToolProvider {
                     now,
                 );
             }
-            OrderLookup::Missing => None,
+            OrderLookup::Missing => {
+                order_status::placement_for_missing(&p.service_number).await.map(|placed| order_status::placement_json(&placed))
+            }
         };
         match found {
             Some(status) => reply(status, now),
             None => reply(json!({ "found": false, "note": format!("no service order matches '{}'", p.service_number) }), now),
         }
+    }
+
+    #[tool(
+        name = "orders_placed",
+        description = "Orders PrestaShop took in on a store-local day or range, e.g. \"how many service orders came in today\" or \"orders at LTN yesterday\": totals by kind, store and day, the first and last order, and each order's number, kind, store, placed time and current state, all in store time. This is the source for when orders came in; service_order.created_at is only when MasterTech first loaded an order, often days later."
+    )]
+    async fn orders_placed(&self, Parameters(p): Parameters<OrdersPlacedParams>) -> Result<CallToolResult, ErrorData> {
+        let now = Utc::now();
+        let today = order_status::store_today(now);
+        let day = |raw: Option<&str>, field: &str| {
+            order_status::parse_day(raw.unwrap_or("today"), today)
+                .ok_or_else(|| invalid(format!("`{field}` is not today, yesterday, a weekday or YYYY-MM-DD")))
+        };
+        let from = day(p.day.as_deref(), "day")?;
+        let through = match p.through.as_deref() {
+            Some(raw) => day(Some(raw), "through")?,
+            None => from,
+        };
+        let (from, through) = if through < from { (through, from) } else { (from, through) };
+        if (through - from).num_days() >= order_status::MAX_RANGE_DAYS {
+            return Err(invalid(format!("a range covers at most {} days", order_status::MAX_RANGE_DAYS)));
+        }
+        let store = p
+            .store
+            .as_deref()
+            .map(|code| store_from_code(code).ok_or_else(|| invalid(format!("`{code}` is not a store code"))))
+            .transpose()?;
+        let kind = p
+            .kind
+            .as_deref()
+            .map(|k| order_status::parse_kind(k).ok_or_else(|| invalid(format!("`{k}` is not an order kind"))))
+            .transpose()?;
+        let orders: Vec<_> = order_status::orders_placed(from, through)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .filter(|o| store.as_ref().is_none_or(|s| o.store == s.as_str()) && kind.is_none_or(|k| o.kind == k))
+            .collect();
+        reply(order_status::placed_json(from, through, &orders), now)
     }
 
     #[tool(

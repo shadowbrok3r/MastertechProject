@@ -8,6 +8,11 @@ use super::Config;
 /// Heads the per-session part that follows the shared rules and playbook.
 const SESSION_HEADER: &str = "\n\n=== THIS SESSION ===\n";
 
+/// Which clock each kind of record keeps.
+const TIME_RULE: &str = "- Times: SurrealDB datetimes are UTC and PrestaShop's are store time (America/Denver); \
+     answer in store time. `service_order.created_at` is when MasterTech first loaded an order, often days after \
+     it came in; `orders_placed` says when orders came in.\n";
+
 /// Role, rules, tool guidance and the MCP server's diagnostic playbook, then this
 /// session's scope and persona under `SESSION_HEADER`.
 pub fn developer_instructions(
@@ -81,9 +86,11 @@ fn machine_rules(out: &mut String, cfg: &Config) {
            reported, what they see on screen, whether a part was swapped), ask it plainly in your \
            reply and end your turn; the technician answers in this chat.\n\
          - Keep replies short and concrete: symptom, evidence, verdict, next step. The technician \
-           reads you between jobs.\n\n",
+           reads you between jobs.\n",
         cfg.tool_timeout_secs
     ));
+    out.push_str(TIME_RULE);
+    out.push('\n');
     out.push_str(POWERSHELL_NOTES);
 }
 
@@ -189,8 +196,10 @@ fn general_rules(out: &mut String) {
          - Agent sessions are rows in `agent_thread`; one is open while its status is queued, \
            starting, idle, running or waiting_approval. `connected_client` is the machine \
            roster, not a list of sessions.\n\
-         - Keep replies short and concrete. The technician reads you between jobs.\n\n",
+         - Keep replies short and concrete. The technician reads you between jobs.\n",
     );
+    out.push_str(TIME_RULE);
+    out.push('\n');
 }
 
 /// The technician whose standing session this is.
