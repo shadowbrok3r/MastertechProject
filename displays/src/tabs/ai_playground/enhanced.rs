@@ -346,7 +346,7 @@ impl Default for EnhancedAiPlayground {
             taken_back_tx,
             taken_back_rx,
             renaming: None,
-            fresh_sessions: false,
+            fresh_sessions: true,
             following: std::collections::HashSet::new(),
             lingering: std::collections::HashSet::new(),
             held: HashMap::new(),

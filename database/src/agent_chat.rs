@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::schema::{AgentEvent, AgentThread, AgentTurn, AssistRequest, RecordId};
+use crate::schema::{is_general, AgentEvent, AgentThread, AgentTurn, AssistRequest, RecordId};
 use crate::{db, sleep_compat};
 
 /// Longest opening note an `assist_request` carries.
@@ -19,7 +19,7 @@ pub struct Sent {
     pub after_seq: i64,
 }
 
-/// Sends `text` to the live session for `connection_string`, or opens one with it.
+/// Sends `text` to the live session for `connection_string`, or opens one with it; a general session idle 30 minutes is not resumed.
 pub async fn send(
     connection_string: &str,
     requested_by: Option<&str>,
@@ -27,7 +27,13 @@ pub async fn send(
     service_number: Option<&str>,
     text: &str,
 ) -> anyhow::Result<Sent> {
-    if let Some(thread) = AgentThread::active_for_connection(connection_string).await? {
+    let general = is_general(connection_string);
+    let live = if general {
+        AgentThread::resumable_for_connection(connection_string).await?
+    } else {
+        AgentThread::active_for_connection(connection_string).await?
+    };
+    if let Some(thread) = live {
         let after_seq = last_seq(&thread.id).await?;
         let kind = if thread.is_busy() { "queue" } else { "start" };
         AgentTurn::ask(&thread.id, kind, text).await?;
@@ -36,7 +42,7 @@ pub async fn send(
     let fits = text.chars().count() <= REQUEST_NOTE_MAX;
     let note = if fits { text } else { OPENER };
     let request =
-        AssistRequest::create_from_chat(connection_string, requested_by, store, service_number, note, false).await?;
+        AssistRequest::create_from_chat(connection_string, requested_by, store, service_number, note, general).await?;
     let thread = await_thread(&request, OPEN_TIMEOUT).await?;
     if fits {
         return Ok(Sent { thread, after_seq: 0 });

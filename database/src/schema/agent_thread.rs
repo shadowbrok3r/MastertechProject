@@ -20,6 +20,12 @@ pub const AGENT_THREAD_OPEN_STATUSES: [&str; 5] =
 /// Open statuses of a thread that is working or waiting for a pool slot to start.
 pub const AGENT_THREAD_WORKING_STATUSES: [&str; 4] = ["queued", "starting", "running", "waiting_approval"];
 
+/// The newest open thread for `$cs` that is working (`$working`) or changed in the last 30 minutes.
+pub const RESUMABLE_SQL: &str = "SELECT * FROM agent_thread WHERE connection_string = $cs \
+     AND status NOT IN ['closed', 'failed'] \
+     AND (status IN $working OR updated_at > time::now() - 30m) \
+     ORDER BY created_at DESC LIMIT 1";
+
 /// Threads of the signed-in technician: assigned to them, or asked for with their email.
 const SIGNED_IN_TECH_THREADS: &str =
     "$auth != NONE AND (assignee = $auth.id OR requested_by = $auth.email)";
@@ -568,6 +574,17 @@ impl AgentThread {
             )
             .await?;
         Ok(res.take(0).unwrap_or_default())
+    }
+
+    /// The newest open thread for `connection_string` that is working or changed in the last 30 minutes.
+    pub async fn resumable_for_connection(connection_string: &str) -> anyhow::Result<Option<Self>> {
+        let mut res = db()
+            .query(RESUMABLE_SQL)
+            .bind(("cs", connection_string.to_string()))
+            .bind(("working", AGENT_THREAD_WORKING_STATUSES.map(String::from).to_vec()))
+            .await?;
+        let rows: Vec<Self> = res.take(0)?;
+        Ok(rows.into_iter().next())
     }
 
     /// The live thread for a machine, if one exists.
