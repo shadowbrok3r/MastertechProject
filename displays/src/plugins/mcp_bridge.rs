@@ -822,6 +822,48 @@ impl ArtifactStore {
     }
 }
 
+/// Registry fields `publish_plugin` writes for one plugin.
+struct RegistryMetadata {
+    name: String,
+    version: String,
+    tools: Vec<database::schema::PluginToolInfo>,
+    abi_version: Option<u32>,
+    fingerprint: Option<u64>,
+}
+
+/// Reads `plugin_id`'s registry fields from its loaded instance, or defaults when none is loaded.
+fn registry_metadata(mgr: &PluginManager, plugin_id: &str) -> RegistryMetadata {
+    let plugin = mgr.plugins.iter().find(|plug| plug.id() == plugin_id);
+    RegistryMetadata {
+        name: plugin.map_or_else(|| plugin_id.to_string(), |plug| plug.name().to_string()),
+        version: plugin.map_or_else(|| "0.1.0".to_string(), |plug| plug.version().to_string()),
+        tools: plugin
+            .map(|plug| plug.mcp_tools())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|td| database::schema::PluginToolInfo {
+                name: td.name,
+                description: td.description,
+                parameters_schema: td.parameters_schema,
+            })
+            .collect(),
+        abi_version: plugin.and_then(|plug| plug.abi_version()),
+        fingerprint: plugin.and_then(|plug| plug.fingerprint()),
+    }
+}
+
+/// Loads `artifact` in place of `plugin_id`'s instance, then reads the registry fields from it.
+#[cfg(feature = "wasm-plugins")]
+fn artifact_registry_metadata(
+    mgr: &mut PluginManager,
+    plugin_id: &str,
+    artifact: Vec<u8>,
+) -> Result<RegistryMetadata, String> {
+    mgr.replace_wasm(plugin_id, artifact)
+        .map_err(|e| format!("WASM load failed: {e}"))?;
+    Ok(registry_metadata(mgr, plugin_id))
+}
+
 // One store shared by every transport and session; the streamable-HTTP factory
 // constructs a fresh PluginToolProvider per session, which must not reset artifacts.
 static GLOBAL_ARTIFACTS: Lazy<Arc<Mutex<ArtifactStore>>> =
@@ -6391,7 +6433,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "publish_plugin",
-        description = "Publish a compiled plugin to the SurrealDB registry. Stores the WASM binary in the 'plugins' bucket and metadata in the plugin_registry table. Call after plugin_compile for reusable plugins."
+        description = "Publish a compiled plugin to the SurrealDB registry. Stores the WASM binary in the 'plugins' bucket and metadata in the plugin_registry table. Call after plugin_compile for reusable plugins. A local artifact is hot-loaded in place of any loaded instance first, so the registry row describes the uploaded binary; a load failure aborts the publish."
     )]
     async fn publish_plugin(
         &self,
@@ -6411,53 +6453,26 @@ impl PluginToolProvider {
             None
         };
 
-        let (name, version, tools_json, abi_version, fingerprint) = {
-            // First check if the plugin is already loaded.
-            let already_loaded = {
-                let mgr = self.try_read_manager()?;
-                mgr.list_plugins().iter().any(|pi| pi.id == p.plugin_id)
-            };
-
-            // If not loaded but we have a compiled artifact, hot-load it locally
-            // so we can call plugin_name() / mcp_tools() for the registry entry.
-            if !already_loaded {
-                if let Some(artifact) = self.try_lock_artifacts()?.get_current(&p.plugin_id).cloned() {
-                    #[cfg(feature = "wasm-plugins")]
-                    {
-                        let mut mgr = self.try_write_manager()?;
-                        mgr.unregister(&p.plugin_id);
-                        let _ = mgr.load_wasm(artifact); // ignore load error — metadata extraction is best-effort
-                    }
-                    let _ = artifact; // suppress unused warning in non-wasm build
-                }
+        let RegistryMetadata {
+            name,
+            version,
+            tools,
+            abi_version,
+            fingerprint,
+        } = match &wasm_bytes {
+            #[cfg(feature = "wasm-plugins")]
+            Some(artifact) => {
+                let mut mgr = self.try_write_manager()?;
+                artifact_registry_metadata(&mut mgr, &p.plugin_id, artifact.clone())
+                    .map_err(to_internal)?
             }
-
-            let mgr = self.try_read_manager()?;
-            let plugin_info = mgr.list_plugins();
-            let matching = plugin_info.iter().find(|pi| pi.id == p.plugin_id);
-
-            let name = matching
-                .map(|pi| pi.name.clone())
-                .unwrap_or_else(|| p.plugin_id.clone());
-            let version = matching
-                .map(|pi| pi.version.clone())
-                .unwrap_or_else(|| "0.1.0".to_string());
-            let abi_version = matching.and_then(|pi| pi.abi_version);
-            let fingerprint = matching.and_then(|pi| pi.fingerprint);
-
-            let tools_json: Vec<database::schema::PluginToolInfo> = mgr.plugins.iter()
-                .find(|plug| plug.id() == p.plugin_id)
-                .map(|plug| plug.mcp_tools())
-                .unwrap_or_default()
-                .iter()
-                .map(|td| database::schema::PluginToolInfo {
-                    name: td.name.clone(),
-                    description: td.description.clone(),
-                    parameters_schema: td.parameters_schema.clone(),
-                })
-                .collect();
-
-            (name, version, tools_json, abi_version, fingerprint)
+            #[cfg(not(feature = "wasm-plugins"))]
+            Some(_) => {
+                return Err(to_internal(
+                    "WASM plugin support not enabled. Rebuild with feature 'wasm-plugins'.",
+                ));
+            }
+            None => registry_metadata(&*self.try_read_manager()?, &p.plugin_id),
         };
 
         let wasm_path = if let Some(bytes) = &wasm_bytes {
@@ -6476,7 +6491,7 @@ impl PluginToolProvider {
             description: p.description.clone(),
             version: version.clone(),
             author: p.author.clone(),
-            tools: tools_json,
+            tools,
             tags: p.tags.clone().unwrap_or_default(),
             wasm_bucket_path: wasm_path.clone(),
             source_code,
@@ -14065,5 +14080,95 @@ mod customer_tool_tests {
         let mut v = serde_json::json!("not an array");
         compact_installed_programs(&mut v);
         assert_eq!(v, serde_json::json!("not an array"));
+    }
+}
+
+#[cfg(all(test, feature = "wasm-plugins"))]
+mod publish_metadata_tests {
+    use super::{artifact_registry_metadata, registry_metadata};
+    use crate::plugins::plugin_wasm_factory::clock_plugin_wasm_bytes;
+    use crate::plugins::{MastertechPlugin, PluginManager, PluginToolDescriptor};
+
+    const ID: &str = "com.mastertech.publish-metadata-test";
+
+    struct LoadedV1;
+
+    impl MastertechPlugin for LoadedV1 {
+        fn id(&self) -> &'static str {
+            ID
+        }
+
+        fn name(&self) -> &str {
+            "Loaded v1"
+        }
+
+        fn version(&self) -> &str {
+            "0.1.0"
+        }
+
+        fn mcp_tools(&self) -> Vec<PluginToolDescriptor> {
+            vec![PluginToolDescriptor {
+                name: "v1_tool".into(),
+                description: "0.1.0 tool".into(),
+                parameters_schema: serde_json::json!({}),
+            }]
+        }
+    }
+
+    fn manager_with_v1() -> PluginManager {
+        let mut mgr = PluginManager::new();
+        mgr.register(Box::new(LoadedV1));
+        mgr
+    }
+
+    #[test]
+    fn the_artifact_replaces_a_stale_loaded_instance() {
+        let mut mgr = manager_with_v1();
+        let artifact = clock_plugin_wasm_bytes(ID, "Clock v2").expect("clock fixture");
+        let meta = artifact_registry_metadata(&mut mgr, ID, artifact).expect("artifact loads");
+        assert_eq!(meta.version, "0.2.0");
+        assert_eq!(meta.name, "Clock v2");
+        let tools: Vec<&str> = meta.tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(tools, ["current_time"]);
+        assert_eq!(
+            mgr.list_plugins().iter().filter(|pi| pi.id == ID).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_mismatched_plugin_id_keeps_the_loaded_instance() {
+        let mut mgr = manager_with_v1();
+        let artifact =
+            clock_plugin_wasm_bytes("com.mastertech.other", "Other").expect("clock fixture");
+        let Err(err) = artifact_registry_metadata(&mut mgr, ID, artifact) else {
+            panic!("a mismatched plugin id must not publish");
+        };
+        assert!(err.contains("com.mastertech.other"), "{err}");
+        assert_eq!(mgr.list_plugins().len(), 1);
+        assert_eq!(registry_metadata(&mgr, ID).version, "0.1.0");
+    }
+
+    #[test]
+    fn an_invalid_artifact_keeps_the_loaded_instance() {
+        let mut mgr = manager_with_v1();
+        assert!(artifact_registry_metadata(&mut mgr, ID, b"not wasm".to_vec()).is_err());
+        assert_eq!(registry_metadata(&mgr, ID).version, "0.1.0");
+    }
+
+    #[test]
+    fn without_an_artifact_the_loaded_instance_is_read() {
+        let meta = registry_metadata(&manager_with_v1(), ID);
+        assert_eq!(meta.version, "0.1.0");
+        let tools: Vec<&str> = meta.tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(tools, ["v1_tool"]);
+    }
+
+    #[test]
+    fn without_an_artifact_or_instance_the_defaults_apply() {
+        let meta = registry_metadata(&PluginManager::new(), ID);
+        assert_eq!(meta.name, ID);
+        assert_eq!(meta.version, "0.1.0");
+        assert!(meta.tools.is_empty());
     }
 }
