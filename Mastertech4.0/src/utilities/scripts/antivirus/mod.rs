@@ -12,7 +12,7 @@ use sha2::Digest;
 use log::info;
 use std::{io, path::PathBuf, time::Duration};
 
-use super::{get_running_processes, InstalledProgram};
+use super::{get_running_processes, redact_key, InstalledProgram};
 
 /// Kills all running SUPERAntiSpyware processes (SUPERAntiSpyware.exe, SASCore, SASTask, etc).
 /// Returns the number of processes killed.
@@ -633,7 +633,7 @@ pub async fn install_webroot(
                          Finish it there, in the UI (WRSA > My Account > 'Activate a new keycode') \
                          or by running {}.",
                         version_after.as_deref().unwrap_or("an unknown version"),
-                        webroot_rekey_command(exe, &activation_key)
+                        webroot_rekey_command(exe, &redact_key(&activation_key))
                     )
                 },
             );
@@ -690,7 +690,7 @@ async fn run_sas_autoregister(
         }
     }
 
-    info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
+    info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{}", redact_key(activation_key));
     let mut child = Command::new("cmd")
         .arg("/C")
         .arg(sas_exe.as_os_str())
@@ -903,12 +903,15 @@ pub async fn install_supereasybackup(
         let activation_code = &carbonite_entry.activation_code;
         #[cfg(target_os = "windows")]
         {
-            let cmd_string = format!(
-                "msiexec /i \"{}\" /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}",
-                seb_path, activation_code
-            );
+            let command_line = |code: &str| {
+                format!(
+                    "msiexec /i \"{}\" /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}",
+                    seb_path, code
+                )
+            };
+            let cmd_string = command_line(activation_code);
 
-            info!("Running SEB installer: {:?}", cmd_string);
+            info!("Running SEB installer: {:?}", command_line(&redact_key(activation_code)));
 
             let output = Command::new("powershell")
                 .arg("-Command")

@@ -23,6 +23,30 @@ pub use {
     antivirus::*  
 };
 
+/// `key` masked to its last four characters, or entirely when eight or shorter.
+pub fn redact_key(key: &str) -> String {
+    let key = key.trim();
+    let len = key.chars().count();
+    match len {
+        0 => "(empty)".to_string(),
+        1..=8 => "***".to_string(),
+        _ => format!("***{}", key.chars().skip(len - 4).collect::<String>()),
+    }
+}
+
+/// Each CPS key pair with both keys redacted.
+pub fn redact_cps_keys(keys: &[database::schema::GetKeysResponse]) -> Vec<String> {
+    keys.iter()
+        .map(|k| {
+            format!(
+                "webroot {} superanti {}",
+                redact_key(&k.webroot_key),
+                redact_key(&k.superanti_key)
+            )
+        })
+        .collect()
+}
+
 #[cfg(target_os="windows")]
 fn _install_pc_health_check() -> anyhow::Result<String, anyhow::Error> {
     Ok(run_ps_script("winget install Microsoft.WindowsPCHealthCheck -h --accept-package-agreements --force")?)
@@ -177,3 +201,33 @@ pub const CHECK_POWER_OPTIONS: &str = r#"
     Write-Host "Checking power settings..."
     Write-output Check-PowerSettingsEnabled
 "#;
+
+#[cfg(test)]
+mod redact_tests {
+    use super::{redact_cps_keys, redact_key};
+    use database::schema::GetKeysResponse;
+
+    #[test]
+    fn a_key_keeps_only_its_last_four_characters() {
+        assert_eq!(redact_key("AAAA-BBBB-CCCC-DDDD-1234"), "***1234");
+    }
+
+    #[test]
+    fn a_short_key_is_masked_entirely() {
+        assert_eq!(redact_key("ABCD-123"), "***");
+    }
+
+    #[test]
+    fn a_blank_key_reads_as_empty() {
+        assert_eq!(redact_key("  "), "(empty)");
+    }
+
+    #[test]
+    fn a_key_pair_redacts_both_keys() {
+        let keys = [GetKeysResponse {
+            webroot_key: "AAAA-BBBB-CCCC-DDDD-1234".into(),
+            superanti_key: String::new(),
+        }];
+        assert_eq!(redact_cps_keys(&keys), ["webroot ***1234 superanti (empty)"]);
+    }
+}

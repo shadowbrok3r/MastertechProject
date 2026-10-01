@@ -1,5 +1,6 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports, unused_variables))]
 use crate::tabs::tur_sheet::scaffold::{ScaffoldActions, ScaffoldApps};
+use crate::utilities::scripts::{redact_cps_keys, redact_key};
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use crossbeam::channel;
@@ -62,7 +63,13 @@ impl SendRequest {
             .await?;
 
         let response_text: Vec<License> = response.json().await?;
-        info!("Response: {:?}", response_text);
+        info!(
+            "Response: {:?}",
+            response_text
+                .iter()
+                .map(|license| format!("{} {}", license.r#type, redact_key(&license.key)))
+                .collect::<Vec<_>>()
+        );
 
         // Separate SAS and WRAV keys
         let mut sas_keys = Vec::new();
@@ -89,7 +96,7 @@ impl SendRequest {
             });
         }
 
-        info!("Processed keys: {:?}", result);
+        info!("Processed keys: {:?}", redact_cps_keys(&result));
         Ok(result)
     }
 
