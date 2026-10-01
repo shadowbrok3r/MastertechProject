@@ -3,7 +3,7 @@
 use crate::schema::prestashop::{Order, OrderPayment, Prestashop};
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Default, Clone)]
 pub enum PayPeriod {
@@ -191,6 +191,10 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
             }
         },
     };
+
+    // Drops orders returned by both the sales-rep and split-rep queries.
+    let mut seen = HashSet::new();
+    filtered_orders.retain(|order| seen.insert(order.id.clone()));
 
     Ok(filtered_orders)
 }

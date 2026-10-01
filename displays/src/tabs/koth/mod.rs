@@ -26,6 +26,8 @@ pub struct Koth {
     order_payment_rx: Receiver<OrderPayment>,
     orders: HashMap<String, Vec<Order>>,
     payments: HashMap<String, Vec<OrderPayment>>,
+    // Order ids whose payments have been requested.
+    payment_requests: HashSet<String>,
     employees: Vec<Employee>,
     order_state: OrderState,
     koth_selection: KothSelection,
@@ -72,6 +74,7 @@ impl Default for Koth {
             employees: Vec::new(),
             orders: Default::default(),
             payments: Default::default(),
+            payment_requests: HashSet::new(),
             order_state: Default::default(),
             pay_period: Default::default(),
             koth_selection: KothSelection::default(),
@@ -214,6 +217,7 @@ impl Koth {
                         self.total_spiffs = 0.0;
                         self.orders.clear();
                         self.payments.clear();
+                        self.payment_requests.clear();
                         self.koth_table.clear();
                         self.all_table.clear();
                         let pay_period = self.pay_period.clone();
@@ -251,6 +255,7 @@ impl Koth {
                     self.total_spiffs = 0.0;
                     self.orders.clear();
                     self.payments.clear();
+                    self.payment_requests.clear();
                     self.employees.clear();
                     self.koth_table.clear();
                     self.all_table.clear();
@@ -969,6 +974,7 @@ impl Koth {
 
                     // Request payments for each order; totals are computed from payments in rebuild
                     for order in new_orders.iter() {
+                        if !self.payment_requests.insert(order.id.clone()) { continue; }
                         let tx = self.order_payment_tx.clone();
                         let order = order.clone();
                         PlatformSpawner::spawn(async move {
@@ -1025,6 +1031,7 @@ impl Koth {
 
                     // Process each order
                     for order in new_orders.iter() {
+                        if !self.payment_requests.insert(order.id.clone()) { continue; }
                         let tx = self.order_payment_tx.clone();
                         let order = order.clone();
                         PlatformSpawner::spawn(async move {
@@ -1049,12 +1056,13 @@ impl Koth {
                             .collect();
 
                         if self.pulling_all_orders {
-                            if let Some(orders) = self.orders.get_mut(&uid) {
-                                orders.extend(emp_orders);
-                                orders.sort_by(sort);
-                            } else {
-                                self.orders.insert(uid.clone(), emp_orders);
+                            let orders = self.orders.entry(uid.clone()).or_default();
+                            for order in emp_orders {
+                                if !orders.iter().any(|o| o.id == order.id) {
+                                    orders.push(order);
+                                }
                             }
+                            orders.sort_by(sort);
                         } else {
                             self.orders.insert(uid.clone(), emp_orders);
                         }
@@ -1092,13 +1100,13 @@ impl Koth {
                             if is_true_split {
                                 p.amount = format!("{}", amt / 2.0);
                             }
-                            self.payments.entry(uid).or_insert_with(Vec::new).push(p);
+                            push_payment(&mut self.payments, uid, p);
                         }
                     } else {
                         // Fallback: if we can't find the order, just store as-is if positive
                         let amt = payment.amount.parse::<f64>().unwrap_or(0.0);
                         if amt > 0.0 {
-                            self.payments.entry(uid).or_insert_with(Vec::new).push(payment.clone());
+                            push_payment(&mut self.payments, uid, payment.clone());
                         }
                     }
                 },
@@ -1130,10 +1138,7 @@ impl Koth {
                         for emp_id in recipients {
                             let mut p = payment.clone();
                             if is_true_split { p.amount = format!("{}", base_amt / 2.0); }
-                            self.payments
-                                .entry(emp_id)
-                                .or_insert_with(Vec::new)
-                                .push(p);
+                            push_payment(&mut self.payments, emp_id, p);
                         }
                     } else {
                         // Fallback: previous behavior using discovered employees, halving if two distinct employees involved
@@ -1155,10 +1160,7 @@ impl Koth {
                         for emp_id in uniq {
                             let mut p = payment.clone();
                             if split > 1.0 { p.amount = format!("{}", base_amt / split); }
-                            self.payments
-                                .entry(emp_id)
-                                .or_insert_with(Vec::new)
-                                .push(p);
+                            push_payment(&mut self.payments, emp_id, p);
                         }
                     }
                 }
@@ -1212,4 +1214,12 @@ impl Koth {
         }
     }
 
+}
+
+/// Adds `payment` to `emp_id`'s payments unless one with the same id is already there.
+fn push_payment(payments: &mut HashMap<String, Vec<OrderPayment>>, emp_id: String, payment: OrderPayment) {
+    let entry = payments.entry(emp_id).or_default();
+    if !entry.iter().any(|p| p.id == payment.id) {
+        entry.push(payment);
+    }
 }
