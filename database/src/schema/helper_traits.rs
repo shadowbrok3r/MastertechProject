@@ -1,6 +1,6 @@
 #![allow(async_fn_in_trait)]
 use super::{
-    employee_directory, prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, EmployeeDirectory, RecordId, SurrealValue, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
+    employee_directory, prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, EmployeeDirectory, RecordId, SurrealValue, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, EMPLOYEE_SHOP_ID, TASK_NOTE_TABLE
 };
 use crate::{db, PlatformSpawner, Spawner, schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE, parse_msg_date, prestashop::{OrderState, OrderType, PrestashopId}}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -478,6 +478,7 @@ impl EmployeeHelper for Employee {
         query.insert("filter[id_store]", id_store);
         query.insert("output_format", "JSON");
         query.insert("filter[active]", "1");
+        query.insert("id_shop", EMPLOYEE_SHOP_ID);
 
         let employees: Vec<PrestashopId> = api_call
             .request_resources_checked("employees", query.clone())

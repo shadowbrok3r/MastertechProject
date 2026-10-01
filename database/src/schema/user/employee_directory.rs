@@ -12,7 +12,7 @@ use crate::schema::{
 const EMPLOYEE_DISPLAY: &str = "[id,firstname,lastname,email,active,id_store]";
 
 /// Shop that employee list queries run under; it holds retail and warehouse staff.
-const EMPLOYEE_SHOP_ID: &str = "4";
+pub const EMPLOYEE_SHOP_ID: &str = "4";
 
 /// One employee as the directory reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
