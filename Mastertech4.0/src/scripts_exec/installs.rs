@@ -112,8 +112,6 @@ async fn activate_cps(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult, bo
         return (ScriptResult::Skipped(msg.into()), false);
     };
 
-    kill_sas_processes(ctx, def).await;
-
     ctx.log_info(category.clone(), name, "Fetching CPS keys...");
 
     let keys = match SendRequest::get_cps(service_number, env::http()).await {
@@ -131,6 +129,9 @@ async fn activate_cps(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult, bo
     };
 
     let key = keys.first().cloned().unwrap_or_default();
+    if !key.superanti_key.is_empty() {
+        kill_sas_processes(ctx, def).await;
+    }
     let mut reboot_recommended = false;
     let mut failed = Vec::new();
 
@@ -236,7 +237,7 @@ async fn fetch_cps_key(
 /// Installs and licenses Webroot alone, reporting whether a reboot finalizes it.
 #[cfg(target_os = "windows")]
 async fn activate_webroot(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult, bool) {
-    use crate::utilities::scripts::install_webroot;
+    use crate::utilities::scripts::{install_webroot, redact_key};
 
     let (category, name) = (def.category(), def.name.as_str());
     let Some(service_number) = ctx.service_number.clone().filter(|s| !s.is_empty()) else {
@@ -251,7 +252,7 @@ async fn activate_webroot(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult
     ctx.log_info(
         category.clone(),
         name,
-        format!("Webroot key: {}", key.webroot_key),
+        format!("Webroot key: {}", redact_key(&key.webroot_key)),
     );
 
     match install_webroot(
@@ -278,7 +279,7 @@ async fn activate_webroot(ctx: &ScriptContext, def: &ScriptDef) -> (ScriptResult
 #[cfg(target_os = "windows")]
 async fn activate_superanti(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
     use crate::utilities::scripts::antivirus::kill_sas_processes;
-    use crate::utilities::scripts::install_sas;
+    use crate::utilities::scripts::{install_sas, redact_key};
 
     let (category, name) = (def.category(), def.name.as_str());
     let Some(service_number) = ctx.service_number.clone().filter(|s| !s.is_empty()) else {
@@ -287,23 +288,25 @@ async fn activate_superanti(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResul
         return ScriptResult::Skipped(msg.into());
     };
 
-    let killed = tokio::task::spawn_blocking(kill_sas_processes)
-        .await
-        .unwrap_or(0);
-    ctx.log_info(
-        category.clone(),
-        name,
-        format!("Killed {killed} SAS processes"),
-    );
-
     let key = match fetch_cps_key(ctx, def, service_number).await {
         Ok(key) => key,
         Err(result) => return result,
     };
+
+    if !key.superanti_key.is_empty() {
+        let killed = tokio::task::spawn_blocking(kill_sas_processes)
+            .await
+            .unwrap_or(0);
+        ctx.log_info(
+            category.clone(),
+            name,
+            format!("Killed {killed} SAS processes"),
+        );
+    }
     ctx.log_info(
         category.clone(),
         name,
-        format!("SuperAnti key: {}", key.superanti_key),
+        format!("SuperAnti key: {}", redact_key(&key.superanti_key)),
     );
 
     match install_sas(

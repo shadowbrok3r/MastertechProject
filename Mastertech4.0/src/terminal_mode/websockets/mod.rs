@@ -3043,7 +3043,7 @@ if (Test-Path $path) {{
                             match crate::tabs::tur_sheet::get_ticket::SendRequest::get_cps(so, client.clone()).await {
                                 Ok(keys) => {
                                     let key = keys.get(0).cloned().unwrap_or_default();
-                                    send_log(&tx, format!("Webroot key: {}", key.webroot_key));
+                                    send_log(&tx, format!("Webroot key: {}", crate::utilities::scripts::redact_key(&key.webroot_key)));
                                     match crate::utilities::scripts::antivirus::install_webroot(key.webroot_key, client, progress_tx).await {
                                         Ok(outcome) => {
                                             send_log(&tx, format!("Webroot licensed and active ({outcome})"));
@@ -3071,15 +3071,17 @@ if (Test-Path $path) {{
                                 send_result(&tx, &script.name, RemoteScriptStatus::Failed);
                                 return;
                             }
-                            let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
-                            send_log(&tx, format!("Killed {killed} SAS processes"));
                             let so = service_number.clone();
                             let client = reqwest::Client::new();
                             let (progress_tx, _) = crossbeam::channel::unbounded();
                             match crate::tabs::tur_sheet::get_ticket::SendRequest::get_cps(so, client.clone()).await {
                                 Ok(keys) => {
                                     let key = keys.get(0).cloned().unwrap_or_default();
-                                    send_log(&tx, format!("SuperAnti key: {}", key.superanti_key));
+                                    if !key.superanti_key.is_empty() {
+                                        let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
+                                        send_log(&tx, format!("Killed {killed} SAS processes"));
+                                    }
+                                    send_log(&tx, format!("SuperAnti key: {}", crate::utilities::scripts::redact_key(&key.superanti_key)));
                                     // install_sas activates via /REGCODE during silent install
                                     // (fresh) or /autoregister:KEY against the existing exe.
                                     match crate::utilities::scripts::antivirus::install_sas(key.superanti_key, client, progress_tx).await {

@@ -1,5 +1,6 @@
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
+    utilities::scripts::redact_cps_keys,
     terminal_mode::{events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent, WidgetId}, modals::DuplicateMergeModal, systems::notification_system::{Notification, NotificationType}}
 };
 
@@ -108,12 +109,12 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
 
                         tokio::spawn(async move{
                             let req =  cps_request.await.unwrap_or_default();
-                            log::info!("Keys response: {req:?}");
+                            log::info!("Keys response: {:?}", redact_cps_keys(&req));
                             let _ = cps_tx.send(req);
                         });
 
                         if let Ok(keys) = rx.recv() {
-                            log::info!("Got keys: {keys:?}");
+                            log::info!("Got keys: {:?}", redact_cps_keys(&keys));
                             let key = keys.get(0).cloned().unwrap_or_default();
                             self.keys = key.clone();
                             self.webroot_key_btn.set_label(key.webroot_key.clone());
