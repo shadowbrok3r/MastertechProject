@@ -109,10 +109,13 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
      TUNE-UP PASS (adapt to what the machine needs; skip what the note says is already done):\n\
      - Prechecks: run-prechecks (activation, security software, network).\n\
      - Windows updates: install-windows-updates, then reboot and repeat until none remain.\n\
-     - Security software: confirm Webroot and SUPERAntiSpyware are installed and active \
-       (is-webroot-installed, is-superantispyware-installed); re-activate either that is missing or \
-       inactive (activate-webroot / activate-superanti, or activate-cps for both). CPS in the note \
-       means both were just done — verify rather than reinstall.\n\
+     - Security software: confirm Webroot and SUPERAntiSpyware are installed, licensed and active \
+       (is-webroot-installed, is-superantispyware-installed, and the com.mastertech.cps plugin's \
+       webroot_license / sas_license / wsc_products); re-activate either that is missing or \
+       inactive (activate-cps for both, or activate-webroot / activate-superanti). CPS keys belong \
+       to the order that sold them: when this order has none, find the customer's other recent \
+       orders with search_prestashop_orders and pass that order's number as service_number. CPS \
+       in the note means both were just done — verify rather than reinstall.\n\
      - Scans: run-webroot-scan and run-superantispyware-scan (full).\n\
      - Junkware: run-junkware-category, and remove obvious bloat.\n\
      - Startup apps: do NOT disable any. If startup is heavy, list what you would recommend \
