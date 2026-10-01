@@ -162,6 +162,14 @@ pub fn visible_to(entries: Vec<Entry>, prefix: &str) -> Vec<Entry> {
         .collect()
 }
 
+/// The lasting memories under `prefix`; `daily` session notes are left for recall.
+pub fn standing_for(entries: Vec<Entry>, prefix: &str) -> Vec<Entry> {
+    entries
+        .into_iter()
+        .filter(|e| e.key.to_lowercase().starts_with(prefix) && !e.category.eq_ignore_ascii_case("daily"))
+        .collect()
+}
+
 pub fn render_entries(entries: &[Entry]) -> String {
     entries
         .iter()
@@ -234,6 +242,21 @@ mod tests {
         ];
         let keys: Vec<String> = visible_to(entries, &prefix).into_iter().map(|e| e.key).collect();
         assert_eq!(keys, ["tech/sam.jones@pclaptops.com/tone", "fleet/verdict"]);
+    }
+
+    #[test]
+    fn the_opening_brief_keeps_lasting_memories_and_skips_session_notes() {
+        let prefix = person_prefix("logan@x.com");
+        let mut note = entry("tech/logan@x.com/codex/w9tg05bmg50qkx1otpk8", "session closed. Agent's last word: no orders today");
+        note.category = "daily".into();
+        let entries = vec![
+            entry("tech/logan@x.com/tone", "short answers"),
+            note,
+            entry("tech/kim@x.com/tone", "long answers"),
+            entry("fleet/verdict", "shared"),
+        ];
+        let keys: Vec<String> = standing_for(entries, &prefix).into_iter().map(|e| e.key).collect();
+        assert_eq!(keys, ["tech/logan@x.com/tone"]);
     }
 
     #[test]

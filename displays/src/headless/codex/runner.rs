@@ -1225,8 +1225,7 @@ impl Runner {
         let query = format!("{} {}", owner.email, owner.name);
         match tokio::time::timeout(Duration::from_secs(10), mem.recall(zeroclaw::GENERAL_AGENT, &query)).await {
             Ok(Ok(entries)) => {
-                let mine: Vec<zeroclaw::Entry> =
-                    entries.into_iter().filter(|e| e.key.to_lowercase().starts_with(&prefix)).collect();
+                let mine = zeroclaw::standing_for(entries, &prefix);
                 if mine.is_empty() {
                     return opening;
                 }
