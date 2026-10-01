@@ -599,6 +599,22 @@ impl PluginManager {
         Ok(())
     }
 
+    /// Swaps the instance registered as `id` for the module in `bytes`; on error the old instance stays loaded.
+    #[cfg(feature = "wasm-plugins")]
+    pub fn replace_wasm(&mut self, id: &str, bytes: Vec<u8>) -> Result<(), String> {
+        let event_tx = self.host.event_tx.clone();
+        let plugin = wasm::WasmPlugin::from_bytes(bytes, self.wasm_runtime.engine(), event_tx)?;
+        if plugin.id() != id {
+            return Err(format!(
+                "artifact declares plugin id '{}', not '{id}'",
+                plugin.id()
+            ));
+        }
+        self.unregister(id);
+        self.register(Box::new(plugin));
+        Ok(())
+    }
+
     // ── Broadcast (host → plugins) ──────────────────────────────────────
 
     pub fn broadcast_client_connected(&mut self, client: ClientSnapshot) {
