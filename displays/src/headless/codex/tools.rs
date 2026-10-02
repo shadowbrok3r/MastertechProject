@@ -625,6 +625,26 @@ pub fn scope_violation(arguments: &Value, connection_string: &str) -> Option<Str
     }
 }
 
+/// Tools that find their diagnostic session from `session_id` or `connection_string`.
+const SESSION_RESOLVED_TOOLS: [&str; 2] = ["set_current_theory", "create_ai_task"];
+
+/// Points a session-resolving call at this session's machine when it names neither a session nor a machine.
+pub fn default_to_session_machine(name: &str, arguments: &mut Value, connection_string: &str) {
+    if super::is_general(connection_string) || !SESSION_RESOLVED_TOOLS.contains(&name) {
+        return;
+    }
+    let Some(args) = arguments.as_object_mut() else { return };
+    for key in ["session_id", "connection_string"] {
+        let blank = args.get(key).is_some_and(|v| v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty()));
+        if blank {
+            args.remove(key);
+        }
+    }
+    if !args.contains_key("session_id") && !args.contains_key("connection_string") {
+        args.insert("connection_string".into(), json!(connection_string));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,6 +774,30 @@ mod tests {
         assert_eq!(scope_violation(&args, "DESKTOP-EOA4FR0:3a1e473a3"), None);
         assert_eq!(scope_violation(&json!({ "query": "RTX 4070" }), "DESKTOP-EOA4FR0:3a1e473a3"), None);
         assert!(scope_violation(&json!({ "connection_string": "OTHER:1" }), "DESKTOP-EOA4FR0:3a1e473a3").is_some());
+    }
+
+    #[test]
+    fn session_resolving_tools_default_to_the_session_machine() {
+        let cs = "DESKTOP-EOA4FR0:3a1e473a3";
+        let mut bare = json!({ "theory": "The GPU drops out under load.", "confidence": "medium" });
+        default_to_session_machine("set_current_theory", &mut bare, cs);
+        assert_eq!(bare["connection_string"], cs);
+
+        let mut blank = json!({ "session_id": " ", "connection_string": null, "steps": [] });
+        default_to_session_machine("create_ai_task", &mut blank, cs);
+        assert_eq!(blank, json!({ "connection_string": cs, "steps": [] }));
+
+        let mut named = json!({ "session_id": "3a341052", "theory": "x" });
+        default_to_session_machine("set_current_theory", &mut named, cs);
+        assert_eq!(named, json!({ "session_id": "3a341052", "theory": "x" }));
+
+        let mut other_tool = json!({ "query": "RTX 4070" });
+        default_to_session_machine("search_odoo_inventory", &mut other_tool, cs);
+        assert!(other_tool.get("connection_string").is_none());
+
+        let mut general = json!({ "theory": "x" });
+        default_to_session_machine("set_current_theory", &mut general, "general:sam.jones@pclaptops.com");
+        assert!(general.get("connection_string").is_none());
     }
 
     fn owner() -> Person {
