@@ -302,13 +302,13 @@ mod tests {
     fn tier_durations_match_bands() {
         let hours = |name: &str| load_cert_preset(name).unwrap().total_secs() as f64 / 3600.0;
         let bronze = hours("bronze");
-        assert!((1.0..=2.0).contains(&bronze), "bronze {bronze}h");
+        assert!((1.5..=2.0).contains(&bronze), "bronze {bronze}h");
         let silver = hours("silver");
-        assert!((3.0..=4.0).contains(&silver), "silver {silver}h");
+        assert!((4.0..=4.5).contains(&silver), "silver {silver}h");
         let gold = hours("gold");
-        assert!((6.0..=8.5).contains(&gold), "gold {gold}h");
+        assert!((9.0..=10.0).contains(&gold), "gold {gold}h");
         let platinum = hours("platinum");
-        assert!((10.0..=12.5).contains(&platinum), "platinum {platinum}h");
+        assert!((13.5..=14.5).contains(&platinum), "platinum {platinum}h");
     }
 
     #[test]
@@ -361,6 +361,6 @@ mod tests {
         let linpack = stages.iter().find(|s| s.stressor == Stressor::Linpack).unwrap();
         assert_eq!(linpack.memory_cap_mb, 2048);
         assert!(spec.rules.is_some());
-        assert_eq!(spec.preset_label.as_deref(), Some("cert:gold-v1"));
+        assert_eq!(spec.preset_label.as_deref(), Some("cert:gold-v2"));
     }
 }

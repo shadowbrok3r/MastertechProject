@@ -240,6 +240,12 @@ fn run(
         return (ScriptResult::Error(msg), run_id);
     };
 
+    if v.is_skipped() {
+        let outcome = format!("{name} SKIPPED: {} (run persisted)", v.skipped.join("; "));
+        ctx.log_warning(category, &name, outcome.clone());
+        return (ScriptResult::Warning(outcome), run_id);
+    }
+
     let token = match v.result {
         RunResult::Pass => "PASSED",
         RunResult::Fail => "FAILED",

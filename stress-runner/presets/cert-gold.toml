@@ -1,10 +1,10 @@
-# Gold certification — OCCT Gold System parity (~8 h).
-# Full CPU mix incl. Linpack residual checks, long RAM verify, VRAM verify, PSU stage.
+# Gold certification — OCCT Gold System parity (~9.5 h).
+# Full CPU mix incl. AVX2 verify and Linpack residual checks, long RAM and CPU+RAM verify, VRAM verify, PSU stage.
 
 [preset]
 name = "gold"
-label = "cert:gold-v1"
-description = "Gold certification (~8h): CPU FMA/matrix/integer/verify, Linpack, 80% RAM pattern-verify, GPU compute + matmul, 80% VRAM verify, PSU combined load"
+label = "cert:gold-v2"
+description = "Gold certification (~9.5h): CPU FMA/matrix/integer/verify, AVX2 verify, Linpack, 80% RAM pattern-verify, 50% CPU+RAM verify, GPU compute + matmul, 80% VRAM verify, PSU combined load"
 target_kind = "system"
 tags = ["preset:cert", "cert:gold"]
 
@@ -40,6 +40,11 @@ stressor = "cpu_verify"
 duration_secs = 3600
 
 [[stage]]
+label = "avx2"
+stressor = "avx2"
+duration_secs = 1800
+
+[[stage]]
 label = "linpack"
 stressor = "linpack"
 duration_secs = 3600
@@ -50,6 +55,12 @@ label = "memtest_80pct"
 stressor = "mem_test"
 duration_secs = 5400
 memory_pct = 80
+
+[[stage]]
+label = "cpu_mem_50pct"
+stressor = "cpu_mem"
+duration_secs = 3600
+memory_pct = 50
 
 [[stage]]
 label = "gpu_compute"

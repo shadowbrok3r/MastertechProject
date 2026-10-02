@@ -534,6 +534,7 @@ fn uses_memory_cap(choice: StressorChoice) -> bool {
             | S::Vm
             | S::MemTest
             | S::Linpack
+            | S::CpuMem
             | S::Combined
             | S::GpuVram
             | S::GpuPcie

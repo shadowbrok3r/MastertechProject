@@ -2497,7 +2497,7 @@ pub struct ScriptsRunStressSuiteRemoteParams {
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
     #[schemars(
-        description = "Also run the four certifications (Cert: Bronze/Silver/Gold/Platinum, 1.5 to 7+ hours each). Default false; for one certification call scripts_run_remote instead."
+        description = "Also run the four certifications (Cert: Bronze/Silver/Gold/Platinum, 2 to 14 hours each). Default false; for one certification call scripts_run_remote instead."
     )]
     #[serde(default)]
     pub include_certs: Option<bool>,
@@ -10415,6 +10415,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 "summary": serde_json::to_value(&v.summary).unwrap_or_default(),
                 "duration_secs": v.duration_secs,
                 "ungraded_rules": v.ungraded_rule_lines(),
+                "skipped_stages": v.skipped,
             })
         });
 
@@ -10564,6 +10565,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
                 "summary": serde_json::to_value(&v.summary).unwrap_or_default(),
                 "duration_secs": v.duration_secs,
                 "ungraded_rules": v.ungraded_rule_lines(),
+                "skipped_stages": v.skipped,
             })
         });
 
@@ -11362,7 +11364,7 @@ VOLTAGES ARE UNCALIBRATED: they are nominal-divider values (`calibrated: false` 
 
     #[tool(
         name = "scripts_run_stress_suite_remote",
-        description = "Run the StressTests catalog one script at a time on a remote client (GPU Stress Test, QC Benchmark, and every 'Stress: …' single). The certifications (Cert: Bronze/Silver/Gold/Platinum, 1.5 to 7+ hours each) are left out unless include_certs is true; for a certification run ONE with scripts_run_remote. Each script gets its catalog budget and the machine runs one stress script at a time, so the suite takes as long as its scripts. A caller that stops waiting does not stop the suite; follow it in stress_test_run and do not start it again. Each script persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Use `skip` to omit scripts that already ran. Returns per-script results plus suite summary counts."
+        description = "Run the StressTests catalog one script at a time on a remote client (GPU Stress Test, QC Benchmark, and every 'Stress: …' single). The certifications (Cert: Bronze/Silver/Gold/Platinum, 2 to 14 hours each) are left out unless include_certs is true; for a certification run ONE with scripts_run_remote. Each script gets its catalog budget and the machine runs one stress script at a time, so the suite takes as long as its scripts. A caller that stops waiting does not stop the suite; follow it in stress_test_run and do not start it again. Each script persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Use `skip` to omit scripts that already ran. Returns per-script results plus suite summary counts."
     )]
     async fn scripts_run_stress_suite_remote(
         &self,

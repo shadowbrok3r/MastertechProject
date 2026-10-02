@@ -654,7 +654,7 @@ impl QcToolProvider {
 
     #[tool(
         name = "run_certification",
-        description = "Run a certification preset (bronze ~1.5h, silver ~3.5h, gold ~8h, platinum ~12h, power-virus ~30m) with per-stage verdict rules (WHEA/TDR/errors/temp limits/clock collapse/throughput stability). duration_multiplier scales stage durations (e.g. 0.005 for a smoke run). Full persistence via stress-runner; returns run_id, per-stage verdicts, and the run verdict."
+        description = "Run a certification preset (bronze ~2h, silver ~4.25h, gold ~9.5h, platinum ~14h, power-virus ~30m; a stage this CPU cannot run, such as AVX2 without AVX2/FMA3, is skipped) with per-stage verdict rules (WHEA/TDR/errors/temp limits/clock collapse/throughput stability). duration_multiplier scales stage durations (e.g. 0.005 for a smoke run). Full persistence via stress-runner; returns run_id, per-stage verdicts, and the run verdict."
     )]
     async fn run_certification(
         &self,
@@ -1030,6 +1030,54 @@ impl QcToolProvider {
                 256,
                 "qc-mcp:cpu-stability-v1",
                 "preset:cpu-stability",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        name = "run_avx2_test",
+        description = "AVX2/FMA3 CPU stability test with error detection: 256-bit modular multiplies over a cache-resident working set, every lane checked against an independently computed expectation (the OCCT CPU AVX2 small-data-set equivalent). A mismatch names the logical CPU it ran on. Default 300 s, all threads. On a CPU without AVX2/FMA3 the test is skipped and the run is recorded inconclusive, not as a hardware fault. Returns verdict, error count, GFLOPS, temps, WHEA delta."
+    )]
+    async fn run_avx2_test(
+        &self,
+        Parameters(args): Parameters<DurationOnlyArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "avx2",
+                Stressor::Avx2,
+                0,
+                args.duration_secs.unwrap_or(300),
+                256,
+                "qc-mcp:avx2-v1",
+                "preset:avx2",
+            )
+            .await?;
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        name = "run_cpu_mem_test",
+        description = "OCCT-style CPU + RAM test: verified AVX2 modular math (scalar on CPUs without AVX2) streamed through a large share of RAM. Every value is checked when read back (memory errors: RAM or memory controller) and after the math (compute errors: CPU cores), and each error names the logical CPU it ran on. Default 4096 MiB for 600 s. Returns verdict, error count, MiB/s, temps, WHEA delta."
+    )]
+    async fn run_cpu_mem_test(
+        &self,
+        Parameters(args): Parameters<CpuMemArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self
+            .run_verified_single(
+                "cpu_mem",
+                Stressor::CpuMem,
+                args.threads.unwrap_or(0),
+                args.duration_secs.unwrap_or(600),
+                args.memory_cap_mb.unwrap_or(4096).max(64),
+                "qc-mcp:cpu-mem-v1",
+                "preset:cpu_mem",
             )
             .await?;
         let json = serde_json::to_string_pretty(&report)
@@ -1904,6 +1952,20 @@ pub struct MemTestArgs {
     pub threads: Option<usize>,
 }
 
+/// `run_cpu_mem_test` arguments.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CpuMemArgs {
+    /// MiB of RAM to stream, split across workers. Default 4096.
+    #[serde(default)]
+    pub memory_cap_mb: Option<u64>,
+    /// Test duration in seconds. Default 600.
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+    /// 0 = one worker per logical CPU (default).
+    #[serde(default)]
+    pub threads: Option<usize>,
+}
+
 /// Duration-only arguments (`run_cpu_stability`, `run_psu_test`).
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DurationOnlyArgs {
@@ -2429,7 +2491,9 @@ impl ServerHandler for QcToolProvider {
              per-lane metrics), `run_qc_benchmark` (curated 8-stage burn-in with pass/fail verdict), \
              `run_gpu_probe`, `stop_stress_run`, `get_run_status`. \
              Verified tests with error detection: `run_memtest` (RAM pattern verify), \
-             `run_cpu_stability` (duplicate-execution compare), `run_linpack` (LU + residual check), \
+             `run_cpu_stability` (duplicate-execution compare), `run_avx2_test` (AVX2/FMA3 \
+             known-answer verify), `run_cpu_mem_test` (OCCT-style CPU + RAM verify), \
+             `run_linpack` (LU + residual check), \
              `run_psu_test` (CPU+GPU combined max load), \
              `run_psu_transient_test` (same load pulsed 100ms on/off for rail load-step testing), \
              `run_combined_test` (single fused CPU+RAM+GPU torture). \

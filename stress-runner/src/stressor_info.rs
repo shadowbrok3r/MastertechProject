@@ -53,6 +53,8 @@ impl Subsystem {
                 S::Matrix,
                 S::Linpack,
                 S::CpuVerify,
+                S::Avx2,
+                S::CpuMem,
                 S::Bitops,
                 S::Branch,
                 S::Prime,
@@ -126,6 +128,20 @@ pub fn info_for(choice: StressorChoice) -> StressorInfo {
             when: "Results are wrong but no WHEA errors are logged.",
             pass: Some("Zero digest divergences"),
             caveat: None,
+        },
+        S::Avx2 => StressorInfo {
+            subsystem: Subsystem::Cpu,
+            what: "256-bit AVX2/FMA3 math on a cache-sized working set, every result checked.",
+            when: "Errors or crashes only under heavy AVX load, or an undervolt, overclock, or degraded CPU is suspected.",
+            pass: Some("Zero mismatches"),
+            caveat: Some("Needs AVX2 and FMA3; on a CPU without them the stage is skipped. An error names the logical CPU it ran on."),
+        },
+        S::CpuMem => StressorInfo {
+            subsystem: Subsystem::Cpu,
+            what: "OCCT-style CPU + RAM test: verified AVX2 math streamed through a large share of memory.",
+            when: "Errors or crashes under load and it is unclear whether the CPU, memory controller, or RAM is at fault.",
+            pass: Some("Zero memory or compute mismatches"),
+            caveat: Some("Memory errors point at the RAM or memory controller, compute errors at the cores; confirm with Memory Test or AVX2 Verify."),
         },
         S::Bitops => StressorInfo {
             subsystem: Subsystem::Cpu,
@@ -358,22 +374,22 @@ pub fn cert_preset_info(preset: &str) -> Option<ModeInfo> {
     let info = match preset {
         "bronze" => ModeInfo {
             label: "Bronze",
-            what: "~1.5h: CPU, RAM, and GPU verified.",
+            what: "~2h: CPU, AVX2, RAM, CPU + RAM, and GPU verified.",
             when: "Minimum sign-off on a stock build.",
         },
         "silver" => ModeInfo {
             label: "Silver",
-            what: "~3.5h: CPU, RAM, GPU, and PSU load.",
+            what: "~4.25h: CPU, AVX2, RAM, CPU + RAM, GPU, and PSU load.",
             when: "Standard sign-off on a gaming build.",
         },
         "gold" => ModeInfo {
             label: "Gold",
-            what: "~8h: CPU mix, Linpack, RAM, GPU, VRAM, and PSU.",
+            what: "~9.5h: CPU mix, AVX2, Linpack, RAM, CPU + RAM, GPU, VRAM, and PSU.",
             when: "High-end or overclocked builds.",
         },
         "platinum" => ModeInfo {
             label: "Platinum",
-            what: "~12h: full CPU, RAM, GPU, disk, and PSU mix.",
+            what: "~14h: full CPU, AVX2, RAM, CPU + RAM, GPU, disk, and PSU mix.",
             when: "Flagships, or chasing an intermittent fault.",
         },
         "power-virus" | "power_virus" => ModeInfo {

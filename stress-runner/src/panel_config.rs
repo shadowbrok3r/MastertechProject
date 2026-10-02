@@ -160,10 +160,12 @@ pub enum StressorChoice {
     GpuVram,
     GpuPcie,
     GpuDisplay,
+    Avx2,
+    CpuMem,
 }
 
 impl StressorChoice {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 32] = [
         Self::Cpu,
         Self::Memory,
         Self::Disk,
@@ -194,6 +196,8 @@ impl StressorChoice {
         Self::GpuVram,
         Self::GpuPcie,
         Self::GpuDisplay,
+        Self::Avx2,
+        Self::CpuMem,
     ];
 
     pub fn label(self) -> &'static str {
@@ -232,6 +236,8 @@ impl StressorChoice {
             Self::GpuVram => Stressor::GpuVram,
             Self::GpuPcie => Stressor::GpuPcie,
             Self::GpuDisplay => Stressor::GpuDisplay,
+            Self::Avx2 => Stressor::Avx2,
+            Self::CpuMem => Stressor::CpuMem,
         }
     }
 

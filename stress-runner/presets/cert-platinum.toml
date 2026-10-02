@@ -1,10 +1,10 @@
-# Platinum certification (~12 h) — longest tier, plus PCIe round-trip and
+# Platinum certification (~14 h) — longest tier, plus PCIe round-trip and
 # disk coverage OCCT System certificates don't include.
 
 [preset]
 name = "platinum"
-label = "cert:platinum-v1"
-description = "Platinum certification (~12h): extended CPU mix, Linpack, 2h RAM pattern-verify, GPU compute/matmul/VRAM/PCIe, disk, PSU combined load"
+label = "cert:platinum-v2"
+description = "Platinum certification (~14h): extended CPU mix, AVX2 verify, Linpack, 2h RAM pattern-verify, 1h CPU+RAM verify, GPU compute/matmul/VRAM/PCIe, disk, PSU combined load"
 target_kind = "system"
 tags = ["preset:cert", "cert:platinum"]
 
@@ -40,6 +40,11 @@ stressor = "cpu_verify"
 duration_secs = 5400
 
 [[stage]]
+label = "avx2"
+stressor = "avx2"
+duration_secs = 3600
+
+[[stage]]
 label = "linpack"
 stressor = "linpack"
 duration_secs = 5400
@@ -50,6 +55,12 @@ label = "memtest_80pct"
 stressor = "mem_test"
 duration_secs = 7200
 memory_pct = 80
+
+[[stage]]
+label = "cpu_mem_50pct"
+stressor = "cpu_mem"
+duration_secs = 3600
+memory_pct = 50
 
 [[stage]]
 label = "gpu_compute"
