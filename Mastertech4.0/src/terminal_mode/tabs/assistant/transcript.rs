@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
-use database::schema::{AgentEvent, RecordId, RecordIdExt};
+use database::schema::{AgentEvent, Plan, PlanStatus, RecordId, RecordIdExt};
 use displays::tabs::agent_sessions::ToolCall;
 use displays::ui_tools::chat_bubble::markdown::{as_json, ends_cut, split_json};
 use displays::ui_tools::chat_bubble::{self as chat, ChatKind};
@@ -173,7 +173,7 @@ pub fn flatten<'r>(
 
 /// Open state of a folding row: the technician's toggle, else Ctrl+T for thinking and Ctrl+O or a failure for the rest.
 fn fold_state(ev: &AgentEvent, opts: &Options, toggled: Option<bool>) -> Option<bool> {
-    let kind = kind_of(&ev.kind).filter(|k| k.collapsible())?;
+    let kind = row_kind(ev).filter(|k| k.collapsible())?;
     Some(toggled.unwrap_or_else(|| match kind {
         ChatKind::Reasoning => opts.show_reasoning,
         _ => opts.expand || failed(ev),
@@ -186,6 +186,13 @@ fn failed(ev: &AgentEvent) -> bool {
         "command" => Shell::from_event(ev).exit.is_some_and(|c| c != 0),
         _ => false,
     }
+}
+
+fn row_kind(ev: &AgentEvent) -> Option<ChatKind> {
+    if ev.plan().is_some() {
+        return Some(ChatKind::Plan);
+    }
+    kind_of(&ev.kind)
 }
 
 fn kind_of(kind: &str) -> Option<ChatKind> {
@@ -212,6 +219,7 @@ fn label(kind: ChatKind) -> &'static str {
         ChatKind::FileChange => "File change",
         ChatKind::Approval => "Approval",
         ChatKind::Error => "Error",
+        ChatKind::Plan => "Plan",
     }
 }
 
@@ -220,7 +228,7 @@ fn color(kind: ChatKind) -> Color {
     match kind {
         ChatKind::User | ChatKind::Command | ChatKind::Approval => THEME.warning,
         ChatKind::Agent | ChatKind::Tool => THEME.accent,
-        ChatKind::Reasoning | ChatKind::FileChange => THEME.tertiary,
+        ChatKind::Reasoning | ChatKind::FileChange | ChatKind::Plan => THEME.tertiary,
         ChatKind::Error => THEME.error,
     }
 }
@@ -247,7 +255,7 @@ fn render(
             });
         }
         "turn_completed" => return None,
-        other => match kind_of(other) {
+        _ => match row_kind(ev) {
             Some(kind) => kind,
             None => return notice(text, time, key, width),
         },
@@ -334,6 +342,11 @@ fn render(
                 }
                 out
             }))
+        }
+        ChatKind::Plan => {
+            let plan = ev.plan()?;
+            head.summary = chat::plan_summary(&plan);
+            Some(folding(head, fold, width, key, |w| plan_lines(&plan, w, usize::MAX)))
         }
     }
 }
@@ -432,6 +445,43 @@ fn message(head: Head, text: &str, ink: Color, width: usize, key: String) -> Row
 pub fn draft(text: &str, width: usize) -> Vec<Line<'static>> {
     let head = Head::new(ChatKind::User, None);
     message(head, text, THEME.text, width.max(MIN_WIDTH), String::new()).lines
+}
+
+/// The newest plan update among `events`.
+pub fn newest_plan(events: &[AgentEvent]) -> Option<Plan> {
+    events.iter().rev().find_map(AgentEvent::plan)
+}
+
+/// Checklist lines for `plan`: at most `max` steps from just before the first open one, then a count of the rest.
+pub fn plan_lines(plan: &Plan, width: usize, max: usize) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    if let Some(why) = &plan.explanation {
+        out.push(Line::styled(wrap::clip(&wrap::one_line(why), width), muted()));
+    }
+    let open = plan.steps.iter().position(|s| s.status != PlanStatus::Completed).unwrap_or(0);
+    let start = if plan.steps.len() > max { open.saturating_sub(1).min(plan.steps.len() - max) } else { 0 };
+    for step in plan.steps.iter().skip(start).take(max) {
+        let (mark, mark_style, text_style) = match step.status {
+            PlanStatus::Completed => (
+                glyphs::checkbox(true),
+                Style::default().fg(THEME.tertiary),
+                muted().add_modifier(Modifier::CROSSED_OUT),
+            ),
+            PlanStatus::InProgress => (
+                glyphs::SPINNER[0],
+                Style::default().fg(THEME.accent),
+                Style::default().fg(THEME.text).add_modifier(Modifier::BOLD),
+            ),
+            PlanStatus::Pending => (glyphs::checkbox(false), muted(), Style::default().fg(THEME.text)),
+        };
+        let text = wrap::clip(&wrap::one_line(&step.step), width.saturating_sub(2));
+        out.push(Line::from(vec![Span::styled(mark, mark_style), Span::raw(" "), Span::styled(text, text_style)]));
+    }
+    let hidden = plan.steps.len().saturating_sub(max);
+    if hidden > 0 {
+        out.push(Line::styled(format!("{} {hidden} more", glyphs::ELLIPSIS), muted()));
+    }
+    out
 }
 
 /// A folding row: the header, then while open the body behind a left rule.
@@ -1032,5 +1082,40 @@ mod tests {
         assert_eq!(option_label(Some(&q), 2).as_deref(), Some("No"));
         assert_eq!(question_answers(Some(&q), "Yes"), json!({ "q7": ["Yes"] }));
         assert_eq!(question_answers(None, "x"), json!({ "answer": ["x"] }));
+    }
+
+    fn plan_event(key: &str) -> AgentEvent {
+        let plan = Plan::from_value(&json!({ "plan": [
+            { "step": "Prechecks", "status": "completed" },
+            { "step": "Windows updates", "status": "inProgress" },
+            { "step": "Scans", "status": "pending" },
+        ]}))
+        .expect("plan");
+        event(key, "other", &plan.text(), true, Some(plan.to_item()))
+    }
+
+    #[test]
+    fn a_plan_update_folds_to_its_progress_and_opens_to_its_checklist() {
+        let events = [plan_event("p")];
+        let folded = rows(&events, &opts(80, false));
+        let head = lines_of(&folded[0]);
+        assert_eq!(head.len(), 1, "{head:?}");
+        assert!(head[0].contains("Plan") && head[0].contains("1 of 3 done · Windows updates"), "{head:?}");
+        let open = lines_of(&rows(&events, &opts(80, true))[0]);
+        assert!(open.iter().any(|l| l.contains("\u{2713} Prechecks")), "{open:?}");
+        assert!(open.iter().any(|l| l.contains("\u{25d0} Windows updates")), "{open:?}");
+        assert!(open.iter().any(|l| l.contains("\u{25cb} Scans")), "{open:?}");
+    }
+
+    #[test]
+    fn the_pinned_plan_windows_long_checklists_around_the_open_step() {
+        let steps: Vec<Value> = (1..=10)
+            .map(|i| json!({ "step": format!("step {i}"), "status": if i < 8 { "completed" } else { "pending" } }))
+            .collect();
+        let plan = Plan::from_value(&json!({ "plan": steps })).expect("plan");
+        let lines: Vec<String> = plan_lines(&plan, 40, 4).iter().map(text).collect();
+        assert_eq!(lines.first().map(String::as_str), Some("\u{2713} step 7"), "{lines:?}");
+        assert_eq!(lines.last().map(String::as_str), Some("\u{2026} 6 more"), "{lines:?}");
+        assert_eq!(newest_plan(&[plan_event("a"), event("b", "agent", "hi", true, None)]).map(|p| p.done()), Some(1));
     }
 }

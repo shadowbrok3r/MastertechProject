@@ -28,3 +28,7 @@ pub const FILTER: &str = p::FUNNEL_SIMPLE;
 pub const VOICE: &str = p::MICROPHONE;
 pub const RECORDS: &str = p::DATABASE;
 pub const UNARCHIVE: &str = p::TRAY_ARROW_UP;
+pub const PLAN: &str = p::LIST_CHECKS;
+pub const PLAN_DONE: &str = p::CHECK_CIRCLE;
+pub const PLAN_ACTIVE: &str = p::CIRCLE_HALF;
+pub const PLAN_PENDING: &str = p::CIRCLE;

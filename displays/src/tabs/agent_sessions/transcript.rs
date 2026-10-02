@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use chrono::{DateTime, Local, Utc};
-use database::schema::{AgentEvent, RecordIdExt};
+use database::schema::{AgentEvent, Plan, RecordIdExt};
 use eframe::egui::{Id, Ui};
 use serde_json::Value;
 
@@ -21,9 +21,25 @@ pub fn transcript_ui(ui: &mut Ui, salt: &str, events: &[AgentEvent], show_reason
     let style = ChatStyle::from_ui(ui);
     let scope = Id::new(("agent_transcript", salt));
     let now = Local::now();
+    let newest_plan = events.iter().rev().find(|e| e.plan().is_some()).map(|e| e.seq);
     for ev in events {
-        event_row(ui, &style, scope, &now, ev, show_reasoning, user);
+        match ev.plan() {
+            Some(plan) => plan_row(ui, &style, scope, &now, ev, &plan, newest_plan == Some(ev.seq)),
+            None => event_row(ui, &style, scope, &now, ev, show_reasoning, user),
+        }
     }
+}
+
+/// One plan update, collapsed to its summary unless it is the newest.
+fn plan_row(ui: &mut Ui, style: &ChatStyle, scope: Id, now: &DateTime<Local>, ev: &AgentEvent, plan: &Plan, newest: bool) {
+    let key = ev.id.key_string();
+    ChatRow::new(ChatKind::Plan, &key, "Plan")
+        .badge(chat_bubble::plan_progress(plan), style.weak)
+        .time(event_time(ev, now))
+        .summary(plan.current().map(|s| s.step.as_str()).unwrap_or_default())
+        .copy(&ev.text)
+        .default_open(newest)
+        .show(ui, style, scope, |ui, _| chat_bubble::plan_steps(ui, style, plan));
 }
 
 fn event_time(ev: &AgentEvent, now: &DateTime<Local>) -> Option<String> {
