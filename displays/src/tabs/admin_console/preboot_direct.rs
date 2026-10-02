@@ -608,15 +608,26 @@ mod tests {
         let squatter = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
         let port = squatter.local_addr().unwrap().port();
 
+        // Marks the firewall rule as set so start() skips netsh.
+        #[cfg(windows)]
+        FIREWALL_RULE_SET.store(true, std::sync::atomic::Ordering::Release);
+
         let hub = DirectHub::new();
         hub.start(port);
         assert!(hub.started.load(std::sync::atomic::Ordering::Acquire), "latched while spawning");
 
-        // Let the spawned task run its bind and fail.
-        rt.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(150)).await });
+        // Waits up to 5 s for the spawned bind to fail and release the latch.
+        let released = rt.block_on(tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            async {
+                while hub.started.load(std::sync::atomic::Ordering::Acquire) {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            },
+        ));
 
         assert!(
-            !hub.started.load(std::sync::atomic::Ordering::Acquire),
+            released.is_ok(),
             "latch stayed set after a failed bind - start() can never rebind"
         );
         drop(squatter);
