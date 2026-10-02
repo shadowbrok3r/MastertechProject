@@ -40,6 +40,8 @@ const THREAD_POLL_WAITING: Duration = Duration::from_secs(2);
 const EVENT_POLL: Duration = Duration::from_millis(1500);
 const APPROVAL_POLL: Duration = Duration::from_secs(2);
 const EVENT_PAGE: usize = 400;
+/// Most plan steps listed in the box over the composer.
+const PLAN_PANEL_STEPS: usize = 6;
 const SNOOZE: Duration = Duration::from_secs(60);
 /// Longest wait for the broker to open a requested session before it reads as a failure.
 const REQUEST_WAIT: Duration = Duration::from_secs(120);
@@ -824,10 +826,17 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             .as_ref()
             .map(|l| (l.len() as u16 + 2).min(area.height / 2))
             .unwrap_or(0);
+        let plan = transcript::newest_plan(&self.events).filter(|p| !p.complete());
+        let plan_lines = plan.as_ref().map(|p| transcript::plan_lines(p, inner_w.max(8), PLAN_PANEL_STEPS));
+        let plan_h = plan_lines
+            .as_ref()
+            .map(|l| (l.len() as u16 + 2).min(area.height / 3))
+            .unwrap_or(0);
 
         let rows = Layout::vertical([
             Constraint::Fill(1),
             Constraint::Length(approval_h),
+            Constraint::Length(plan_h),
             Constraint::Length(4),
             Constraint::Length(1),
         ])
@@ -926,6 +935,17 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             f.render_widget(Paragraph::new(lines).block(block).style(Style::default().bg(THEME.bg)), rows[1]);
         }
 
+        if let (Some(plan), Some(lines)) = (plan.as_ref(), plan_lines) {
+            let title = format!(" Plan {} {} of {} done ", glyphs::DOT, plan.done(), plan.steps.len());
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(SHORTCUT_SET)
+                .border_style(Style::default().fg(THEME.tertiary))
+                .title_style(Style::default().fg(THEME.tertiary).add_modifier(Modifier::BOLD))
+                .title(title);
+            f.render_widget(Paragraph::new(lines).block(block).style(Style::default().bg(THEME.bg)), rows[2]);
+        }
+
         let input_title = if approval.as_ref().is_some_and(|r| r.kind == "question") {
             "Answer the agent"
         } else if self.watching_others() {
@@ -944,12 +964,12 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 .border_type(BorderType::Rounded)
                 .title(Line::styled(input_title, Style::default().fg(title_color))),
         );
-        f.render_widget(&self.input, rows[2]);
+        f.render_widget(&self.input, rows[3]);
 
         let muted = Style::default().fg(THEME.text_muted).bg(THEME.bg);
         let mut right = Vec::new();
         if let Some(note) = self.note_at.filter(|t| t.elapsed() < NOTE_SHOWN).map(|_| self.note.as_str()) {
-            let note = wrap::clip(&wrap::one_line(note), (rows[3].width / 2) as usize);
+            let note = wrap::clip(&wrap::one_line(note), (rows[4].width / 2) as usize);
             right.push(Span::styled(note, Style::default().fg(THEME.accent_soft)));
         }
         if let Some(context) = self.thread.as_ref().and_then(AgentThread::context_usage) {
@@ -959,7 +979,7 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             right.push(Span::styled(context, muted));
         }
         let right_w = if right.is_empty() { 0 } else { wrap::spans_width(&right) as u16 + 1 };
-        let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_w)]).areas(rows[3]);
+        let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_w)]).areas(rows[4]);
         f.render_widget(Paragraph::new(self.footer_line(hints.width as usize, running)).style(muted), hints);
         f.render_widget(Paragraph::new(Line::from(right)).alignment(Alignment::Right).style(muted), usage);
     }

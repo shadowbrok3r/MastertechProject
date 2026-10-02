@@ -14,7 +14,7 @@ use database::schema::assistant::Person;
 use database::schema::AiProfile;
 use database::schema::{
     AgentActivity, AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest,
-    DEFAULT_UPLOAD_DIR, NewAgentApproval, RecordId, RecordIdExt, TurnImage, upload_name,
+    DEFAULT_UPLOAD_DIR, NewAgentApproval, Plan, RecordId, RecordIdExt, TurnImage, upload_name,
 };
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
@@ -184,6 +184,8 @@ struct Runner {
     stopping: bool,
     /// A compaction was sent and no turn has started for it yet.
     compact_unstarted: bool,
+    /// The last `update_plan` checklist written to the transcript.
+    last_plan: Option<Plan>,
     /// The requester the assistant tools act for.
     owner: Option<Person>,
     /// The owner's persona block for the developer instructions.
@@ -271,6 +273,7 @@ impl Runner {
             turn_failed: false,
             stopping: false,
             compact_unstarted: false,
+            last_plan: None,
             owner,
             persona,
         };
@@ -375,6 +378,7 @@ impl Runner {
                 "features.multi_agent": false,
                 "features.goals": false,
                 "features.view_image": false,
+                "tools.update_plan.enabled": true,
                 "web_search": "disabled",
                 "mcp_servers.mastertech.enabled": false,
             },
@@ -588,6 +592,16 @@ impl Runner {
         self.seqs.insert(item_id.to_string(), seq);
         self.row.touch(seq);
         seq
+    }
+
+    /// Writes an `update_plan` checklist to the transcript unless it repeats the last one.
+    async fn plan_updated(&mut self, params: &Value) {
+        let Some(plan) = Plan::from_value(params) else { return };
+        if self.last_plan.as_ref() == Some(&plan) {
+            return;
+        }
+        self.marker("other", &plan.text(), Some(plan.to_item())).await;
+        self.last_plan = Some(plan);
     }
 
     /// A standalone transcript row with no codex item behind it, written after any buffered text.
@@ -835,6 +849,7 @@ impl Runner {
                         self.signal(Signal::Server(status)).await;
                     }
                 }
+                "turn/plan/updated" => self.plan_updated(&params).await,
                 "thread/compacted" if self.compact_unstarted => {
                     self.compact_unstarted = false;
                     if !self.busy.is_idle() {

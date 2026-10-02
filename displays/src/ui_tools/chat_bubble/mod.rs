@@ -2,6 +2,7 @@
 
 mod json_tree;
 pub mod markdown;
+mod plan;
 mod shell;
 
 use std::borrow::Cow;
@@ -17,6 +18,7 @@ use serde_json::Value;
 
 use super::mtech_glass::{edge, lift, pane};
 use super::{icons, theme};
+pub use plan::{pinned_plan, plan_progress, plan_steps, plan_summary};
 pub use shell::is_command_key;
 use shell::ShellColors;
 
@@ -47,6 +49,7 @@ pub enum ChatKind {
     FileChange,
     Approval,
     Error,
+    Plan,
 }
 
 impl ChatKind {
@@ -54,7 +57,12 @@ impl ChatKind {
     pub fn collapsible(self) -> bool {
         matches!(
             self,
-            Self::Reasoning | Self::Tool | Self::Command | Self::FileChange | Self::Approval
+            Self::Reasoning
+                | Self::Tool
+                | Self::Command
+                | Self::FileChange
+                | Self::Approval
+                | Self::Plan
         )
     }
 
@@ -68,6 +76,7 @@ impl ChatKind {
             Self::FileChange => icons::FILE_TEXT,
             Self::Approval => icons::LOCK,
             Self::Error => icons::STATUS_WARN,
+            Self::Plan => icons::PLAN,
         }
     }
 }
@@ -156,7 +165,9 @@ impl ChatStyle {
                 (self.tertiary_hue, self.tertiary)
             }
             ChatKind::Agent | ChatKind::Tool => (self.primary_hue, self.primary),
-            ChatKind::Reasoning | ChatKind::FileChange => (self.secondary_hue, self.secondary),
+            ChatKind::Reasoning | ChatKind::FileChange | ChatKind::Plan => {
+                (self.secondary_hue, self.secondary)
+            }
             ChatKind::Error => (self.error_hue, self.error),
         }
     }

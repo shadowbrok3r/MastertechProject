@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::live_data::{Action, listen_data_filtered};
-use database::schema::{AgentEvent, RecordId, RecordIdExt};
+use database::schema::{AgentEvent, Plan, RecordId, RecordIdExt};
 use eframe::egui::Context;
 use futures::future::AbortHandle;
 use web_time::Instant;
@@ -26,7 +26,15 @@ const IDLE_TICK: Duration = Duration::from_secs(2);
 
 enum Msg {
     Events(RecordId, Result<Vec<AgentEvent>, String>),
+    Plan(RecordId, Option<AgentEvent>),
     Ended(u64, Option<String>),
+}
+
+/// The newest plan update seen for the followed session.
+struct LatestPlan {
+    id: RecordId,
+    seq: i64,
+    plan: Plan,
 }
 
 /// One abortable LIVE SELECT and when to reopen it after it drops.
@@ -74,6 +82,9 @@ pub struct LiveTranscript {
     loading: bool,
     last_snapshot: Option<Instant>,
     error: Option<String>,
+    plan: Option<LatestPlan>,
+    /// Set once the followed session's newest plan has been asked for.
+    plan_requested: bool,
 }
 
 impl Default for LiveTranscript {
@@ -93,6 +104,8 @@ impl Default for LiveTranscript {
             loading: false,
             last_snapshot: None,
             error: None,
+            plan: None,
+            plan_requested: false,
         }
     }
 }
@@ -110,6 +123,13 @@ impl LiveTranscript {
         self.loaded = false;
         self.last_snapshot = None;
         self.error = None;
+        self.plan = None;
+        self.plan_requested = false;
+    }
+
+    /// The followed session's newest `update_plan` checklist.
+    pub fn plan(&self) -> Option<&Plan> {
+        self.plan.as_ref().map(|p| &p.plan)
     }
 
     /// The followed session.
@@ -144,6 +164,9 @@ impl LiveTranscript {
         if self.stream.due() {
             self.start_stream(&thread);
         }
+        if !self.plan_requested {
+            self.request_plan(thread.clone());
+        }
         if !self.loading && self.last_snapshot.is_none_or(|t| t.elapsed() >= SNAPSHOT_POLL) {
             self.snapshot(thread);
         }
@@ -157,7 +180,12 @@ impl LiveTranscript {
                 continue;
             }
             match action {
-                Action::Delete => self.events.retain(|e| e.id != row.id),
+                Action::Delete => {
+                    if self.plan.as_ref().is_some_and(|p| p.id == row.id) {
+                        self.plan = None;
+                    }
+                    self.events.retain(|e| e.id != row.id);
+                }
                 Action::Create | Action::Update => self.merge(row),
             }
         }
@@ -179,6 +207,13 @@ impl LiveTranscript {
                         Err(e) => self.error = Some(e),
                     }
                 }
+                Msg::Plan(thread, row) => {
+                    if self.thread.as_ref() == Some(&thread)
+                        && let Some(row) = row
+                    {
+                        self.keep_plan(&row);
+                    }
+                }
                 Msg::Ended(generation, error) => {
                     if self.stream.ended(generation) {
                         self.last_snapshot = None;
@@ -193,7 +228,27 @@ impl LiveTranscript {
 
     fn merge(&mut self, row: AgentEvent) {
         self.last_seq = self.last_seq.max(row.seq);
+        self.keep_plan(&row);
         merge_event(&mut self.events, row);
+    }
+
+    /// Holds `row`'s plan when it is a plan update at least as new as the one held.
+    fn keep_plan(&mut self, row: &AgentEvent) {
+        if self.plan.as_ref().is_some_and(|p| p.seq > row.seq) {
+            return;
+        }
+        if let Some(plan) = row.plan() {
+            self.plan = Some(LatestPlan { id: row.id.clone(), seq: row.seq, plan });
+        }
+    }
+
+    fn request_plan(&mut self, thread: RecordId) {
+        self.plan_requested = true;
+        let tx = self.tx.clone();
+        PlatformSpawner::spawn(async move {
+            let row = AgentEvent::latest_plan(&thread).await.ok().flatten();
+            let _ = tx.send(Msg::Plan(thread, row));
+        });
     }
 
     fn start_stream(&mut self, thread: &RecordId) {
@@ -287,5 +342,27 @@ mod tests {
         assert!(live.events().is_empty() && !live.loaded() && live.last_seq == 0);
         live.follow(None);
         assert!(live.thread().is_none());
+    }
+
+    fn plan_event(id: &str, seq: i64, done: &str, open: &str) -> AgentEvent {
+        let plan = Plan::from_value(&serde_json::json!({ "plan": [
+            { "step": done, "status": "completed" },
+            { "step": open, "status": "inProgress" },
+        ]}))
+        .expect("plan");
+        AgentEvent { kind: "other".into(), text: plan.text(), item: Some(plan.to_item()), ..event(id, seq, "", true) }
+    }
+
+    #[test]
+    fn the_newest_plan_update_is_held_and_cleared_with_the_session() {
+        let mut live = LiveTranscript::default();
+        live.follow(Some(RecordId::new("agent_thread", "t")));
+        live.merge(plan_event("p2", 9, "Scans", "Junkware"));
+        live.merge(plan_event("p1", 4, "Prechecks", "Updates"));
+        live.merge(event("a", 10, "working", true));
+        let current = live.plan().and_then(|p| p.current()).map(|s| s.step.as_str());
+        assert_eq!(current, Some("Junkware"), "an older update arriving late does not replace a newer one");
+        live.follow(Some(RecordId::new("agent_thread", "u")));
+        assert!(live.plan().is_none());
     }
 }

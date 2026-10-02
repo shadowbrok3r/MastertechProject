@@ -50,6 +50,26 @@ pub fn event_key(thread: &RecordId, item_id: &str) -> String {
 }
 
 impl AgentEvent {
+    /// The `update_plan` checklist this row carries, if it is a plan update.
+    pub fn plan(&self) -> Option<super::Plan> {
+        let item = self.item.as_ref().filter(|i| i.get("type").and_then(serde_json::Value::as_str) == Some(super::PLAN_ITEM_TYPE))?;
+        super::Plan::from_value(item)
+    }
+
+    /// The newest plan update on a thread.
+    pub async fn latest_plan(thread: &RecordId) -> anyhow::Result<Option<Self>> {
+        let mut res = db()
+            .query(
+                "SELECT * FROM agent_event WHERE thread = $thread AND kind = 'other' AND item.type = $type \
+                 ORDER BY seq DESC LIMIT 1",
+            )
+            .bind(("thread", thread.clone()))
+            .bind(("type", super::PLAN_ITEM_TYPE.to_string()))
+            .await?;
+        let rows: Vec<Self> = res.take(0)?;
+        Ok(rows.into_iter().next())
+    }
+
     /// Writes the current text of a streaming item; `seq` sticks from the first write.
     pub async fn upsert_text(
         thread: &RecordId,

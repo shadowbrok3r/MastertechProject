@@ -665,6 +665,9 @@ impl EnhancedAiPlayground {
                 }
             });
 
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        self.show_pinned_plan(ui);
+
         CentralPanel::default()
             .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
             .show(ui, |ui| self.show_chat_content(ui));
@@ -1189,6 +1192,19 @@ impl EnhancedAiPlayground {
     #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
     fn live_shown(&self) -> bool {
         false
+    }
+
+    /// The open session's current plan, pinned above the composer.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn show_pinned_plan(&self, ui: &mut Ui) {
+        let Some(plan) = self.live.plan().filter(|_| self.live_shown()) else { return };
+        let style = ChatStyle::from_ui(ui);
+        let id = Id::new(("ai_pinned_plan", self.selected_thread.as_str()));
+        let max_height = (ui.available_height() * 0.3).clamp(80.0, 260.0);
+        eframe::egui::Panel::bottom("enhanced_ai_plan")
+            .resizable(false)
+            .frame(Frame::default().inner_margin(Margin::symmetric(INPUT_PANEL_MARGIN, 0)))
+            .show(ui, |ui| crate::ui_tools::chat_bubble::pinned_plan(ui, &style, id, plan, max_height));
     }
 
     /// The live transcript, then local rows newer than its last row, such as a message not yet picked up or a send error.
