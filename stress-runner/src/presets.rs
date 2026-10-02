@@ -270,11 +270,9 @@ mod tests {
         }
     }
 
-    /// GPU temperature is NVML-only, so it reads nothing on AMD and Intel
-    /// discrete cards. A preset that let that gap gate the verdict would make
-    /// every cert on those vendors unsignable, which is what shipped before.
+    /// A GPU temperature can be missing or ungradable on any vendor, so no preset may gate on it.
     #[test]
-    fn no_preset_gates_on_the_nvidia_only_gpu_sensor() {
+    fn no_preset_gates_on_an_ungradable_gpu_sensor() {
         for name in CERT_PRESET_NAMES {
             let preset = load_cert_preset(name).expect(name);
             let gpu = preset

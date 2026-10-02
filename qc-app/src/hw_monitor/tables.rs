@@ -348,11 +348,7 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
 
 pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
     if gpus.is_empty() {
-        empty_state(
-            ui,
-            "No GPU sensors visible to sysinfo. \
-             Vendor-specific live metrics (NVML / ADL) are not wired up yet.",
-        );
+        empty_state(ui, "No GPU visible to NVML, WDDM, or sysinfo.");
         return;
     }
 

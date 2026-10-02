@@ -2314,7 +2314,7 @@ impl SummaryAccumulator {
             self.min_v12_v = Some(self.min_v12_v.map_or(v, |m| m.min(v)));
         }
 
-        // GPU board power summed across cards (NVML); CPU package power has
+        // GPU board power summed across cards (NVML, ADLX); CPU package power has
         // no portable source, so this is the PSU-load proxy we have.
         let gpu_w: f64 = snapshot.gpus.iter().filter_map(|g| g.power_w).map(f64::from).sum();
         if gpu_w > 0.0 {

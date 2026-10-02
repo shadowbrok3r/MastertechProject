@@ -12,6 +12,10 @@
 mod core;
 mod disk;
 mod gpu;
+#[cfg(target_os = "windows")]
+mod gpu_adlx;
+#[cfg(target_os = "windows")]
+mod gpu_wddm;
 mod memory;
 mod network;
 mod processes;
@@ -46,7 +50,7 @@ pub use self::cpu_ceiling::{CpuCeilingSource, CpuThermalCeiling, CpuVendor};
 pub use self::core::CoreSample;
 pub use self::core::{sample_cores, sample_cores_with_die};
 pub use self::disk::DiskRateSample;
-pub use self::gpu::GpuSample;
+pub use self::gpu::{GpuSample, GpuSource};
 pub use self::memory::MemorySample;
 pub use self::network::NetworkRateSample;
 pub use self::processes::ProcessSample;
@@ -572,7 +576,7 @@ fn capture_snapshot_blocking() -> TelemetrySnapshot {
         disks: Vec::new(),
         networks: Vec::new(),
         processes: Vec::new(),
-        gpus: gpu::sample_gpus(&components),
+        gpus: gpu::GpuSampler::default().sample(&components),
         whea: None,
         whea_unavailable: false,
         tdr: None,
@@ -781,6 +785,8 @@ fn sampler_loop(
     #[cfg(target_os = "windows")]
     let mut storage_thermal = storage_thermal_windows::StorageThermalMonitor::open();
 
+    let mut gpus = gpu::GpuSampler::default();
+
     // First refresh seeds counters; the next tick yields usable rates.
     sys.refresh_cpu_all();
     thread::sleep(interval);
@@ -837,7 +843,7 @@ fn sampler_loop(
             disks: disk::sample_disks(&disks, elapsed),
             networks: network::sample_networks(&networks, elapsed),
             processes: processes::sample_processes(&sys),
-            gpus: gpu::sample_gpus(&components),
+            gpus: gpus.sample(&components),
             #[cfg(target_os = "windows")]
             whea: whea.as_mut().map(|w| w.poll()),
             #[cfg(not(target_os = "windows"))]

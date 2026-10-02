@@ -5,7 +5,9 @@
 //! throughput — are rule-independent and fail under every policy.
 
 use serde::{Deserialize, Serialize};
-use stress_kit::telemetry::{AccessStatus, AccessTier, BackendId, CpuTempSource, TelemetrySnapshot};
+use stress_kit::telemetry::{
+    AccessStatus, AccessTier, BackendId, CpuTempSource, GpuSample, GpuSource, TelemetrySnapshot,
+};
 use stress_kit::{Metrics, Stressor};
 
 /// How far over its own thermal ceiling a part must sit before the ceiling
@@ -170,16 +172,12 @@ impl VerdictRules {
                 on_missing: MissingSensorPolicy::Inconclusive,
                 basis: TempLimitBasis::PartCeiling,
             }),
-            // NVML reads temperature on NVIDIA only, so no AMD or Intel
-            // discrete card can be graded thermally; gating on it would make
-            // every cert on those vendors unsignable.
-            // No GPU vendor publishes a ceiling we can read, so this stays an
-            // absolute number whatever the basis default is.
+            // NVML and sysinfo readings grade flat; WDDM ones against the driver's throttle temperature.
             max_gpu_temp_c: Some(TempRule {
                 limit_c: 90.0,
                 consecutive_ticks: 5,
                 on_missing: MissingSensorPolicy::Warn,
-                basis: TempLimitBasis::Absolute,
+                basis: TempLimitBasis::PartCeiling,
             }),
             clock_collapse: Some(ClockCollapseRule {
                 below_pct_of_stage_max: 0.60,
@@ -211,7 +209,14 @@ pub enum RuleViolation {
         #[serde(default)]
         ceiling_c: Option<f32>,
     },
-    GpuTemp { limit_c: f32, peak_c: f32, sustained_ticks: u32 },
+    GpuTemp {
+        limit_c: f32,
+        peak_c: f32,
+        sustained_ticks: u32,
+        /// The driver's throttle temperature when `limit_c` was derived from it.
+        #[serde(default)]
+        ceiling_c: Option<f32>,
+    },
     ClockCollapse { below_pct: f32, ticks: u32 },
     ThroughputUnstable { cv: f64, max_cv: f64 },
     RailDroop { rail: String, floor_v: f32, min_v: f32, sustained_ticks: u32 },
@@ -264,7 +269,10 @@ impl UnevaluatedRule {
                 "no CPU die temperature",
                 "the CPU was not graded thermally",
             ),
-            MissingSensor::GpuTelemetry => ("no GPU telemetry", "the GPU was not graded thermally"),
+            MissingSensor::GpuTelemetry => (
+                "no gradable GPU temperature",
+                "the GPU was not graded thermally",
+            ),
             MissingSensor::CpuThermalCeiling => (
                 "no thermal ceiling for this part",
                 "the CPU was not graded thermally",
@@ -310,9 +318,16 @@ impl RuleViolation {
                      part's own ceiling is unknown, so the configured limit graded it"
                 ),
             },
-            Self::GpuTemp { limit_c, peak_c, sustained_ticks } => format!(
-                "GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C)"
-            ),
+            Self::GpuTemp { limit_c, peak_c, sustained_ticks, ceiling_c } => match ceiling_c {
+                Some(c) => format!(
+                    "GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C) — \
+                     the driver's {c:.0}C throttle temperature plus a {OVER_CEILING_MARGIN_C:.0}C \
+                     margin, so the card was not holding its thermal limit"
+                ),
+                None => {
+                    format!("GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C)")
+                }
+            },
             Self::ClockCollapse { below_pct, ticks } => format!(
                 "clock under {:.0}% of stage max for {ticks}s",
                 below_pct * 100.0
@@ -415,9 +430,13 @@ pub struct StageStats {
     /// sensor rule could not be graded.
     pub access: AccessStatus,
     pub max_gpu_temp_c: Option<f32>,
-    /// Ticks that carried at least one GPU telemetry sample. Zero means every
+    /// Graded GPU reading furthest over its own limit this stage.
+    gpu_peak: Option<GpuReading>,
+    /// Ticks that carried at least one gradable GPU temperature. Zero means every
     /// GPU rule below was unevaluable.
     pub gpu_temp_samples: u32,
+    /// Ticks whose GPU temperatures were all WDDM readings without a driver throttle temperature.
+    ungraded_gpu_temp_ticks: u32,
     /// Lowest +12V sample this stage; `None` when no SuperIO rail was readable.
     pub min_v12_v: Option<f32>,
     pub max_avg_clock_mhz: Option<u32>,
@@ -486,7 +505,9 @@ impl StageStats {
             cpu_ceiling_c: snapshot.cpu_ceiling.map(|c| c.limit_c),
             access: snapshot.access.clone(),
             max_gpu_temp_c: None,
+            gpu_peak: None,
             gpu_temp_samples: 0,
+            ungraded_gpu_temp_ticks: 0,
             min_v12_v: None,
             max_avg_clock_mhz: None,
             cpu_temp_over_run: 0,
@@ -621,12 +642,31 @@ impl StageStats {
             .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |m| m.max(t))));
         if let Some(t) = tick_max_gpu_temp {
             self.max_gpu_temp_c = Some(self.max_gpu_temp_c.map_or(t, |m| m.max(t)));
-            self.gpu_temp_samples = self.gpu_temp_samples.saturating_add(1);
         }
         if let Some(rule) = &rules.max_gpu_temp_c {
+            let worst = snapshot
+                .gpus
+                .iter()
+                .filter_map(|g| GpuReading::graded(rule, g))
+                .max_by(|a, b| a.excess_c().total_cmp(&b.excess_c()));
+            match worst {
+                Some(reading) => {
+                    self.gpu_temp_samples = self.gpu_temp_samples.saturating_add(1);
+                    if self
+                        .gpu_peak
+                        .is_none_or(|p| reading.excess_c() > p.excess_c())
+                    {
+                        self.gpu_peak = Some(reading);
+                    }
+                }
+                None if tick_max_gpu_temp.is_some() => {
+                    self.ungraded_gpu_temp_ticks = self.ungraded_gpu_temp_ticks.saturating_add(1);
+                }
+                None => {}
+            }
             track_over_run(
-                tick_max_gpu_temp,
-                rule.limit_c,
+                worst.map(|r| r.temp_c),
+                worst.map_or(rule.limit_c, |r| r.limit_c),
                 &mut self.gpu_temp_over_run,
                 &mut self.worst_gpu_temp_over,
             );
@@ -811,6 +851,36 @@ fn no_ceiling_line(flat_limit_c: f32) -> String {
          this part's own ceiling is not one CPUID can establish; the configured \
          {flat_limit_c:.0}C would fail every part whose ceiling sits above it"
     )
+}
+
+/// One GPU temperature and the limit it is graded against.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct GpuReading {
+    temp_c: f32,
+    limit_c: f32,
+    /// The driver's throttle temperature when `limit_c` was derived from it.
+    ceiling_c: Option<f32>,
+}
+
+impl GpuReading {
+    /// `None` without a temperature, or for a WDDM reading with no throttle temperature under a
+    /// part-ceiling rule.
+    fn graded(rule: &TempRule, gpu: &GpuSample) -> Option<Self> {
+        let temp_c = gpu.temp_c?;
+        let ceiling_c = match (gpu.source, rule.basis) {
+            (GpuSource::Wddm, TempLimitBasis::PartCeiling) => Some(gpu.throttle_temp_c?),
+            _ => None,
+        };
+        Some(Self {
+            temp_c,
+            limit_c: rule.effective_limit_c(ceiling_c),
+            ceiling_c,
+        })
+    }
+
+    fn excess_c(&self) -> f32 {
+        self.temp_c - self.limit_c
+    }
 }
 
 /// Consecutive-breach run tracking for one temp reading against a limit.
@@ -1049,13 +1119,19 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
                 policy: rule.on_missing,
                 // GPU telemetry is NVML, not the kernel-mode backend, so the
                 // backend's state says nothing about this gap.
-                detail: None,
+                detail: (stats.ungraded_gpu_temp_ticks > 0).then(|| {
+                    "the GPU temperature came through WDDM with no driver throttle temperature \
+                     to grade it against"
+                        .to_string()
+                }),
             });
         } else if stats.worst_gpu_temp_over >= rule.consecutive_ticks {
+            let peak = stats.gpu_peak;
             violations.push(RuleViolation::GpuTemp {
-                limit_c: rule.limit_c,
-                peak_c: stats.max_gpu_temp_c.unwrap_or(rule.limit_c),
+                limit_c: peak.map_or(rule.limit_c, |p| p.limit_c),
+                peak_c: peak.map_or(rule.limit_c, |p| p.temp_c),
                 sustained_ticks: stats.worst_gpu_temp_over,
+                ceiling_c: peak.and_then(|p| p.ceiling_c),
             });
         }
     }
@@ -2078,9 +2154,7 @@ mod tests {
             .any(|v| matches!(v, RuleViolation::Inconclusive { .. })));
     }
 
-    /// NVML reads no AMD or Intel discrete card, so the cert's GPU temp rule is
-    /// unevaluable on entire vendors. It is recorded and warned about, never
-    /// gated on.
+    /// A stage with no gradable GPU temperature is recorded and warned about, never gated on.
     #[test]
     fn gpu_stage_without_gpu_telemetry_warns_and_still_passes() {
         let cert = VerdictRules::certification();
@@ -2121,6 +2195,139 @@ mod tests {
         let verdict = evaluate_stage(&stats, &cert);
         assert!(verdict.pass, "violations: {:?}", verdict.violations);
         assert_eq!(stats.gpu_temp_samples, 30);
+    }
+
+    #[test]
+    fn a_wddm_temperature_without_a_throttle_temperature_is_recorded_but_not_graded() {
+        let cert = VerdictRules::certification();
+        let mut snap = snapshot_with_gpu(70.0, 4000, 95.0, 97.0);
+        snap.gpus[0].source = GpuSource::Wddm;
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snap, &cert);
+        }
+        stats.finish(&snap);
+
+        let verdict = evaluate_stage(&stats, &cert);
+        assert!(verdict.violations.is_empty(), "{:?}", verdict.violations);
+        assert_eq!(verdict.result_token(), "pass");
+        assert_eq!(stats.max_gpu_temp_c, Some(97.0));
+        let gap = verdict
+            .unevaluated
+            .iter()
+            .find(|u| u.sensor == MissingSensor::GpuTelemetry)
+            .expect("the WDDM-only stage leaves the GPU rule ungraded");
+        assert!(
+            gap.describe().contains("no driver throttle temperature"),
+            "{}",
+            gap.describe()
+        );
+    }
+
+    fn wddm_stage(gpu_temp_c: f32, throttle_temp_c: f32, cert: &VerdictRules) -> StageStats {
+        let mut snap = snapshot_with_gpu(70.0, 4000, 95.0, gpu_temp_c);
+        snap.gpus[0].source = GpuSource::Wddm;
+        snap.gpus[0].throttle_temp_c = Some(throttle_temp_c);
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snap, cert);
+        }
+        stats.finish(&snap);
+        stats
+    }
+
+    #[test]
+    fn a_wddm_card_holding_its_throttle_temperature_passes() {
+        let cert = VerdictRules::certification();
+        let stats = wddm_stage(101.0, 100.0, &cert);
+        let verdict = evaluate_stage(&stats, &cert);
+        assert!(verdict.violations.is_empty(), "{:?}", verdict.violations);
+        assert!(
+            !verdict
+                .unevaluated
+                .iter()
+                .any(|u| u.sensor == MissingSensor::GpuTelemetry),
+            "{:?}",
+            verdict.unevaluated
+        );
+        assert_eq!(stats.gpu_temp_samples, 30);
+    }
+
+    #[test]
+    fn a_wddm_card_overshooting_its_throttle_temperature_fails() {
+        let cert = VerdictRules::certification();
+        let stats = wddm_stage(105.0, 100.0, &cert);
+        let verdict = evaluate_stage(&stats, &cert);
+        let breach = verdict
+            .violations
+            .iter()
+            .find(|v| matches!(v, RuleViolation::GpuTemp { .. }))
+            .expect("a GPU temperature breach");
+        let RuleViolation::GpuTemp {
+            limit_c,
+            peak_c,
+            ceiling_c,
+            ..
+        } = breach
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            (*limit_c, *peak_c, *ceiling_c),
+            (100.0 + OVER_CEILING_MARGIN_C, 105.0, Some(100.0))
+        );
+        assert!(
+            breach.describe().contains("throttle temperature"),
+            "{}",
+            breach.describe()
+        );
+    }
+
+    #[test]
+    fn an_absolute_rule_grades_a_wddm_reading_flat() {
+        let mut cert = VerdictRules::certification();
+        if let Some(rule) = cert.max_gpu_temp_c.as_mut() {
+            rule.basis = TempLimitBasis::Absolute;
+        }
+        let stats = wddm_stage(95.0, 100.0, &cert);
+        let verdict = evaluate_stage(&stats, &cert);
+        assert!(
+            verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::GpuTemp { limit_c, ceiling_c: None, .. } if *limit_c == 90.0)),
+            "{:?}",
+            verdict.violations
+        );
+    }
+
+    #[test]
+    fn an_nvml_reading_is_graded_beside_a_wddm_one() {
+        let cert = VerdictRules::certification();
+        let mut snap = snapshot_with_gpu(70.0, 4000, 95.0, 96.0);
+        snap.gpus[0].source = GpuSource::Nvml;
+        snap.gpus.push(stress_kit::telemetry::GpuSample {
+            name: "integrated".into(),
+            temp_c: Some(99.0),
+            source: GpuSource::Wddm,
+            ..Default::default()
+        });
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+        for _ in 0..30 {
+            stats.absorb_tick(&metrics(100.0, 0), &snap, &cert);
+        }
+        stats.finish(&snap);
+
+        let verdict = evaluate_stage(&stats, &cert);
+        assert!(
+            verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::GpuTemp { peak_c, .. } if *peak_c == 96.0)),
+            "{:?}",
+            verdict.violations
+        );
+        assert_eq!(stats.max_gpu_temp_c, Some(99.0));
     }
 
     #[test]
