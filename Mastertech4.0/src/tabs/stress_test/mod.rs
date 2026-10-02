@@ -180,7 +180,11 @@ impl StressRunner {
                 self.live.elapsed_secs = verdict.duration_secs;
                 self.live.verdict = Some(VerdictView {
                     result: verdict.result,
-                    failure_kind: Some(verdict.failure_mode.kind().to_string()),
+                    failure_kind: Some(if verdict.is_skipped() {
+                        "skipped".to_string()
+                    } else {
+                        verdict.failure_mode.kind().to_string()
+                    }),
                     duration_secs: verdict.duration_secs,
                     max_temp_c: verdict.summary.max_temp_c,
                     whea_delta: verdict.summary.whea_delta_count,

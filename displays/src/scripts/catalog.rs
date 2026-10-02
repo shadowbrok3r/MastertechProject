@@ -305,7 +305,7 @@ mod catalog_tests {
                 toml::from_str(raw).unwrap_or_else(|e| panic!("{name}.toml does not parse: {e}"));
             assert!(!file.script.is_empty(), "{name}.toml is empty");
         }
-        assert_eq!(CATALOG.len(), 101, "every catalog entry must survive load");
+        assert_eq!(CATALOG.len(), 103, "every catalog entry must survive load");
     }
 
     #[test]
@@ -701,7 +701,13 @@ mod catalog_tests {
     const RECOVERED: &[&str] = &["Activate Webroot", "Activate SuperAnti", "ESET Security"];
 
     /// New entries no earlier catalog had.
-    const ADDED: &[&str] = &["Network Status", "OneDrive Health", "ACL Deny Scan"];
+    const ADDED: &[&str] = &[
+        "Network Status",
+        "OneDrive Health",
+        "ACL Deny Scan",
+        "Stress: AVX2",
+        "Stress: CPU+Memory",
+    ];
 
     /// Three catalogs disagreed; this keeps them from drifting apart again. A name
     /// here that stops resolving means a surface can ask for a script nothing can name.

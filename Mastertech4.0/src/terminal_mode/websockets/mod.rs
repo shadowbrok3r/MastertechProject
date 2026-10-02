@@ -420,8 +420,9 @@ fn run_remote_stress_plan(
                     }
                 }
                 RunUpdate::Finished(v) => {
-                    success = v.result == RunResult::Pass;
+                    success = v.result == RunResult::Pass || v.is_skipped();
                     let result_str = match v.result {
+                        _ if v.is_skipped() => "SKIPPED",
                         RunResult::Pass => "PASSED",
                         RunResult::Fail => "FAILED",
                         RunResult::Aborted => "ABORTED",
@@ -3838,8 +3839,9 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                         }
                                     }
                                     RunUpdate::Finished(v) => {
-                                        success = v.result == RunResult::Pass;
+                                        success = v.result == RunResult::Pass || v.is_skipped();
                                         let result_str = match v.result {
+                                            _ if v.is_skipped() => "SKIPPED",
                                             RunResult::Pass => "PASSED",
                                             RunResult::Fail => "FAILED",
                                             RunResult::Aborted => "ABORTED",

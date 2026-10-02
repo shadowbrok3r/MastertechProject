@@ -528,6 +528,20 @@ pub mod affinity {
 
     #[cfg(not(target_os = "windows"))]
     pub fn restore(_prev: Option<usize>) {}
+
+    /// Logical processor running the calling thread, numbered across 64-wide groups.
+    #[cfg(target_os = "windows")]
+    pub fn current() -> Option<usize> {
+        use winapi::um::{processthreadsapi, winnt::PROCESSOR_NUMBER};
+        let mut number = PROCESSOR_NUMBER { Group: 0, Number: 0, Reserved: 0 };
+        unsafe { processthreadsapi::GetCurrentProcessorNumberEx(&mut number) };
+        Some(usize::from(number.Group) * 64 + usize::from(number.Number))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn current() -> Option<usize> {
+        None
+    }
 }
 
 #[cfg(test)]

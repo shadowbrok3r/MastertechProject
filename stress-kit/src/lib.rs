@@ -185,6 +185,12 @@ pub enum Stressor {
     /// Appended last so existing bincode variant indices stay stable.
     #[facet(rename = "gpu_display")]
     GpuDisplay,
+    /// Verified AVX2/FMA3 multiplies in cache; reports GFLOPS; mismatches counted in `errors`.
+    #[facet(rename = "avx2")]
+    Avx2,
+    /// OCCT-style verified CPU + RAM stream; reports MiB/s; mismatches counted in `errors`.
+    #[facet(rename = "cpu_mem")]
+    CpuMem,
 }
 
 impl Stressor {
@@ -220,6 +226,8 @@ impl Stressor {
             Self::Combined => "Combined (CPU+RAM+GPU)",
             Self::PsuTransient => "PSU Transient",
             Self::GpuDisplay => "GPU Display Path",
+            Self::Avx2 => "AVX2 Verify",
+            Self::CpuMem => "CPU + Memory",
         }
     }
 
@@ -255,6 +263,8 @@ impl Stressor {
             Self::Combined => "GFLOPS",
             Self::PsuTransient => "GFLOPS",
             Self::GpuDisplay => "FPS",
+            Self::Avx2 => "GFLOPS",
+            Self::CpuMem => "MiB/s",
         }
     }
 
@@ -293,7 +303,19 @@ impl Stressor {
                 | Self::GpuVram
                 | Self::GpuPcie
                 | Self::GpuDisplay
+                | Self::Avx2
+                | Self::CpuMem
         )
+    }
+
+    /// Why this stressor cannot run on this machine, or `None` when it can.
+    pub fn unsupported_reason(self) -> Option<&'static str> {
+        match self {
+            Self::Avx2 if !stressors::modmul::avx2_available() => {
+                Some("this CPU has no AVX2/FMA3")
+            }
+            _ => None,
+        }
     }
 
     pub fn all() -> &'static [Stressor] {
@@ -328,6 +350,8 @@ impl Stressor {
             Self::Combined,
             Self::PsuTransient,
             Self::GpuDisplay,
+            Self::Avx2,
+            Self::CpuMem,
         ]
     }
 
@@ -818,6 +842,50 @@ mod tests {
         let m = run_briefly(Stressor::CpuVerify, 16, 2);
         assert_eq!(m.errors, 0, "cpu_verify mismatch: {:?}", m.last_error);
         assert!(m.throughput > 0.0);
+    }
+
+    #[test]
+    fn verified_cpu_paths_are_wired_into_the_vocabulary() {
+        assert_eq!(Stressor::Avx2.as_str(), "avx2");
+        assert_eq!(Stressor::CpuMem.as_str(), "cpu_mem");
+        assert_eq!(Stressor::from_str("cpu_mem"), Some(Stressor::CpuMem));
+        assert_eq!(Stressor::Avx2.throughput_unit(), "GFLOPS");
+        assert_eq!(Stressor::CpuMem.throughput_unit(), "MiB/s");
+        for s in [Stressor::Avx2, Stressor::CpuMem] {
+            assert!(s.detects_errors(), "{s:?} must count as verifying");
+            assert!(!s.tests_memory(), "{s:?} mixes compute and memory errors");
+            assert!(!s.has_gpu_leg());
+        }
+    }
+
+    #[test]
+    fn only_avx2_depends_on_cpu_features() {
+        let avx2 = stressors::modmul::avx2_available();
+        assert_eq!(Stressor::Avx2.unsupported_reason().is_none(), avx2);
+        for &s in Stressor::all().iter().filter(|s| **s != Stressor::Avx2) {
+            assert_eq!(s.unsupported_reason(), None, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn avx2_clean_on_healthy_cpu() {
+        let m = run_briefly(Stressor::Avx2, 16, 3);
+        if stressors::modmul::avx2_available() {
+            assert_eq!(m.errors, 0, "avx2 reported errors: {:?}", m.last_error);
+            assert!(m.throughput > 0.0, "avx2 produced no throughput");
+            assert!(!m.fatal);
+        } else {
+            assert!(m.fatal, "a CPU without AVX2 must not report a clean AVX2 run");
+            assert!(m.last_error.unwrap_or_default().contains("inconclusive -"));
+        }
+    }
+
+    #[test]
+    fn cpu_mem_clean_on_healthy_system() {
+        let m = run_briefly(Stressor::CpuMem, 32, 3);
+        assert_eq!(m.errors, 0, "cpu_mem reported errors: {:?}", m.last_error);
+        assert!(m.throughput > 0.0, "cpu_mem produced no throughput");
+        assert!(m.last_error.is_none(), "a clean run must not carry a message: {:?}", m.last_error);
     }
 
     #[test]

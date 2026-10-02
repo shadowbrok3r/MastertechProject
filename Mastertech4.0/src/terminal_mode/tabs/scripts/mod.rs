@@ -384,6 +384,7 @@ impl<'a> ScriptsTab<'a> {
                 }
                 RunUpdate::Finished(verdict) => {
                     let result_str = match verdict.result {
+                        _ if verdict.is_skipped() => "SKIPPED",
                         stress_runner::RunResult::Pass => "PASS",
                         stress_runner::RunResult::Fail => "FAIL",
                         stress_runner::RunResult::Aborted => "ABORTED",

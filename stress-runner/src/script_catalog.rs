@@ -29,6 +29,8 @@ pub const STRESS_SCRIPT_NAMES: &[&str] = &[
     "Memory Test",
     "Stress: CPU Verify",
     "Stress: Linpack",
+    "Stress: AVX2",
+    "Stress: CPU+Memory",
     "Stress: PSU",
     "Stress: PSU Transient",
     "Stress: CPU",
@@ -136,6 +138,14 @@ pub fn build_stress_script_spec(
             duration_secs,
             "linpack",
             1024,
+        )),
+        "Stress: AVX2" => Some(single(computer, Stressor::Avx2, duration_secs, "avx2")),
+        "Stress: CPU+Memory" => Some(single_with_mem(
+            computer,
+            Stressor::CpuMem,
+            duration_secs,
+            "cpu_mem",
+            4096,
         )),
         "Stress: PSU" => Some(single(computer, Stressor::Psu, duration_secs, "psu")),
         "Stress: PSU Transient" => Some(single(

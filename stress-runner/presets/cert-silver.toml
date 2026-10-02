@@ -1,10 +1,10 @@
-# Silver certification — OCCT Silver System parity (~3.5 h).
-# Adds matrix load shaping and the combined CPU+GPU power stage.
+# Silver certification — OCCT Silver System parity (~4.25 h).
+# Adds matrix load shaping, AVX2 and CPU+RAM verify, and the combined CPU+GPU power stage.
 
 [preset]
 name = "silver"
-label = "cert:silver-v1"
-description = "Silver certification (~3.5h): CPU FMA + matrix, CPU verify, 80% RAM pattern-verify, GPU compute + matmul, PSU combined load"
+label = "cert:silver-v2"
+description = "Silver certification (~4.25h): CPU FMA + matrix, CPU verify, AVX2 verify, 80% RAM pattern-verify, 50% CPU+RAM verify, GPU compute + matmul, PSU combined load"
 target_kind = "system"
 tags = ["preset:cert", "cert:silver"]
 
@@ -35,10 +35,21 @@ stressor = "cpu_verify"
 duration_secs = 1800
 
 [[stage]]
+label = "avx2"
+stressor = "avx2"
+duration_secs = 900
+
+[[stage]]
 label = "memtest_80pct"
 stressor = "mem_test"
 duration_secs = 1800
 memory_pct = 80
+
+[[stage]]
+label = "cpu_mem_50pct"
+stressor = "cpu_mem"
+duration_secs = 1800
+memory_pct = 50
 
 [[stage]]
 label = "gpu_compute"

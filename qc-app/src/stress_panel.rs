@@ -324,7 +324,11 @@ impl StressPanel {
             .collect();
         let verdict = self.last_verdict.as_ref().map(|v| VerdictView {
             result: v.result,
-            failure_kind: Some(v.failure_mode.kind().to_string()),
+            failure_kind: Some(if v.is_skipped() {
+                "skipped".to_string()
+            } else {
+                v.failure_mode.kind().to_string()
+            }),
             duration_secs: v.duration_secs,
             max_temp_c: v.summary.max_temp_c,
             whea_delta: v.summary.whea_delta_count,

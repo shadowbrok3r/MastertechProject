@@ -41,7 +41,9 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
         | Stressor::Icache
         | Stressor::Tsc
         | Stressor::CpuVerify
-        | Stressor::Linpack => TargetKind::Cpu,
+        | Stressor::Linpack
+        | Stressor::Avx2 => TargetKind::Cpu,
+        Stressor::CpuMem => TargetKind::Mixed,
         Stressor::Memory
         | Stressor::Memcpy
         | Stressor::Vm

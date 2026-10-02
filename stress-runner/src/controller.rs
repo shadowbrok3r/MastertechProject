@@ -137,6 +137,69 @@ impl RunPlan {
             }
         }
     }
+
+    /// Removes stages whose stressor cannot run on this machine and returns them.
+    pub(crate) fn drop_unsupported(&mut self) -> Vec<SkippedStage> {
+        self.drop_where(Stressor::unsupported_reason)
+    }
+
+    /// Removes stages `reason` rejects; a `Single` plan keeps its stage and reports it.
+    fn drop_where(&mut self, reason: impl Fn(Stressor) -> Option<&'static str>) -> Vec<SkippedStage> {
+        match self {
+            Self::Single { stressor, .. } => reason(*stressor)
+                .map(|why| SkippedStage {
+                    label: stressor.label().to_string(),
+                    stressor: *stressor,
+                    reason: why,
+                })
+                .into_iter()
+                .collect(),
+            Self::Scenario { stages, .. } | Self::Concurrent { lanes: stages, .. } => {
+                let mut skipped = Vec::new();
+                stages.retain(|s| match reason(s.stressor) {
+                    Some(why) => {
+                        skipped.push(SkippedStage {
+                            label: s.label.clone(),
+                            stressor: s.stressor,
+                            reason: why,
+                        });
+                        false
+                    }
+                    None => true,
+                });
+                skipped
+            }
+        }
+    }
+
+    /// `true` when `skipped` left no stage to run.
+    pub(crate) fn nothing_left(&self, skipped: &[SkippedStage]) -> bool {
+        !skipped.is_empty()
+            && match self {
+                Self::Single { .. } => true,
+                Self::Scenario { stages, .. } | Self::Concurrent { lanes: stages, .. } => {
+                    stages.is_empty()
+                }
+            }
+    }
+}
+
+/// A stage left out because its stressor cannot run on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SkippedStage {
+    pub label: String,
+    pub stressor: Stressor,
+    pub reason: &'static str,
+}
+
+impl SkippedStage {
+    pub(crate) fn describe(&self) -> String {
+        if self.label == self.stressor.label() {
+            format!("skipped {}: {}", self.label, self.reason)
+        } else {
+            format!("skipped stage '{}' ({}): {}", self.label, self.stressor.label(), self.reason)
+        }
+    }
 }
 
 /// Declarative description of one stress run.  Identifying fields
@@ -276,6 +339,8 @@ pub struct RunVerdict {
     pub summary: RunSummary,
     pub duration_secs: f64,
     pub stage_outcomes: Vec<StageOutcome>,
+    /// One line per stage left out because this machine cannot run its stressor.
+    pub skipped: Vec<String>,
 }
 
 impl RunVerdict {
@@ -283,6 +348,11 @@ impl RunVerdict {
     /// by its stage. Empty on a fully-monitored run.
     pub fn ungraded_rule_lines(&self) -> Vec<String> {
         ungraded_lines(&self.stage_outcomes, false)
+    }
+
+    /// `true` when every stage was skipped, so nothing ran.
+    pub fn is_skipped(&self) -> bool {
+        !self.skipped.is_empty() && self.stage_outcomes.is_empty()
     }
 }
 
@@ -490,6 +560,17 @@ fn worker(
 
     close_orphaned_runs(&spec.computer, &update_tx);
 
+    // Drops stages whose stressor cannot run on this machine.
+    let skipped = spec.plan.drop_unsupported();
+    let nothing_left = spec.plan.nothing_left(&skipped);
+    for stage in &skipped {
+        let tag = format!("skipped:{}", stage.stressor.as_str());
+        if !spec.tags.contains(&tag) {
+            spec.tags.push(tag);
+        }
+        send(&update_tx, RunUpdate::Warning { message: stage.describe() });
+    }
+
     // ---- 1. Build + persist the StressTestRun row ----
     // `StressTestRun::create` already does a read-back via `Self::exists`,
     // so an Ok here proves the row landed in SurrealDB.
@@ -519,6 +600,15 @@ fn worker(
             running.store(false, Ordering::SeqCst);
             return;
         }
+    }
+
+    for stage in &skipped {
+        persist_skip_event(&run_id_clone, stage);
+    }
+    if nothing_left {
+        finish_skipped_run(&run_id_clone, &skipped, started_at, &update_tx);
+        running.store(false, Ordering::SeqCst);
+        return;
     }
 
     // ---- 2. Track state for the final summary ----
@@ -675,7 +765,7 @@ fn worker(
     }
     let stages: Vec<ScenarioStageSummary> =
         outcomes.iter().map(|o| o.summary.clone()).collect();
-    let verdict = acc.into_verdict(
+    let mut verdict = acc.into_verdict(
         &run_id_clone,
         &cancel,
         duration_secs,
@@ -684,6 +774,7 @@ fn worker(
         &spec.plan,
         outcomes,
     );
+    verdict.skipped = skipped.iter().map(SkippedStage::describe).collect();
 
     // Same `'static` requirement as the create call — clone everything into
     // an owned async block.
@@ -737,6 +828,68 @@ fn build_run(spec: &RunSpec) -> StressTestRun {
 
     run.duration_planned_secs = spec.plan.expected_duration_secs();
     run
+}
+
+/// Persists a `custom`/`stage_skipped` event for a stage left out of the plan.
+fn persist_skip_event(run_id: &RecordId, stage: &SkippedStage) {
+    let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Custom, "stress-runner");
+    event.code = Some("stage_skipped".to_string());
+    event.detail = stage.describe();
+    event.data = Some(serde_json::json!({
+        "stage": stage.label,
+        "stressor": stage.stressor.as_str(),
+        "reason": stage.reason,
+    }));
+    spawn_event_create(event, "stage-skipped");
+}
+
+/// Finalizes a run whose every stage was skipped as inconclusive: nothing was tested.
+fn finish_skipped_run(
+    run_id: &RecordId,
+    skipped: &[SkippedStage],
+    started_at: Instant,
+    update_tx: &Sender<RunUpdate>,
+) {
+    let reasons: Vec<String> = skipped.iter().map(SkippedStage::describe).collect();
+    let failure_mode = FailureMode::AppError {
+        exit_code: None,
+        message: format!("{}; nothing was run", reasons.join("; ")),
+    };
+    let finalize_id = run_id.clone();
+    let finalize_failure = failure_mode.clone();
+    let res = runtime::block_on(async move {
+        StressTestRun::finalize(
+            &finalize_id,
+            RunResult::Inconclusive,
+            DbFinishReason::Completed,
+            finalize_failure,
+            RunSummary::default(),
+            Vec::new(),
+            None,
+        )
+        .await
+    });
+    if let Err(err) = res {
+        send(
+            update_tx,
+            RunUpdate::Warning {
+                message: format!("finalize failed (run still recorded as in_progress): {err}"),
+            },
+        );
+    }
+    send(
+        update_tx,
+        RunUpdate::Finished(RunVerdict {
+            run_id: run_id.clone(),
+            result: RunResult::Inconclusive,
+            finish_reason: DbFinishReason::Completed,
+            failure_mode,
+            summary: RunSummary::default(),
+            duration_secs: started_at.elapsed().as_secs_f64(),
+            stage_outcomes: Vec::new(),
+            skipped: reasons,
+        }),
+    );
 }
 
 /// Closes this computer's `in_progress` runs that went silent before this boot or outlived their window.
@@ -2371,6 +2524,7 @@ impl SummaryAccumulator {
             summary,
             duration_secs,
             stage_outcomes,
+            skipped: Vec::new(),
         }
     }
 }
@@ -4098,6 +4252,88 @@ mod tests {
         );
         assert_eq!(verdict.finish_reason, DbFinishReason::Completed);
         assert_eq!(verdict.failure_mode, FailureMode::None);
+    }
+
+    fn avx2_missing(s: Stressor) -> Option<&'static str> {
+        (s == Stressor::Avx2).then_some("no AVX2 here")
+    }
+
+    #[test]
+    fn unsupported_stages_leave_the_plan_and_its_duration() {
+        let mut plan = RunPlan::Scenario {
+            stages: vec![
+                stage_spec("cpu_verify", Stressor::CpuVerify),
+                stage_spec("avx2", Stressor::Avx2),
+                stage_spec("memtest", Stressor::MemTest),
+            ],
+            total_wall_secs: None,
+            repeat_until_total: false,
+        };
+        let skipped = plan.drop_where(avx2_missing);
+        assert_eq!(plan.stressors(), vec![Stressor::CpuVerify, Stressor::MemTest]);
+        assert_eq!(plan.expected_duration_secs(), Some(120));
+        assert!(!plan.nothing_left(&skipped));
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].describe(), "skipped stage 'avx2' (AVX2 Verify): no AVX2 here");
+    }
+
+    #[test]
+    fn a_plan_of_only_unsupported_stages_has_nothing_left() {
+        let mut single = RunPlan::Single {
+            stressor: Stressor::Avx2,
+            threads: 0,
+            duration_secs: Some(60),
+            memory_cap_mb: 256,
+            disk_file_mb: 16,
+        };
+        let skipped = single.drop_where(avx2_missing);
+        assert!(single.nothing_left(&skipped));
+        assert_eq!(skipped[0].describe(), "skipped AVX2 Verify: no AVX2 here");
+
+        let mut lanes = concurrent_plan(&[Stressor::Avx2]);
+        let skipped = lanes.drop_where(avx2_missing);
+        assert!(lanes.nothing_left(&skipped));
+        assert!(lanes.stressors().is_empty());
+    }
+
+    #[test]
+    fn a_supported_plan_is_left_alone() {
+        let mut plan = concurrent_plan(&[Stressor::Avx2, Stressor::CpuMem]);
+        let skipped = plan.drop_where(|_| None);
+        assert!(skipped.is_empty());
+        assert!(!plan.nothing_left(&skipped));
+        assert_eq!(plan.stressors(), vec![Stressor::Avx2, Stressor::CpuMem]);
+        let mut empty = RunPlan::Scenario {
+            stages: Vec::new(),
+            total_wall_secs: None,
+            repeat_until_total: false,
+        };
+        let none_skipped = empty.drop_where(avx2_missing);
+        assert!(!empty.nothing_left(&none_skipped), "an empty plan skipped nothing");
+    }
+
+    #[test]
+    fn avx2_or_cpu_mem_lane_certifies_a_concurrent_run() {
+        for verifying in [Stressor::Avx2, Stressor::CpuMem] {
+            let lanes = [Stressor::Cpu, verifying];
+            let outcomes = vec![
+                lane_outcome(Stressor::Cpu, Some(240.0)),
+                lane_outcome(verifying, Some(150.0)),
+            ];
+            let verdict = verdict_planned(
+                SummaryAccumulator::default(),
+                outcomes,
+                600.0,
+                Some(600),
+                &concurrent_plan(&lanes),
+            );
+            assert_eq!(
+                verdict.result,
+                RunResult::Pass,
+                "{verifying:?}: {:?}",
+                verdict.failure_mode
+            );
+        }
     }
 
     /// Verify-under-load: one verifying lane among load lanes is the

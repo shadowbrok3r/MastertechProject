@@ -1,8 +1,10 @@
 pub mod atomic;
+pub mod avx2;
 pub mod bitops;
 pub mod branch;
 pub mod cache;
 pub mod cpu;
+pub mod cpu_mem;
 pub mod cpu_verify;
 pub mod disk;
 pub mod fp;
@@ -13,6 +15,7 @@ pub mod matrix;
 pub mod memcpy;
 pub mod memory;
 pub mod memtest;
+pub(crate) mod modmul;
 pub mod mutex;
 pub mod prefetch;
 pub mod prime;
@@ -111,6 +114,10 @@ pub(crate) fn run_core(
         Stressor::CpuVerify => cpu_verify::run(thread_count, cancel, tx, started_at),
         Stressor::Linpack => {
             linpack::run(thread_count, config.memory_cap_mb, cancel, tx, started_at)
+        }
+        Stressor::Avx2 => avx2::run(thread_count, cancel, tx, started_at),
+        Stressor::CpuMem => {
+            cpu_mem::run(thread_count, config.memory_cap_mb, cancel, tx, started_at)
         }
 
         #[cfg(feature = "gpu")]

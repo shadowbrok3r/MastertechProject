@@ -603,7 +603,8 @@ impl<'a> StressTab<'a> {
                     | StressorChoice::Memcpy
                     | StressorChoice::Vm
                     | StressorChoice::MemTest
-                    | StressorChoice::Linpack => v.push(Focus::Memory),
+                    | StressorChoice::Linpack
+                    | StressorChoice::CpuMem => v.push(Focus::Memory),
                     StressorChoice::Disk => v.push(Focus::Disk),
                     _ => {}
                 }
@@ -1031,7 +1032,8 @@ impl<'a> StressTab<'a> {
             | StressorChoice::Memcpy
             | StressorChoice::Vm
             | StressorChoice::MemTest
-            | StressorChoice::Linpack => self.draw_field_row(f, inner, &mut y, "Memory cap",
+            | StressorChoice::Linpack
+            | StressorChoice::CpuMem => self.draw_field_row(f, inner, &mut y, "Memory cap",
                 &format!("{} MiB", s.memory_cap_mb), self.focus_style(Focus::Memory),
                 None, Some("single:mem")),
             StressorChoice::Disk => self.draw_field_row(f, inner, &mut y, "File size",
