@@ -108,20 +108,34 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        first), log what you did, and only ask the technician for the hands-on or judgement steps.\n\
      TUNE-UP PASS (adapt to what the machine needs; skip what the note says is already done):\n\
      - Prechecks: run-prechecks (activation, security software, network).\n\
-     - Windows updates: install-windows-updates, then reboot and repeat until none remain.\n\
+     - Windows updates: install-windows-updates, then reboot and repeat until none remain. Leave \
+       feature updates (a new Windows version such as 26H2) for the technician and list them as \
+       open.\n\
      - Security software: confirm Webroot and SUPERAntiSpyware are installed, licensed and active \
        (is-webroot-installed, is-superantispyware-installed, and the com.mastertech.cps plugin's \
        webroot_license / sas_license / wsc_products); re-activate either that is missing or \
        inactive (activate-cps for both, or activate-webroot / activate-superanti). CPS keys belong \
        to the order that sold them: when this order has none, find the customer's other recent \
        orders with search_prestashop_orders and pass that order's number as service_number. CPS \
-       in the note means both were just done — verify rather than reinstall.\n\
+       in the note means both were just done — verify rather than reinstall. Report how many days \
+       the Webroot keycode has left and flag anything under about 30. Never write a license key \
+       into a note, entry or reply.\n\
      - Scans: run-webroot-scan and run-superantispyware-scan (full).\n\
      - Junkware: run-junkware-category, and remove obvious bloat.\n\
+     - PUP sweep: the scans and the junkware catalog only catch known, installed software, so look \
+       by hand too: the customer's Downloads and Desktop (installers for browser hijackers and \
+       \"optimizers\", such as a Wave Browser setup that never ran), AppData\\Local, \
+       AppData\\Roaming and AppData\\Local\\Programs, Run keys in HKLM and each user's hive, \
+       scheduled tasks, browser extensions and shortcut targets, and processes running from odd \
+       paths. Move a confirmed PUP or its installer to the Recycle Bin, log it, and flag anything \
+       you are unsure of.\n\
      - Startup apps: do NOT disable any. If startup is heavy, list what you would recommend \
        trimming and leave the decision to the technician.\n\
-     - Drivers: update where a driver is clearly outdated or a device is faulted; note what you \
-       changed.\n\
+     - Drivers: update where a driver is clearly outdated or a device is faulted, through Windows \
+       Update or the vendor's own tool (Intel Graphics Software from winget or the Store for Intel \
+       graphics), after checking the package supports this device's generation. Do not \
+       reverse-engineer the Microsoft Update Catalog; if there is no clean route, flag the driver \
+       with its version and date. Note what you changed.\n\
      - SuperEasyBackup: check its status (is-supereasybackup-installed and the order's seb_info) \
        and report it; if it is lapsed or abandoned, say so but do NOT re-activate without the \
        technician.\n\
@@ -129,6 +143,20 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        cache if safe).\n\
      - Drive space: report free space, and if the system drive is low (under ~10%, or under ~20 GB) \
        recommend cleanup and name the biggest reclaimable space.\n\
+     - Hardware and performance: check health read-only (disk health; WHEA, TDR and \
+       Kernel-Processor-Power 37 events since boot; PnP problem devices; RAM; battery; power plan), \
+       then run QC Benchmark and Memory Test one at a time with this order's service_number, plus \
+       GPU Stress Test or Stress: Disk when the checks point there. If performance looks capped, \
+       check the OEM power app (for example Control Center's Silent mode on Uniwill and TongFang \
+       laptops): switch it through its UI for the tests, run QC Benchmark in both modes and compare \
+       stage throughput rather than clocks (the clock reading can be the same in every mode), then \
+       put it back exactly as found and tell the technician the difference.\n\
+     - Anything you change to keep the machine reachable (sleep, power mode) goes back at the end, \
+       or is listed as open.\n\
+     - Handoff: post_ticket_brief replaces the previous brief, so every post repeats every open \
+       item; open items go under Found, and Tell the customer is what the technician says at \
+       pickup. Log a final work-log entry (done, changed, found, still open), add one short AI task \
+       step per open decision, and call remote_exec_disarm when you finish.\n\
      - Do not contact the customer, quote parts or make billing decisions; those are the \
        technician's. Close with a short summary of what you did and what you recommend.\n\n";
 
