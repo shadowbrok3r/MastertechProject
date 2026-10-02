@@ -1,10 +1,10 @@
-use eframe::egui::{Button, CentralPanel, ComboBox, Id, Layout, RichText, ScrollArea, Separator, Spinner, TextEdit, Ui, Widget};
+use eframe::egui::{Button, CentralPanel, ComboBox, Id, Label, Layout, RichText, ScrollArea, Separator, Spinner, TextEdit, Ui, Widget};
 use eframe::egui::{Color32, Grid, Style, scroll_area};
 use database::schema::prestashop::{OrderState, OrderType};
 use crate::ui_tools::icons;
 use crate::ui_tools::store_picker::presta_store_options;
 use crate::{PlatformSpawner, TaskUiActions};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use database::schema::{Store, User};
 use database::get_database_users;
 use crossbeam::channel::Sender;
@@ -62,32 +62,34 @@ impl TaskAuditViewer {
                     Separator::default().horizontal().shrink(ui.available_width()/2.5).ui(ui);
                     ui.add_space(5.0);
     
+                    ui.horizontal(|ui| {
+                        if ui.button("Close ->").clicked() {
+                            self.services_viewer.selected = None;
+                        }
+
+                        ui.add_space(10.);
+                        ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                            if ui.button(RichText::new("Create Task").code().color(ui.global_style().visuals.error_fg_color)).clicked() {
+                                let tx = self.services_viewer.tur_channel.0.clone();
+                                let order_num = order.order.id.clone();
+                                PlatformSpawner::spawn(async move {
+                                    let presta_order = TaskRowViewer::get_prestashop_order(order_num).await.unwrap_or_default();
+                                    let _ = tx.try_send(presta_order);
+                                });
+                            }
+                            ui.add_space(10.);
+                        });
+                    });
+
+                    ui.add_space(5.0);
+                    ui.separator();
+                    ui.add_space(5.0);
+
+                    // Order details capped at half the remaining height.
                     ScrollArea::vertical()
                     .auto_shrink(true)
+                    .max_height(ui.available_height() * 0.5)
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("Close ->").clicked() {
-                                self.services_viewer.selected = None;
-                            }
-
-                            ui.add_space(10.);
-                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                if ui.button(RichText::new("Create Task").code().color(ui.global_style().visuals.error_fg_color)).clicked() {
-                                    let tx = self.services_viewer.tur_channel.0.clone();
-                                    let order_num = order.order.id.clone();
-                                    PlatformSpawner::spawn(async move {
-                                        let presta_order = TaskRowViewer::get_prestashop_order(order_num).await.unwrap_or_default();
-                                        let _ = tx.try_send(presta_order);
-                                    });
-                                }
-                                ui.add_space(10.);
-                            });
-                        });
-    
-                        ui.add_space(5.0);
-                        ui.separator();
-                        ui.add_space(5.0);
-    
                         ui.group(|ui| {
                             Grid::new(order.order.id.clone())
                             .num_columns(2)
@@ -133,24 +135,26 @@ impl TaskAuditViewer {
                                 ui.label(formatted_date);
                                 ui.end_row();
                                     
-                                ui.colored_label(Color32::LIGHT_RED, " Missed Calls");
-                                ui.label("");
-                                ui.end_row();
-    
-                                let id = order.order.id.clone();
-                                let missed_call = self
+                                let missing_days = self
                                     .services_viewer
                                     .missed_calls
                                     .iter()
-                                    .find(|o| *o.id == id);
-    
-                                if let Some(call) = missed_call {
-    
-                                    for missing_day in call.missing_days.iter() {
-                                        ui.label(" -> ");
-                                        ui.colored_label(Color32::RED, missing_day);
-                                        ui.end_row();
-                                    }
+                                    .find(|o| o.id == order.order.id)
+                                    .map(|call| call.missing_days.as_slice())
+                                    .unwrap_or_default();
+
+                                ui.colored_label(Color32::LIGHT_RED, " Missed Calls");
+                                if missing_days.is_empty() {
+                                    ui.label("None");
+                                } else {
+                                    ui.colored_label(Color32::RED, missing_days.len().to_string());
+                                }
+                                ui.end_row();
+
+                                for (month, days) in missed_days_by_month(missing_days) {
+                                    ui.label(format!(" -> {month}"));
+                                    Label::new(RichText::new(days).color(Color32::RED)).wrap().ui(ui);
+                                    ui.end_row();
                                 }
                             });
                         });
@@ -350,6 +354,23 @@ impl TaskAuditViewer {
 }
 
 
+/// Groups "YYYY-MM-DD" dates into (month name, space-separated day numbers) runs.
+fn missed_days_by_month(days: &[String]) -> Vec<(String, String)> {
+    let mut groups: Vec<((i32, u32), String, Vec<String>)> = Vec::new();
+    for date in days.iter().filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()) {
+        let key = (date.year(), date.month());
+        let day = date.format("%d").to_string();
+        match groups.last_mut() {
+            Some((last, _, days)) if *last == key => days.push(day),
+            _ => groups.push((key, date.format("%b").to_string(), vec![day])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(_, month, days)| (month, days.join(" ")))
+        .collect()
+}
+
 fn return_colors(num: usize, _style: &Style) -> Option<Color32> {
     let mut _col = Color32::from_rgb(30, 30, 38);
     if num % 2 == 0 {
@@ -358,4 +379,29 @@ fn return_colors(num: usize, _style: &Style) -> Option<Color32> {
         _col = Color32::from_rgb(30, 30, 38);
     }
     Some(_col)
+}
+#[cfg(test)]
+mod tests {
+    use super::missed_days_by_month;
+
+    #[test]
+    fn groups_days_by_month() {
+        let days: Vec<String> = ["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(
+            missed_days_by_month(&days),
+            vec![
+                ("Sep".to_string(), "29 30".to_string()),
+                ("Oct".to_string(), "01 02".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn same_month_different_year_splits() {
+        let days: Vec<String> = ["2025-10-31", "2026-10-01"].into_iter().map(String::from).collect();
+        assert_eq!(missed_days_by_month(&days).len(), 2);
+    }
 }
