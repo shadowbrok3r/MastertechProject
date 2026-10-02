@@ -512,7 +512,7 @@ pub fn show_rail_meters(
 /// Per-GPU load and VRAM meters with an honest temperature pill.
 pub fn show_gpu_panel(ui: &mut Ui, gpus: &[GpuSample]) {
     if gpus.is_empty() {
-        empty_state(ui, "No GPU sensors visible to sysinfo.");
+        empty_state(ui, "No GPU visible to NVML, WDDM, or sysinfo.");
         return;
     }
 
@@ -572,6 +572,11 @@ pub fn show_gpu_panel(ui: &mut Ui, gpus: &[GpuSample]) {
 
         if let Some(w) = g.power_w {
             caption(ui, &format!("{w:.0} W draw"));
+        } else if let Some(pct) = g.power_pct {
+            caption(ui, &format!("{pct:.0}% of power limit"));
+        }
+        if let Some(hotspot) = g.hotspot_c {
+            caption(ui, &format!("hotspot {hotspot:.1} °C"));
         }
         if !g.throttle_reasons.is_empty() {
             let label = format!("throttling: {}", g.throttle_reasons.join(", "));
@@ -1012,7 +1017,7 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
 
 pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
     if gpus.is_empty() {
-        empty_state(ui, "No GPU sensors visible to sysinfo.");
+        empty_state(ui, "No GPU visible to NVML, WDDM, or sysinfo.");
         return;
     }
 

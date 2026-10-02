@@ -356,154 +356,21 @@ impl ComputerInfo for ComputerData {
 }
 
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
-    let machine = get_machine_instance().await?.clone();
-    let card = machine.gpu_info()?;
-    let usage = machine.graphics_status()?;
+    let mut info = get_sysinfo_no_gpu().await?;
+    info.gpu_info = nvml_gpu_info()
+        .await
+        .inspect_err(|e| debug!("get_sysinfo: NVML GPU info unavailable: {e}"))
+        .ok()
+        .filter(|gpu| !gpu.card.is_empty())
+        .unwrap_or_else(|| telemetry_gpu_info(&current_telemetry_snapshot().gpus));
+    Ok(info)
+}
 
-    let gpu_info = Gpu {
-        card,
-        usage
-    };
-    
-    let sys = &mut machine.sysinfo.lock().await;
-    // info!("GPU: {gpu_info:?}");
-    sys.refresh_all();
-    let cpu_name = &mut String::new();
-    let cpu_percentage = &mut f32::default();
-    let mut cpu_clock = f32::default();
-    let mut disks = Vec::new();
-    let disk_list = Disks::new_with_refreshed_list();
-    let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
-    let mut component_temps: HashMap<String, f32> = HashMap::new();
-    let mut processes: Vec<SysProcess> = Vec::new();
-    let motherboard = Motherboard::new();
-    let motherboard_name = &mut String::new();
-    let motherboard_serial = &mut String::new();
-    let motherboard_asset_tag = &mut String::new();
-    let motherboard_vendor = &mut String::new();
-
-    if let Some(mobo) = motherboard {
-        *motherboard_name = mobo.name().unwrap_or_default();
-        *motherboard_serial = mobo.serial_number().unwrap_or_default();
-        *motherboard_asset_tag = mobo.asset_tag().unwrap_or_default();
-        *motherboard_vendor = mobo.vendor_name().unwrap_or_default();
-    }
-
-    // Components temperature:
-    let mut components = Components::new_with_refreshed_list();
-    // Network interfaces name, total data received and total data transmitted:
-    let networks = Networks::new_with_refreshed_list();
-    // RAM and swap information:
-    let total_memory = sys.total_memory() as f32 / (1024.0 * 1024.0);
-    let used_memory = sys.used_memory() as f32 / (1024.0 * 1024.0);
-
-    // Display system information:
-    let name = System::name().context("Could not retrieve system name")?;
-    let kernel_version = System::kernel_version().context("Could not retrieve kernel_version")?;
-    let os_version = System::os_version().context("Could not retrieve os_version")?;
-    let hostname = System::host_name().context("Could not retrieve hostname")?;
-    
-    // Display processes ID, name na disk usage:
-    // for (pid, process) in sys.processes() {log::info!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
-    for (pid, process) in sys.processes().iter() {
-        let id = pid.as_u32();
-        let name = process.name().to_string_lossy().to_string();
-        let cmd = format!("{:?}", process.cmd());
-        let user_id = process.user_id().map(|id| id.to_string());
-        
-        let memory = (process.memory() as f32 / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-
-        let cpu_usage = process.cpu_usage() / System::physical_core_count().unwrap_or_default() as f32;
-        let read_bytes = (process.disk_usage().read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-        let total_read_bytes = (process.disk_usage().total_read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-        let total_written_bytes = (process.disk_usage().total_written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-        let written_bytes = (process.disk_usage().written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-
-        processes.push(SysProcess {
-            id,
-            name,
-            cmd,
-            user_id,
-            memory,
-            cpu_usage,
-            process_disk_usage: ProcessDiskUsage {
-                read_bytes,
-                total_read_bytes,
-                total_written_bytes,
-                written_bytes,
-            },
-            exe_path: Some(std::env::current_exe().unwrap_or_default().to_string_lossy().to_string()),
-        });
-    }
-
-    for disk in &disk_list {
-        disks.push(database::schema::system_information::Disk {
-            device_name: disk.name().to_string_lossy().to_string(),
-            file_system: disk.file_system().to_string_lossy().to_string(),
-            mount_point: disk.mount_point().to_string_lossy().to_string(),
-            total_space: disk.total_space(),
-            available_space: disk.available_space(),
-        });
-    }
-
-    for (interface_name, data) in &networks {
-        if data.total_received() > 1 {
-            let interface_name = interface_name.to_string();
-            network_interfaces.push(
-                NetworkInterface { 
-                    interface_name,
-                    total_received: (data.total_received() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0,
-                    total_transmitted: (data.total_transmitted() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0
-                }
-            );
-        }
-    }
-
-    for component in components.list_mut() {
-        component.refresh();
-        component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
-    }
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    *cpu_percentage = sys.global_cpu_usage();
-    for cpu in sys.cpus() {
-        cpu_clock = cpu.frequency() as f32;
-        *cpu_name = cpu.brand().to_string();
-    }
-    let cpu_cores = live_cpu_cores(sys, &components);
-
-    Ok(SystemInformation {
-        name,
-        gpu_info,
-        os_version,
-        kernel_version,
-        disks,
-        total_memory,
-        hostname,
-        cpu_percentage: *cpu_percentage,
-        cpu_clock,
-        component_temps,
-        used_memory,
-        network_interfaces,
-        processes,
-        cpu: cpu_name.clone(),
-        number_of_cpus: format!("NB CPUs: {} \n", System::physical_core_count().unwrap_or_default()),
-        motherboard_name: motherboard_name.clone(),
-        motherboard_serial: motherboard_serial.clone(),
-        motherboard_asset_tag: motherboard_asset_tag.clone(),
-        motherboard_vendor: motherboard_vendor.clone(),
-        product_name: Product::name().unwrap_or_default(),
-        product_sku: Product::stock_keeping_unit().unwrap_or_default(),
-        product_serial: Product::serial_number().unwrap_or_default(),
-        product_vendor: Product::vendor_name().unwrap_or_default(),
-        // Enriched by `live_computer_stats` from the shared telemetry
-        // agent's snapshot before the payload is sent. Default `None`
-        // here so the synchronous builders stay cheap.
-        whea: None,
-        tdr: None,
-        cpu_cores,
-        voltages: Vec::new(),
+async fn nvml_gpu_info() -> anyhow::Result<Gpu> {
+    let machine = get_machine_instance().await?;
+    Ok(Gpu {
+        card: machine.gpu_info()?,
+        usage: machine.graphics_status()?,
     })
 }
 
@@ -527,6 +394,39 @@ pub fn shared_telemetry_agent() -> std::sync::Arc<stress_kit::telemetry::Telemet
 /// publish the same shape.
 pub fn current_telemetry_snapshot() -> stress_kit::telemetry::TelemetrySnapshot {
     shared_telemetry_agent().snapshot()
+}
+
+/// Wire GPU rows from telemetry samples, with `card` and `usage` index-aligned.
+pub fn telemetry_gpu_info(gpus: &[stress_kit::telemetry::GpuSample]) -> Gpu {
+    use database::schema::{GraphicsCard, GraphicsUsage, NvidiaInfo};
+    const MIB: u64 = 1024 * 1024;
+    let card = gpus
+        .iter()
+        .enumerate()
+        .map(|(i, g)| GraphicsCard {
+            id: i.to_string(),
+            name: g.name.clone(),
+            brand: g.vendor.clone(),
+            memory: g.memory_total_mb.unwrap_or(0).saturating_mul(MIB),
+            temperature: g.temp_c.unwrap_or(0.0) as u32,
+            nvidia_info: NvidiaInfo {
+                driver_version: g.driver_version.clone().unwrap_or_default(),
+                ..Default::default()
+            },
+        })
+        .collect();
+    let usage = gpus
+        .iter()
+        .enumerate()
+        .map(|(i, g)| GraphicsUsage {
+            id: i.to_string(),
+            gpu: g.usage_pct.unwrap_or(0.0).round() as u32,
+            memory_used: g.memory_used_mb.unwrap_or(0).saturating_mul(MIB),
+            temperature: g.temp_c.unwrap_or(0.0) as u32,
+            ..Default::default()
+        })
+        .collect();
+    Gpu { card, usage }
 }
 
 pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::Error> {

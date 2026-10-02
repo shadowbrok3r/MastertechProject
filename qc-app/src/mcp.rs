@@ -946,7 +946,7 @@ impl QcToolProvider {
 
     #[tool(
         name = "get_gpu_telemetry",
-        description = "Return the latest per-GPU telemetry sample: NVML-backed for NVIDIA (temp, power, clocks, util, mem, PCIe replay counter, ECC errors, throttle reasons), sysinfo fallback otherwise. Use this between stress runs to spot-check the card."
+        description = "Return the latest per-GPU telemetry sample, each naming its reader in `source`: `nvml` for NVIDIA (temp, power, clocks, util, mem, PCIe replay counter, ECC errors, throttle reasons); `wddm` for AMD, Intel and other vendors (temp, util, clocks, VRAM, fan RPM, `power_pct` = draw as a percent of the card's limit, and `throttle_temp_c`; on AMD with the Adrenalin driver, ADLX adds `power_w` = total board power and `hotspot_c`); `sysinfo` last (name and temperature only). Use this between stress runs to spot-check the card."
     )]
     async fn get_gpu_telemetry(
         &self,

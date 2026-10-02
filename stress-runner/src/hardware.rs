@@ -139,10 +139,7 @@ pub fn ensure_components_from_snapshot(snapshot: &TelemetrySnapshot) -> Resolved
         }
     }
 
-    // Telemetry-derived GPUs come from NVML plus sysinfo Components, so an AMD
-    // or Intel card yields nothing and the machine gets no GPU component even
-    // though the stressors bind it happily. Fall back to the wgpu adapter list,
-    // which is vendor-neutral and is what the GPU stressors actually run on.
+    // Falls back to the wgpu adapter list when NVML, WDDM and sysinfo all listed no GPU.
     if gpu_upserts == 0 {
         match wgpu_gpu_identities() {
             Ok(identities) if !identities.is_empty() => {
@@ -166,9 +163,9 @@ pub fn ensure_components_from_snapshot(snapshot: &TelemetrySnapshot) -> Resolved
                 }
                 if gpu_upserts > 0 {
                     notices.push(format!(
-                        "GPU telemetry reported nothing (NVML is NVIDIA-only); recorded \
-                         {gpu_upserts} hardware_component.gpu row(s) from the wgpu adapter list \
-                         instead. GPU thermal/power readings are still unavailable."
+                        "GPU telemetry reported nothing; recorded {gpu_upserts} \
+                         hardware_component.gpu row(s) from the wgpu adapter list instead. GPU \
+                         thermal/power readings are unavailable."
                     ));
                 }
             }
