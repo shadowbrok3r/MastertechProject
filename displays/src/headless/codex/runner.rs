@@ -26,7 +26,7 @@ use super::busy::{self, Busy, Signal};
 use super::coalesce::{self, Partial, ThreadRow, TranscriptBuffer};
 use super::parse_check;
 use super::queue::{self, TurnQueue};
-use super::tools::{assistant_summary, scope_violation, ToolHost, ToolOutcome, ToolPolicy};
+use super::tools::{assistant_summary, default_to_session_machine, scope_violation, ToolHost, ToolOutcome, ToolPolicy};
 use super::wait;
 use super::zeroclaw::{self, ZeroclawMemory};
 use super::{manager, prompt, register_runner, runner_for, unregister_runner, Config};
@@ -1028,10 +1028,11 @@ impl Runner {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let arguments = params
+        let mut arguments = params
             .get("arguments")
             .cloned()
             .unwrap_or_else(|| json!({}));
+        default_to_session_machine(&tool, &mut arguments, &self.thread.connection_string);
         if tool == wait::TOOL_NAME {
             self.start_wait(request_id, &arguments).await;
             return;

@@ -1876,7 +1876,7 @@ pub struct LogDiagnosticEntryParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct CreateAiTaskParams {
-    #[schemars(description = "Session ID of the diagnostic session proposing the hands-on work. Omit to auto-resolve from connection_string via the active-session registry.")]
+    #[schemars(description = "Session ID of the diagnostic session proposing the hands-on work. Omit to use the open session for connection_string.")]
     pub session_id: Option<String>,
     #[schemars(description = "Web Console connection_string — alternative to session_id when a session is active for this client.")]
     pub connection_string: Option<String>,
@@ -2000,7 +2000,7 @@ impl TheoryConfidence {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct SetCurrentTheoryParams {
-    #[schemars(description = "Diagnostic session id. Omit to resolve from connection_string via the active-session registry.")]
+    #[schemars(description = "Diagnostic session id. Omit to use the open session for connection_string.")]
     pub session_id: Option<String>,
     #[schemars(description = "Web Console connection_string - alternative to session_id when a session is active for this client.")]
     pub connection_string: Option<String>,
@@ -7314,9 +7314,9 @@ impl PluginToolProvider {
         const MAX_THEORY: usize = 240;
         let session_key = match (&p.session_id, &p.connection_string) {
             (Some(sid), _) => sid.clone(),
-            (None, Some(cs)) => super::diagnostic_session_registry::get(cs).ok_or_else(|| {
+            (None, Some(cs)) => super::diagnostic_session_registry::resolve_open_session_key(cs).await.ok_or_else(|| {
                 ErrorData::invalid_params(format!(
-                    "set_current_theory: no active diagnostic session for '{cs}' - pass session_id"), None)
+                    "set_current_theory: no open diagnostic session for '{cs}' - pass session_id"), None)
             })?,
             (None, None) => return Err(ErrorData::invalid_params(
                 "set_current_theory: session_id or connection_string is required".to_string(), None)),
@@ -7375,12 +7375,12 @@ impl PluginToolProvider {
         let steps = validate_steps(&p.steps, 0)
             .map_err(|e| ErrorData::invalid_params(format!("create_ai_task: {}", e.message), None))?;
 
-        // Resolve the diagnostic session (explicit id, or active-registry lookup).
+        // Resolve the diagnostic session (explicit id, or the open session for the connection).
         let session_key = match (&p.session_id, &p.connection_string) {
             (Some(sid), _) => sid.clone(),
-            (None, Some(cs)) => super::diagnostic_session_registry::get(cs).ok_or_else(|| {
+            (None, Some(cs)) => super::diagnostic_session_registry::resolve_open_session_key(cs).await.ok_or_else(|| {
                 ErrorData::invalid_params(format!(
-                    "create_ai_task: no active diagnostic session for '{cs}' — pass session_id"), None)
+                    "create_ai_task: no open diagnostic session for '{cs}' — pass session_id"), None)
             })?,
             (None, None) => return Err(ErrorData::invalid_params(
                 "create_ai_task: session_id or connection_string is required".to_string(), None)),
