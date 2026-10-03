@@ -117,10 +117,19 @@ impl ApplicationHandler for SoftwareApp {
                 let canvas = skia_surface.canvas();
                 canvas.clear(Color::from_argb(255, 0, 0, 0));
 
+                let mut close_requested = false;
                 let repaint_after = egui_skia.run(&window, |ui| {
                     mt.logic_inner(ui.ctx());
                     mt.ui_inner(ui);
+                    // The app's ViewportCommand::Close, which egui_skia never applies.
+                    close_requested = ui
+                        .ctx()
+                        .viewport(|vp| vp.commands.contains(&eframe::egui::ViewportCommand::Close));
                 });
+                if close_requested {
+                    event_loop.exit();
+                    return;
+                }
 
                 egui_skia.paint(canvas);
                 present(skia_surface, softbuffer_surface, width, height);
