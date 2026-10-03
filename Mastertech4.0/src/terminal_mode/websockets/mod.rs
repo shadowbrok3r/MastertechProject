@@ -1138,7 +1138,7 @@ impl TerminalWebsocketClient {
     // Migrated start_websocket_sender function
     pub async fn start_websocket_sender(
         &mut self,
-        mut buffer_rx: tokio::sync::mpsc::UnboundedReceiver<(usize, Buffer)>,
+        mut buffer_rx: tokio::sync::watch::Receiver<Option<(usize, Buffer)>>,
         start_tx: tokio::sync::mpsc::UnboundedSender<bool>,
         connection_state_tx: tokio::sync::mpsc::UnboundedSender<(bool, String)>,
         event_tx: tokio::sync::mpsc::UnboundedSender<LocalTermEvent>,
@@ -1358,13 +1358,16 @@ impl TerminalWebsocketClient {
     
                     if *ready {
                         tokio::select! {
-                            Some((frame_count, buffer)) = buffer_rx.recv() => {
-                                log::debug!("Sending buffer, frame_count={}", frame_count);
-                                let send_start = Instant::now();
-                                let serialized = encode_buffer_with_timestamp(frame_count as u64, &buffer)?;
-                                sender.send(WsMessage::Binary(serialized));
-                                let send_duration = send_start.elapsed();
-                                log::debug!("Buffer sent, frame_count={}, send_duration={:?}", frame_count, send_duration);
+                            Ok(()) = buffer_rx.changed() => {
+                                let latest = buffer_rx.borrow_and_update().clone();
+                                if let Some((frame_count, buffer)) = latest {
+                                    log::debug!("Sending buffer, frame_count={}", frame_count);
+                                    let send_start = Instant::now();
+                                    let serialized = encode_buffer_with_timestamp(frame_count as u64, &buffer)?;
+                                    sender.send(WsMessage::Binary(serialized));
+                                    let send_duration = send_start.elapsed();
+                                    log::debug!("Buffer sent, frame_count={}, send_duration={:?}", frame_count, send_duration);
+                                }
                             }
                             Some(cmd_output) = self.command_rx.recv() => {
                                 sender.send(WsMessage::Binary(cmd_output));
@@ -5216,7 +5219,7 @@ impl<'a> TerminalApp<'a> {
         last_sent: &mut Instant, 
         send_interval: Duration, 
         can_start: &mut bool,
-        buffer_tx: tokio::sync::mpsc::UnboundedSender<(usize, Buffer)>
+        buffer_tx: &tokio::sync::watch::Sender<Option<(usize, Buffer)>>,
     ) {
         let now = Instant::now(); // Changed: Throttle buffer sending
         if now.duration_since(*last_sent) >= send_interval {
@@ -5230,13 +5233,8 @@ impl<'a> TerminalApp<'a> {
                 if let Ok(serialized) = encode_buffer_with_timestamp(count as u64, &buffer_to_send) {
                     crate::tcp_listener::broadcast_term_frame(serialized);
                 }
-                std::thread::scope(|s| {
-                    s.spawn(|| {
-                        if let Err(e) = buffer_tx.send((count, buffer_to_send)) {
-                            log::warn!("Failed to send buffer: {:?}", e);
-                        }
-                    });
-                });
+                // Keeps only the newest frame for the relay room socket.
+                buffer_tx.send_replace(Some((count, buffer_to_send)));
                 *last_sent = now;
             }
         }

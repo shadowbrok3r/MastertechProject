@@ -204,7 +204,7 @@ impl <'a>TerminalApp<'a> {
                 }
             }
         }));
-        let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (buffer_tx, buffer_rx) = tokio::sync::watch::channel(None);
         let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<LocalTermEvent>();
         let (connection_state_tx, mut connection_state_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -311,7 +311,7 @@ impl <'a>TerminalApp<'a> {
                     }
 
                     self.render_frame::<B>(f);
-                    Self::send_buffer(f, last_sent, send_interval, can_start, buffer_tx.clone());
+                    Self::send_buffer(f, last_sent, send_interval, can_start, &buffer_tx);
                 }
             })?;
         }
