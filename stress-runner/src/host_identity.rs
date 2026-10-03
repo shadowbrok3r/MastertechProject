@@ -8,8 +8,10 @@
 //! `ComputerName` out of its SYSTEM hive and adopts the machine id that install
 //! persisted, so both halves of the key match the installed-OS identity.
 //!
-//! Every fallback lands back on the live PE values, so a locked, dirty or absent
-//! offline Windows degrades to the old `HBCD_PE:…` behaviour instead of failing.
+//! A SYSTEM hive another process already loaded is read where it is mounted.
+//! Every other fallback lands back on the live PE values, so a BitLocker-locked,
+//! dirty or absent offline Windows degrades to the old `HBCD_PE:…` behaviour
+//! instead of failing.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -22,6 +24,10 @@ const HBCD_PE_HOSTNAME: &str = "HBCD_PE";
 /// Mount point for the offline SYSTEM hive.
 #[cfg(target_os = "windows")]
 const OFFLINE_HIVE_MOUNT: &str = r"HKLM\MTOFFSYS";
+
+/// Every loaded hive, as `\REGISTRY\<root>\<key>` mapped to its file's NT path.
+#[cfg(target_os = "windows")]
+const HIVELIST: &str = r"HKLM\SYSTEM\CurrentControlSet\Control\hivelist";
 
 /// `machine_id.txt` under a user profile. Mirrors the tail of
 /// `ProjectDirs::data_local_dir` on Windows; pinned by a test below.
@@ -253,21 +259,33 @@ fn fixed_volumes() -> Vec<(String, u64)> {
 }
 
 /// `(ComputerName, control set, whether Select\Current resolved)` from an
-/// offline SYSTEM hive.
+/// offline SYSTEM hive, read where it is already loaded when `reg load` fails.
 #[cfg(target_os = "windows")]
 fn read_offline_computer_name(hive: &Path) -> Option<(String, String, bool)> {
-    let _loaded = LoadedHive::load(hive)?;
+    if let Some(_loaded) = LoadedHive::load(hive) {
+        return computer_name_under(OFFLINE_HIVE_MOUNT);
+    }
+    let mount = existing_mount(hive)?;
+    log::info!(
+        "host_identity: {} is already loaded at {mount}; reading its hostname there",
+        hive.display()
+    );
+    computer_name_under(&mount)
+}
 
-    let (control_set, select_valid) =
-        match reg_dword(&format!(r"{OFFLINE_HIVE_MOUNT}\Select"), "Current") {
-            Some(n) if n > 0 => (format!("ControlSet{n:03}"), true),
-            _ => ("ControlSet001".to_string(), false),
-        };
+/// `(ComputerName, control set, whether Select\Current resolved)` from a SYSTEM
+/// hive loaded at `root`.
+#[cfg(target_os = "windows")]
+fn computer_name_under(root: &str) -> Option<(String, String, bool)> {
+    let (control_set, select_valid) = match reg_dword(&format!(r"{root}\Select"), "Current") {
+        Some(n) if n > 0 => (format!("ControlSet{n:03}"), true),
+        _ => ("ControlSet001".to_string(), false),
+    };
 
     // sysinfo reports the DNS hostname, which preserves case; the NetBIOS name
     // under Control\ComputerName is stored uppercased.
-    let tcpip = format!(r"{OFFLINE_HIVE_MOUNT}\{control_set}\Services\Tcpip\Parameters");
-    let control = format!(r"{OFFLINE_HIVE_MOUNT}\{control_set}\Control\ComputerName");
+    let tcpip = format!(r"{root}\{control_set}\Services\Tcpip\Parameters");
+    let control = format!(r"{root}\{control_set}\Control\ComputerName");
     let hostname = reg_value(&tcpip, "NV Hostname")
         .or_else(|| reg_value(&tcpip, "Hostname"))
         .or_else(|| reg_value(&format!(r"{control}\ComputerName"), "ComputerName"))
@@ -277,6 +295,30 @@ fn read_offline_computer_name(hive: &Path) -> Option<(String, String, bool)> {
         return None;
     }
     Some((hostname, control_set, select_valid))
+}
+
+/// HKLM key a hive file is already loaded under, from the kernel's hive list.
+#[cfg(target_os = "windows")]
+fn existing_mount(hive: &Path) -> Option<String> {
+    let path = hive.to_str()?;
+    let (drive, rest) = (path.get(..2)?, path.get(2..)?);
+    let nt_path = format!("{}{rest}", dos_device(drive)?);
+    mount_in_hivelist(&reg(&["query", HIVELIST])?, &nt_path)
+}
+
+/// NT device a drive letter such as `C:` maps to, e.g. `\Device\HarddiskVolume3`.
+#[cfg(target_os = "windows")]
+fn dos_device(drive: &str) -> Option<String> {
+    use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
+    use windows::core::PCWSTR;
+
+    let name: Vec<u16> = drive.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut targets = [0u16; 1024];
+    // SAFETY: `name` is NUL-terminated and both buffers outlive the call.
+    let len = unsafe { QueryDosDeviceW(PCWSTR(name.as_ptr()), Some(&mut targets)) } as usize;
+    // NUL-separated targets; the first is the current mapping.
+    let first = targets.get(..len)?.split(|&c| c == 0).next()?;
+    (!first.is_empty()).then(|| String::from_utf16_lossy(first))
 }
 
 /// `machine_id.txt` from the newest user profile on `volume` that has one.
@@ -386,6 +428,23 @@ fn parse_reg_query(output: &str, name: &str) -> Option<String> {
     None
 }
 
+/// `HKLM\<key>` or `HKU\<key>` whose entry in `reg query` output of the hive list
+/// names the file at `nt_path`.
+fn mount_in_hivelist(output: &str, nt_path: &str) -> Option<String> {
+    const ROOTS: [(&str, &str); 2] = [(r"\REGISTRY\MACHINE\", "HKLM"), (r"\REGISTRY\USER\", "HKU")];
+    output.lines().find_map(|line| {
+        let (name, data) = line.trim().split_once("REG_SZ")?;
+        if !data.trim().eq_ignore_ascii_case(nt_path) {
+            return None;
+        }
+        let name = name.trim();
+        ROOTS.iter().find_map(|(prefix, root)| {
+            let key = name.get(prefix.len()..)?;
+            name[..prefix.len()].eq_ignore_ascii_case(prefix).then(|| format!(r"{root}\{key}"))
+        })
+    })
+}
+
 // ============================================================
 // Everything else
 // ============================================================
@@ -430,6 +489,56 @@ mod tests {
             parse_reg_query(SELECT_CURRENT_QUERY, "Current").as_deref(),
             Some("0x2")
         );
+    }
+
+    /// `reg query …\Control\hivelist` output with another install's SYSTEM hive loaded as WX_SYS.
+    const HIVELIST_QUERY: &str = "\r\n\
+        HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\hivelist\r\n    \
+        \\REGISTRY\\MACHINE\\HARDWARE    REG_SZ    \r\n    \
+        \\REGISTRY\\MACHINE\\SYSTEM    REG_SZ    \\Device\\HarddiskVolume1\\windows\\system32\\config\\SYSTEM\r\n    \
+        \\REGISTRY\\MACHINE\\WX_SYS    REG_SZ    \\Device\\HarddiskVolume3\\Windows\\System32\\config\\SYSTEM\r\n    \
+        \\REGISTRY\\USER\\.DEFAULT    REG_SZ    \\Device\\HarddiskVolume3\\Windows\\System32\\config\\DEFAULT\r\n\r\n";
+
+    #[test]
+    fn finds_the_key_a_hive_file_is_loaded_under() {
+        assert_eq!(
+            mount_in_hivelist(HIVELIST_QUERY, r"\Device\HarddiskVolume3\Windows\System32\config\SYSTEM")
+                .as_deref(),
+            Some(r"HKLM\WX_SYS")
+        );
+        assert_eq!(
+            mount_in_hivelist(HIVELIST_QUERY, r"\device\harddiskvolume3\windows\system32\config\system")
+                .as_deref(),
+            Some(r"HKLM\WX_SYS"),
+            "NT paths compare without case"
+        );
+        assert_eq!(
+            mount_in_hivelist(HIVELIST_QUERY, r"\Device\HarddiskVolume3\Windows\System32\config\DEFAULT")
+                .as_deref(),
+            Some(r"HKU\.DEFAULT")
+        );
+    }
+
+    #[test]
+    fn a_hive_that_is_not_loaded_has_no_key() {
+        assert_eq!(
+            mount_in_hivelist(HIVELIST_QUERY, r"\Device\HarddiskVolume4\Windows\System32\config\SYSTEM"),
+            None
+        );
+    }
+
+    /// The running OS's own SYSTEM hive is in the hive list, so it resolves to `HKLM\SYSTEM`.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn the_running_systems_hive_is_found_where_it_is_loaded() {
+        if is_winpe() {
+            return;
+        }
+        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        let hive = std::path::PathBuf::from(format!(r"{drive}\Windows\System32\config\SYSTEM"));
+        assert_eq!(existing_mount(&hive).as_deref(), Some(r"HKLM\SYSTEM"));
+        let (hostname, _, _) = computer_name_under(r"HKLM\SYSTEM").expect("hostname is readable");
+        assert!(hostname.eq_ignore_ascii_case(&live_hostname()), "{hostname} vs {}", live_hostname());
     }
 
     #[test]

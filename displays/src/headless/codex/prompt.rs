@@ -193,6 +193,14 @@ const POWERSHELL_NOTES: &str = "POWERSHELL ON THE MACHINE (remote_exec_start run
        (`h` is Get-History, `r` is Invoke-History, and `gc`, `gi`, `ls`, `ps`, `sl` are taken).\n\
      - `HKU:` is not a default drive. Read other users' hives through `Registry::HKEY_USERS\\<SID>\\...`; \
        HKCU is the elevated account's hive, not the customer's.\n\
+     - Offline hives (WinPE): unload every hive a job loads with `reg load` before that job ends, and \
+       check that the unload succeeded. It fails with Access is denied while the script still holds keys \
+       from Get-Item or Get-ChildItem, so clear those variables and run \
+       `[gc]::Collect(); [gc]::WaitForPendingFinalizers()` first; if it still fails, unload from a new job \
+       before anything else touches the hive. A hive left loaded stays locked until reboot: `reg load` of \
+       that file fails as in use by another process, and `reg query HKLM` shows where it is mounted. Read \
+       values with `.GetValue(name, $null, 'DoNotExpandEnvironmentNames')`: Get-ItemProperty expands \
+       %SystemRoot% to PE's X:\\windows.\n\
      - Stay on 5.1 syntax: no `??`, `?.`, ternaries, `&&`/`||` chains or `ForEach-Object -Parallel`. \
        Scheduled-task run levels are `Limited` and `Highest` (there is no `LeastPrivilege`).\n\
      - Everything a script starts runs elevated. Launch user-facing apps (OneDrive, Teams, browsers) \
