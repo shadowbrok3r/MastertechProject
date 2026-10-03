@@ -5,31 +5,10 @@ use reqwest::{
     header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
     Client,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{fs::File, io::AsyncWriteExt};
 
-
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct GithubRelease {
-    pub url: String,
-    pub html_url: String,
-    pub name: String,
-    pub created_at: String,
-    pub body: String,
-    pub tag_name: String,
-    pub assets: Vec<Asset>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct Asset {
-    pub name: String,
-    pub url: String,
-    pub browser_download_url: String,
-    pub size: u64,
-    pub created_at: String,
-}
+pub use displays::tabs::github::{Asset, GithubRelease};
 
 /// Proxied GitHub API base (Cloudflare Worker — CORS for WASM).
 const GIT_MASTER_TECH_REPO_BASE: &str =

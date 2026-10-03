@@ -1,7 +1,7 @@
 use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, Separator, Stroke, Vec2, Widget, vec2};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
-use crate::{tabs::github::{get_github_releases, self_updater::run}};
+use crate::tabs::github::self_updater::run;
 use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
@@ -255,13 +255,8 @@ impl MasterTechApp {
                                 
                                 if ui.add(Button::new("Downloads").frame(true).frame_when_inactive(true)).clicked() {
                                     self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
-                                    let github_releases_tx = self.context.github_releases_channel.0.clone();
-                                    let client = self.context.client.clone();
-                                    spawn(async move {
-                                        let get_releases = get_github_releases(github_releases_tx, client).await;
-                                        info!("get_releases: {get_releases:?}");
-                                    });
-                    
+                                    self.context.shared_ctx.release_browser.refresh(ui.ctx());
+
                                     match self
                                         .context.shared_ctx
                                         .app_state_tx
