@@ -32,3 +32,5 @@ pub const PLAN: &str = p::LIST_CHECKS;
 pub const PLAN_DONE: &str = p::CHECK_CIRCLE;
 pub const PLAN_ACTIVE: &str = p::CIRCLE_HALF;
 pub const PLAN_PENDING: &str = p::CIRCLE;
+pub const PLAN_EXPAND: &str = p::CARET_UP;
+pub const PLAN_COLLAPSE: &str = p::CARET_DOWN;

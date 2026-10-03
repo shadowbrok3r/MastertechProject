@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
-use database::schema::{AgentEvent, Plan, PlanStatus, RecordId, RecordIdExt};
+use database::schema::{AgentEvent, Plan, PlanStatus, PlanStep, RecordId, RecordIdExt};
 use displays::tabs::agent_sessions::ToolCall;
 use displays::ui_tools::chat_bubble::markdown::{as_json, ends_cut, split_json};
 use displays::ui_tools::chat_bubble::{self as chat, ChatKind};
@@ -275,15 +275,30 @@ fn render(
             if text.trim().is_empty() {
                 return None;
             }
+            let (title, body) = reasoning_parts(text);
+            head.label = Some(if ev.done { "Thought" } else { "Thinking" });
             head.spinner = spinner;
-            head.summary = chat::summary_line(text, SUMMARY_CHARS);
+            head.duration = ev
+                .done
+                .then(|| reasoning_ms(ev))
+                .flatten()
+                .filter(|ms| *ms >= 1000)
+                .map(chat::duration_label);
+            match title {
+                Some(title) => {
+                    let style = Style::default().fg(THEME.text).add_modifier(Modifier::ITALIC);
+                    head.name = Some((chat::clip(&title, SUMMARY_CHARS).into_owned(), style));
+                }
+                None => head.summary = chat::summary_line(text, SUMMARY_CHARS),
+            }
             Some(folding(head, fold, width, key, |w| {
-                markdown::render(text, w, THEME.text_muted)
+                markdown::render(body, w, THEME.text_muted)
             }))
         }
         ChatKind::Tool => {
             let call = ToolCall::from_event(ev);
-            head.name = Some(chat::tool_label(call.name).to_string());
+            let bold = Style::default().fg(THEME.text).add_modifier(Modifier::BOLD);
+            head.name = Some((chat::tool_label(call.name).to_string(), bold));
             if call.running {
                 head.badge = Some(("running".into(), THEME.accent_soft));
                 head.spinner = spinner;
@@ -346,7 +361,7 @@ fn render(
         ChatKind::Plan => {
             let plan = ev.plan()?;
             head.summary = chat::plan_summary(&plan);
-            Some(folding(head, fold, width, key, |w| plan_lines(&plan, w, usize::MAX)))
+            Some(folding(head, fold, width, key, |w| plan_lines(&plan, w, glyphs::SPINNER[0])))
         }
     }
 }
@@ -354,7 +369,9 @@ fn render(
 /// The parts of a row's header line.
 struct Head {
     kind: ChatKind,
-    name: Option<String>,
+    /// Replaces the kind's label.
+    label: Option<&'static str>,
+    name: Option<(String, Style)>,
     spinner: Option<&'static str>,
     badge: Option<(String, Color)>,
     duration: Option<String>,
@@ -366,6 +383,7 @@ impl Head {
     fn new(kind: ChatKind, time: Option<String>) -> Self {
         Self {
             kind,
+            label: None,
             name: None,
             spinner: None,
             badge: None,
@@ -387,16 +405,13 @@ impl Head {
             Span::styled(mark, Style::default().fg(ink)),
             Span::raw(" "),
             Span::styled(
-                label(self.kind),
+                self.label.unwrap_or(label(self.kind)),
                 Style::default().fg(ink).add_modifier(Modifier::BOLD),
             ),
         ];
-        if let Some(name) = self.name {
+        if let Some((name, style)) = self.name {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                name,
-                Style::default().fg(THEME.text).add_modifier(Modifier::BOLD),
-            ));
+            spans.push(Span::styled(wrap::sanitize(&name).replace('\n', " "), style));
         }
         let spinner = self
             .spinner
@@ -426,12 +441,16 @@ impl Head {
     }
 }
 
-/// A message row: the header, then the markdown body inset under it.
+/// A message row: the header, then the markdown body inset under it; the technician's on a band of their own.
 fn message(head: Head, text: &str, ink: Color, width: usize, key: String) -> Row {
+    let band = (head.kind == ChatKind::User).then(user_band);
     let mut lines = vec![head.line(None, width)];
     if !text.trim().is_empty() {
         let body = markdown::render(text, width - BODY_INDENT, ink);
         lines.extend(wrap::indent(body, &[wrap::pad(BODY_INDENT)]));
+    }
+    if let Some(bg) = band {
+        lines = lines.into_iter().map(|l| wrap::on_bg(l, width, bg)).collect();
     }
     Row {
         key,
@@ -447,39 +466,104 @@ pub fn draft(text: &str, width: usize) -> Vec<Line<'static>> {
     message(head, text, THEME.text, width.max(MIN_WIDTH), String::new()).lines
 }
 
-/// The newest plan update among `events`.
-pub fn newest_plan(events: &[AgentEvent]) -> Option<Plan> {
-    events.iter().rev().find_map(AgentEvent::plan)
+/// Background of the technician's message rows: a third of the way from the pane to the surface colour.
+fn user_band() -> Color {
+    tachyonfx::Interpolatable::lerp(&THEME.bg, &THEME.surface, 0.35)
 }
 
-/// Checklist lines for `plan`: at most `max` steps from just before the first open one, then a count of the rest.
-pub fn plan_lines(plan: &Plan, width: usize, max: usize) -> Vec<Line<'static>> {
+/// The newest plan update among `events` and its checklist.
+pub fn newest_plan(events: &[AgentEvent]) -> Option<(&AgentEvent, Plan)> {
+    events.iter().rev().find_map(|e| e.plan().map(|p| (e, p)))
+}
+
+/// True when a turn started after the event at `seq`.
+pub fn turn_started_after(events: &[AgentEvent], seq: i64) -> bool {
+    events.iter().rev().any(|e| e.seq > seq && e.kind == "turn_started")
+}
+
+/// When the running turn started: the newest `turn_started` row's time.
+pub fn turn_started_at(events: &[AgentEvent]) -> Option<DateTime<Utc>> {
+    let ev = events.iter().rev().find(|e| e.kind == "turn_started")?;
+    ev.created_at.or(ev.updated_at).map(DateTime::<Utc>::from)
+}
+
+/// Title of the newest thinking row in the running turn.
+pub fn current_thought(events: &[AgentEvent]) -> Option<String> {
+    let ev = events
+        .iter()
+        .rev()
+        .take_while(|e| e.kind != "turn_started")
+        .find(|e| e.kind == "reasoning" && !e.text.trim().is_empty())?;
+    reasoning_parts(&ev.text)
+        .0
+        .or_else(|| Some(chat::summary_line(&ev.text, SUMMARY_CHARS)))
+        .filter(|t| !t.is_empty())
+}
+
+/// A reasoning summary's opening heading, bold line or `#` heading, and the text after it.
+pub fn reasoning_parts(text: &str) -> (Option<String>, &str) {
+    let trimmed = text.trim_start();
+    let (first, rest) = trimmed.split_once('\n').unwrap_or((trimmed, ""));
+    let first = first.trim();
+    let title = first
+        .strip_prefix("**")
+        .and_then(|t| t.strip_suffix("**"))
+        .filter(|t| !t.contains("**"))
+        .or_else(|| {
+            let level = first.bytes().take_while(|b| *b == b'#').count();
+            (1..=6).contains(&level).then(|| first[level..].trim())
+        })
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    match title {
+        Some(t) => (Some(t.to_string()), rest.trim_start_matches(['\n', '\r'])),
+        None => (None, text),
+    }
+}
+
+/// Milliseconds a finished thinking row streamed for.
+fn reasoning_ms(ev: &AgentEvent) -> Option<u64> {
+    let start = DateTime::<Utc>::from(ev.created_at?);
+    let end = DateTime::<Utc>::from(ev.updated_at?);
+    u64::try_from((end - start).num_milliseconds()).ok()
+}
+
+/// A bar `cells` wide filled in `fill` to the share `done` of `total`.
+pub fn progress_bar(done: usize, total: usize, cells: usize, fill: Color) -> Vec<Span<'static>> {
+    let filled = (done * cells + total / 2).checked_div(total).unwrap_or(0).min(cells);
+    vec![
+        Span::styled(glyphs::BAR_FILLED.repeat(filled), Style::default().fg(fill)),
+        Span::styled(glyphs::BAR_EMPTY.repeat(cells - filled), Style::default().fg(THEME.border_muted)),
+    ]
+}
+
+/// One step's marker and its text wrapped under itself; `spinner` marks the step in progress.
+pub fn plan_step_lines(step: &PlanStep, width: usize, spinner: &str) -> Vec<Line<'static>> {
+    let (mark, mark_style, text_style) = match step.status {
+        PlanStatus::Completed => (
+            glyphs::checkbox(true),
+            Style::default().fg(THEME.success),
+            muted().add_modifier(Modifier::CROSSED_OUT),
+        ),
+        PlanStatus::InProgress => (
+            spinner,
+            Style::default().fg(THEME.accent),
+            Style::default().fg(THEME.text).add_modifier(Modifier::BOLD),
+        ),
+        PlanStatus::Pending => (glyphs::checkbox(false), muted(), Style::default().fg(THEME.text)),
+    };
+    let first = [Span::styled(mark.to_string(), mark_style), Span::raw(" ")];
+    wrap::words(&[(text_style, step.step.as_str())], width.max(4), &first, &[wrap::pad(2)])
+}
+
+/// The explanation, then every step of `plan` wrapped to `width`.
+pub fn plan_lines(plan: &Plan, width: usize, spinner: &str) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     if let Some(why) = &plan.explanation {
-        out.push(Line::styled(wrap::clip(&wrap::one_line(why), width), muted()));
+        out.extend(wrap::words(&[(muted(), why.as_str())], width.max(4), &[], &[]));
     }
-    let open = plan.steps.iter().position(|s| s.status != PlanStatus::Completed).unwrap_or(0);
-    let start = if plan.steps.len() > max { open.saturating_sub(1).min(plan.steps.len() - max) } else { 0 };
-    for step in plan.steps.iter().skip(start).take(max) {
-        let (mark, mark_style, text_style) = match step.status {
-            PlanStatus::Completed => (
-                glyphs::checkbox(true),
-                Style::default().fg(THEME.tertiary),
-                muted().add_modifier(Modifier::CROSSED_OUT),
-            ),
-            PlanStatus::InProgress => (
-                glyphs::SPINNER[0],
-                Style::default().fg(THEME.accent),
-                Style::default().fg(THEME.text).add_modifier(Modifier::BOLD),
-            ),
-            PlanStatus::Pending => (glyphs::checkbox(false), muted(), Style::default().fg(THEME.text)),
-        };
-        let text = wrap::clip(&wrap::one_line(&step.step), width.saturating_sub(2));
-        out.push(Line::from(vec![Span::styled(mark, mark_style), Span::raw(" "), Span::styled(text, text_style)]));
-    }
-    let hidden = plan.steps.len().saturating_sub(max);
-    if hidden > 0 {
-        out.push(Line::styled(format!("{} {hidden} more", glyphs::ELLIPSIS), muted()));
+    for step in &plan.steps {
+        out.extend(plan_step_lines(step, width, spinner));
     }
     out
 }
@@ -1108,14 +1192,58 @@ mod tests {
     }
 
     #[test]
-    fn the_pinned_plan_windows_long_checklists_around_the_open_step() {
+    fn plan_steps_wrap_under_their_marker_and_every_step_is_listed() {
         let steps: Vec<Value> = (1..=10)
-            .map(|i| json!({ "step": format!("step {i}"), "status": if i < 8 { "completed" } else { "pending" } }))
+            .map(|i| json!({ "step": format!("step {i} {}", "word ".repeat(12)), "status": if i < 8 { "completed" } else { "pending" } }))
             .collect();
         let plan = Plan::from_value(&json!({ "plan": steps })).expect("plan");
-        let lines: Vec<String> = plan_lines(&plan, 40, 4).iter().map(text).collect();
-        assert_eq!(lines.first().map(String::as_str), Some("\u{2713} step 7"), "{lines:?}");
-        assert_eq!(lines.last().map(String::as_str), Some("\u{2026} 6 more"), "{lines:?}");
-        assert_eq!(newest_plan(&[plan_event("a"), event("b", "agent", "hi", true, None)]).map(|p| p.done()), Some(1));
+        let lines: Vec<String> = plan_lines(&plan, 30, glyphs::SPINNER[1]).iter().map(text).collect();
+        assert!(lines.iter().all(|l| wrap::width(l) <= 30), "{lines:?}");
+        assert_eq!(lines.iter().filter(|l| l.starts_with('\u{2713}')).count(), 7, "{lines:?}");
+        assert_eq!(lines.iter().filter(|l| l.starts_with('\u{25cb}')).count(), 3, "{lines:?}");
+        assert!(lines.iter().filter(|l| l.starts_with("  ")).count() >= 10, "wrapped lines hang under the text: {lines:?}");
+        let events = [plan_event("a"), event("b", "agent", "hi", true, None)];
+        let (ev, newest) = newest_plan(&events).expect("plan");
+        assert_eq!((ev.id.key_string().as_str(), newest.done()), ("t1:a", 1));
+    }
+
+    #[test]
+    fn a_thought_folds_to_its_heading_and_how_long_it_took() {
+        let mut ev = event("r", "reasoning", "**Checking SMART data**\n\nThe disk reports reallocated sectors.", true, None);
+        ev.updated_at = Some(Datetime::from_timestamp(1_790_000_012, 0).expect("valid time"));
+        let folded = lines_of(&rows(&[ev.clone()], &opts(100, false))[0]);
+        assert_eq!(folded.len(), 1, "{folded:?}");
+        assert!(folded[0].starts_with("\u{25b8} Thought Checking SMART data  12.0 s"), "{folded:?}");
+        let shown = Transcript::default().rows(&[ev], &Options { show_reasoning: true, ..opts(100, false) }, &HashMap::new());
+        let open = lines_of(&shown[0]);
+        assert!(open.iter().any(|l| l.contains("The disk reports reallocated sectors.")), "{open:?}");
+        assert!(!open[1..].iter().any(|l| l.contains("Checking SMART data")), "the heading is not repeated: {open:?}");
+
+        let streaming = event("s", "reasoning", "Looking at the event log first", false, None);
+        let head = lines_of(&rows(&[streaming], &opts(100, false))[0]);
+        assert!(head[0].starts_with("\u{25b8} Thinking \u{25d0}"), "{head:?}");
+        assert!(head[0].contains("Looking at the event log first"), "{head:?}");
+    }
+
+    #[test]
+    fn the_running_turn_names_its_newest_thought() {
+        let events = [
+            event("a", "turn_started", "", true, None),
+            event("b", "reasoning", "**Reading the dump**\nbody", true, None),
+            event("c", "tool_call", "x({})", true, None),
+            event("d", "reasoning", "## Comparing drivers", false, None),
+        ];
+        assert_eq!(current_thought(&events).as_deref(), Some("Comparing drivers"));
+        assert_eq!(current_thought(&events[..1]), None);
+        assert_eq!(reasoning_parts("plain first line\nmore").0, None);
+        assert_eq!(reasoning_parts("**a** and **b**").0, None);
+    }
+
+    #[test]
+    fn the_progress_bar_fills_its_share() {
+        let spans = progress_bar(3, 6, 10, THEME.success);
+        assert_eq!(spans[0].content.chars().count(), 5);
+        assert_eq!(spans[1].content.chars().count(), 5);
+        assert_eq!(progress_bar(0, 0, 4, THEME.success)[0].content, "");
     }
 }

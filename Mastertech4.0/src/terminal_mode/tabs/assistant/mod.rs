@@ -6,10 +6,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::schema::{
-    AgentApproval, AgentDecideOutcome, AgentEvent, AgentThread, AgentTurn, ApprovalAudience, ApprovalViewer,
-    AssistRequest, RecordId, RecordIdExt,
+    AgentActivity, AgentApproval, AgentDecideOutcome, AgentEvent, AgentThread, AgentTurn, ApprovalAudience,
+    ApprovalViewer, AssistRequest, Plan, RecordId, RecordIdExt,
 };
 use displays::{PlatformSpawner, Spawner};
 use ratatui::{
@@ -18,10 +19,11 @@ use ratatui::{
     prelude::Backend,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame,
 };
 use serde_json::Value;
+use tachyonfx::RefRect;
 
 use crate::terminal_mode::{
     events::action_handler::WidgetId,
@@ -29,19 +31,28 @@ use crate::terminal_mode::{
     widgets::{button::ButtonState, input_field::InputField, ButtonType, HandleWidget, SHORTCUT_SET},
 };
 
+mod fx;
 mod json;
 mod markdown;
+mod plan;
+mod sessions;
 mod syntax;
 mod transcript;
 mod wrap;
+
+use fx::{Fx, FxKey};
 
 const THREAD_POLL: Duration = Duration::from_secs(4);
 const THREAD_POLL_WAITING: Duration = Duration::from_secs(2);
 const EVENT_POLL: Duration = Duration::from_millis(1500);
 const APPROVAL_POLL: Duration = Duration::from_secs(2);
 const EVENT_PAGE: usize = 400;
-/// Most plan steps listed in the box over the composer.
-const PLAN_PANEL_STEPS: usize = 6;
+/// Milliseconds each spinner frame shows.
+const SPIN_MS: u128 = 120;
+/// How long a row that just arrived takes to fade in.
+const ARRIVE_MS: u32 = 450;
+/// Lines a mouse wheel notch scrolls the transcript.
+const WHEEL_LINES: usize = 3;
 const SNOOZE: Duration = Duration::from_secs(60);
 /// Longest wait for the broker to open a requested session before it reads as a failure.
 const REQUEST_WAIT: Duration = Duration::from_secs(120);
@@ -56,7 +67,8 @@ const REMOTE_REFUSED: &str = "a remote viewer cannot decide, send, stop or close
 const OTHERS_SESSION_TITLE: &str = "Start your own session (this one is another technician's)";
 
 enum Msg {
-    Thread(Result<Option<AgentThread>, String>),
+    /// The thread poll for the session picked then (`None` follows the machine).
+    Thread(Option<RecordId>, Result<Option<AgentThread>, String>),
     Events(RecordId, Result<Vec<AgentEvent>, String>),
     Approvals(RecordId, Result<Vec<AgentApproval>, String>),
     Turn(&'static str, Result<(), String>),
@@ -98,6 +110,31 @@ enum NewSession {
     Close(RecordId),
     /// Nothing is open; clear the view.
     Clear,
+}
+
+/// Screen areas the running effects follow.
+#[derive(Default)]
+struct Rects {
+    transcript: RefRect,
+    border: RefRect,
+    status: RefRect,
+    approval: RefRect,
+    plan: RefRect,
+    note: RefRect,
+    unseen: RefRect,
+    steps: HashMap<usize, RefRect>,
+}
+
+/// What the last redraw showed, to start and stop effects when it changes.
+#[derive(Default)]
+struct Seen {
+    running: bool,
+    status: bool,
+    approval: Option<RecordId>,
+    picker: Option<Rect>,
+    note_at: Option<Instant>,
+    unseen: bool,
+    thread: Option<RecordId>,
 }
 
 fn new_session_step(requesting: bool, closing: bool, open: Option<&RecordId>, confirmed: bool) -> NewSession {
@@ -149,7 +186,6 @@ pub struct AssistantTab<'a> {
     /// The message that asked for the new session.
     requested_text: String,
     scroll_back: Cell<usize>,
-    frame: Cell<usize>,
     last_thread_poll: Option<Instant>,
     last_event_poll: Option<Instant>,
     last_approval_poll: Option<Instant>,
@@ -158,6 +194,26 @@ pub struct AssistantTab<'a> {
     loading_approvals: bool,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
+    fx: Fx,
+    picker: RefCell<sessions::SessionPicker>,
+    plan_panel: plan::PlanPanel,
+    /// The session picked from the list; `None` follows this machine's newest session.
+    pinned: Option<RecordId>,
+    /// Start of the spinner clock.
+    clock: Instant,
+    /// Set once the shown session's first events have loaded; rows after that fade in.
+    primed: bool,
+    /// Rows fading in and the screen rows they hold, by event key.
+    arriving: HashMap<String, (Instant, RefRect)>,
+    /// Rows that arrived while scrolled back.
+    unseen: Cell<usize>,
+    /// Transcript lines at the last redraw.
+    last_total: Cell<usize>,
+    /// The scrollbar column at the last redraw.
+    scrollbar: Cell<Rect>,
+    dragging: Cell<bool>,
+    rects: Rects,
+    seen: Seen,
 }
 
 impl<'a> AssistantTab<'a> {
@@ -169,6 +225,7 @@ impl<'a> AssistantTab<'a> {
         let input = InputField::new("Message the agent", WidgetId("AssistantInput".to_string()));
         input.set_state(ButtonState::Active);
         let hostname = connection_string.split(':').next().unwrap_or_default().to_string();
+        let picker = RefCell::new(sessions::SessionPicker::new(connection_string.clone()));
         let (tx, rx) = unbounded();
         Self {
             input,
@@ -200,7 +257,6 @@ impl<'a> AssistantTab<'a> {
             requested_at: None,
             requested_text: String::new(),
             scroll_back: Cell::new(0),
-            frame: Cell::new(0),
             last_thread_poll: None,
             last_event_poll: None,
             last_approval_poll: None,
@@ -209,7 +265,24 @@ impl<'a> AssistantTab<'a> {
             loading_approvals: false,
             tx,
             rx,
+            fx: Fx::default(),
+            picker,
+            plan_panel: plan::PlanPanel::default(),
+            pinned: None,
+            clock: Instant::now(),
+            primed: false,
+            arriving: HashMap::new(),
+            unseen: Cell::new(0),
+            last_total: Cell::new(0),
+            scrollbar: Cell::new(Rect::default()),
+            dragging: Cell::new(false),
+            rects: Rects::default(),
+            seen: Seen::default(),
         }
+    }
+
+    fn spinner(&self) -> &'static str {
+        glyphs::SPINNER[(self.clock.elapsed().as_millis() / SPIN_MS) as usize % glyphs::SPINNER.len()]
     }
 
     fn running(&self) -> bool {
@@ -287,9 +360,14 @@ impl<'a> AssistantTab<'a> {
         self.last_thread_poll = Some(Instant::now());
         let tx = self.tx.clone();
         let cs = self.connection_string.clone();
+        let pinned = self.pinned.clone();
         PlatformSpawner::spawn(async move {
-            let r = AgentThread::latest_for_connection(&cs).await.map_err(|e| e.to_string());
-            let _ = tx.send(Msg::Thread(r));
+            let r = match &pinned {
+                Some(id) => AgentThread::get(id).await,
+                None => AgentThread::latest_for_connection(&cs).await,
+            }
+            .map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Thread(pinned, r));
         });
     }
 
@@ -328,26 +406,13 @@ impl<'a> AssistantTab<'a> {
     fn drain(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                Msg::Thread(Ok(found)) => {
+                Msg::Thread(for_pin, Ok(found)) => {
                     self.loading_thread = false;
-                    let changed = found.as_ref().map(|t| &t.id) != self.thread.as_ref().map(|t| &t.id);
-                    if changed {
-                        self.events.clear();
-                        self.approvals.clear();
-                        self.transcript.clear();
-                        self.toggled.borrow_mut().clear();
-                        self.fresh = None;
-                        self.last_seq = 0;
-                        self.last_event_poll = None;
-                        self.last_approval_poll = None;
-                        self.scroll_back.set(0);
+                    if for_pin == self.pinned {
+                        self.show_thread(found);
                     }
-                    if found.as_ref().is_some_and(AgentThread::is_open) {
-                        self.requested_at = None;
-                    }
-                    self.thread = found;
                 }
-                Msg::Thread(Err(e)) => {
+                Msg::Thread(_, Err(e)) => {
                     self.loading_thread = false;
                     self.set_note(e);
                 }
@@ -356,6 +421,8 @@ impl<'a> AssistantTab<'a> {
                     if self.thread.as_ref().map(|t| &t.id) != Some(&thread) {
                         continue;
                     }
+                    let partial = rows.len() < EVENT_PAGE;
+                    let mut arrived = 0;
                     for row in rows {
                         self.last_seq = self.last_seq.max(row.seq);
                         match self.events.iter_mut().find(|e| e.id == row.id) {
@@ -364,10 +431,22 @@ impl<'a> AssistantTab<'a> {
                                 *existing = row;
                             }
                             Some(_) => {}
-                            None => self.events.push(row),
+                            None => {
+                                if self.primed {
+                                    self.arrive(row.id.key_string());
+                                    arrived += 1;
+                                }
+                                self.events.push(row);
+                            }
                         }
                     }
                     self.events.sort_by_key(|e| e.seq);
+                    if self.scroll_back.get() > 0 {
+                        self.unseen.set(self.unseen.get() + arrived);
+                    }
+                    if partial {
+                        self.primed = true;
+                    }
                 }
                 Msg::Events(_, Err(e)) => {
                     self.loading_events = false;
@@ -426,10 +505,119 @@ impl<'a> AssistantTab<'a> {
         }
     }
 
+    /// Shows `found`, starting over when it is another session than the one on screen.
+    fn show_thread(&mut self, found: Option<AgentThread>) {
+        let changed = found.as_ref().map(|t| &t.id) != self.thread.as_ref().map(|t| &t.id);
+        if changed {
+            self.events.clear();
+            self.approvals.clear();
+            self.transcript.clear();
+            self.toggled.borrow_mut().clear();
+            self.fresh = None;
+            self.last_seq = 0;
+            self.last_event_poll = None;
+            self.last_approval_poll = None;
+            self.scroll_back.set(0);
+            self.plan_panel.reset();
+            self.primed = false;
+            self.arriving.clear();
+            self.unseen.set(0);
+        }
+        if found.as_ref().is_some_and(AgentThread::is_open) {
+            self.requested_at = None;
+        }
+        self.thread = found;
+    }
+
+    /// Fades in the row keyed `key`, which just arrived.
+    fn arrive(&mut self, key: String) {
+        let rect = RefRect::default();
+        self.fx.add(FxKey::Row(key.clone()), fx::fade_in(rect.clone(), ARRIVE_MS));
+        self.arriving.insert(key, (Instant::now(), rect));
+    }
+
+    fn open_picker(&mut self) {
+        let email = displays::get_current_user_from_auth().map(|u| u.get_email().to_string());
+        let shown = self.thread.as_ref().map(|t| t.id.clone());
+        let viewer = self.viewer.clone();
+        self.picker.get_mut().open(viewer, email, shown);
+    }
+
+    fn apply_pick(&mut self, pick: sessions::Pick) {
+        match pick {
+            sessions::Pick::Follow => {
+                if self.pinned.take().is_some() {
+                    self.last_thread_poll = None;
+                    self.set_note("following this machine's newest session");
+                }
+            }
+            sessions::Pick::Open(thread) => {
+                let thread = *thread;
+                self.pinned = Some(thread.id.clone());
+                self.fresh = None;
+                self.requested_at = None;
+                self.armed_at = None;
+                self.set_note(format!("viewing {}", thread.label()));
+                self.show_thread(Some(thread));
+                self.last_thread_poll = Some(Instant::now());
+            }
+        }
+    }
+
+    /// The plan to pin over the composer: the newest, unless it finished before the running turn began.
+    fn shown_plan(&self) -> Option<(String, Plan)> {
+        if self.replacing() {
+            return None;
+        }
+        let (ev, plan) = transcript::newest_plan(&self.events)?;
+        if plan.complete() && transcript::turn_started_after(&self.events, ev.seq) {
+            return None;
+        }
+        Some((ev.id.key_string(), plan))
+    }
+
+    /// The working line under the transcript and how many cells after its spinner the shimmer covers.
+    fn status_line(&self, spinner: &str, width: usize) -> Option<(Line<'static>, u16)> {
+        let thread = self.thread.as_ref().filter(|t| t.is_working() && !self.replacing())?;
+        let queued = thread.status == "queued";
+        let label = if queued { "Waiting for a free agent".to_string() } else { thread.activity().label() };
+        let thought = matches!(thread.activity(), AgentActivity::Thinking)
+            .then(|| transcript::current_thought(&self.events))
+            .flatten();
+        let mut tail = Vec::new();
+        if !queued && let Some(at) = transcript::turn_started_at(&self.events) {
+            tail.push(elapsed_label(u64::try_from((Utc::now() - at).num_seconds()).unwrap_or(0)));
+        }
+        if self.running() && self.may_steer() {
+            tail.push("Esc to stop".to_string());
+        }
+        let accent = Style::default().fg(THEME.accent);
+        let muted = Style::default().fg(THEME.text_muted);
+        let mut spans = vec![
+            Span::styled(format!(" {spinner} "), accent),
+            Span::styled(label, accent.add_modifier(Modifier::BOLD)),
+        ];
+        if let Some(thought) = thought {
+            spans.push(Span::styled(format!(" {} ", glyphs::DOT), muted));
+            spans.push(Span::styled(wrap::one_line(&thought), Style::default().fg(THEME.text)));
+        }
+        let glow = wrap::spans_width(&spans[1..]);
+        if !tail.is_empty() {
+            spans.push(Span::styled(format!("  ({})", tail.join(&format!(" {} ", glyphs::DOT))), muted));
+        }
+        let glow = glow.min(width.saturating_sub(3)) as u16;
+        Some((wrap::fit(spans, width), glow))
+    }
+
     /// Schedules the periodic reads; called once per frame.
     fn tick(&mut self) {
         self.drain();
-        self.frame.set(self.frame.get().wrapping_add(1));
+        self.picker.get_mut().tick();
+        if let Some(pick) = self.picker.get_mut().take_pick() {
+            self.apply_pick(pick);
+        }
+        let fading = Duration::from_millis(u64::from(ARRIVE_MS) + 200);
+        self.arriving.retain(|_, (at, _)| at.elapsed() < fading);
         if self.last_viewer_read.is_none_or(|t| t.elapsed() >= APPROVAL_POLL)
             && let Some(viewer) = ApprovalViewer::signed_in()
         {
@@ -463,6 +651,7 @@ impl<'a> AssistantTab<'a> {
 
     /// Files an assist request for this machine; the broker opens the session, a new one when another technician's is open.
     fn request_session(&mut self, text: String) {
+        self.pinned = None;
         let fresh = self.open_thread().is_some();
         let cs = self.connection_string.clone();
         let user = displays::get_current_user_from_auth();
@@ -545,6 +734,11 @@ impl<'a> AssistantTab<'a> {
 
     /// Ctrl+L: closes the open session on a second press within [`CONFIRM_WINDOW`], then clears the view for a new one.
     fn new_session(&mut self) {
+        if self.pinned.take().is_some() {
+            self.last_thread_poll = None;
+            self.set_note("back to this machine's newest session; press Ctrl+L again for a new one");
+            return;
+        }
         if self.watching_others() {
             self.set_note(NOT_YOURS);
             return;
@@ -761,6 +955,10 @@ impl<'a> AssistantTab<'a> {
         if running && !self.replacing() && self.may_steer() {
             hints.push(("Esc", "stop"));
         }
+        hints.push(("Ctrl+S", "sessions"));
+        if transcript::newest_plan(&self.events).is_some() {
+            hints.push(("Ctrl+P", "plan"));
+        }
         hints.push(("Ctrl+O", if self.expand { "collapse tools" } else { "expand tools" }));
         hints.push(("Ctrl+T", if self.show_reasoning { "hide thinking" } else { "show thinking" }));
         if !self.watching_others() {
@@ -770,6 +968,7 @@ impl<'a> AssistantTab<'a> {
             hints.push(("Ctrl+X", "close session"));
         }
         hints.push(("PgUp/PgDn", "scroll"));
+        hints.push(("Ctrl+End", "latest"));
         hints.push(("Alt+Enter", "newline"));
         let mut used = wrap::spans_width(&spans);
         for (k, a) in hints {
@@ -808,42 +1007,40 @@ impl<'a> AssistantTab<'a> {
         *self.anchor.borrow_mut() = Some(Anchor { key: hit.key.clone(), line: 0, at: usize::from(y - view.y) });
         true
     }
-}
 
-impl<'a> HandleWidget<'a> for AssistantTab<'a> {
-    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        self.tick();
-        if let Some(thread) = &self.thread {
-            displays::ui_data::agent_session_notify::mark_in_view(&thread.id);
+    /// A press or drag on the scrollbar moves the view there; false when the event is elsewhere.
+    fn scrollbar_mouse(&self, mouse: &MouseEvent) -> bool {
+        let bar = self.scrollbar.get();
+        let on_bar = bar.width > 0 && bar.contains(Position::new(mouse.column, mouse.row));
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if on_bar => {
+                self.dragging.set(true);
+                self.scroll_to(mouse.row);
+                true
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging.get() => {
+                self.scroll_to(mouse.row);
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.dragging.get() => {
+                self.dragging.set(false);
+                true
+            }
+            _ => false,
         }
-        let approval = self.active_approval();
-        let busy = approval.as_ref().is_some_and(|r| self.in_flight.contains(&r.id));
-        let inner_w = area.width.saturating_sub(2) as usize;
-        let approval_budget = (area.height / 2).saturating_sub(2) as usize;
-        let approval_lines =
-            approval.as_ref().map(|r| Self::approval_lines(r, inner_w.max(8), busy, approval_budget));
-        let approval_h = approval_lines
-            .as_ref()
-            .map(|l| (l.len() as u16 + 2).min(area.height / 2))
-            .unwrap_or(0);
-        let plan = transcript::newest_plan(&self.events).filter(|p| !p.complete());
-        let plan_lines = plan.as_ref().map(|p| transcript::plan_lines(p, inner_w.max(8), PLAN_PANEL_STEPS));
-        let plan_h = plan_lines
-            .as_ref()
-            .map(|l| (l.len() as u16 + 2).min(area.height / 3))
-            .unwrap_or(0);
+    }
 
-        let rows = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(approval_h),
-            Constraint::Length(plan_h),
-            Constraint::Length(4),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    /// Scrolls so the view's place in the transcript matches screen row `row` of the scrollbar.
+    fn scroll_to(&self, row: u16) {
+        let bar = self.scrollbar.get();
+        let range = self.last_total.get().saturating_sub(usize::from(self.view.get().height));
+        let at = usize::from(row.saturating_sub(bar.y).min(bar.height.saturating_sub(1)));
+        let start = at * range / usize::from(bar.height.saturating_sub(1)).max(1);
+        self.scroll_back.set(range - start.min(range));
+    }
 
-        let running = self.running();
-        let spinner = glyphs::SPINNER[self.frame.get() % glyphs::SPINNER.len()];
+    /// The transcript block: rows, the scrollbar on its right edge, and what is below while scrolled back.
+    fn draw_transcript(&mut self, f: &mut Frame, area: Rect, spinner: &'static str, running: bool) {
         let word = if self.requested_at.is_some() {
             "opening a new session".to_string()
         } else if self.closing() {
@@ -856,19 +1053,32 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 None => "no session".to_string(),
             }
         };
-        let title = if running || self.requested_at.is_some() || self.closing() {
-            format!(" Agent \u{00b7} {} \u{00b7} {word} {spinner} ", self.hostname)
-        } else {
-            format!(" Agent \u{00b7} {} \u{00b7} {word} ", self.hostname)
+        let host = match &self.thread {
+            Some(t) if database::schema::is_general(&t.connection_string) => "general".to_string(),
+            Some(t) => t.hostname.clone().filter(|h| !h.trim().is_empty()).unwrap_or_else(|| self.hostname.clone()),
+            None => self.hostname.clone(),
         };
-        let block = Block::default()
+        let viewing = if self.pinned.is_some() { format!(" {} viewing", glyphs::DOT) } else { String::new() };
+        let title = if self.requested_at.is_some() || self.closing() {
+            format!(" Agent \u{00b7} {host} \u{00b7} {word}{viewing} {spinner} ")
+        } else {
+            format!(" Agent \u{00b7} {host} \u{00b7} {word}{viewing} ")
+        };
+        let muted = Style::default().fg(THEME.text_muted);
+        let hint = " Ctrl+S sessions ";
+        let hint_fits = usize::from(area.width) >= wrap::width(&title) + wrap::width(hint) + 4;
+        let mut block = Block::default()
             .borders(Borders::ALL)
             .border_set(SHORTCUT_SET)
             .border_style(THEME.border(running))
             .title_style(THEME.title())
             .title(title);
+        if hint_fits {
+            block = block.title(Line::styled(hint, muted).right_aligned());
+        }
 
-        let inner = block.inner(rows[0]);
+        let inner = block.inner(area);
+        let inner_w = inner.width as usize;
         let inner_h = inner.height as usize;
         let opts = transcript::Options {
             width: inner_w,
@@ -899,10 +1109,15 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
         }
         self.scroll_back.set(back);
         self.last_back.set(back);
+        self.last_total.set(total);
+        if back == 0 {
+            self.unseen.set(0);
+        }
         let end = total - back;
         let start = end.saturating_sub(inner_h);
         let mut hits = Vec::new();
         let mut top = None;
+        let mut spans: HashMap<&str, (usize, usize)> = HashMap::new();
         for (i, slot) in slots[start..end].iter().enumerate() {
             let Some(row) = slot.row else { continue };
             if top.is_none() {
@@ -911,18 +1126,184 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             if let Some(open) = row.fold.filter(|_| slot.is_head()) {
                 hits.push(Hit { y: inner.y + i as u16, key: row.key.clone(), open });
             }
+            if self.arriving.contains_key(&row.key) {
+                spans.entry(row.key.as_str()).or_insert((i, i)).1 = i;
+            }
+        }
+        for (key, (_, rect)) in &self.arriving {
+            rect.set(match spans.get(key.as_str()) {
+                Some(&(a, b)) => Rect { x: inner.x, y: inner.y + a as u16, width: inner.width, height: (b - a + 1) as u16 },
+                None => Rect::default(),
+            });
         }
         *self.hits.borrow_mut() = hits;
         *self.top.borrow_mut() = top;
         self.view.set(inner);
         self.page.set(inner_h.saturating_sub(2).max(1));
+        self.rects.transcript.set(inner);
+        self.rects.border.set(area);
         let view: Vec<Line> = slots[start..end].iter().map(|s| s.line.clone()).collect();
-        let block = if back > 0 {
-            block.title_bottom(Line::from(format!(" {} {back} more below \u{00b7} PgDn ", glyphs::SCROLL_DOWN)).right_aligned())
+        f.render_widget(Paragraph::new(view).block(block).style(Style::default().bg(THEME.bg)), area);
+
+        let bar = Rect { x: area.right().saturating_sub(1), y: inner.y, width: 1, height: inner.height };
+        if total > inner_h && inner_h > 1 {
+            let mut state = ScrollbarState::new(total - inner_h + 1).position(start).viewport_content_length(inner_h);
+            let thumb = if back > 0 { THEME.accent } else { THEME.overlay };
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(Some(glyphs::SCROLL_TRACK_V))
+                .track_style(THEME.border(running))
+                .thumb_symbol(glyphs::SCROLL_THUMB)
+                .thumb_style(Style::default().fg(thumb));
+            f.render_stateful_widget(scrollbar, bar, &mut state);
+            self.scrollbar.set(bar);
         } else {
-            block
-        };
-        f.render_widget(Paragraph::new(view).block(block).style(Style::default().bg(THEME.bg)), rows[0]);
+            self.scrollbar.set(Rect::default());
+        }
+
+        if back > 0 {
+            let unseen = self.unseen.get();
+            let mut spans = vec![Span::styled(format!(" {} {back} more below", glyphs::SCROLL_DOWN), muted)];
+            let mut badge = None;
+            if unseen > 0 {
+                spans.push(Span::styled(format!(" {} ", glyphs::DOT), muted));
+                let text = format!("{unseen} new");
+                badge = Some((wrap::spans_width(&spans) as u16, wrap::width(&text) as u16));
+                spans.push(Span::styled(text, Style::default().fg(THEME.accent).add_modifier(Modifier::BOLD)));
+            }
+            spans.push(Span::styled(format!(" {} Ctrl+End ", glyphs::DOT), muted));
+            let w = wrap::spans_width(&spans) as u16;
+            if w + 4 <= area.width {
+                let at = Rect { x: area.right() - 2 - w, y: area.bottom() - 1, width: w, height: 1 };
+                f.render_widget(Paragraph::new(Line::from(spans)), at);
+                if let Some((off, width)) = badge {
+                    self.rects.unseen.set(Rect { x: at.x + off, y: at.y, width, height: 1 });
+                }
+            }
+        }
+    }
+
+    /// Starts and stops the effects that follow what is on screen.
+    fn update_fx(&mut self, running: bool, status: bool, approval: Option<RecordId>) {
+        if running != self.seen.running {
+            if running {
+                self.fx.add(FxKey::Border, fx::running_border(self.rects.border.clone(), THEME.accent_soft));
+            } else {
+                self.fx.cancel(FxKey::Border);
+            }
+            self.seen.running = running;
+        }
+        if status != self.seen.status {
+            if status {
+                self.fx.add(FxKey::Status, fx::shimmer(self.rects.status.clone(), THEME.text));
+            } else {
+                self.fx.cancel(FxKey::Status);
+            }
+            self.seen.status = status;
+        }
+        if approval != self.seen.approval {
+            if approval.is_some() {
+                self.fx.add(FxKey::Approval, fx::wipe_in(self.rects.approval.clone(), 300));
+                self.fx.add(FxKey::ApprovalPulse, fx::pulse_outline(self.rects.approval.clone()));
+            } else {
+                self.fx.cancel(FxKey::ApprovalPulse);
+            }
+            self.seen.approval = approval;
+        }
+        if self.note_at != self.seen.note_at {
+            if self.note_at.is_some() {
+                self.fx.add(FxKey::Note, fx::tint_in(self.rects.note.clone(), THEME.accent, 700));
+            }
+            self.seen.note_at = self.note_at;
+        }
+        let unseen = self.scroll_back.get() > 0 && self.unseen.get() > 0;
+        if unseen != self.seen.unseen {
+            if unseen {
+                self.fx.add(FxKey::Unseen, fx::pulse_text(self.rects.unseen.clone()));
+            } else {
+                self.fx.cancel(FxKey::Unseen);
+            }
+            self.seen.unseen = unseen;
+        }
+        let shown = self.thread.as_ref().map(|t| t.id.clone());
+        if shown != self.seen.thread {
+            if self.seen.thread.is_some() && shown.is_some() {
+                self.fx.add(FxKey::Transcript, fx::wipe_in(self.rects.transcript.clone(), 320));
+            }
+            self.seen.thread = shown;
+        }
+        let picker = self.picker.get_mut();
+        let open = picker.is_open().then(|| picker.area());
+        if open != self.seen.picker {
+            match open {
+                Some(area) => {
+                    if self.seen.picker.is_none() {
+                        self.fx.add(FxKey::Picker, fx::drop_in(area));
+                    }
+                    self.fx.add(FxKey::PickerDim, fx::dim_except(area));
+                }
+                None => {
+                    self.fx.cancel(FxKey::Picker);
+                    self.fx.cancel(FxKey::PickerDim);
+                }
+            }
+            self.seen.picker = open;
+        }
+    }
+}
+
+impl<'a> HandleWidget<'a> for AssistantTab<'a> {
+    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        self.tick();
+        if let Some(thread) = &self.thread {
+            displays::ui_data::agent_session_notify::mark_in_view(&thread.id);
+        }
+        let spinner = self.spinner();
+        let approval = self.active_approval();
+        let busy = approval.as_ref().is_some_and(|r| self.in_flight.contains(&r.id));
+        let inner_w = area.width.saturating_sub(2) as usize;
+        let approval_budget = (area.height / 2).saturating_sub(2) as usize;
+        let approval_lines =
+            approval.as_ref().map(|r| Self::approval_lines(r, inner_w.max(8), busy, approval_budget));
+        let approval_h = approval_lines
+            .as_ref()
+            .map(|l| (l.len() as u16 + 2).min(area.height / 2))
+            .unwrap_or(0);
+        let plan = self.shown_plan();
+        if let Some((key, plan)) = &plan {
+            let (first, done) = self.plan_panel.observe(key, plan);
+            if first {
+                self.fx.add(FxKey::Plan, fx::wipe_in(self.rects.plan.clone(), 380));
+            }
+            for i in done {
+                let rect = self.rects.steps.entry(i).or_default().clone();
+                self.fx.add(FxKey::PlanStep(i), fx::flash(rect, THEME.success, THEME.surface, 900));
+            }
+        }
+        let plan_h = plan
+            .as_ref()
+            .map(|(_, p)| self.plan_panel.height(p, area.width, area.height / 3))
+            .unwrap_or(0);
+        let status = self.status_line(spinner, area.width as usize);
+
+        let rows = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(u16::from(status.is_some())),
+            Constraint::Length(approval_h),
+            Constraint::Length(plan_h),
+            Constraint::Length(4),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+        let running = self.running();
+        self.draw_transcript(f, rows[0], spinner, running);
+
+        if let Some((line, glow)) = status.as_ref() {
+            f.render_widget(Paragraph::new(line.clone()).style(Style::default().bg(THEME.bg)), rows[1]);
+            self.rects.status.set(Rect { x: rows[1].x + 3, y: rows[1].y, width: *glow, height: 1 });
+        }
 
         if let (Some(req), Some(lines)) = (approval.as_ref(), approval_lines) {
             let title = if req.kind == "question" { " The agent asks " } else { " Approval needed " };
@@ -932,30 +1313,32 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 .border_style(Style::default().fg(THEME.warning))
                 .title_style(Style::default().fg(THEME.warning).add_modifier(Modifier::BOLD))
                 .title(title);
-            f.render_widget(Paragraph::new(lines).block(block).style(Style::default().bg(THEME.bg)), rows[1]);
+            f.render_widget(Paragraph::new(lines).block(block).style(Style::default().bg(THEME.bg)), rows[2]);
+            self.rects.approval.set(rows[2]);
         }
 
-        if let (Some(plan), Some(lines)) = (plan.as_ref(), plan_lines) {
-            let title = format!(" Plan {} {} of {} done ", glyphs::DOT, plan.done(), plan.steps.len());
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_set(SHORTCUT_SET)
-                .border_style(Style::default().fg(THEME.tertiary))
-                .title_style(Style::default().fg(THEME.tertiary).add_modifier(Modifier::BOLD))
-                .title(title);
-            f.render_widget(Paragraph::new(lines).block(block).style(Style::default().bg(THEME.bg)), rows[2]);
+        let mut step_rects = Vec::new();
+        if let Some((_, plan)) = &plan {
+            step_rects = self.plan_panel.draw(f, rows[3], plan, spinner);
+            self.rects.plan.set(rows[3]);
+        }
+        for (i, rect) in &self.rects.steps {
+            rect.set(step_rects.get(*i).copied().flatten().unwrap_or_default());
         }
 
         let input_title = if approval.as_ref().is_some_and(|r| r.kind == "question") {
-            "Answer the agent"
+            "Answer the agent".to_string()
         } else if self.watching_others() {
-            OTHERS_SESSION_TITLE
+            OTHERS_SESSION_TITLE.to_string()
         } else if self.starts_session() {
-            "Start a new session"
+            match self.thread.as_ref().filter(|t| self.pinned.is_some() && t.connection_string != self.connection_string) {
+                Some(_) => format!("Start a new session on {}", self.hostname),
+                None => "Start a new session".to_string(),
+            }
         } else if running {
-            "Message the agent while it works"
+            "Message the agent while it works".to_string()
         } else {
-            "Message the agent"
+            "Message the agent".to_string()
         };
         let (_, title_color, _, _) = self.input.colors();
         self.input.set_block(
@@ -964,12 +1347,14 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 .border_type(BorderType::Rounded)
                 .title(Line::styled(input_title, Style::default().fg(title_color))),
         );
-        f.render_widget(&self.input, rows[3]);
+        f.render_widget(&self.input, rows[4]);
 
         let muted = Style::default().fg(THEME.text_muted).bg(THEME.bg);
         let mut right = Vec::new();
+        let mut note_w = 0;
         if let Some(note) = self.note_at.filter(|t| t.elapsed() < NOTE_SHOWN).map(|_| self.note.as_str()) {
-            let note = wrap::clip(&wrap::one_line(note), (rows[4].width / 2) as usize);
+            let note = wrap::clip(&wrap::one_line(note), (rows[5].width / 2) as usize);
+            note_w = wrap::width(&note) as u16;
             right.push(Span::styled(note, Style::default().fg(THEME.accent_soft)));
         }
         if let Some(context) = self.thread.as_ref().and_then(AgentThread::context_usage) {
@@ -979,14 +1364,28 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
             right.push(Span::styled(context, muted));
         }
         let right_w = if right.is_empty() { 0 } else { wrap::spans_width(&right) as u16 + 1 };
-        let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_w)]).areas(rows[4]);
+        let [hints, usage] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_w)]).areas(rows[5]);
+        self.rects.note.set(Rect { x: usage.x + 1, y: usage.y, width: note_w, height: 1 });
         f.render_widget(Paragraph::new(self.footer_line(hints.width as usize, running)).style(muted), hints);
         f.render_widget(Paragraph::new(Line::from(right)).alignment(Alignment::Right).style(muted), usage);
+
+        let following = self.pinned.is_none();
+        let shown = self.thread.as_ref().map(|t| t.id.clone());
+        let picker = self.picker.get_mut();
+        if picker.is_open() {
+            picker.draw(f, area, shown.as_ref(), following, spinner);
+        }
+        self.update_fx(running, status.is_some(), approval.map(|r| r.id));
+        self.fx.process(f.buffer_mut(), area);
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if self.picker.get_mut().is_open() {
+            self.picker.get_mut().handle_key(key);
+            return true;
+        }
         if !self.remote_input
             && let Some(req) = self.active_approval()
             && self.approval_hotkey(&req, &key)
@@ -1033,6 +1432,33 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
                 self.scroll_back.set(self.scroll_back.get().saturating_sub(self.page.get()));
                 true
             }
+            KeyCode::Home if ctrl => {
+                self.scroll_back.set(usize::MAX / 2);
+                true
+            }
+            KeyCode::End if ctrl => {
+                self.scroll_back.set(0);
+                true
+            }
+            KeyCode::Up if ctrl => {
+                self.scroll_back.set(self.scroll_back.get().saturating_add(1));
+                true
+            }
+            KeyCode::Down if ctrl => {
+                self.scroll_back.set(self.scroll_back.get().saturating_sub(1));
+                true
+            }
+            KeyCode::Char('s') if ctrl => {
+                self.open_picker();
+                true
+            }
+            KeyCode::Char('p') if ctrl => {
+                match transcript::newest_plan(&self.events) {
+                    Some((_, plan)) => self.plan_panel.toggle(&plan),
+                    None => self.set_note("the agent has no plan in this session"),
+                }
+                true
+            }
             KeyCode::Char('o') if ctrl => {
                 self.expand = !self.expand;
                 self.refold();
@@ -1060,9 +1486,19 @@ impl<'a> HandleWidget<'a> for AssistantTab<'a> {
     }
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
+        if let Ok(mut picker) = self.picker.try_borrow_mut()
+            && picker.is_open()
+        {
+            picker.handle_mouse(mouse_event);
+            return;
+        }
+        let plan = self.shown_plan().map(|(_, p)| p);
+        if self.plan_panel.handle_mouse(mouse_event, plan.as_ref()) || self.scrollbar_mouse(mouse_event) {
+            return;
+        }
         match mouse_event.kind {
-            MouseEventKind::ScrollUp => self.scroll_back.set(self.scroll_back.get().saturating_add(3)),
-            MouseEventKind::ScrollDown => self.scroll_back.set(self.scroll_back.get().saturating_sub(3)),
+            MouseEventKind::ScrollUp => self.scroll_back.set(self.scroll_back.get().saturating_add(WHEEL_LINES)),
+            MouseEventKind::ScrollDown => self.scroll_back.set(self.scroll_back.get().saturating_sub(WHEEL_LINES)),
             MouseEventKind::Down(MouseButton::Left) if self.toggle_at(mouse_event.column, mouse_event.row) => {}
             _ => ButtonType::handle_mouse_event(&self.input, mouse_event),
         }
@@ -1089,6 +1525,15 @@ fn status_word(status: &str) -> &'static str {
 
 fn short_key(id: &RecordId) -> String {
     id.key_string().chars().take(8).collect()
+}
+
+/// `14s`, `2m 05s` or `1h 03m`.
+fn elapsed_label(secs: u64) -> String {
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3_600 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3_600, secs % 3_600 / 60),
+    }
 }
 
 #[cfg(test)]
@@ -1359,6 +1804,79 @@ mod tests {
         assert!(tab.active_approval().is_none());
         tab.viewer = viewer("boss", true);
         assert!(tab.active_approval().is_some());
+    }
+
+    #[tokio::test]
+    async fn ctrl_s_opens_the_session_list_and_keys_go_to_it() {
+        let mut tab = tab(Some(thread("t1", "idle")));
+        tab.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(tab.picker.get_mut().is_open());
+        tab.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(tab.input.get_raw_text(), "", "typing filters the list instead of the composer");
+        tab.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        tab.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!tab.picker.get_mut().is_open());
+        assert!(footer(&tab).contains("Ctrl+S sessions"));
+    }
+
+    #[test]
+    fn a_picked_session_is_viewed_until_ctrl_l_follows_the_machine_again() {
+        let mut tab = tab(Some(thread("t1", "idle")));
+        let mut old = thread("t0", "closed");
+        old.connection_string = "PC-2:def".into();
+        tab.apply_pick(sessions::Pick::Open(Box::new(old)));
+        assert_eq!(tab.pinned, Some(RecordId::new("agent_thread", "t0")));
+        assert_eq!(tab.thread.as_ref().map(|t| t.id.key_string()), Some("t0".into()));
+        assert!(tab.events.is_empty(), "another session starts from an empty transcript");
+        assert!(tab.starts_session());
+        tab.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        assert!(tab.pinned.is_none());
+        assert!(tab.fresh.is_none(), "the first Ctrl+L only stops viewing");
+        tab.apply_pick(sessions::Pick::Open(Box::new(thread("t5", "idle"))));
+        tab.apply_pick(sessions::Pick::Follow);
+        assert!(tab.pinned.is_none() && tab.last_thread_poll.is_none());
+    }
+
+    #[test]
+    fn the_working_line_names_the_activity_the_thought_and_the_stop_key() {
+        let mut t = thread("t1", "running");
+        t.activity = Some("thinking".into());
+        let mut tab = tab(Some(t.clone()));
+        let mut thought = event(&t);
+        thought.id = RecordId::new("agent_event", "e2");
+        thought.kind = "reasoning".into();
+        thought.text = "**Reading the minidump**\nbody".into();
+        tab.events.push(thought);
+        let (line, glow) = tab.status_line("*", 120).expect("a working session has a status line");
+        let t_line = text(&[line]);
+        assert!(t_line.contains("Thinking \u{00b7} Reading the minidump"), "{t_line}");
+        assert!(t_line.contains("Esc to stop"), "{t_line}");
+        assert_eq!(usize::from(glow), wrap::width("Thinking \u{00b7} Reading the minidump"));
+        tab.thread = Some(thread("t1", "idle"));
+        assert!(tab.status_line("*", 120).is_none());
+        assert_eq!(elapsed_label(14), "14s");
+        assert_eq!(elapsed_label(125), "2m 05s");
+        assert_eq!(elapsed_label(3_780), "1h 03m");
+    }
+
+    #[test]
+    fn a_finished_plan_from_an_earlier_turn_leaves_the_composer() {
+        let t = thread("t1", "idle");
+        let mut tab = tab(Some(t.clone()));
+        let plan = Plan::from_value(&serde_json::json!({ "plan": [{ "step": "a", "status": "completed" }] })).expect("plan");
+        let mut row = event(&t);
+        row.id = RecordId::new("agent_event", "p");
+        row.seq = 2;
+        row.kind = "other".into();
+        row.item = Some(plan.to_item());
+        tab.events.push(row);
+        assert!(tab.shown_plan().is_some());
+        let mut turn = event(&t);
+        turn.id = RecordId::new("agent_event", "u");
+        turn.seq = 3;
+        turn.kind = "turn_started".into();
+        tab.events.push(turn);
+        assert!(tab.shown_plan().is_none());
     }
 
     #[test]

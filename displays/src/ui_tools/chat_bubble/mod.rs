@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use super::mtech_glass::{edge, lift, pane};
 use super::{icons, theme};
-pub use plan::{pinned_plan, plan_progress, plan_steps, plan_summary};
+pub use plan::{floating_plan, plan_progress, plan_steps, plan_summary};
 pub use shell::is_command_key;
 use shell::ShellColors;
 
