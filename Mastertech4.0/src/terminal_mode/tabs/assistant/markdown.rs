@@ -21,18 +21,30 @@ pub fn render(text: &str, width: usize, ink: Color) -> Vec<Line<'static>> {
         return values.iter().flat_map(|v| json::lines(v, width)).collect();
     }
     let text = normalize(&text);
+    let blocks = md::blocks(&text);
     let mut out = Vec::new();
     let mut blank = true;
-    for block in md::blocks(&text) {
+    let mut i = 0;
+    while i < blocks.len() {
+        let block = blocks[i];
         if block == Block::Blank {
             if !blank {
                 out.push(Line::default());
             }
             blank = true;
+            i += 1;
             continue;
         }
         blank = false;
+        if let Some((rows, aligns)) = table_rows(&blocks[i..])
+            && let Some(lines) = table(&rows, &aligns, width, ink)
+        {
+            out.extend(lines);
+            i += rows.len();
+            continue;
+        }
         out.extend(block_lines(block, width, ink));
+        i += 1;
     }
     if out.last().is_some_and(|l| l.spans.is_empty()) {
         out.pop();
@@ -49,12 +61,44 @@ fn block_lines(block: Block<'_>, width: usize, ink: Color) -> Vec<Line<'static>>
             } else {
                 ink
             };
-            let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+            let mut style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+            if level == 1 {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
             wrap::words(&inline(text, style), width, &[], &[])
         }
         Block::Line { depth, text } => {
             let pad = [wrap::pad((depth * INDENT).min(width / 2))];
             wrap::words(&inline(text, base), width, &pad, &pad)
+        }
+        Block::Item {
+            depth,
+            marker: Marker::Bullet,
+            text,
+        } if task(text).is_some() => {
+            let (done, text) = task(text).unwrap_or((false, text));
+            let lead = (depth * INDENT).min(width / 2);
+            let (mark, mark_style, style) = if done {
+                (
+                    glyphs::checkbox(true),
+                    Style::default().fg(THEME.success),
+                    Style::default()
+                        .fg(THEME.text_muted)
+                        .add_modifier(Modifier::CROSSED_OUT),
+                )
+            } else {
+                (
+                    glyphs::checkbox(false),
+                    Style::default().fg(THEME.tertiary),
+                    base,
+                )
+            };
+            let first = [
+                wrap::pad(lead),
+                Span::styled(format!("{mark} "), mark_style),
+            ];
+            let rest = [wrap::pad(lead + 2)];
+            wrap::words(&inline(text, style), width, &first, &rest)
         }
         Block::Item {
             depth,
@@ -91,6 +135,184 @@ fn block_lines(block: Block<'_>, width: usize, ink: Color) -> Vec<Line<'static>>
         ))],
         Block::Blank => vec![Line::default()],
     }
+}
+
+/// A task list item's state and text: `[ ]` open, `[x]` done.
+fn task(text: &str) -> Option<(bool, &str)> {
+    let rest = text.strip_prefix('[')?;
+    let (state, rest) = rest.split_at_checked(1)?;
+    let rest = rest.strip_prefix("] ")?;
+    match state {
+        " " => Some((false, rest)),
+        "x" | "X" => Some((true, rest)),
+        _ => None,
+    }
+}
+
+/// How a table column lines its cells up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Align {
+    Left,
+    Center,
+    Right,
+}
+
+/// Columns kept clear for a cell's padding.
+const CELL_PAD: usize = 2;
+/// Narrowest a table column is squeezed to before the table falls back to plain lines.
+const MIN_COL: usize = 3;
+
+/// The rows of a table opening `blocks` (header, separator, then body) and its column alignment.
+fn table_rows<'a>(blocks: &[Block<'a>]) -> Option<(Vec<&'a str>, Vec<Align>)> {
+    let row = |b: &Block<'a>| match *b {
+        Block::Line { depth: 0, text } if text.contains('|') => Some(text),
+        _ => None,
+    };
+    let header = row(blocks.first()?)?;
+    let aligns = separator(row(blocks.get(1)?)?)?;
+    if cells(header).len() != aligns.len() {
+        return None;
+    }
+    let rows: Vec<&str> = blocks.iter().map_while(row).collect();
+    Some((rows, aligns))
+}
+
+/// Alignment of each column in a `|---|:--:|` row; `None` when it is not one.
+fn separator(text: &str) -> Option<Vec<Align>> {
+    cells(text)
+        .into_iter()
+        .map(|c| {
+            let dashes = c.trim_matches(':');
+            (!dashes.is_empty() && dashes.bytes().all(|b| b == b'-')).then(|| {
+                match (c.starts_with(':'), c.ends_with(':')) {
+                    (true, true) => Align::Center,
+                    (false, true) => Align::Right,
+                    _ => Align::Left,
+                }
+            })
+        })
+        .collect()
+}
+
+/// A row's cells between its pipes, trimmed.
+fn cells(text: &str) -> Vec<&str> {
+    let t = text.trim();
+    let t = t.strip_prefix('|').unwrap_or(t);
+    let t = t.strip_suffix('|').unwrap_or(t);
+    t.split('|').map(str::trim).collect()
+}
+
+/// Column widths for `natural` widths within `room` cells: narrow columns keep theirs, wide ones share the rest.
+fn column_widths(natural: &[usize], room: usize) -> Option<Vec<usize>> {
+    if natural.iter().sum::<usize>() <= room {
+        return Some(natural.to_vec());
+    }
+    if room < natural.len() * MIN_COL {
+        return None;
+    }
+    let mut widths = vec![0; natural.len()];
+    let mut open: Vec<usize> = (0..natural.len()).collect();
+    let mut left = room;
+    loop {
+        let share = left / open.len();
+        let (fits, wide): (Vec<usize>, Vec<usize>) =
+            open.iter().partition(|&&c| natural[c] <= share);
+        if fits.is_empty() {
+            let extra = left - share * wide.len();
+            for (n, c) in wide.into_iter().enumerate() {
+                widths[c] = (share + usize::from(n < extra)).max(MIN_COL);
+            }
+            return Some(widths);
+        }
+        for c in fits {
+            widths[c] = natural[c];
+            left -= natural[c];
+        }
+        open = wide;
+        if open.is_empty() {
+            return Some(widths);
+        }
+    }
+}
+
+/// A markdown table in rounded box lines, cells wrapped to fit `width`; `None` when it cannot fit.
+fn table(rows: &[&str], aligns: &[Align], width: usize, ink: Color) -> Option<Vec<Line<'static>>> {
+    let cols = aligns.len();
+    let border = Style::default().fg(THEME.border_muted);
+    let head = Style::default()
+        .fg(THEME.tertiary)
+        .add_modifier(Modifier::BOLD);
+    let base = Style::default().fg(ink);
+    let grid: Vec<Vec<&str>> = rows
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 1)
+        .map(|(_, r)| {
+            let mut c = cells(r);
+            c.resize(cols, "");
+            c
+        })
+        .collect();
+    let measure = |cell: &str, style: Style| {
+        inline(cell, style)
+            .iter()
+            .map(|(_, t)| wrap::width(t))
+            .sum::<usize>()
+    };
+    let natural: Vec<usize> = (0..cols)
+        .map(|c| {
+            grid.iter()
+                .enumerate()
+                .map(|(r, row)| measure(row[c], if r == 0 { head } else { base }))
+                .max()
+                .unwrap_or(0)
+                .max(1)
+        })
+        .collect();
+    let room = width.checked_sub(cols + 1 + cols * CELL_PAD)?;
+    let widths = column_widths(&natural, room)?;
+    let set = ratatui::symbols::line::ROUNDED;
+    let rule = |left: &str, mid: &str, right: &str| {
+        let mut text = left.to_string();
+        for (i, w) in widths.iter().enumerate() {
+            text.push_str(&set.horizontal.repeat(w + CELL_PAD));
+            text.push_str(if i + 1 == cols { right } else { mid });
+        }
+        Line::from(Span::styled(text, border))
+    };
+    let mut out = vec![rule(set.top_left, set.horizontal_down, set.top_right)];
+    for (r, row) in grid.iter().enumerate() {
+        let style = if r == 0 { head } else { base };
+        let wrapped: Vec<Vec<Line<'static>>> = row
+            .iter()
+            .zip(&widths)
+            .map(|(cell, w)| wrap::words(&inline(cell, style), *w, &[], &[]))
+            .collect();
+        let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+        for k in 0..height {
+            let mut spans = vec![Span::styled(set.vertical, border)];
+            for (c, lines) in wrapped.iter().enumerate() {
+                let content = lines.get(k).map(|l| l.spans.clone()).unwrap_or_default();
+                let used = wrap::spans_width(&content);
+                let gap = widths[c].saturating_sub(used);
+                let (before, after) = match aligns[c] {
+                    Align::Left => (0, gap),
+                    Align::Right => (gap, 0),
+                    Align::Center => (gap / 2, gap - gap / 2),
+                };
+                spans.push(wrap::pad(1 + before));
+                spans.extend(content);
+                spans.push(wrap::pad(after + 1));
+                spans.push(Span::styled(set.vertical, border));
+            }
+            out.push(Line::from(spans));
+        }
+        if r == 0 && grid.len() > 1 {
+            out.push(rule(set.vertical_right, set.cross, set.vertical_left));
+        }
+    }
+    out.push(rule(set.bottom_left, set.horizontal_up, set.bottom_right));
+    Some(out)
 }
 
 /// Inline code, bold, italic and link runs of one line over `base`.
@@ -466,6 +688,68 @@ mod tests {
                 assert!(wrap::width(&line) <= width, "{width}: {line:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_table_draws_in_box_lines_with_its_alignment() {
+        let out = trimmed(&render(
+            "Disks:\n| Disk | Health | Size |\n|:-----|:------:|-----:|\n| C: | **OK** | 512 GB |\n| D: | Failing | 2 TB |\nDone.",
+            60,
+            THEME.text,
+        ));
+        assert_eq!(
+            out,
+            vec![
+                "Disks:",
+                "\u{256d}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{252c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{252c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256e}",
+                "\u{2502} Disk \u{2502} Health  \u{2502}   Size \u{2502}",
+                "\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{253c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{253c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}",
+                "\u{2502} C:   \u{2502}   OK    \u{2502} 512 GB \u{2502}",
+                "\u{2502} D:   \u{2502} Failing \u{2502}   2 TB \u{2502}",
+                "\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2534}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2534}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}",
+                "Done.",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wide_table_wraps_its_cells_and_a_too_narrow_one_stays_plain() {
+        let long = "word ".repeat(30);
+        let text = format!("| Name | Notes |\n|---|---|\n| fan | {long} |");
+        for width in [24, 40, 80] {
+            let lines = texts(&render(&text, width, THEME.text));
+            assert!(
+                lines.iter().all(|l| wrap::width(l) <= width),
+                "{width}: {lines:?}"
+            );
+            assert!(lines[0].starts_with('\u{256d}'), "{width}: {lines:?}");
+            assert!(lines.len() > 5, "{width}: the notes wrap: {lines:?}");
+        }
+        let narrow = texts(&render(&text, 8, THEME.text));
+        assert!(
+            narrow.iter().all(|l| !l.starts_with('\u{256d}')),
+            "{narrow:?}"
+        );
+        assert_eq!(column_widths(&[3, 50, 4], 30), Some(vec![3, 23, 4]));
+        assert_eq!(column_widths(&[40, 50], 30), Some(vec![15, 15]));
+        assert_eq!(column_widths(&[2, 2], 3), None);
+    }
+
+    #[test]
+    fn task_items_draw_as_checklist_marks() {
+        let out = trimmed(&render(
+            "- [x] read SMART\n- [ ] run chkdsk\n- [?] literal",
+            40,
+            THEME.text,
+        ));
+        assert_eq!(
+            out,
+            vec![
+                "\u{2713} read SMART",
+                "\u{25cb} run chkdsk",
+                "\u{25aa} [?] literal"
+            ]
+        );
     }
 
     #[test]

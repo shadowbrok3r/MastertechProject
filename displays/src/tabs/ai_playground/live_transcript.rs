@@ -127,9 +127,9 @@ impl LiveTranscript {
         self.plan_requested = false;
     }
 
-    /// The followed session's newest `update_plan` checklist.
-    pub fn plan(&self) -> Option<&Plan> {
-        self.plan.as_ref().map(|p| &p.plan)
+    /// The newest `update_plan` checklist and the event that carried it.
+    pub fn plan_entry(&self) -> Option<(&RecordId, &Plan)> {
+        self.plan.as_ref().map(|p| (&p.id, &p.plan))
     }
 
     /// The followed session.
@@ -360,9 +360,9 @@ mod tests {
         live.merge(plan_event("p2", 9, "Scans", "Junkware"));
         live.merge(plan_event("p1", 4, "Prechecks", "Updates"));
         live.merge(event("a", 10, "working", true));
-        let current = live.plan().and_then(|p| p.current()).map(|s| s.step.as_str());
+        let current = live.plan_entry().and_then(|(_, p)| p.current()).map(|s| s.step.as_str());
         assert_eq!(current, Some("Junkware"), "an older update arriving late does not replace a newer one");
         live.follow(Some(RecordId::new("agent_thread", "u")));
-        assert!(live.plan().is_none());
+        assert!(live.plan_entry().is_none());
     }
 }

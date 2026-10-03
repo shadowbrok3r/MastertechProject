@@ -665,9 +665,6 @@ impl EnhancedAiPlayground {
                 }
             });
 
-        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-        self.show_pinned_plan(ui);
-
         CentralPanel::default()
             .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
             .show(ui, |ui| self.show_chat_content(ui));
@@ -1194,17 +1191,18 @@ impl EnhancedAiPlayground {
         false
     }
 
-    /// The open session's current plan, pinned above the composer.
+    /// The open session's current plan floating over the bottom of `over`; returns the height it covers.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-    fn show_pinned_plan(&self, ui: &mut Ui) {
-        let Some(plan) = self.live.plan().filter(|_| self.live_shown()) else { return };
+    fn show_floating_plan(&self, ui: &Ui, over: eframe::egui::Rect) -> f32 {
+        let Some((event, plan)) = self.live.plan_entry() else { return 0.0 };
+        let busy = self
+            .open_row
+            .as_ref()
+            .filter(|r| r.id.key_string() == self.selected_thread)
+            .is_some_and(AgentThread::is_busy);
         let style = ChatStyle::from_ui(ui);
-        let id = Id::new(("ai_pinned_plan", self.selected_thread.as_str()));
-        let max_height = (ui.available_height() * 0.3).clamp(80.0, 260.0);
-        eframe::egui::Panel::bottom("enhanced_ai_plan")
-            .resizable(false)
-            .frame(Frame::default().inner_margin(Margin::symmetric(INPUT_PANEL_MARGIN, 0)))
-            .show(ui, |ui| crate::ui_tools::chat_bubble::pinned_plan(ui, &style, id, plan, max_height));
+        let scope = Id::new(("ai_plan", self.selected_thread.as_str()));
+        chat_bubble::floating_plan(ui, &style, scope, &event.key_string(), plan, over, busy)
     }
 
     /// The live transcript, then local rows newer than its last row, such as a message not yet picked up or a send error.
@@ -1224,6 +1222,9 @@ impl EnhancedAiPlayground {
         let scope = Id::new(("ai_chat_rows", salt.as_str()));
         let now = Local::now();
         let error = self.live.error().map(str::to_string);
+        let over = ui.max_rect();
+        let covered_id = Id::new(("ai_plan_covered", salt.as_str()));
+        let covered = ui.ctx().data(|d| d.get_temp::<f32>(covered_id)).unwrap_or(0.0);
         ScrollArea::vertical()
             .id_salt(("ai_live_transcript", salt.as_str()))
             .auto_shrink([false, false])
@@ -1234,7 +1235,13 @@ impl EnhancedAiPlayground {
                 if let Some(e) = error {
                     ui.label(RichText::new(e).small().color(crate::ui_tools::theme::warn(ui)));
                 }
+                ui.add_space(covered);
             });
+        let now_covered = self.show_floating_plan(ui, over);
+        if (now_covered - covered).abs() > 0.5 {
+            ui.ctx().data_mut(|d| d.insert_temp(covered_id, now_covered));
+            ui.ctx().request_repaint();
+        }
     }
 
     /// Kicks off a one-time load of the user's persisted chat threads.

@@ -642,6 +642,19 @@ impl AgentThread {
         Ok(rows.into_iter().next())
     }
 
+    /// A machine's threads regardless of status, newest first.
+    pub async fn list_for_connection(connection_string: &str, limit: usize) -> anyhow::Result<Vec<Self>> {
+        let mut res = db()
+            .query(
+                "SELECT * FROM agent_thread WHERE connection_string = $cs \
+                 ORDER BY created_at DESC LIMIT $limit",
+            )
+            .bind(("cs", connection_string.to_string()))
+            .bind(("limit", limit))
+            .await?;
+        Ok(res.take(0)?)
+    }
+
     /// Deletes the transcript, turns and approvals of threads closed longer ago
     /// than `retention` (a duration such as `30d`); the thread rows stay, stamped `purged_at`.
     pub async fn purge_closed_before(retention: &str) -> anyhow::Result<usize> {

@@ -65,3 +65,17 @@ pub const RULE: &str = "\u{2500}"; // ─
 pub const ELLIPSIS: &str = "\u{2026}"; // …
 /// Separator between inline items.
 pub const DOT: &str = "\u{00b7}"; // ·
+/// Filled and empty cells of a progress bar.
+pub const BAR_FILLED: &str = "\u{2501}"; // ━
+pub const BAR_EMPTY: &str = "\u{2500}"; // ─
+/// Status dot of a working session.
+pub const DOT_ON: &str = "\u{25cf}"; // ●
+/// Status dot of an idle session.
+pub const DOT_OFF: &str = "\u{25cb}"; // ○
+/// Marker of the selected row in a list.
+pub const SELECTED: &str = "\u{25b6}"; // ▶
+/// Text caret in a one-line field.
+pub const CARET: &str = "\u{258f}"; // ▏
+/// Arrows for key hints.
+pub const ARROW_UP: &str = "\u{2191}"; // ↑
+pub const ARROW_DOWN: &str = "\u{2193}"; // ↓
