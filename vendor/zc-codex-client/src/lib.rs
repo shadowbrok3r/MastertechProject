@@ -137,9 +137,13 @@ impl Coalescer {
 /// Ceiling on any single request; thread/start may wait on MCP server startup.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, Value>>>>>;
+/// Longest a closing socket waits to send its close frame and to hear the server end.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
-/// A connected app-server session. Cheap to clone; all clones share one socket.
+/// Requests awaiting a response; None once the read pump has stopped.
+type Pending = Arc<Mutex<Option<HashMap<String, oneshot::Sender<Result<Value, Value>>>>>>;
+
+/// A connected app-server session. Cheap to clone; all clones share one socket, closed with the last clone.
 #[derive(Clone)]
 pub struct Client {
     out: mpsc::Sender<String>,
@@ -187,8 +191,9 @@ impl Client {
 
         let (out_tx, mut out_rx) = mpsc::channel::<String>(256);
         let (ev_tx, ev_rx) = mpsc::channel::<Event>(1024);
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
         let active_turns = Arc::new(Mutex::new(HashMap::new()));
+        let (closing_tx, mut closing) = oneshot::channel::<()>();
 
         tokio::spawn(async move {
             // Pinged on a timer as well as written to, so an idle session survives the phone being
@@ -209,6 +214,9 @@ impl Client {
                     break;
                 }
             }
+            // Every clone is gone or the socket failed: close it and stop the read pump.
+            let _ = tokio::time::timeout(CLOSE_GRACE, sink.close()).await;
+            let _ = closing_tx.send(());
         });
 
         let pend = pending.clone();
@@ -218,7 +226,24 @@ impl Client {
             let mut coalesce_text = Coalescer::new(Duration::from_millis(900));
             let mut coalesce_cmd = Coalescer::new(Duration::from_millis(900));
             let mut coalesce_reason = Coalescer::new(Duration::from_millis(900));
-            while let Some(Ok(msg)) = stream.next().await {
+            let mut close_by: Option<tokio::time::Instant> = None;
+            loop {
+                let msg = tokio::select! {
+                    m = stream.next() => match m {
+                        Some(Ok(m)) => m,
+                        _ => break,
+                    },
+                    _ = &mut closing, if close_by.is_none() => {
+                        close_by = Some(tokio::time::Instant::now() + CLOSE_GRACE);
+                        continue;
+                    }
+                    _ = tokio::time::sleep_until(close_by.unwrap_or_else(tokio::time::Instant::now)),
+                        if close_by.is_some() => break,
+                };
+                // Draining until the server ends the socket.
+                if close_by.is_some() {
+                    continue;
+                }
                 let txt = match msg {
                     tokio_tungstenite::tungstenite::Message::Text(t) => t.to_string(),
                     tokio_tungstenite::tungstenite::Message::Close(_) => break,
@@ -247,6 +272,9 @@ impl Client {
                 }
                 dispatch(v, &pend, &evt, &mut coalesce_text, &mut coalesce_cmd, &mut coalesce_reason).await;
             }
+            drop(stream);
+            // Fails every waiting request and refuses new ones.
+            *pend.lock().await = None;
             let _ = evt
                 .send(Event::Other {
                     method: "connection/closed".into(),
@@ -284,7 +312,12 @@ impl Client {
     pub async fn request_with_timeout(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(id.to_string(), tx);
+        self.pending
+            .lock()
+            .await
+            .as_mut()
+            .ok_or_else(|| anyhow!("{method}: connection closed"))?
+            .insert(id.to_string(), tx);
         let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         self.out.send(msg.to_string()).await.map_err(|_| anyhow!("connection closed"))?;
         match tokio::time::timeout(timeout, rx).await {
@@ -292,7 +325,9 @@ impl Client {
             Ok(Ok(Err(e))) => Err(anyhow!("{method} failed: {e}")),
             Ok(Err(_)) => Err(anyhow!("{method}: connection closed before response")),
             Err(_) => {
-                self.pending.lock().await.remove(&id.to_string());
+                if let Some(p) = self.pending.lock().await.as_mut() {
+                    p.remove(&id.to_string());
+                }
                 Err(anyhow!("{method}: no response within {}s", timeout.as_secs()))
             }
         }
@@ -435,7 +470,7 @@ async fn dispatch(
     // Response to one of our requests.
     if !has_method && has_id {
         let id = v["id"].to_string().trim_matches('"').to_string();
-        if let Some(tx) = pending.lock().await.remove(&id) {
+        if let Some(tx) = pending.lock().await.as_mut().and_then(|p| p.remove(&id)) {
             let _ = tx.send(if let Some(e) = v.get("error") {
                 Err(e.clone())
             } else {
@@ -610,8 +645,107 @@ pub mod decision {
 
 #[cfg(test)]
 mod tests {
-    use super::{context_tokens, in_progress_turn, steer_params};
-    use serde_json::json;
+    use super::{context_tokens, in_progress_turn, steer_params, Client};
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::{json, Value};
+    use std::time::{Duration, Instant};
+    use tokio_tungstenite::tungstenite::Message;
+
+    const MS: Duration = Duration::from_millis(1);
+
+    /// A server that answers every request, pings every 20ms, and reports how the socket ended.
+    async fn pinging_server() -> (String, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (ended_tx, ended) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut beat = tokio::time::interval(20 * MS);
+            let why = loop {
+                tokio::select! {
+                    _ = beat.tick() => {
+                        if ws.send(Message::Ping(Vec::new().into())).await.is_err() {
+                            break "ping failed".to_string();
+                        }
+                    }
+                    m = ws.next() => match m {
+                        Some(Ok(Message::Text(t))) => {
+                            let v: Value = serde_json::from_str(&t).unwrap();
+                            let reply = json!({ "jsonrpc": "2.0", "id": v["id"], "result": {} });
+                            ws.send(Message::Text(reply.to_string().into())).await.unwrap();
+                        }
+                        Some(Ok(Message::Close(_))) => break "close frame".to_string(),
+                        Some(Ok(_)) => {}
+                        Some(Err(e)) => break e.to_string(),
+                        None => break "eof".to_string(),
+                    }
+                }
+            };
+            let _ = ended_tx.send(why);
+        });
+        (url, ended)
+    }
+
+    #[tokio::test]
+    async fn dropping_the_last_clone_closes_the_socket() {
+        let (url, mut ended) = pinging_server().await;
+        let (client, mut events) = Client::connect(&url, "test").await.unwrap();
+        let clone = client.clone();
+        drop(client);
+        tokio::time::sleep(300 * MS).await;
+        assert!(
+            ended.try_recv().is_err(),
+            "the socket closed while a clone was alive"
+        );
+        drop(clone);
+        let why = tokio::time::timeout(Duration::from_secs(3), &mut ended)
+            .await
+            .expect("the socket stayed open")
+            .unwrap();
+        assert_eq!(why, "close frame");
+        let drained = tokio::time::timeout(Duration::from_secs(3), async {
+            while events.recv().await.is_some() {}
+        })
+        .await;
+        assert!(drained.is_ok(), "the event stream outlived the socket");
+    }
+
+    #[tokio::test]
+    async fn a_request_fails_at_once_when_the_server_hangs_up() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            while let Some(Ok(Message::Text(t))) = ws.next().await {
+                let v: Value = serde_json::from_str(&t).unwrap();
+                if v["method"] != "initialize" {
+                    let _ = ws.close(None).await;
+                    break;
+                }
+                let reply = json!({ "jsonrpc": "2.0", "id": v["id"], "result": {} });
+                ws.send(Message::Text(reply.to_string().into()))
+                    .await
+                    .unwrap();
+            }
+        });
+        let (client, _events) = Client::connect(&url, "test").await.unwrap();
+        let t0 = Instant::now();
+        let err = client.request("thread/list", json!({})).await.unwrap_err();
+        assert!(
+            t0.elapsed() < Duration::from_secs(5),
+            "waited {:?}: {err}",
+            t0.elapsed()
+        );
+        let err = client.request("thread/list", json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("connection closed"), "{err}");
+        assert!(
+            t0.elapsed() < Duration::from_secs(5),
+            "waited {:?}: {err}",
+            t0.elapsed()
+        );
+    }
 
     #[test]
     fn steer_params_name_the_turn_they_steer() {
