@@ -1,23 +1,14 @@
 #![allow(deprecated)]
-use std::str::FromStr;
-
-use chrono::DateTime;
-use crossbeam::channel::Sender;
 use database::schema::User;
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Ui};
-use egui_extras::{Column, TableBuilder};
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
-use futures::StreamExt;
+use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
 use log::{error, info};
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
-use reqwest::header::CONTENT_TYPE;
-use reqwest::{
-    header::{HeaderName, ACCEPT, USER_AGENT},
-    Client,
-};
-use serde::{Deserialize, Serialize};
+use reqwest::Client;
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{app_state::SharedContext, get_toast_sender, markdown_editor, PlatformSpawner, Spawner, ToastMessage};
+use crate::{app_state::SharedContext, get_toast_sender, PlatformSpawner, Spawner, ToastMessage};
+
+mod releases;
+pub use releases::ReleaseBrowser;
 
 /// Cloudflare Worker in front of GitHub API / asset redirects — CORS-safe for browser WASM.
 const GIT_MASTER_TECH_REPO_BASE: &str =
@@ -137,16 +128,25 @@ impl GithubIssue {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct GithubRelease {
     pub url: String,
     pub html_url: String,
+    #[serde(deserialize_with = "null_as_default")]
     pub name: String,
+    pub tag_name: String,
     pub created_at: String,
+    #[serde(deserialize_with = "null_as_default")]
+    pub published_at: String,
+    pub prerelease: bool,
+    pub draft: bool,
+    #[serde(deserialize_with = "null_as_default")]
     pub body: String,
     pub assets: Vec<Asset>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct Asset {
     pub name: String,
     pub url: String,
@@ -156,161 +156,15 @@ pub struct Asset {
 }
 
 impl SharedContext {
-        pub fn downloads_page(&mut self, ui: &mut eframe::egui::Ui) {
-        CentralPanel::default()
-            .frame(
-                Frame::central_panel(&ui.ctx().global_style())
-                    .outer_margin(10.)
-                    .inner_margin(10.),
-            )
-            .show(ui, |ui| {
-                ui.with_layout(
-                    Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center),
-                    |ui| {
-                        ui.style_mut().override_font_id = Some(FontId::monospace(15.0));
-                        let releases = self.github_releases.clone();
-
-                        TableBuilder::new(ui)
-                            .striped(false)
-                            .cell_layout(Layout::top_down_justified(Align::Min))
-                            .cell_layout(Layout::top_down_justified(Align::Min))
-                            .cell_layout(Layout::top_down_justified(Align::Min))
-                            .column(Column::exact(180.0))
-                            .column(Column::exact(130.0))
-                            .column(Column::remainder().resizable(true))
-                            .header(20.0, |mut header| {
-                                header.col(|ui| {
-                                    ui.heading("Release Name");
-                                });
-                                header.col(|ui| {
-                                    ui.heading("Created At");
-                                });
-                                header.col(|ui| {
-                                    ui.heading("Description");
-                                });
-                            })
-                            .body(|mut body| {
-                                let assets: Vec<Asset> = releases
-                                    .iter()
-                                    .flat_map(|r| r.assets.iter().cloned())
-                                    .collect();
-                                for (release, asset) in releases.iter().zip(assets.iter()) {
-                                    body.row(100.0, |mut row| {
-                                        row.col(|ui| {
-                                            ui.add_space(5.0);
-                                            ui.vertical_centered(|ui| {
-                                                ui.add_space(20.0);
-                                                let link_txt = RichText::new(&release.name)
-                                                    .color(Color32::from_rgb(113, 156, 202));
-                                                let link =
-                                                    ui.link(link_txt).on_hover_text(&asset.name);
-
-                                                #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                                                if link.clicked() {
-                                                    let asset = asset.clone();
-                                                    let tx = self.bytes_channel.0.clone();
-                                                    PlatformSpawner::spawn(async move {
-                                                        let _ = download_release(asset, tx).await;
-                                                    });
-                                                }
-                                                #[cfg(any(target_os = "ios", target_os = "android"))]
-                                                let _ = link;
-
-                                                ui.add_space(10.0);
-                                                ui.label(&asset.name);
-                                            });
-                                        });
-
-                                        row.col(|ui| {
-                                            ui.horizontal_centered(|ui| {
-                                                ui.add_space(5.0);
-                                                ui.label(format_date(&release.created_at));
-                                            });
-                                        });
-                                        row.col(|ui| {
-                                            ui.add_space(5.0);
-                                            markdown_editor::viewer::easy_mark(ui, &release.body);
-                                        });
-                                    });
-                                }
-                            });
-                    },
-                );
-            });
+    pub fn downloads_page(&mut self, ui: &mut Ui) {
+        self.release_browser.ui(ui);
     }
 }
 
-fn format_date(date_str: &str) -> String {
-    let datetime = DateTime::parse_from_rfc3339(date_str).unwrap();
-    let naive_date = datetime.naive_local().date();
-    naive_date.format("%m/%d/%Y").to_string()
-}
-
-fn _bytes_to_megabytes(bytes: u64) -> f64 {
-    bytes as f64 / 1_048_576.0
-}
-
-pub async fn get_github_releases(tx: Sender<Vec<GithubRelease>>) -> Result<(), anyhow::Error> {
-    let client = Client::new();
-    let response: Vec<GithubRelease> = client
-        .get(format!("{GIT_MASTER_TECH_REPO_BASE}/releases"))
-        .header(ACCEPT, "application/vnd.github+json")
-        .header(HeaderName::from_str("X-GitHub-Api-Version").unwrap(), "2022-11-28")
-        .header(USER_AGENT, "shadowbrok3r")
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    log::info!("response {:?}", response.clone());
-    tx.try_send(response.clone())?;
-    Ok(())
-}
-
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
-pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Result<(), anyhow::Error> {
-    let file = rfd::AsyncFileDialog::new()
-        .set_file_name(asset.name.clone())
-        .save_file()
-        .await;
-
-    if !asset.url.is_empty() {
-        let client = Client::new();
-
-        let asset_url = proxied_github_asset_url(&asset.url);
-
-        let resp = client
-            .get(&asset_url)
-            .header(ACCEPT, "application/octet-stream")
-            .header(CONTENT_TYPE, "application/octet-stream")
-            .header(USER_AGENT, "shadowbrok3r/Mastertech")
-            .header(HeaderName::from_str("X-GitHub-Api-Version").unwrap(), "2022-11-28")
-            .send()
-            .await?;
-
-        let content_length = resp.content_length().unwrap_or(0);
-        let mut downloaded_bytes: u64 = 0;
-
-        let mut byte_stream = resp.bytes_stream();
-        info!("Content length: {content_length}");
-
-        let mut byte_vec = Vec::new();
-
-        while let Some(item) = byte_stream.next().await {
-            let chunk = item?.clone();
-            byte_vec.push(chunk.to_vec());
-            let _ = tx.try_send((chunk.to_vec(), content_length));
-            downloaded_bytes += chunk.len() as u64;
-        }
-
-        if downloaded_bytes == content_length {
-            info!("Downloaded: {downloaded_bytes}");
-            let x = byte_vec.concat();
-            if let Some(ref file) = file {
-                file.write(x.as_slice()).await?;
-            }
-        }
-    }
-
-    Ok(())
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }

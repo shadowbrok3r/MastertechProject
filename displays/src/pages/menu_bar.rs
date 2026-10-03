@@ -1,5 +1,5 @@
 #![allow(deprecated)]
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, PlatformSpawner, Spawner, TaskUiActions};
+use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Notification, Store}, db};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
@@ -67,29 +67,6 @@ impl SharedContext {
                             Ok(_) => log::info!("AppState::Authenticated(MainPages::Tasks)"),
                             Err(e) => log::error!("Error: {e:?}"),
                         }
-                    }
-
-                    while let Ok(res) = self.bytes_channel.1.try_recv() {
-                        self.total_download_size = res.1 as f32;
-                        for y in res.0 {
-                            self.download_progress += y as f32;
-                        }
-                    }
-
-                    if self.download_progress == self.total_download_size {
-                        self.download_progress = 0.0;
-                        self.total_download_size = 0.0;
-                    }
-                    
-                    if self.download_progress.ne(&0.0) {
-                        ui.add_space(30.);
-                        ProgressBar::new(
-                            self.download_progress / self.total_download_size,
-                        )
-                        .fill(Color32::from_rgba_premultiplied(50, 10, 50, 65))
-                        .show_percentage()
-                        .desired_width(150.0)
-                        .ui(ui);
                     }
 
                     ui.add_space(ui.available_width()/7.0);
@@ -187,12 +164,7 @@ impl SharedContext {
 
                                 if ui.add(Button::new("Downloads")).clicked() {
                                     self.state = AppState::Authenticated(MainPages::Downloads);
-                                    
-                                    let github_releases_tx = self.github_releases_channel.0.clone();
-                                    PlatformSpawner::spawn(async move {
-                                        let get_releases = get_github_releases(github_releases_tx).await;
-                                        log::info!("get_releases: {get_releases:?}");
-                                    });
+                                    self.release_browser.refresh(ui.ctx());
 
                                     match self.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads))
                                     {

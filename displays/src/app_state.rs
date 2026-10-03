@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::SignupForm}, tabs::{admin_console::AdminConsole, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, server_console::ServerConsole, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::SignupForm}, tabs::{admin_console::AdminConsole, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, ReleaseBrowser}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, server_console::ServerConsole, stock::StockTable, stress_lab::StressLab, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{bootstrap_startup_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, AiTask, AiTaskItem, CarboniteResponse, ConnectedClient, DescriptionChange, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
@@ -142,15 +142,11 @@ pub struct SharedContext {
     #[serde(skip)]
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
     #[serde(skip)]
-    pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
-    #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     #[serde(skip)]
     pub specs_channel: (Sender<database::schema::prestashop::order::ExtractedOrderSpecs>, Receiver<database::schema::prestashop::order::ExtractedOrderSpecs>),
-    #[serde(skip)]
-    pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
 
     // Notifications and App State
     #[serde(skip)]
@@ -393,8 +389,8 @@ pub struct SharedContext {
     /// {Used to create GitHub issues from the website}
     #[serde(skip)]
     pub github_issue: GithubIssue,
-    /// The result of querying github for Mastertech releases
-    pub github_releases: Vec<GithubRelease>,
+    #[serde(skip)]
+    pub release_browser: ReleaseBrowser,
     pub notification_modal: Option<Notification>,
     pub admin_notification_text: String,
     #[serde(skip)]
@@ -432,10 +428,6 @@ pub struct SharedContext {
     pub notification_center: NotificationCenter,
     #[serde(skip)]
     pub command_bar: crate::ui_tools::command_bar::CommandBar,
-    /// When downloading mastertech from the website
-    pub total_download_size: f32,
-    /// progress of downloading mastertech
-    pub download_progress: f32,
     pub user_settings: UserSettings,
     pub update_settings: bool,
     pub get_settings: bool,
@@ -676,14 +668,12 @@ impl SharedContext {
             channel::unbounded::<(u64, ReconnectOutcome)>();
         let (visibility_signal_tx, visibility_signal_rx) = channel::unbounded::<bool>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
-        let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
         let (settings_sender, settings_receiver) =
             crossbeam::channel::bounded::<crate::ui_tools::SavedTheme>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let specs_channel = <database::schema::prestashop::order::ExtractedOrderSpecs>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
-        let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         // bounded(1) → only the latest snapshot survives if the UI is slow.
         // Pair the tx/rx here so they share one channel; the poller `try_send`s
         // and drops on overflow.
@@ -714,11 +704,10 @@ impl SharedContext {
             signup: SignupForm::default(),
             state: AppState::default(),
             github_issue: GithubIssue::new(),
-            github_releases: Vec::new(),
+            release_browser: ReleaseBrowser::default(),
             account_mod: UserPreferences::default(),
             database_viewer: DatabaseEditor::default(),
             query_editor: QueryEditor::default(),
-            github_releases_channel,
             task_index: HashMap::new(),
             layout_configs: None,
             current_user: None,
@@ -789,7 +778,6 @@ impl SharedContext {
             ai_popup_queue: std::collections::VecDeque::new(),
             ai_popup_modal: None,
             settings_sender, settings_receiver,
-            bytes_channel,
             tur_channel,
             seb_channel,
             specs_channel,
@@ -839,8 +827,6 @@ impl SharedContext {
             update_settings: false,
             get_settings: true,
             search_input: String::new(),
-            total_download_size: 0.0,
-            download_progress: 0.0,
             pending_tab_adds: Vec::new(),
             pending_tab_removes: Vec::new(),
             pending_activate_tab: None,

@@ -145,6 +145,9 @@ pub const CHECK: &str = p::CHECK;
 pub const UNDO: &str = p::ARROW_COUNTER_CLOCKWISE;
 pub const ARCHIVE: &str = p::ARCHIVE;
 pub const TAG: &str = p::TAG;
+pub const WINDOWS_LOGO: &str = p::WINDOWS_LOGO;
+pub const LINUX_LOGO: &str = p::LINUX_LOGO;
+pub const GITHUB_LOGO: &str = p::GITHUB_LOGO;
 pub const GRAPH: &str = p::GRAPH;
 
 pub fn folder_shortcut_icon(path: &str) -> &'static str {

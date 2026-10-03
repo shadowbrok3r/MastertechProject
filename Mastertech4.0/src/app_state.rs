@@ -164,7 +164,6 @@ pub struct MastertechContext {
     pub copied_items_tx: Sender<String>,
     pub copied_items_rx: Receiver<String>,
     pub github_releases: Vec<GithubRelease>,
-    pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     pub get_settings: bool,
@@ -246,7 +245,6 @@ impl MasterTechApp {
         let (computer_data_tx, computer_data_rx) = crossbeam::channel::unbounded();
         let (current_antivirus_tx, current_antivirus_rx) = crossbeam::channel::unbounded();
         
-        let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let (duplicate_check_tx, duplicate_check_rx) = crossbeam::channel::unbounded::<DuplicateCheckResult>();
@@ -391,7 +389,6 @@ impl MasterTechApp {
             special_part_order: Default::default(),
             github_releases: Default::default(),
             toolbox: FileSystem::new(),
-            bytes_channel,
 
             // Data table shit
             seb_channel,

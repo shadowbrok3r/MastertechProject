@@ -789,12 +789,6 @@ impl crate::app_state::SharedContext {
         
         self.task_audit_table.receive(self.store_users.clone(), frame);
 
-        if let Ok(releases) = self.github_releases_channel.1.try_recv() {
-            log::debug!("Releases: {releases:?}");
-            ctx.request_repaint();
-            self.github_releases = releases;
-        }
-
         if let Ok(settings) = self.settings_receiver.try_recv() {
             ctx.request_repaint();
             crate::ui_tools::theme_config::sync_editor_config(&mut self.theme_config, &settings.style);

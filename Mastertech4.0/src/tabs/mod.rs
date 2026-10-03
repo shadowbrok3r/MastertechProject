@@ -3,11 +3,9 @@ use displays::tabs::{TabContext, TabId};
 use egui_dock::{tab_viewer::OnCloseResponse, NodePath, TabViewer};
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
-use github::get_github_releases;
 use std::sync::atomic::Ordering;
 use log::error;
 use egui::Color32;
-use anyhow::Error;
 use tokio::spawn;
 
 pub mod file_browser;
@@ -248,17 +246,6 @@ impl TabViewer for MastertechContext {
                             }
                         });
                     }
-                }
-                TabId::Downloads => {
-                    let github_tx = self.github_releases_channel.0.clone();
-                    let client = self.client.clone();
-                    spawn(async move {
-                        if let Err(e) = get_github_releases(github_tx, client).await {
-                            error!("Error getting github releases: {e:?}");
-                        }
-
-                        Ok::<(), Error>(())
-                    });
                 }
                 _ => {}
             }

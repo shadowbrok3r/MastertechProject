@@ -1,18 +1,9 @@
 use anyhow::{Error, Result};
-use chrono::DateTime;
 use crossbeam::channel::Sender;
-use eframe::egui::{
-    Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Layout, RichText, Stroke,
-    TextEdit, Ui,
-};
-use egui_extras::{Column, TableBuilder};
-use futures::StreamExt;
+use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
 use log::{debug, error};
-use reqwest::{
-    header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
-    Client,
-};
-use self_updater::{Asset, GithubRelease};
+use reqwest::Client;
+use self_updater::GithubRelease;
 use tokio::spawn;
 use displays::{get_toast_sender, ToastMessage};
 
@@ -26,11 +17,6 @@ pub mod self_updater;
 /// Cloudflare Worker in front of GitHub API / asset redirects — CORS-safe for WASM.
 const GIT_MASTER_TECH_REPO_BASE: &str =
     "https://git.master-tech.app/repos/shadowbrok3r/MastertechProject";
-
-#[inline]
-fn proxied_github_asset_url(asset_api_url: &str) -> String {
-    asset_api_url.replace("api.github.com", "git.master-tech.app")
-}
 
 impl MastertechContext {
     pub fn github(&mut self, ui: &mut Ui) {
@@ -114,111 +100,8 @@ impl MastertechContext {
     }
 
     pub fn downloads_page(&mut self, ui: &mut Ui) {
-        CentralPanel::default()
-            .frame(
-                Frame::central_panel(&ui.ctx().global_style())
-                    .outer_margin(10.)
-                    .inner_margin(10.)
-            )
-            .show(ui, |ui| {
-                ui.with_layout(
-                    Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center),
-                    |ui| {
-                        ui.style_mut().override_font_id = Some(FontId::monospace(15.0));
-                        let releases = self.github_releases.clone();
-
-                        TableBuilder::new(ui)
-                            .striped(true)
-                            .cell_layout(Layout::top_down_justified(Align::Min))
-                            .cell_layout(Layout::top_down_justified(Align::Min))
-                            .cell_layout(Layout::top_down_justified(Align::Min))
-                            .column(Column::exact(180.0))
-                            .column(Column::exact(130.0))
-                            .column(Column::remainder().resizable(true))
-                            .header(20.0, |mut header| {
-                                header.col(|ui| {
-                                    ui.heading("Release Name");
-                                });
-                                header.col(|ui| {
-                                    ui.heading("Created At");
-                                });
-                                header.col(|ui| {
-                                    ui.heading("Description");
-                                });
-                            })
-                            .body(|mut body| {
-                                // One row per release; offer the OS-appropriate
-                                // MasterTech asset (Windows = `.exe`, others =
-                                // the extension-less binary) so a multi-asset
-                                // release never pairs the wrong file.
-                                let want_exe = cfg!(target_os = "windows");
-                                let bin_prefix = env!("CARGO_PKG_NAME").to_ascii_lowercase();
-                                for release in releases.iter() {
-                                    let Some(asset) = release.assets.iter().find(|a| {
-                                        let name = a.name.to_ascii_lowercase();
-                                        name.starts_with(&bin_prefix)
-                                            && name.ends_with(".exe") == want_exe
-                                    }) else {
-                                        continue;
-                                    };
-                                    body.row(100.0, |mut row| {
-                                        row.col(|ui| {
-                                            ui.add_space(5.0);
-                                            ui.vertical_centered(|ui| {
-                                                ui.add_space(20.0);
-                                                let link_txt = RichText::new(&release.name)
-                                                    .color(Color32::LIGHT_RED);
-                                                let link =
-                                                    ui.link(link_txt).on_hover_text(&asset.name);
-
-                                                if link.clicked() {
-                                                    let asset = asset.clone();
-                                                    let tx = self.bytes_channel.0.clone();
-                                                    spawn(async move {
-                                                        if let Err(e) = download_release(
-                                                            asset,
-                                                            tx,
-                                                            Client::new(),
-                                                        )
-                                                        .await
-                                                        {
-                                                            error!("Download failed: {e:?}");
-                                                        }
-                                                    });
-                                                }
-
-                                                ui.add_space(10.0);
-                                                ui.label(&asset.name);
-                                            });
-                                        });
-
-                                        row.col(|ui| {
-                                            ui.horizontal_centered(|ui| {
-                                                ui.add_space(5.0);
-                                                ui.label(format_date(&release.created_at));
-                                            });
-                                        });
-                                        row.col(|ui| {
-                                            ui.add_space(5.0);
-                                            ui.label(&release.body);
-                                        });
-                                    });
-                                }
-                            });
-                    },
-                );
-            });
+        self.shared_ctx.release_browser.ui(ui);
     }
-}
-
-fn format_date(date_str: &str) -> String {
-    let datetime = DateTime::parse_from_rfc3339(date_str).unwrap();
-    let naive_date = datetime.naive_local().date();
-    naive_date.format("%m/%d/%Y").to_string()
-}
-
-fn _bytes_to_megabytes(bytes: u64) -> f64 {
-    bytes as f64 / 1_048_576.0
 }
 
 pub async fn get_github_releases(
@@ -237,53 +120,3 @@ pub async fn get_github_releases(
     tx.try_send(response.clone())?;
     Ok(())
 }
-
-pub async fn download_release(
-    asset: Asset,
-    tx: Sender<(Vec<u8>, u64)>,
-    client: Client,
-) -> Result<(), Error> {
-    let file = rfd::AsyncFileDialog::new()
-        .set_file_name(asset.name.clone())
-        .save_file()
-        .await;
-
-    if !asset.url.is_empty() {
-        let asset_url = proxied_github_asset_url(&asset.url);
-
-        let resp = client
-            .get(&asset_url)
-            .header(ACCEPT, "application/octet-stream")
-            .header(CONTENT_TYPE, "application/octet-stream")
-            .header(USER_AGENT, "shadowbrok3r/Mastertech")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
-            .await?;
-
-        let content_length = resp.content_length().unwrap_or(0);
-        let mut downloaded_bytes: u64 = 0;
-
-        let mut byte_stream = resp.bytes_stream();
-        debug!("Content length: {content_length}");
-
-        let mut byte_vec = Vec::new();
-
-        while let Some(item) = byte_stream.next().await {
-            let chunk = item?.clone();
-            byte_vec.push(chunk.to_vec());
-            let _ = tx.try_send((chunk.to_vec(), content_length));
-            downloaded_bytes += chunk.len() as u64;
-        }
-
-        if downloaded_bytes == content_length {
-            debug!("Downloaded: {downloaded_bytes}");
-            let x = byte_vec.concat();
-            if let Some(ref file) = file {
-                file.write(x.as_slice()).await?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
