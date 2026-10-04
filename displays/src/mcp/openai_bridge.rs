@@ -5,22 +5,30 @@ use serde_json;
 use std::collections::HashSet;
 use crossbeam::channel::Sender as CrossbeamSender;
 
-use crate::{ai::{effective_api_base, effective_api_key, effective_model}, mcp::mcp::ShellType};
+use crate::{ai::{custom_api_base, effective_api_key, effective_model}, mcp::mcp::ShellType};
+use database::schema::ZeroclawGateway;
 use futures::StreamExt;
+use std::time::Duration;
 
-/// A bridge session that connects Gemini Chat Completions to an MCP server over TCP.
+/// `[[model_routes]]` hint the ZeroClaw gateway resolves to the fast pool.
+const ZEROCLAW_HINT: &str = "quick";
+/// Longest a ZeroClaw completion may take.
+const ZEROCLAW_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Command suggestions from the ZeroClaw gateway, or from the user's own OpenAI-compatible endpoint.
 pub struct OpenAiMcpSession {
     pub model: String,
 }
 
 impl OpenAiMcpSession {
     pub async fn connect(addr: &str, model: String) -> Result<Self> {
-        let api_key = effective_api_key();
-        if api_key.is_empty() { log::warn!("No OpenAI/Gemini API key set – completions will fail until provided"); }
+        if custom_api_base().is_some() && effective_api_key().is_empty() {
+            log::warn!("Custom completion endpoint set without an API key");
+        }
 
         let model = effective_model(&model);
 
-        log::debug!("Initialized GeminiMcpSession (addr='{}', model='{}')", addr, model);
+        log::debug!("Initialized command suggestion session (addr='{}', model='{}')", addr, model);
         Ok(Self { model })
     }
 
@@ -82,10 +90,12 @@ impl OpenAiMcpSession {
             ),
         };
 
-        let api_base = effective_api_base();
+        let Some(api_base) = custom_api_base() else {
+            return self.complete_via_zeroclaw(&prompt, partial, cancel_rx, &progress_tx).await;
+        };
         let url = format!("{}/responses", api_base.trim_end_matches('/'));
         let api_key = effective_api_key();
-        if api_key.is_empty() { log::warn!("No OpenAI/Gemini API key set – streaming will fail"); }
+        if api_key.is_empty() { log::warn!("No API key set for the custom completion endpoint – streaming will fail"); }
 
         let request_body = serde_json::json!({
             "model": self.model,
@@ -233,6 +243,48 @@ impl OpenAiMcpSession {
         Ok(())
     }
 
+    /// Asks the ZeroClaw gateway for the suggestions; quiet when the user has no gateway access.
+    async fn complete_via_zeroclaw(
+        &self,
+        prompt: &str,
+        partial: &str,
+        mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+        progress_tx: &CrossbeamSender<crate::mcp::DiagnosticResponse>,
+    ) -> Result<()> {
+        let gateway = match ZeroclawGateway::fetch().await {
+            Ok(Some(gateway)) => gateway,
+            Ok(None) => {
+                log::debug!("command suggestions need ZeroClaw gateway access");
+                return Ok(());
+            }
+            Err(e) => {
+                log::warn!("ZeroClaw gateway lookup failed: {e}");
+                return Ok(());
+            }
+        };
+        let reply = tokio::select! {
+            r = tokio::time::timeout(ZEROCLAW_TIMEOUT, zeroclaw_complete(&gateway, prompt)) => r,
+            _ = &mut cancel_rx => return Ok(()),
+        };
+        let text = match reply {
+            Ok(Ok(text)) => text,
+            Ok(Err(e)) => {
+                log::error!("ZeroClaw completion for '{partial}' failed: {e}");
+                return Ok(());
+            }
+            Err(_) => {
+                log::warn!("ZeroClaw completion for '{partial}' took over {}s", ZEROCLAW_TIMEOUT.as_secs());
+                return Ok(());
+            }
+        };
+        match json_object(&text).map(|json| self.process_suggestions_json(json, progress_tx.clone())) {
+            Some(Ok(())) => {}
+            Some(Err(e)) => log::warn!("ZeroClaw suggestions for '{partial}' did not parse: {e}"),
+            None => log::warn!("ZeroClaw completion for '{partial}' held no JSON object"),
+        }
+        Ok(())
+    }
+
     fn process_suggestions_json(&self, raw: &str, progress_tx: CrossbeamSender<crate::mcp::DiagnosticResponse>) -> Result<()> {
         #[derive(Debug, serde::Deserialize)]
         struct Suggestion { completion: String, description: String, category: String, confidence: f32 }
@@ -251,5 +303,95 @@ impl OpenAiMcpSession {
         let _ = progress_tx.try_send(crate::mcp::DiagnosticResponse::CommandCompletions { completions: out, context_info: None });
         log::debug!("emitted streaming suggestions ({} chars raw)", raw.len());
         Ok(())
+    }
+}
+
+/// One completion from the gateway's `POST /api/complete`.
+async fn zeroclaw_complete(gateway: &ZeroclawGateway, prompt: &str) -> Result<String> {
+    let url = format!("{}/api/complete", gateway.url.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(&gateway.token)
+        .json(&serde_json::json!({ "hint": ZEROCLAW_HINT, "prompt": prompt, "temperature": 0.2 }))
+        .send()
+        .await?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        let why = body.get("error").and_then(|v| v.as_str()).unwrap_or("no error message");
+        anyhow::bail!("HTTP {} from /api/complete: {why}", status.as_u16());
+    }
+    body.get("response")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("/api/complete returned no response"))
+}
+
+/// The outermost `{…}` of a reply that may wrap its JSON in prose or a code fence.
+fn json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    (start < end).then(|| &text[start..=end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn json_object_strips_prose_and_fences() {
+        assert_eq!(json_object("```json\n{\"a\":1}\n```"), Some("{\"a\":1}"));
+        assert_eq!(json_object("Here: {\"a\":{\"b\":2}} done"), Some("{\"a\":{\"b\":2}}"));
+        assert_eq!(json_object("no json"), None);
+        assert_eq!(json_object("} {"), None);
+    }
+
+    /// Serves one canned HTTP response and hands back the request it received.
+    async fn one_shot_server(status: &str, body: &str) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let reply = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = socket.read(&mut buf).await.unwrap();
+                request.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&request);
+                if let Some(head_end) = text.find("\r\n\r\n") {
+                    let length = text[..head_end]
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap()))
+                        .unwrap_or(0);
+                    if request.len() >= head_end + 4 + length { break; }
+                }
+                if n == 0 { break; }
+            }
+            socket.write_all(reply.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&request).to_string()
+        });
+        (url, served)
+    }
+
+    #[tokio::test]
+    async fn zeroclaw_complete_posts_the_hint_with_the_token() {
+        let (url, served) = one_shot_server("200 OK", r#"{"response":"{\"suggestions\":[]}","model":"zc-quick","hint":"quick"}"#).await;
+        let gateway = ZeroclawGateway { url, token: "zc_test".into() };
+        let reply = zeroclaw_complete(&gateway, "Get-Pro").await.unwrap();
+        assert_eq!(reply, r#"{"suggestions":[]}"#);
+        let request = served.await.unwrap();
+        assert!(request.starts_with("POST /api/complete "), "{request}");
+        assert!(request.to_ascii_lowercase().contains("authorization: bearer zc_test"), "{request}");
+        assert!(request.contains(r#""hint":"quick""#) && request.contains("Get-Pro"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn zeroclaw_complete_reports_the_gateway_error() {
+        let (url, _served) = one_shot_server("400 Bad Request", r#"{"error":"no [[model_routes]] entry has hint `quick`"}"#).await;
+        let gateway = ZeroclawGateway { url, token: "t".into() };
+        let err = zeroclaw_complete(&gateway, "x").await.unwrap_err().to_string();
+        assert!(err.contains("HTTP 400") && err.contains("hint `quick`"), "{err}");
     }
 }

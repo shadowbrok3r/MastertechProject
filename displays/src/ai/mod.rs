@@ -1,5 +1,3 @@
-pub(crate) const DEFAULT_API_BASE: &str = "https://openrouter.ai/api/v1";
-
 use std::sync::RwLock;
 
 #[derive(Default, Clone)]
@@ -33,9 +31,9 @@ pub fn effective_api_key() -> String {
     mcp_override(|o| o.api_key.clone()).unwrap_or_default()
 }
 
-/// API base URL: the user's mcp_settings endpoint, else the default.
-pub fn effective_api_base() -> String {
-    mcp_override(|o| o.endpoint.clone()).unwrap_or_else(|| DEFAULT_API_BASE.to_string())
+/// The user's own OpenAI-compatible endpoint from mcp_settings; None means ZeroClaw serves the call.
+pub fn custom_api_base() -> Option<String> {
+    mcp_override(|o| o.endpoint.clone())
 }
 
 /// Model name: the user's mcp_settings model, else the supplied default.
