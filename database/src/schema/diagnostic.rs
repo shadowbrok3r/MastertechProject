@@ -342,6 +342,21 @@ pub fn normalize_actor(raw: &str, default_source: &str) -> String {
     if name.is_empty() { format!("{source}/unknown") } else { format!("{source}/{name}") }
 }
 
+/// Verdict author: an agent actor as `<source>/<name>`, any other name as given, else the session's actor.
+pub fn verdict_author(explicit: Option<&str>, session_actor: Option<&str>) -> Option<String> {
+    if let Some(raw) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
+        let head = raw.split([':', '/']).next().unwrap_or(raw);
+        if ACTOR_SOURCES.contains(&head) && raw.len() > head.len() {
+            return Some(normalize_actor(raw, head));
+        }
+        return Some(raw.to_string());
+    }
+    session_actor
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|actor| normalize_actor(actor, "mcp"))
+}
+
 impl DiagnosticSession {
     /// Days open, for a still-open session past [`STALE_SESSION_DAYS`].
     pub fn stale_days(&self) -> Option<i64> {
@@ -912,7 +927,7 @@ impl DiagnosticEntry {
 
 #[cfg(test)]
 mod actor_tests {
-    use super::normalize_actor;
+    use super::{normalize_actor, verdict_author};
 
     /// The ASSERT is read out of the schema so this test fails if the pattern
     /// changes without the normaliser following it.
@@ -977,6 +992,25 @@ mod actor_tests {
         let re = schema_pattern("diagnosed_by");
         assert!(re.is_match(&normalize_actor("unknown", "tech")));
         assert!(re.is_match(&normalize_actor("Joshua Adams", "tech")));
+    }
+
+    #[test]
+    fn verdict_author_prefers_the_explicit_value() {
+        let session = Some("codex/diagnostician");
+        assert_eq!(verdict_author(Some("zeroclaw:sweeper"), session).as_deref(), Some("zeroclaw/sweeper"));
+        assert_eq!(verdict_author(Some("mcp/desktop@logan.lees"), None).as_deref(), Some("mcp/desktop"));
+        assert_eq!(verdict_author(Some(" Logan Lees "), session).as_deref(), Some("Logan Lees"));
+        assert_eq!(verdict_author(Some("AI-assisted (logan.lees)"), None).as_deref(), Some("AI-assisted (logan.lees)"));
+        assert_eq!(verdict_author(Some("codex"), None).as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn verdict_author_falls_back_to_the_session_actor() {
+        let broker = Some("codex/diagnostician@zc-heavy#admin-agent");
+        assert_eq!(verdict_author(None, broker).as_deref(), Some("codex/diagnostician"));
+        assert_eq!(verdict_author(Some("  "), Some("zeroclaw/sweeper")).as_deref(), Some("zeroclaw/sweeper"));
+        assert_eq!(verdict_author(None, Some(" ")), None);
+        assert_eq!(verdict_author(None, None), None);
     }
 }
 
