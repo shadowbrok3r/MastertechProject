@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+mod automated;
 pub mod enhanced;
 #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
 mod live_transcript;

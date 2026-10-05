@@ -253,6 +253,10 @@ pub struct EnhancedAiPlayground {
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     #[serde(skip)]
     zeroclaw: crate::tabs::zeroclaw::ZeroClawView,
+    /// Diagnostic sessions no agent thread links, listed for an active Root.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    #[serde(skip)]
+    automated: super::automated::AutomatedView,
     /// Whether the signed-in user was last seen as an active Root.
     #[serde(skip)]
     viewer_root: bool,
@@ -355,6 +359,8 @@ impl Default for EnhancedAiPlayground {
             rekeyed: HashMap::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             zeroclaw: Default::default(),
+            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+            automated: Default::default(),
             viewer_root: false,
             viewer_id: None,
             show_everyone: false,
@@ -384,6 +390,8 @@ impl EnhancedAiPlayground {
     pub fn start_new_session(&mut self) {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         self.zeroclaw.deselect();
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        self.automated.deselect();
         if self.is_blank_chat(&self.selected_thread) {
             return;
         }
@@ -444,6 +452,22 @@ impl EnhancedAiPlayground {
     #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
     fn zeroclaw_open(&self) -> bool {
         false
+    }
+
+    /// Whether an automated diagnostic session fills the chat area.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn automated_open(&self) -> bool {
+        self.viewer_root && self.automated.picked().is_some()
+    }
+
+    #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
+    fn automated_open(&self) -> bool {
+        false
+    }
+
+    /// Whether a ZeroClaw item or an automated session fills the chat area instead of a chat.
+    fn side_view_open(&self) -> bool {
+        self.zeroclaw_open() || self.automated_open()
     }
 
     /// Agent sessions the filters admit and the search matches, archived and closed ones only while shown; the open session is listed whatever the filters.
@@ -591,6 +615,10 @@ impl EnhancedAiPlayground {
         if self.viewer_root {
             self.zeroclaw.tick(ui);
         }
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if self.viewer_root {
+            self.automated.tick(ui);
+        }
         let rail = ui.max_rect();
 
         eframe::egui::Panel::top("enhanced_ai_topbar")
@@ -620,6 +648,15 @@ impl EnhancedAiPlayground {
             CentralPanel::default()
                 .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
                 .show(ui, |ui| self.zeroclaw.detail_ui(ui));
+            self.handle_enhanced_ai_events(ui);
+            return;
+        }
+
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if self.automated_open() {
+            CentralPanel::default()
+                .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
+                .show(ui, |ui| self.automated.detail_ui(ui));
             self.handle_enhanced_ai_events(ui);
             return;
         }
@@ -712,6 +749,12 @@ impl EnhancedAiPlayground {
         {
             return title;
         }
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if self.automated_open()
+            && let Some(title) = self.automated.title()
+        {
+            return title;
+        }
         if self.threads.contains_key(&self.selected_thread) {
             self.thread_title(&self.selected_thread)
         } else {
@@ -736,7 +779,7 @@ impl EnhancedAiPlayground {
             if resp.clicked() {
                 set_sessions_pinned(ui, !pinned);
             }
-            if self.threads.contains_key(&self.selected_thread) && !self.zeroclaw_open() {
+            if self.threads.contains_key(&self.selected_thread) && !self.side_view_open() {
                 resp.context_menu(|ui| {
                     if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
                         self.start_rename(self.selected_thread.clone());
@@ -790,7 +833,7 @@ impl EnhancedAiPlayground {
                     let cs = self.focused_client.clone();
                     self.start_agent_diagnosis(cs);
                 }
-                if self.zeroclaw_open() {
+                if self.side_view_open() {
                     return;
                 }
                 if let Some(row) = self.open_row.as_ref().filter(|r| r.id.key_string() == self.selected_thread) {
@@ -840,7 +883,7 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// The search box, local chats, agent sessions and, for Root, ZeroClaw; clicks and renames land in `pick`.
+    /// The search box, local chats, agent sessions and, for Root, automated sessions and ZeroClaw; clicks and renames land in `pick`.
     fn thread_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         let agent_index = self.index_with_open_row();
@@ -873,7 +916,7 @@ impl EnhancedAiPlayground {
             })
             .filter(|(_, title)| needle.is_empty() || title.to_lowercase().contains(&needle))
             .collect();
-        let selected = if self.zeroclaw_open() { String::new() } else { self.selected_thread.clone() };
+        let selected = if self.side_view_open() { String::new() } else { self.selected_thread.clone() };
         let searching = !needle.is_empty();
         let filters = (!self.session_filter.is_default()).then(|| self.session_filter.summary());
         let rows = RowContext {
@@ -882,7 +925,7 @@ impl EnhancedAiPlayground {
             roster: &roster,
             archived: &archived_now,
         };
-        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         let (root, filter) = (self.viewer_root, self.list_filter.clone());
         ScrollArea::vertical()
             .id_salt("enhanced_ai_thread_rows")
@@ -964,6 +1007,13 @@ impl EnhancedAiPlayground {
                         session_row(ui, &rows, thread, true, pick);
                     }
                 }
+                #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+                if root {
+                    ui.separator();
+                    if let Some(key) = self.automated.list_ui(ui, &filter) {
+                        pick.automated = Some(key);
+                    }
+                }
                 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
                 if root {
                     ui.separator();
@@ -978,12 +1028,21 @@ impl EnhancedAiPlayground {
         self.roster = Some(roster);
     }
 
-    /// Opens the picked thread or ZeroClaw item, starting a rename first when one was asked for.
+    /// Opens the picked thread, automated session or ZeroClaw item, starting a rename first when one was asked for.
     fn apply_pick(&mut self, pick: ThreadPick) {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         if let Some(item) = &pick.zeroclaw {
             self.renaming = None;
+            self.automated.deselect();
             self.zeroclaw.select(item);
+            return;
+        }
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if let Some(key) = &pick.automated {
+            self.renaming = None;
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            self.zeroclaw.deselect();
+            self.automated.select(key);
             return;
         }
         if let Some((keys, archive)) = pick.archive {
@@ -1024,6 +1083,8 @@ impl EnhancedAiPlayground {
     fn select_thread(&mut self, id: String) {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         self.zeroclaw.deselect();
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        self.automated.deselect();
         if self.selected_thread != id {
             self.open_row = None;
             self.waiting.clear();
@@ -1367,7 +1428,7 @@ impl EnhancedAiPlayground {
         }
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         {
-            let followed = (!self.zeroclaw_open() && self.agent_threads.contains(&self.selected_thread))
+            let followed = (!self.side_view_open() && self.agent_threads.contains(&self.selected_thread))
                 .then(|| RecordId::new("agent_thread", self.selected_thread.as_str()));
             self.live.follow(followed);
             self.live.tick(ui.ctx());
@@ -2243,6 +2304,9 @@ struct ThreadPick {
     archive: Option<(Vec<String>, bool)>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     zeroclaw: Option<crate::tabs::zeroclaw::ZeroClawPick>,
+    /// An automated diagnostic session's key.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    automated: Option<String>,
 }
 
 fn sessions_pinned_id() -> Id {
@@ -2703,6 +2767,46 @@ mod tests {
         draw(&mut chat);
         chat.show_archived = true;
         draw(&mut chat);
+    }
+
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    #[test]
+    fn root_lists_automated_sessions_and_opening_one_replaces_the_chat() {
+        use database::schema::{Datetime, RecordId, UnthreadedSessionRef};
+        use eframe::egui::{Context, RawInput, Rect, pos2, vec2};
+
+        let mut chat = EnhancedAiPlayground { viewer_root: true, ..Default::default() };
+        chat.automated.set_rows(vec![UnthreadedSessionRef {
+            id: RecordId::new("diagnostic_session", "s1"),
+            connection_string: "DESKTOP-E94IGME:7034b0fb1".into(),
+            hostname: "DESKTOP-E94IGME".into(),
+            customer_name: Some("Jacqueline Hoff".into()),
+            tech: None,
+            driven_by: Some("zeroclaw/sweeper".into()),
+            status: "escalated".into(),
+            started_at: Datetime::default(),
+            last_activity_at: None,
+            current_theory: None,
+        }]);
+        let ctx = Context::default();
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(260.0, 500.0))),
+            ..Default::default()
+        };
+        let mut pick = ThreadPick::default();
+        let mut out = ctx.run_ui(input, |ui| chat.thread_rows(ui, 480.0, &mut pick));
+        out.textures_delta.clear();
+        assert!(pick.automated.is_none(), "nothing is picked without a click");
+
+        chat.apply_pick(ThreadPick { automated: Some("s1".into()), ..Default::default() });
+        assert!(chat.side_view_open());
+        assert_eq!(chat.current_thread_title(), "DESKTOP-E94IGME \u{00b7} ZeroClaw sweeper");
+        chat.select_thread("local".into());
+        assert!(!chat.side_view_open(), "picking a chat closes the automated session");
+
+        chat.viewer_root = false;
+        chat.apply_pick(ThreadPick { automated: Some("s1".into()), ..Default::default() });
+        assert!(!chat.side_view_open(), "only Root sees automated sessions");
     }
 
     #[test]

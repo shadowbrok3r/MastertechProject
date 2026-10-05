@@ -304,6 +304,59 @@ impl OpenSessionRef {
     }
 }
 
+/// A session no agent thread links, for the Ai tab's Automated list; holds no record-id links.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct UnthreadedSessionRef {
+    pub id: RecordId,
+    pub connection_string: String,
+    pub hostname: String,
+    #[serde(default)]
+    pub customer_name: Option<String>,
+    #[serde(default)]
+    pub tech: Option<String>,
+    #[serde(default)]
+    pub driven_by: Option<String>,
+    pub status: String,
+    pub started_at: Datetime,
+    #[serde(default)]
+    pub last_activity_at: Option<Datetime>,
+    #[serde(default)]
+    pub current_theory: Option<String>,
+}
+
+impl UnthreadedSessionRef {
+    pub fn ran_by(&self) -> String {
+        ran_by(self.tech.as_deref(), self.driven_by.as_deref())
+    }
+}
+
+/// The technician, else `driven_by` in words: `zeroclaw/sweeper` reads "ZeroClaw sweeper".
+pub fn ran_by(tech: Option<&str>, driven_by: Option<&str>) -> String {
+    if let Some(tech) = tech.map(str::trim).filter(|t| !t.is_empty()) {
+        return tech.to_string();
+    }
+    let Some(actor) = driven_by.map(str::trim).filter(|d| !d.is_empty()) else {
+        return "Unknown source".to_string();
+    };
+    let (actor, who) = actor.split_once('@').map_or((actor, None), |(a, w)| (a, Some(w)));
+    let (source, name) = actor.split_once('/').unwrap_or(("", actor));
+    let source = match source {
+        "zeroclaw" => "ZeroClaw",
+        "mcp" => "MCP",
+        "codex" => "Codex",
+        "cron" => "Cron",
+        "tech" => "Tech",
+        "legacy" => "Legacy",
+        other => other,
+    };
+    let name = name.replace(['_', '-'], " ");
+    let label = [source, name.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+    match who.filter(|w| !w.is_empty()) {
+        Some(who) => format!("{label} \u{00b7} {who}"),
+        None => label,
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DiagnosticSessionFull {
     #[serde(flatten)]
@@ -367,6 +420,10 @@ pub fn verdict_author(
 }
 
 impl DiagnosticSession {
+    pub fn ran_by(&self) -> String {
+        ran_by(self.tech.as_deref(), self.driven_by.as_deref())
+    }
+
     /// Days open, for a still-open session past [`STALE_SESSION_DAYS`].
     pub fn stale_days(&self) -> Option<i64> {
         if self.status != "open" {
@@ -709,6 +766,22 @@ impl DiagnosticSession {
         Ok(refs)
     }
 
+    /// Sessions no agent thread links and no Codex thread drove, newest first.
+    pub async fn list_unthreaded(limit: u32) -> anyhow::Result<Vec<UnthreadedSessionRef>> {
+        let refs: Vec<UnthreadedSessionRef> = db()
+            .query(
+                "SELECT id, connection_string, hostname, customer_name, tech, driven_by, status, \
+                 started_at, last_activity_at, current_theory FROM diagnostic_session \
+                 WHERE id NOT IN (SELECT VALUE diagnostic_session FROM agent_thread WHERE diagnostic_session != NONE) \
+                 AND !string::starts_with(driven_by ?? '', 'codex/') \
+                 ORDER BY started_at DESC LIMIT $limit",
+            )
+            .bind(("limit", limit as i64))
+            .await?
+            .take(0)?;
+        Ok(refs)
+    }
+
     /// Newest open session for a connected client: by `connection_string`,
     /// else by the linked computer when provided.
     pub async fn latest_open_for_connection(
@@ -1033,6 +1106,30 @@ mod actor_tests {
         assert_eq!(verdict_author(Some("  "), Some("zeroclaw/sweeper"), "ai").as_deref(), Some("zeroclaw/sweeper"));
         assert_eq!(verdict_author(None, Some(" "), "ai"), None);
         assert_eq!(verdict_author(None, None, "tech"), None);
+    }
+}
+
+#[cfg(test)]
+mod ran_by_tests {
+    use super::ran_by;
+
+    #[test]
+    fn a_technician_wins_over_the_source() {
+        assert_eq!(ran_by(Some("logan.lees@pclaptops.com"), Some("mcp/desktop")), "logan.lees@pclaptops.com");
+    }
+
+    #[test]
+    fn sources_read_as_words() {
+        assert_eq!(ran_by(None, Some("zeroclaw/sweeper")), "ZeroClaw sweeper");
+        assert_eq!(ran_by(Some("  "), Some("zeroclaw/tech_chat")), "ZeroClaw tech chat");
+        assert_eq!(ran_by(None, Some("mcp/claude-desktop@logan.lees")), "MCP claude desktop \u{00b7} logan.lees");
+        assert_eq!(ran_by(None, Some("custom")), "custom");
+    }
+
+    #[test]
+    fn no_technician_or_source_says_so() {
+        assert_eq!(ran_by(None, None), "Unknown source");
+        assert_eq!(ran_by(None, Some(" ")), "Unknown source");
     }
 }
 

@@ -260,7 +260,7 @@ fn render_ai_handoff_panel(
         });
 }
 
-fn render_session(
+pub(crate) fn render_session(
     ui: &mut Ui,
     view: &DiagnosticSessionView,
     idx: usize,
@@ -280,7 +280,7 @@ fn render_session(
     let header = format!(
         "{} • {} • {}{}{}",
         started,
-        session.tech.as_deref().unwrap_or("(unknown tech)"),
+        session.ran_by(),
         session.hostname,
         stale_days
             .map(|d| format!("  {} STALE — open {d}d", icons::STATUS_WARN))
