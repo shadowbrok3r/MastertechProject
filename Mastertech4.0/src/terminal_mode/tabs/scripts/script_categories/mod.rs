@@ -53,7 +53,7 @@ pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error
 }
 
 /// Sets all sleep/display/hibernate timeouts to never, turns hibernation off,
-/// and clears Fast Startup.
+/// makes closing the lid on AC do nothing, and clears Fast Startup.
 pub fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
     use crate::utilities::windows::power;
 
