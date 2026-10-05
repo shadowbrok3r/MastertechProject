@@ -2062,7 +2062,7 @@ pub struct CrashVerdictRecordParams {
     pub fix: Option<String>,
     #[schemars(description = "Confidence: low | medium | high | confirmed (default medium)")]
     pub confidence: Option<String>,
-    #[schemars(description = "Tech name or AI identifier recording this verdict")]
+    #[schemars(description = "Who reached this verdict: a tech's name, or an agent's <source>/<name> stamp such as 'zeroclaw/sweeper' (a colon becomes a slash). Omit to credit the driven_by of the session resolved from session_id or connection_string.")]
     pub author: Option<String>,
     #[schemars(description = "Source: tech | ai | autopilot (default ai)")]
     pub source: Option<String>,
@@ -8815,21 +8815,18 @@ impl PluginToolProvider {
             Some(t) => Some(require_record(t, database::schema::TASK_TABLE, "task_id").await?),
             None => None,
         };
+        let session = match (p.session_id.as_deref(), p.connection_string.as_deref()) {
+            (Some(sid), _) => {
+                let rid = parse_record_id(sid, database::schema::DIAGNOSTIC_SESSION_TABLE);
+                database::schema::DiagnosticSession::get(&rid.key_string())
+                    .await
+                    .unwrap_or(None)
+            }
+            (None, Some(cs)) => super::diagnostic_session_registry::resolve_open_session(cs).await,
+            (None, None) => None,
+        };
         if task_ref.is_none() {
-            let session = match (p.session_id.as_deref(), p.connection_string.as_deref()) {
-                (Some(sid), _) => {
-                    let rid =
-                        parse_record_id(sid, database::schema::DIAGNOSTIC_SESSION_TABLE);
-                    database::schema::DiagnosticSession::get(&rid.key_string())
-                        .await
-                        .unwrap_or(None)
-                }
-                (None, Some(cs)) => {
-                    super::diagnostic_session_registry::resolve_open_session(cs).await
-                }
-                (None, None) => None,
-            };
-            if let Some(session) = session {
+            if let Some(session) = &session {
                 task_ref = session.task_ref.clone();
                 if task_ref.is_none() {
                     task_ref = session
@@ -8841,8 +8838,21 @@ impl PluginToolProvider {
                 }
             }
         }
+        let author = database::schema::verdict_author(
+            p.author.as_deref(),
+            session.as_ref().and_then(|s| s.driven_by.as_deref()),
+        );
 
         let mut warnings: Vec<ToolWarning> = Vec::new();
+        if author.is_none() {
+            warnings.push(
+                ToolWarning::info(
+                    "verdict_unattributed",
+                    "Verdict recorded without an author — outcome reports cannot credit it.",
+                )
+                .with_fix("pass author as your <source>/<name> stamp, or session_id"),
+            );
+        }
         if task_ref.is_none() {
             warnings.push(
                 ToolWarning::info(
@@ -8860,7 +8870,7 @@ impl PluginToolProvider {
             &p.verdict,
             p.fix.as_deref().unwrap_or(""),
             p.confidence.as_deref().unwrap_or("medium"),
-            p.author.as_deref().unwrap_or(""),
+            author.as_deref().unwrap_or(""),
             p.source.as_deref().unwrap_or("ai"),
             task_ref.clone(),
         )
@@ -8871,6 +8881,7 @@ impl PluginToolProvider {
                 "signature_id": sig.id,
                 "verdict_id": verdict_id,
                 "task_ref": task_ref.as_ref().map(RecordIdExt::key_string),
+                "author": author,
                 "recorded": true,
             }),
             warnings,
