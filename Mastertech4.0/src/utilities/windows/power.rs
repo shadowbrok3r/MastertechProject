@@ -1,5 +1,5 @@
 //! Keeps this machine awake while MasterTech runs: a process-lifetime sleep
-//! block plus the persistent sleep / hibernation / Fast Startup settings.
+//! block plus the persistent sleep / hibernation / AC lid / Fast Startup settings.
 
 #[cfg(target_os = "windows")]
 use std::{
@@ -51,7 +51,7 @@ pub fn ensure_awake(reason: &str) {
             let failures = disable_sleep_states();
             if failures.is_empty() {
                 log::info!(
-                    "power policy ({reason}): sleep, hibernation and Fast Startup disabled"
+                    "power policy ({reason}): sleep, hibernation, AC lid sleep and Fast Startup disabled"
                 );
             } else {
                 log::warn!("power policy ({reason}): {}", failures.join("; "));
@@ -66,15 +66,24 @@ pub fn ensure_awake(reason: &str) {
 pub fn ensure_awake(_reason: &str) {}
 
 /// Sets the sleep and hibernate idle timeouts to never, turns hibernation off,
-/// and clears Fast Startup. Returns one entry per setting that did not apply.
+/// makes closing the lid on AC do nothing, and clears Fast Startup. Returns one
+/// entry per setting that did not apply.
 #[cfg(target_os = "windows")]
 pub fn disable_sleep_states() -> Vec<String> {
-    let passes: [&[&str]; 5] = [
+    let passes: &[&[&str]] = &[
         &["/change", "standby-timeout-ac", "0"],
         &["/change", "standby-timeout-dc", "0"],
         &["/change", "hibernate-timeout-ac", "0"],
         &["/change", "hibernate-timeout-dc", "0"],
         &["/hibernate", "off"],
+        &[
+            "/setacvalueindex",
+            "SCHEME_CURRENT",
+            "SUB_BUTTONS",
+            "LIDACTION",
+            "0",
+        ],
+        &["/setactive", "SCHEME_CURRENT"],
     ];
     let mut failures: Vec<String> =
         passes.iter().filter_map(|args| powercfg(args).err()).collect();
