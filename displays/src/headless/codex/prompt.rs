@@ -123,13 +123,14 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
      - Scans: run-webroot-scan and run-superantispyware-scan. The SAS script runs SAS's Quick \
        Scan, which is the shop standard; do not look for or run a full SAS scan.\n\
      - Junkware: run-junkware-category, and remove obvious bloat.\n\
-     - PUP sweep: the scans and the junkware catalog only catch known, installed software, so look \
-       by hand too: the customer's Downloads and Desktop (installers for browser hijackers and \
-       \"optimizers\", such as a Wave Browser setup that never ran), AppData\\Local, \
-       AppData\\Roaming and AppData\\Local\\Programs, Run keys in HKLM and each user's hive, \
-       scheduled tasks, browser extensions and shortcut targets, and processes running from odd \
-       paths. Move a confirmed PUP or its installer to the Recycle Bin, log it, and flag anything \
-       you are unsure of.\n\
+     - PUP sweep: the scans and the junkware catalog only catch known, installed software, so run \
+       the com.mastertech.tuneup plugin's pup_sweep (deploy the plugin first if the client lacks \
+       it) instead of writing your own sweep. It covers installers in Downloads and Desktop, \
+       AppData program folders, installed programs, Run keys, non-Microsoft scheduled tasks, \
+       browser extensions and odd-path processes, and saves the full list to \
+       C:\\ProgramData\\MTech\\pupsweep.txt. Review its pup_candidates and odd_path lists, move a \
+       confirmed PUP or its installer to the Recycle Bin, log it, and flag anything you are unsure \
+       of. Report every remote_access tool it finds to the technician.\n\
      - Startup apps: do NOT disable any. If startup is heavy, list what you would recommend \
        trimming and leave the decision to the technician.\n\
      - Drivers: update where a driver is clearly outdated or a device is faulted, through Windows \
@@ -144,9 +145,10 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        cache if safe).\n\
      - Drive space: report free space, and if the system drive is low (under ~10%, or under ~20 GB) \
        recommend cleanup and name the biggest reclaimable space.\n\
-     - Hardware and performance: check health read-only (disk health; WHEA, TDR and \
-       Kernel-Processor-Power 37 events since boot; PnP problem devices; RAM; battery; power plan), \
-       then run QC Benchmark and Memory Test one at a time with this order's service_number, plus \
+     - Hardware and performance: run the com.mastertech.tuneup plugin's health_check (read-only: \
+       disks, volume space, WHEA, TDR, Kernel-Processor-Power 37, crash and disk-error counts, PnP \
+       problem devices, RAM, battery, power plan); its flags list what needs attention. Then run \
+       QC Benchmark and Memory Test one at a time with this order's service_number, plus \
        GPU Stress Test or Stress: Disk when the checks point there. If performance looks capped, \
        check the OEM power app (for example Control Center's Silent mode on Uniwill and TongFang \
        laptops): switch it through its UI for the tests, run QC Benchmark in both modes and compare \
