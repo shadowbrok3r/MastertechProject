@@ -2714,6 +2714,227 @@ fn script_line(def: &crate::scripts::catalog::ScriptDef, detail: bool) -> String
 /// How long a remote tool waits for the session engine to reach a client.
 const SESSION_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// The plugin's registry entry and its published WASM.
+async fn registry_wasm(
+    plugin_id: &str,
+) -> Result<(database::schema::PluginRegistryEntry, Vec<u8>), String> {
+    let entry = database::schema::PluginRegistryEntry::get_by_plugin_id(plugin_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Plugin '{plugin_id}' not found in registry"))?;
+    let wasm_path = entry
+        .wasm_bucket_path
+        .clone()
+        .ok_or_else(|| "Plugin has no WASM binary in the registry".to_string())?;
+    let bytes = database::schema::get_file("plugins", &wasm_path)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("WASM file not found at bucket path: {wasm_path}"))?;
+    Ok((entry, bytes))
+}
+
+/// Deploys the plugin's registry build to a remote client; returns the deployed version.
+async fn deploy_from_registry(connection_string: &str, plugin_id: &str) -> Result<String, String> {
+    let (entry, wasm) = registry_wasm(plugin_id).await?;
+    let body = deploy_wasm_remote(connection_string, plugin_id, wasm)
+        .await
+        .map_err(|e| e.message.to_string())?;
+    if body.get("deployed_remote").and_then(serde_json::Value::as_bool) == Some(false) {
+        return Err(format!("the client did not load {}: {}", entry.version, body["load_message"]));
+    }
+    Ok(entry.version)
+}
+
+/// Sends one plugin tool call to a remote client and returns its (success, result) reply.
+async fn remote_plugin_round_trip(
+    connection_string: &str,
+    plugin_id: &str,
+    tool_name: &str,
+    args_json: &str,
+) -> Result<(bool, String), ErrorData> {
+    let request_id = format!("rpt-{}", uuid::Uuid::new_v4());
+
+    let cmd = crate::Cmd::CallRemotePluginTool {
+        request_id: request_id.clone(),
+        plugin_id: plugin_id.to_string(),
+        tool_name: tool_name.to_string(),
+        args_json: args_json.to_string(),
+    };
+    let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+        .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+    // (MCP-level start_call is fired by the `call_tool` interceptor on
+    // the `ServerHandler` impl — no per-tool hook needed here.)
+    await_admin_session(connection_string).await?;
+
+    let rx = register_pending_request(request_id.clone());
+    // RAII: registry slot evaporates on any exit path (Ok, Err,
+    // panic propagation through `?`).  Without this every timeout
+    // leaks a sender into REMOTE_TOOL_PENDING.
+    let _guard = PendingRequestGuard { request_id: request_id.clone() };
+
+    super::remote_egui_control::hub()
+        .send_raw_binary(connection_string, serialized)
+        .map_err(to_internal)?;
+
+    log::info!(
+        "call_remote_plugin_tool start: req={request_id} cs={} plugin={} tool={}",
+        connection_string,
+        plugin_id,
+        tool_name
+    );
+
+    // Periodic stall warnings while waiting: the previous shape was a
+    // single 300 s `tokio::time::timeout` that revealed nothing about
+    // *which* request was stuck or *how long* it had been silent.
+    // Now we wake every 30 s, log a warn naming the request, and
+    // continue waiting up to the hard deadline.  Each wake is cheap
+    // (oneshot polls return immediately when nothing is ready) and
+    // lets the operator see in real time which tool call is the one
+    // holding everything else up.
+    const HARD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(300);
+    const STALL_TICK: std::time::Duration = std::time::Duration::from_secs(30);
+    let started_at = std::time::Instant::now();
+    let mut rx = rx;
+    let result_pair: Option<(bool, String)> = loop {
+        let remaining = HARD_DEADLINE.saturating_sub(started_at.elapsed());
+        if remaining.is_zero() {
+            break None;
+        }
+        let next_tick = remaining.min(STALL_TICK);
+        match tokio::time::timeout(next_tick, &mut rx).await {
+            Ok(Ok(pair)) => break Some(pair),
+            Ok(Err(_)) => {
+                // Sender dropped — receive-side resolve never came
+                // and never will.  Bail out as a fast error rather
+                // than waiting out the deadline.
+                log::warn!(
+                    "call_remote_plugin_tool: response channel closed for req={request_id} \
+                     cs={} plugin={} tool={} after {:?} — remote client may have \
+                     disconnected mid-call",
+                    connection_string,
+                    plugin_id,
+                    tool_name,
+                    started_at.elapsed()
+                );
+                return Err(to_internal(format!(
+                    "Response channel closed for {}::{} req={request_id} \
+                     (remote client {} may have disconnected mid-call)",
+                    plugin_id, tool_name, connection_string
+                )));
+            }
+            Err(_) => {
+                let waited = started_at.elapsed();
+                log::warn!(
+                    "call_remote_plugin_tool STALL: req={request_id} cs={} plugin={} \
+                     tool={} — no response for {:?}; deadline at {:?} total",
+                    connection_string,
+                    plugin_id,
+                    tool_name,
+                    waited,
+                    HARD_DEADLINE
+                );
+                // Loop and wait another STALL_TICK.
+            }
+        }
+    };
+
+    let pair = match result_pair {
+        Some(pair) => {
+            log::info!(
+                "call_remote_plugin_tool ok: req={request_id} cs={} plugin={} tool={} \
+                 after {:?}",
+                connection_string,
+                plugin_id,
+                tool_name,
+                started_at.elapsed()
+            );
+            pair
+        }
+        None => {
+            log::error!(
+                "call_remote_plugin_tool TIMEOUT: req={request_id} cs={} plugin={} \
+                 tool={} after {:?} (hard deadline {:?})",
+                connection_string,
+                plugin_id,
+                tool_name,
+                started_at.elapsed(),
+                HARD_DEADLINE
+            );
+            return Err(to_internal(format!(
+                "Remote plugin tool call timed out after {:?}: \
+                 req={request_id} cs={} plugin={} tool={}.  \
+                 The kernel TCP socket may still be open (no peer-closed \
+                 event seen on the admin transport) — check the client log \
+                 for whether the call completed there but the response \
+                 never made it back.",
+                HARD_DEADLINE,
+                connection_string,
+                plugin_id,
+                tool_name
+            )));
+        }
+    };
+    Ok(pair)
+}
+
+/// Loads WASM bytes into a remote client's PluginManager and returns the deploy summary.
+async fn deploy_wasm_remote(
+    connection_string: &str,
+    plugin_id: &str,
+    wasm: Vec<u8>,
+) -> Result<serde_json::Value, ErrorData> {
+    let size = wasm.len();
+    let cmd = crate::Cmd::LoadWasmPlugin {
+        plugin_id: plugin_id.to_string(),
+        wasm_bytes: wasm,
+    };
+    let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+        .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+    await_admin_session(connection_string).await?;
+
+    // Register the ack waiter before sending so the result can't race past us.
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<(bool, String)>();
+    if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
+        pending.insert(plugin_id.to_string(), ack_tx);
+    }
+
+    if let Err(e) = super::remote_egui_control::hub()
+        .send_raw_binary(connection_string, serialized)
+    {
+        if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
+            pending.remove(plugin_id);
+        }
+        return Err(to_internal(e));
+    }
+
+    let ack = tokio::time::timeout(std::time::Duration::from_secs(20), ack_rx).await;
+    if ack.is_err() {
+        if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
+            pending.remove(plugin_id);
+        }
+    }
+
+    let body = match ack {
+        Ok(Ok((load_success, load_message))) => serde_json::json!({
+            "plugin_id": plugin_id,
+            "connection_string": connection_string,
+            "deployed_remote": load_success,
+            "load_acknowledged": true,
+            "load_message": load_message,
+            "artifact_bytes": size,
+        }),
+        _ => serde_json::json!({
+            "plugin_id": plugin_id,
+            "connection_string": connection_string,
+            "deployed_remote": true,
+            "load_acknowledged": false,
+            "artifact_bytes": size,
+            "note": "Bytes sent but no LoadWasmPluginResult ack within 20s — old client build or wedged channel. Verify with call_remote_plugin_tool or the remote MCP's list_plugins.",
+        }),
+    };
+    Ok(body)
+}
+
 /// Waits for an open admin session to the client, asking this process's session engine to dial one when it runs.
 async fn await_admin_session(connection_string: &str) -> Result<(), ErrorData> {
     let hub = super::remote_egui_control::hub();
@@ -4217,15 +4438,26 @@ impl PluginToolProvider {
 
     #[tool(
         name = "call_plugin_tool",
-        description = "Call an MCP tool registered by a specific plugin. Use list_plugins to discover available plugin tools."
+        description = "Call an MCP tool registered by a specific plugin. Use list_plugins to discover available plugin tools. A plugin that is not loaded here is loaded from its published registry build first."
     )]
     async fn call_plugin_tool(
         &self,
         Parameters(p): Parameters<CallPluginToolParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut mgr = self.try_write_manager()?;
         let args = p.args.unwrap_or(serde_json::Value::Null);
-        let result = mgr
+        let missing = self.try_write_manager()?.get_plugin_mut(&p.plugin_id).is_none();
+        #[cfg(feature = "wasm-plugins")]
+        if missing {
+            let (entry, wasm) = registry_wasm(&p.plugin_id).await.map_err(to_internal)?;
+            self.try_write_manager()?
+                .load_wasm(wasm)
+                .map_err(|e| to_internal(format!("WASM load failed: {e}")))?;
+            log::info!("call_plugin_tool: loaded {} {} from the registry", p.plugin_id, entry.version);
+        }
+        #[cfg(not(feature = "wasm-plugins"))]
+        let _ = missing;
+        let result = self
+            .try_write_manager()?
             .dispatch_mcp_call(&p.plugin_id, &p.tool_name, args)
             .map_err(to_internal)?;
         Ok(CallToolResult::success(vec![plugin_value_to_content(
@@ -6115,192 +6347,51 @@ impl PluginToolProvider {
                 })?
         };
 
-        let size = artifact.len();
-        let cmd = crate::Cmd::LoadWasmPlugin {
-            plugin_id: p.plugin_id.clone(),
-            wasm_bytes: artifact,
-        };
-        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
-            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
-        await_admin_session(&p.connection_string).await?;
-
-        // Register the ack waiter before sending so the result can't race past us.
-        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<(bool, String)>();
-        if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
-            pending.insert(p.plugin_id.clone(), ack_tx);
-        }
-
-        if let Err(e) = super::remote_egui_control::hub()
-            .send_raw_binary(&p.connection_string, serialized)
-        {
-            if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
-                pending.remove(&p.plugin_id);
-            }
-            return Err(to_internal(e));
-        }
-
-        let ack = tokio::time::timeout(std::time::Duration::from_secs(20), ack_rx).await;
-        if ack.is_err() {
-            if let Ok(mut pending) = super::remote_script_notify::DEPLOY_ACK_PENDING.lock() {
-                pending.remove(&p.plugin_id);
-            }
-        }
-
-        let body = match ack {
-            Ok(Ok((load_success, load_message))) => serde_json::json!({
-                "plugin_id": p.plugin_id,
-                "connection_string": p.connection_string,
-                "deployed_remote": load_success,
-                "load_acknowledged": true,
-                "load_message": load_message,
-                "artifact_bytes": size,
-            }),
-            _ => serde_json::json!({
-                "plugin_id": p.plugin_id,
-                "connection_string": p.connection_string,
-                "deployed_remote": true,
-                "load_acknowledged": false,
-                "artifact_bytes": size,
-                "note": "Bytes sent but no LoadWasmPluginResult ack within 20s — old client build or wedged channel. Verify with call_remote_plugin_tool or the remote MCP's list_plugins.",
-            }),
-        };
+        let body = deploy_wasm_remote(&p.connection_string, &p.plugin_id, artifact).await?;
 
         Ok(CallToolResult::success(vec![ContentBlock::json(body).map_err(to_internal)?]))
     }
 
     #[tool(
         name = "call_remote_plugin_tool",
-        description = "Call an MCP tool on a remote client's plugin over the admin session. The call is proxied: admin → remote client → PluginManager → plugin's handle_mcp_call → result back. Requires a deployed plugin on the remote; a client that is restarting gets up to 20 s to reconnect."
+        description = "Call an MCP tool on a remote client's plugin over the admin session. The call is proxied: admin → remote client → PluginManager → plugin's handle_mcp_call → result back. A plugin the client has not loaded (after a restart, for example) is deployed from its published registry build and the call retried once, so there is no need to fetch_plugin / plugin_deploy_remote first; a client that is restarting gets up to 20 s to reconnect."
     )]
     async fn call_remote_plugin_tool(
         &self,
         Parameters(p): Parameters<CallRemotePluginToolParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let request_id = format!("rpt-{}", uuid::Uuid::new_v4());
         let args = p.args.unwrap_or(serde_json::json!({}));
         let args_json = serde_json::to_string(&args).map_err(|e| to_internal(e.to_string()))?;
-
-        let cmd = crate::Cmd::CallRemotePluginTool {
-            request_id: request_id.clone(),
-            plugin_id: p.plugin_id.clone(),
-            tool_name: p.tool_name.clone(),
-            args_json: args_json.clone(),
-        };
-        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
-            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
-        // (MCP-level start_call is fired by the `call_tool` interceptor on
-        // the `ServerHandler` impl — no per-tool hook needed here.)
-        let _ = args_json; // consumed by `cmd` above
-        await_admin_session(&p.connection_string).await?;
-
-        let rx = register_pending_request(request_id.clone());
-        // RAII: registry slot evaporates on any exit path (Ok, Err,
-        // panic propagation through `?`).  Without this every timeout
-        // leaks a sender into REMOTE_TOOL_PENDING.
-        let _guard = PendingRequestGuard { request_id: request_id.clone() };
-
-        super::remote_egui_control::hub()
-            .send_raw_binary(&p.connection_string, serialized)
-            .map_err(to_internal)?;
-
-        log::info!(
-            "call_remote_plugin_tool start: req={request_id} cs={} plugin={} tool={}",
-            p.connection_string,
-            p.plugin_id,
-            p.tool_name
-        );
-
-        // Periodic stall warnings while waiting: the previous shape was a
-        // single 300 s `tokio::time::timeout` that revealed nothing about
-        // *which* request was stuck or *how long* it had been silent.
-        // Now we wake every 30 s, log a warn naming the request, and
-        // continue waiting up to the hard deadline.  Each wake is cheap
-        // (oneshot polls return immediately when nothing is ready) and
-        // lets the operator see in real time which tool call is the one
-        // holding everything else up.
-        const HARD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(300);
-        const STALL_TICK: std::time::Duration = std::time::Duration::from_secs(30);
-        let started_at = std::time::Instant::now();
-        let mut rx = rx;
-        let result_pair: Option<(bool, String)> = loop {
-            let remaining = HARD_DEADLINE.saturating_sub(started_at.elapsed());
-            if remaining.is_zero() {
-                break None;
-            }
-            let next_tick = remaining.min(STALL_TICK);
-            match tokio::time::timeout(next_tick, &mut rx).await {
-                Ok(Ok(pair)) => break Some(pair),
-                Ok(Err(_)) => {
-                    // Sender dropped — receive-side resolve never came
-                    // and never will.  Bail out as a fast error rather
-                    // than waiting out the deadline.
-                    log::warn!(
-                        "call_remote_plugin_tool: response channel closed for req={request_id} \
-                         cs={} plugin={} tool={} after {:?} — remote client may have \
-                         disconnected mid-call",
-                        p.connection_string,
+        let (mut success, mut result_json) =
+            remote_plugin_round_trip(&p.connection_string, &p.plugin_id, &p.tool_name, &args_json)
+                .await?;
+        if !success && result_json.contains(super::PLUGIN_MISSING) {
+            match deploy_from_registry(&p.connection_string, &p.plugin_id).await {
+                Ok(version) => {
+                    log::info!(
+                        "call_remote_plugin_tool: {} was not loaded on {}; deployed {version} from the registry, retrying {}",
                         p.plugin_id,
-                        p.tool_name,
-                        started_at.elapsed()
+                        p.connection_string,
+                        p.tool_name
                     );
-                    return Err(to_internal(format!(
-                        "Response channel closed for {}::{} req={request_id} \
-                         (remote client {} may have disconnected mid-call)",
-                        p.plugin_id, p.tool_name, p.connection_string
-                    )));
+                    (success, result_json) = remote_plugin_round_trip(
+                        &p.connection_string,
+                        &p.plugin_id,
+                        &p.tool_name,
+                        &args_json,
+                    )
+                    .await?;
                 }
-                Err(_) => {
-                    let waited = started_at.elapsed();
+                Err(e) => {
                     log::warn!(
-                        "call_remote_plugin_tool STALL: req={request_id} cs={} plugin={} \
-                         tool={} — no response for {:?}; deadline at {:?} total",
-                        p.connection_string,
+                        "call_remote_plugin_tool: auto-deploy of {} to {} failed: {e}",
                         p.plugin_id,
-                        p.tool_name,
-                        waited,
-                        HARD_DEADLINE
+                        p.connection_string
                     );
-                    // Loop and wait another STALL_TICK.
+                    result_json = format!("{result_json} (auto-deploy from the registry failed: {e})");
                 }
             }
-        };
-
-        let (success, result_json) = match result_pair {
-            Some(pair) => {
-                log::info!(
-                    "call_remote_plugin_tool ok: req={request_id} cs={} plugin={} tool={} \
-                     after {:?}",
-                    p.connection_string,
-                    p.plugin_id,
-                    p.tool_name,
-                    started_at.elapsed()
-                );
-                pair
-            }
-            None => {
-                log::error!(
-                    "call_remote_plugin_tool TIMEOUT: req={request_id} cs={} plugin={} \
-                     tool={} after {:?} (hard deadline {:?})",
-                    p.connection_string,
-                    p.plugin_id,
-                    p.tool_name,
-                    started_at.elapsed(),
-                    HARD_DEADLINE
-                );
-                return Err(to_internal(format!(
-                    "Remote plugin tool call timed out after {:?}: \
-                     req={request_id} cs={} plugin={} tool={}.  \
-                     The kernel TCP socket may still be open (no peer-closed \
-                     event seen on the admin transport) — check the client log \
-                     for whether the call completed there but the response \
-                     never made it back.",
-                    HARD_DEADLINE,
-                    p.connection_string,
-                    p.plugin_id,
-                    p.tool_name
-                )));
-            }
-        };
+        }
 
         if success {
             let value: serde_json::Value = serde_json::from_str(&result_json)
@@ -6525,20 +6616,7 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<FetchPluginParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let entry = database::schema::PluginRegistryEntry::get_by_plugin_id(&p.plugin_id)
-            .await
-            .map_err(to_internal)?
-            .ok_or_else(|| to_internal(format!("Plugin '{}' not found in registry", p.plugin_id)))?;
-
-        let wasm_path = entry
-            .wasm_bucket_path
-            .as_deref()
-            .ok_or_else(|| to_internal("Plugin has no WASM binary in the registry"))?;
-
-        let bytes = database::schema::get_file("plugins", wasm_path)
-            .await
-            .map_err(to_internal)?
-            .ok_or_else(|| to_internal(format!("WASM file not found at bucket path: {}", wasm_path)))?;
+        let (entry, bytes) = registry_wasm(&p.plugin_id).await.map_err(to_internal)?;
 
         let sz = bytes.len();
         self.try_lock_artifacts()?.store(&p.plugin_id, bytes);

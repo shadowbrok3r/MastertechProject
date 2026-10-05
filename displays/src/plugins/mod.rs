@@ -310,6 +310,9 @@ pub trait EventDispatcher: Send + Sync + 'static {
 
 // ─── Plugin Manager ────────────────────────────────────────────────────────────
 
+/// Error prefix when a tool call names a plugin that is not loaded or is disabled.
+pub const PLUGIN_MISSING: &str = "Plugin not found or disabled";
+
 /// Manages all `MastertechPlugin` instances and bridges them into egui's `Plugin` system.
 ///
 /// Wrap in `Arc<Mutex<>>` and register via `ctx.add_plugin(PluginManagerHandle(arc))`.
@@ -416,7 +419,7 @@ impl PluginManager {
             .plugins
             .iter_mut()
             .find(|p| p.id() == plugin_id && p.enabled())
-            .ok_or_else(|| format!("Plugin not found or disabled: {plugin_id}"))?;
+            .ok_or_else(|| format!("{PLUGIN_MISSING}: {plugin_id}"))?;
         plugin.handle_mcp_call(tool_name, args)
     }
 
