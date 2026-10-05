@@ -342,19 +342,28 @@ pub fn normalize_actor(raw: &str, default_source: &str) -> String {
     if name.is_empty() { format!("{source}/unknown") } else { format!("{source}/{name}") }
 }
 
-/// Verdict author: an agent actor as `<source>/<name>`, any other name as given, else the session's actor.
-pub fn verdict_author(explicit: Option<&str>, session_actor: Option<&str>) -> Option<String> {
-    if let Some(raw) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
-        let head = raw.split([':', '/']).next().unwrap_or(raw);
-        if ACTOR_SOURCES.contains(&head) && raw.len() > head.len() {
-            return Some(normalize_actor(raw, head));
-        }
-        return Some(raw.to_string());
-    }
-    session_actor
+/// Verdict author stamp: an agent stamp as given, a technician as `tech/<first.last>`, other text as the session's actor.
+pub fn verdict_author(
+    explicit: Option<&str>,
+    session_actor: Option<&str>,
+    source: &str,
+) -> Option<String> {
+    let session = session_actor
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|actor| normalize_actor(actor, "mcp"))
+        .map(|actor| normalize_actor(actor, "mcp"));
+    let Some(raw) = explicit.map(str::trim).filter(|s| !s.is_empty()) else {
+        return session;
+    };
+    let head = raw.split([':', '/']).next().unwrap_or(raw);
+    if ACTOR_SOURCES.contains(&head) && raw.len() > head.len() {
+        return Some(normalize_actor(raw, head));
+    }
+    if source == "tech" {
+        let dotted = raw.split_whitespace().collect::<Vec<_>>().join(".");
+        return Some(normalize_actor(&dotted, "tech"));
+    }
+    session.or_else(|| Some(raw.to_string()))
 }
 
 impl DiagnosticSession {
@@ -995,22 +1004,35 @@ mod actor_tests {
     }
 
     #[test]
-    fn verdict_author_prefers_the_explicit_value() {
+    fn verdict_author_keeps_an_explicit_stamp() {
         let session = Some("codex/diagnostician");
-        assert_eq!(verdict_author(Some("zeroclaw:sweeper"), session).as_deref(), Some("zeroclaw/sweeper"));
-        assert_eq!(verdict_author(Some("mcp/desktop@logan.lees"), None).as_deref(), Some("mcp/desktop"));
-        assert_eq!(verdict_author(Some(" Logan Lees "), session).as_deref(), Some("Logan Lees"));
-        assert_eq!(verdict_author(Some("AI-assisted (logan.lees)"), None).as_deref(), Some("AI-assisted (logan.lees)"));
-        assert_eq!(verdict_author(Some("codex"), None).as_deref(), Some("codex"));
+        assert_eq!(verdict_author(Some("zeroclaw:sweeper"), session, "ai").as_deref(), Some("zeroclaw/sweeper"));
+        assert_eq!(verdict_author(Some("mcp/desktop@logan.lees"), None, "ai").as_deref(), Some("mcp/desktop"));
+    }
+
+    #[test]
+    fn verdict_author_stamps_a_technician() {
+        let desktop = Some("mcp/desktop");
+        assert_eq!(verdict_author(Some(" Logan Lees "), None, "tech").as_deref(), Some("tech/logan.lees"));
+        assert_eq!(verdict_author(Some("logan.lees@pclaptops.com"), desktop, "tech").as_deref(), Some("tech/logan.lees"));
+    }
+
+    #[test]
+    fn verdict_author_replaces_agent_free_text_with_the_session_actor() {
+        let desktop = Some("mcp/desktop");
+        assert_eq!(verdict_author(Some("claude (logan.lees session)"), desktop, "ai").as_deref(), Some("mcp/desktop"));
+        assert_eq!(verdict_author(Some("Logan (via Claude)"), desktop, "ai").as_deref(), Some("mcp/desktop"));
+        assert_eq!(verdict_author(Some("AI-assisted (logan.lees)"), None, "ai").as_deref(), Some("AI-assisted (logan.lees)"));
+        assert_eq!(verdict_author(Some("codex"), None, "ai").as_deref(), Some("codex"));
     }
 
     #[test]
     fn verdict_author_falls_back_to_the_session_actor() {
         let broker = Some("codex/diagnostician@zc-heavy#admin-agent");
-        assert_eq!(verdict_author(None, broker).as_deref(), Some("codex/diagnostician"));
-        assert_eq!(verdict_author(Some("  "), Some("zeroclaw/sweeper")).as_deref(), Some("zeroclaw/sweeper"));
-        assert_eq!(verdict_author(None, Some(" ")), None);
-        assert_eq!(verdict_author(None, None), None);
+        assert_eq!(verdict_author(None, broker, "ai").as_deref(), Some("codex/diagnostician"));
+        assert_eq!(verdict_author(Some("  "), Some("zeroclaw/sweeper"), "ai").as_deref(), Some("zeroclaw/sweeper"));
+        assert_eq!(verdict_author(None, Some(" "), "ai"), None);
+        assert_eq!(verdict_author(None, None, "tech"), None);
     }
 }
 

@@ -2062,7 +2062,7 @@ pub struct CrashVerdictRecordParams {
     pub fix: Option<String>,
     #[schemars(description = "Confidence: low | medium | high | confirmed (default medium)")]
     pub confidence: Option<String>,
-    #[schemars(description = "Who reached this verdict: a tech's name, or an agent's <source>/<name> stamp such as 'zeroclaw/sweeper' (a colon becomes a slash). Omit to credit the driven_by of the session resolved from session_id or connection_string.")]
+    #[schemars(description = "Who reached this verdict, as a <source>/<name> stamp. Agents pass their own, such as 'zeroclaw/sweeper' or 'mcp/desktop' (a colon becomes a slash); with source 'tech', a technician's name or email becomes 'tech/<first.last>'. Other text, or no author, credits the driven_by of the session resolved from session_id or connection_string.")]
     pub author: Option<String>,
     #[schemars(description = "Source: tech | ai | autopilot (default ai)")]
     pub source: Option<String>,
@@ -8838,9 +8838,11 @@ impl PluginToolProvider {
                 }
             }
         }
+        let source = p.source.as_deref().unwrap_or("ai");
         let author = database::schema::verdict_author(
             p.author.as_deref(),
             session.as_ref().and_then(|s| s.driven_by.as_deref()),
+            source,
         );
 
         let mut warnings: Vec<ToolWarning> = Vec::new();
@@ -8871,7 +8873,7 @@ impl PluginToolProvider {
             p.fix.as_deref().unwrap_or(""),
             p.confidence.as_deref().unwrap_or("medium"),
             author.as_deref().unwrap_or(""),
-            p.source.as_deref().unwrap_or("ai"),
+            source,
             task_ref.clone(),
         )
         .await
