@@ -84,6 +84,27 @@ impl Plan {
         self.done() == self.steps.len()
     }
 
+    pub fn completed_steps(&self) -> Vec<PlanStep> {
+        self.steps
+            .iter()
+            .filter(|s| s.status == PlanStatus::Completed)
+            .cloned()
+            .collect()
+    }
+
+    /// This plan led by the `carried` steps it does not already name.
+    pub fn with_carried(mut self, carried: &[PlanStep]) -> Self {
+        let named: Vec<String> = self.steps.iter().map(|s| step_key(&s.step)).collect();
+        let mut steps: Vec<PlanStep> = carried
+            .iter()
+            .filter(|c| !named.contains(&step_key(&c.step)))
+            .cloned()
+            .collect();
+        steps.append(&mut self.steps);
+        self.steps = steps;
+        self
+    }
+
     /// The step being worked on: the first in progress, else the first pending.
     pub fn current(&self) -> Option<&PlanStep> {
         self.steps
@@ -109,6 +130,15 @@ impl Plan {
         }
         out
     }
+}
+
+/// Lowercase alphanumeric words of a step, for matching rewordings that differ only in punctuation or case.
+fn step_key(step: &str) -> String {
+    step.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -146,6 +176,40 @@ mod tests {
             plan.text(),
             "Plan (1 of 3 done)\nTune-up pass\n- [x] Prechecks\n- [ ] Windows updates (in progress)\n- [ ] Scans"
         );
+    }
+
+    #[test]
+    fn carried_steps_lead_a_rebuilt_plan() {
+        let before = Plan::from_value(&json!({ "plan": [
+            { "step": "Open session + gather prior history", "status": "completed" },
+            { "step": "Prechecks", "status": "completed" },
+            { "step": "Windows updates", "status": "inProgress" },
+        ] }))
+        .expect("plan");
+        let rebuilt = Plan::from_value(&json!({ "plan": [
+            { "step": "Windows updates", "status": "completed" },
+            { "step": "Scans", "status": "inProgress" },
+            { "step": "Close session", "status": "pending" },
+        ] }))
+        .expect("plan");
+        let shown = rebuilt.with_carried(&before.completed_steps());
+        assert_eq!(
+            shown.text(),
+            "Plan (3 of 5 done)\n- [x] Open session + gather prior history\n- [x] Prechecks\n- [x] Windows updates\n- [ ] Scans (in progress)\n- [ ] Close session"
+        );
+    }
+
+    #[test]
+    fn a_carried_step_the_new_plan_names_keeps_the_new_status() {
+        let carried = vec![PlanStep { step: "Run prechecks.".into(), status: PlanStatus::Completed }];
+        let rebuilt = Plan::from_value(&json!({ "plan": [
+            { "step": "run Prechecks", "status": "pending" },
+            { "step": "Scans", "status": "pending" },
+        ] }))
+        .expect("plan");
+        let shown = rebuilt.clone().with_carried(&carried);
+        assert_eq!(shown, rebuilt);
+        assert_eq!(shown.done(), 0);
     }
 
     #[test]

@@ -14,7 +14,7 @@ use database::schema::assistant::Person;
 use database::schema::AiProfile;
 use database::schema::{
     AgentActivity, AgentApproval, AgentEvent, AgentThread, AgentTurn, AssistRequest,
-    DEFAULT_UPLOAD_DIR, NewAgentApproval, Plan, RecordId, RecordIdExt, TurnImage, upload_name,
+    DEFAULT_UPLOAD_DIR, NewAgentApproval, Plan, PlanStep, RecordId, RecordIdExt, TurnImage, upload_name,
 };
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
@@ -186,6 +186,8 @@ struct Runner {
     compact_unstarted: bool,
     /// The last `update_plan` checklist written to the transcript.
     last_plan: Option<Plan>,
+    /// Steps finished before the last compaction, shown ahead of the rebuilt plan.
+    carried_steps: Vec<PlanStep>,
     /// The requester the assistant tools act for.
     owner: Option<Person>,
     /// The owner's persona block for the developer instructions.
@@ -274,6 +276,7 @@ impl Runner {
             stopping: false,
             compact_unstarted: false,
             last_plan: None,
+            carried_steps: Vec::new(),
             owner,
             persona,
         };
@@ -594,9 +597,13 @@ impl Runner {
         seq
     }
 
-    /// Writes an `update_plan` checklist to the transcript unless it repeats the last one.
+    /// Writes an `update_plan` checklist, led by the steps carried over a compaction, unless it repeats the last one.
     async fn plan_updated(&mut self, params: &Value) {
         let Some(plan) = Plan::from_value(params) else { return };
+        if self.last_plan.as_ref().is_some_and(Plan::complete) {
+            self.carried_steps.clear();
+        }
+        let plan = plan.with_carried(&self.carried_steps);
         if self.last_plan.as_ref() == Some(&plan) {
             return;
         }
@@ -894,6 +901,14 @@ impl Runner {
                 self.transcript.open(&item_id, seq, kind, turn, text, now);
             }
             return;
+        }
+        if item_type == "contextCompaction" {
+            self.carried_steps = self
+                .last_plan
+                .as_ref()
+                .filter(|p| !p.complete())
+                .map(Plan::completed_steps)
+                .unwrap_or_default();
         }
         let seq = self.seq_for(&item_id);
         self.transcript.close(&item_id);
