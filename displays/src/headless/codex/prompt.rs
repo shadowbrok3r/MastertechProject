@@ -120,7 +120,8 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        in the note means both were just done — verify rather than reinstall. Report how many days \
        the Webroot keycode has left and flag anything under about 30. Never write a license key \
        into a note, entry or reply.\n\
-     - Scans: run-webroot-scan and run-superantispyware-scan (full).\n\
+     - Scans: run-webroot-scan and run-superantispyware-scan. The SAS script runs SAS's Quick \
+       Scan, which is the shop standard; do not look for or run a full SAS scan.\n\
      - Junkware: run-junkware-category, and remove obvious bloat.\n\
      - PUP sweep: the scans and the junkware catalog only catch known, installed software, so look \
        by hand too: the customer's Downloads and Desktop (installers for browser hijackers and \
