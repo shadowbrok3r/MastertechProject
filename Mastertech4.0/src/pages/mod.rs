@@ -50,6 +50,17 @@ impl MasterTechApp {
             self.context.pending_activate_tab = Some(TabId::Ai);
         }
 
+        if let Some(request) = displays::ui_data::agent_problem_notify::take_problems_request() {
+            use displays::ui_data::agent_problem_notify::ProblemsRequest;
+            let problem = match &request {
+                ProblemsRequest::Problem(key) => Some(key.as_str()),
+                ProblemsRequest::List => None,
+            };
+            self.context.shared_ctx.enhanced_ai_playground.show_problems(problem);
+            self.context.pending_tab_opens.push(TabId::Ai);
+            self.context.pending_activate_tab = Some(TabId::Ai);
+        }
+
         for tab in std::mem::take(&mut self.context.pending_tab_opens) {
             if !mode.allows(tab) {
                 refuse(&mut self.context, mode, tab);

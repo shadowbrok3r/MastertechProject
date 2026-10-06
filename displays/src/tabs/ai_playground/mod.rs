@@ -6,6 +6,8 @@ mod automated;
 pub mod enhanced;
 #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
 mod live_transcript;
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+mod problems;
 mod session_list;
 
 pub type ImageType = (String, Bytes);

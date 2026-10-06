@@ -419,6 +419,9 @@ pub struct SharedContext {
     /// Toasts for the signed-in user's agent sessions that replied, failed or wait on them.
     #[serde(skip)]
     pub agent_notify: crate::ui_data::agent_session_notify::AgentSessionNotifier,
+    /// Toasts an active Root user about every technician's failed AI requests and agent errors.
+    #[serde(skip)]
+    pub agent_problems: crate::ui_data::agent_problem_notify::AgentProblemNotifier,
     /// AI diagnostics ROI aggregates; fetched only while drawn.
     #[serde(skip)]
     pub ai_analytics: crate::tabs::ai_analytics::AiAnalytics,
@@ -726,6 +729,10 @@ impl SharedContext {
                     crate::ui_data::agent_session_notify::toast_contents,
                 )
                 .custom_contents(
+                    crate::ui_data::agent_problem_notify::PROBLEM_TOAST_KIND,
+                    crate::ui_data::agent_problem_notify::toast_contents,
+                )
+                .custom_contents(
                     crate::modals::approval_toast::APPROVAL_TOAST_KIND,
                     crate::modals::approval_toast::toast_contents,
                 ),
@@ -820,6 +827,7 @@ impl SharedContext {
             agent_audit: Default::default(),
             agent_approvals: Default::default(),
             agent_notify: Default::default(),
+            agent_problems: Default::default(),
             ai_analytics: Default::default(),
             notification_center: NotificationCenter::default(),
             command_bar: Default::default(),

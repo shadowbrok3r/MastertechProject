@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION;
+use database::schema::agent_problem::{AGENT_ERROR_PREFIX, RECONNECTING_TEXT, RETRYING_PREFIX};
 use database::schema::agent_thread::AgentThreadState;
 use database::schema::agent_turn::APPROVALS_PROMPT;
 use database::schema::assistant::Person;
@@ -559,7 +560,7 @@ impl Runner {
     async fn reconnect(&mut self) -> anyhow::Result<mpsc::Receiver<Event>> {
         self.stop_waits("the connection to the agent host dropped");
         self.flush_all().await;
-        self.marker("error", "Connection to the agent host dropped; reconnecting.", None).await;
+        self.marker("error", RECONNECTING_TEXT, None).await;
         let mut delay = Duration::from_secs(2);
         for attempt in 1..=RECONNECT_ATTEMPTS {
             tokio::time::sleep(delay).await;
@@ -824,9 +825,9 @@ impl Runner {
             Event::TurnCompleted { .. } => self.turn_completed().await,
             Event::Error { message, will_retry, .. } => {
                 let text = if will_retry {
-                    format!("Agent hit a transient error and is retrying: {message}")
+                    format!("{RETRYING_PREFIX}: {message}")
                 } else {
-                    format!("Agent error: {message}")
+                    format!("{AGENT_ERROR_PREFIX}{message}")
                 };
                 self.marker("error", &text, None).await;
                 if will_retry {

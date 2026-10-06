@@ -417,6 +417,14 @@ impl AgentThread {
         AGENT_THREAD_WORKING_STATUSES.contains(&self.status.as_str())
     }
 
+    /// The error the last turn ended on, while the session sits idle after it.
+    pub fn failed_turn_error(&self) -> Option<&str> {
+        if self.status != "idle" {
+            return None;
+        }
+        self.error.as_deref().map(str::trim).filter(|e| !e.is_empty())
+    }
+
     /// The recorded activity; idle while no turn runs.
     pub fn activity(&self) -> AgentActivity {
         match self.status.as_str() {
@@ -744,6 +752,19 @@ mod tests {
             last_event_at: None,
             closed_at: None,
         }
+    }
+
+    #[test]
+    fn only_an_idle_session_reports_its_failed_turn() {
+        let mut row = thread(None, None);
+        assert_eq!(row.failed_turn_error(), None);
+        row.error = Some(" exceeded retry limit, last status: 429 ".into());
+        assert_eq!(row.failed_turn_error(), Some("exceeded retry limit, last status: 429"));
+        row.error = Some("  ".into());
+        assert_eq!(row.failed_turn_error(), None);
+        row.error = Some("codex daemon: refused".into());
+        row.status = "failed".into();
+        assert_eq!(row.failed_turn_error(), None);
     }
 
     #[test]

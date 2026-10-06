@@ -61,6 +61,7 @@ pub mod agent_thread;
 pub mod agent_thread_archive;
 pub mod agent_event;
 pub mod agent_plan;
+pub mod agent_problem;
 pub mod agent_turn;
 pub mod agent_approval;
 pub mod waiting_services;
@@ -107,6 +108,7 @@ pub use assist::{AssistRequest, ConfirmedRequest, ASSIST_REQUEST_TABLE};
 pub use agent_thread::{clean_title, general_connection, is_general, AgentActivity, AgentThread, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE, CREATE_THREAD_SQL, MAY_STEER_SQL};
 pub use agent_event::{event_key, AgentEvent, AGENT_EVENT_TABLE};
 pub use agent_plan::{Plan, PlanStatus, PlanStep, PLAN_ITEM_TYPE};
+pub use agent_problem::{AgentProblem, ProblemKind};
 pub use agent_turn::{upload_name, AgentTurn, QueuedTurn, TurnImage, TurnRefused, AGENT_TURN_TABLE, DEFAULT_UPLOAD_DIR};
 pub use agent_approval::{
     approval_audience, AgentApproval, AgentDecideOutcome, ApprovalAudience, ApprovalViewer, NewAgentApproval,

@@ -5,6 +5,7 @@ use crate::app_state::ReconnectOutcome;
 use crossbeam::channel::Sender;
 use std::sync::Arc;
 
+pub mod agent_problem_notify;
 pub mod agent_session_notify;
 pub mod receive_notes;
 pub mod receive_notifications;
@@ -148,10 +149,11 @@ impl crate::app_state::SharedContext {
         self.agent_approvals.tick_and_ui(ctx, self.current_user.as_ref(), &mut self.toasts);
     }
 
-    /// Queues toasts for the signed-in user's agent sessions that replied, failed or wait on them.
+    /// Queues toasts for the signed-in user's agent sessions that replied, failed or wait on them, and for Root every AI problem.
     fn receive_agent_notifications(&mut self, ctx: &eframe::egui::Context) {
         let live_epoch = (self.live_queries_active && !self.reconnect_in_progress).then_some(self.live_epoch);
         self.agent_notify.tick(ctx, self.current_user.as_ref(), live_epoch, &mut self.toasts);
+        self.agent_problems.tick(ctx, self.current_user.as_ref(), &mut self.toasts);
     }
 
     /// Spawns the chat live streams (participant-filtered) once the chat tab

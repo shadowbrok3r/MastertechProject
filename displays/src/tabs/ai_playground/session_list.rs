@@ -304,6 +304,11 @@ impl Roster {
         }
     }
 
+    /// The user's name for `email`, else its local part.
+    pub(super) fn name_for(&self, email: &str) -> String {
+        self.name(&email_key(email))
+    }
+
     /// The session's technician by name, or `Unattributed`.
     pub(super) fn tech_of(&self, thread: &AgentThread) -> String {
         match self.owner(thread) {
