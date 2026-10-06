@@ -11,6 +11,9 @@ pub const RETRYING_PREFIX: &str = "Agent hit a transient error and is retrying";
 pub const RECONNECTING_TEXT: &str = "Connection to the agent host dropped; reconnecting.";
 /// Start of the error row written when a turn ends on an error.
 pub const AGENT_ERROR_PREFIX: &str = "Agent error: ";
+/// Error row written when the broker stops a turn that kept calling `update_plan` and nothing else.
+pub const PLAN_LOOP_STOPPED: &str =
+    "Stopped the agent: it kept updating its plan without doing anything else.";
 
 /// Longest headline drawn from an unrecognised error, in characters.
 const HEADLINE_MAX_CHARS: usize = 120;
@@ -317,6 +320,8 @@ pub fn headline(kind: ProblemKind, message: &str) -> String {
                 "A stop never reached the agent"
             } else if text.starts_with("Could not start compaction") {
                 "Could not compact the conversation"
+            } else if text == PLAN_LOOP_STOPPED {
+                "The agent looped on its plan and was stopped"
             } else if says(&["429", "too many requests", "nodes are busy"]) {
                 "The AI servers were busy"
             } else if says(&["409", "conversation state"]) {
@@ -549,6 +554,10 @@ mod tests {
             (
                 "Could not resume the previous agent thread (gone); starting a new one.",
                 "Could not resume the session; the agent started over",
+            ),
+            (
+                PLAN_LOOP_STOPPED,
+                "The agent looped on its plan and was stopped",
             ),
         ];
         for (message, want) in cases {
