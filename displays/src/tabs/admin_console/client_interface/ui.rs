@@ -227,7 +227,7 @@ impl WebSocketClient {
                         && ui
                         .button(format!("{} Download crash dumps", icons::DOWNLOAD))
                         .on_hover_text(
-                            "Zip and download this client's MEMORY.DMP, Minidump\\*, LiveKernelReports\\*, and UE/GPU crash folders (Aftermath dumps + crash context, last 30 days) in one archive",
+                            "Zip and download this client's kernel dumps (MEMORY.DMP, Minidump, LiveKernelReports, WER), app crash dumps, WER crash and hang reports, and UE/GPU crash folders (last 30 days) in one archive, with an app crash summary and a manifest",
                         )
                         .clicked()
                     {
