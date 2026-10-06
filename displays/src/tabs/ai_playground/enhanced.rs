@@ -5,6 +5,7 @@ use crate::{
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom, TOOL_PREFIX},
     ui_tools::agent_chat::{self, Composer, ComposerAction, QueueAction, Rename, RenameOutcome},
     ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle},
+    ui_tools::framed_controls::FramedSelectable,
     ui_tools::icons,
     ui_tools::list_row::{Lead, ListRow},
     PlatformSpawner, Spawner,
@@ -275,9 +276,12 @@ pub struct EnhancedAiPlayground {
     /// Whether agent sessions are grouped by technician.
     #[serde(skip)]
     group_by_tech: bool,
-    /// Technician groups collapsed in the session list.
+    /// Technician groups opened (true) or closed by hand, by group id.
     #[serde(skip)]
-    collapsed_groups: std::collections::HashSet<String>,
+    group_open: HashMap<String, bool>,
+    /// The list a Root user picked above the session list.
+    #[serde(skip)]
+    list_view: ListView,
     /// User names for the session list; `None` until read after the index changes.
     #[serde(skip)]
     roster: Option<Roster>,
@@ -367,7 +371,8 @@ impl Default for EnhancedAiPlayground {
             list_filter: String::new(),
             session_filter: SessionFilter::default(),
             group_by_tech: true,
-            collapsed_groups: std::collections::HashSet::new(),
+            group_open: HashMap::new(),
+            list_view: ListView::default(),
             roster: None,
             archived: std::collections::HashSet::new(),
             archive_pending: HashMap::new(),
@@ -883,8 +888,82 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// The search box, local chats, agent sessions and, for Root, automated sessions and ZeroClaw; clicks and renames land in `pick`.
+    /// The list a Root user picked; everyone else sees the chats.
+    fn shown_view(&self) -> ListView {
+        if self.viewer_root && cfg!(any(target_arch = "wasm32", feature = "tokio")) {
+            self.list_view
+        } else {
+            ListView::Chats
+        }
+    }
+
+    /// The Chats and ZeroClaw buttons over a Root user's session list; ZeroClaw carries its count of new items.
+    fn view_switch(&mut self, ui: &mut Ui) {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        let unread = self.zeroclaw.unread_count();
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+        let unread = 0;
+        let zeroclaw = if unread > 0 {
+            format!("{} ZeroClaw \u{00b7} {unread} new", icons::ROBOT)
+        } else {
+            format!("{} ZeroClaw", icons::ROBOT)
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.framed_selectable_value(
+                &mut self.list_view,
+                ListView::Chats,
+                format!("{} Chats", icons::CHAT),
+            )
+            .on_hover_text("Your chats and the technicians' agent sessions");
+            ui.framed_selectable_value(&mut self.list_view, ListView::ZeroClaw, zeroclaw)
+                .on_hover_text(
+                    "Automated diagnostic sessions, ZeroClaw automations and agent sessions",
+                );
+        });
+    }
+
+    /// The view switch for Root, then the chats list or the automation list; clicks and renames land in `pick`.
     fn thread_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
+        if self.viewer_root && cfg!(any(target_arch = "wasm32", feature = "tokio")) {
+            self.view_switch(ui);
+        }
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if self.shown_view() == ListView::ZeroClaw {
+            self.automation_rows(ui, max_height, pick);
+            return;
+        }
+        self.chat_rows(ui, max_height, pick);
+    }
+
+    /// The search box, then automated diagnostic sessions and ZeroClaw's automations and sessions; clicks land in `pick`.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn automation_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
+        ui.add(
+            TextEdit::singleline(&mut self.list_filter)
+                .hint_text(format!("{} Search", icons::SEARCH))
+                .desired_width(ui.available_width()),
+        );
+        let filter = self.list_filter.clone();
+        ScrollArea::vertical()
+            .id_salt("enhanced_ai_automation_rows")
+            .max_height(max_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                if let Some(key) = self.automated.list_ui(ui, &filter) {
+                    pick.automated = Some(key);
+                }
+                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+                {
+                    ui.separator();
+                    if let Some(p) = self.zeroclaw.list_ui(ui, &filter) {
+                        pick.zeroclaw = Some(p);
+                    }
+                }
+            });
+    }
+
+    /// The search box, local chats and agent sessions; clicks and renames land in `pick`.
+    fn chat_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         let agent_index = self.index_with_open_row();
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
@@ -925,8 +1004,6 @@ impl EnhancedAiPlayground {
             roster: &roster,
             archived: &archived_now,
         };
-        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-        let (root, filter) = (self.viewer_root, self.list_filter.clone());
         ScrollArea::vertical()
             .id_salt("enhanced_ai_thread_rows")
             .max_height(max_height)
@@ -963,13 +1040,18 @@ impl EnhancedAiPlayground {
                     }
                 }
                 if self.group_by_tech {
-                    for group in session_list::group_by_tech(&sessions, &roster) {
-                        let open = searching || !self.collapsed_groups.contains(group.id());
+                    let groups = session_list::group_by_tech(&sessions, &roster);
+                    let lone = groups.len() == 1;
+                    for group in groups {
+                        let open = group_is_open(
+                            self.group_open.get(group.id()).copied(),
+                            searching,
+                            lone,
+                        );
                         let shown = eframe::egui::CollapsingHeader::new(
                             session_list::group_header(ui, &group),
                         )
                         .id_salt(("enhanced_ai_session_group", group.id()))
-                        .default_open(true)
                         .open(Some(open))
                         .show(ui, |ui| {
                             for thread in &group.rows {
@@ -991,10 +1073,7 @@ impl EnhancedAiPlayground {
                             }
                         });
                         if shown.header_response.clicked() && !searching {
-                            let id = group.id();
-                            if !self.collapsed_groups.remove(id) {
-                                self.collapsed_groups.insert(id.to_string());
-                            }
+                            self.group_open.insert(group.id().to_string(), !open);
                         }
                         if let Some(hint) = group.hint() {
                             shown.header_response.on_hover_text(hint);
@@ -1005,23 +1084,6 @@ impl EnhancedAiPlayground {
                     session_list::working_first(&mut flat);
                     for thread in flat {
                         session_row(ui, &rows, thread, true, pick);
-                    }
-                }
-                #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-                if root {
-                    ui.separator();
-                    if let Some(key) = self.automated.list_ui(ui, &filter) {
-                        pick.automated = Some(key);
-                    }
-                }
-                #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-                if root {
-                    ui.separator();
-                    let unread = self.zeroclaw.unread_count();
-                    let label = if unread > 0 { format!("ZeroClaw \u{00b7} {unread} new") } else { "ZeroClaw".to_string() };
-                    ui.label(RichText::new(label).weak().small());
-                    if let Some(p) = self.zeroclaw.list_ui(ui, &filter) {
-                        pick.zeroclaw = Some(p);
                     }
                 }
             });
@@ -2293,6 +2355,21 @@ fn sessions_header(ui: &mut Ui, count: usize, filters: Option<&str>) -> bool {
     clear
 }
 
+/// Which list the session list shows.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum ListView {
+    /// Local chats and agent sessions.
+    #[default]
+    Chats,
+    /// Automated diagnostic sessions and ZeroClaw's automations and sessions.
+    ZeroClaw,
+}
+
+/// Whether a technician group is drawn open: always while searching, else as last toggled, else only as the list's one group.
+fn group_is_open(toggled: Option<bool>, searching: bool, lone: bool) -> bool {
+    searching || toggled.unwrap_or(lone)
+}
+
 /// A thread clicked or asked to be renamed in the session list.
 #[derive(Debug, Default)]
 struct ThreadPick {
@@ -2761,7 +2838,7 @@ mod tests {
         };
         chat.list_filter.clear();
         draw(&mut chat);
-        chat.collapsed_groups.insert("unattributed".into());
+        chat.group_open.insert("unattributed".into(), true);
         draw(&mut chat);
         chat.group_by_tech = false;
         draw(&mut chat);
@@ -2789,14 +2866,20 @@ mod tests {
             current_theory: None,
         }]);
         let ctx = Context::default();
-        let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(260.0, 500.0))),
-            ..Default::default()
-        };
-        let mut pick = ThreadPick::default();
-        let mut out = ctx.run_ui(input, |ui| chat.thread_rows(ui, 480.0, &mut pick));
-        out.textures_delta.clear();
-        assert!(pick.automated.is_none(), "nothing is picked without a click");
+        for view in [ListView::Chats, ListView::ZeroClaw] {
+            chat.list_view = view;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(260.0, 500.0))),
+                ..Default::default()
+            };
+            let mut pick = ThreadPick::default();
+            let mut out = ctx.run_ui(input, |ui| chat.thread_rows(ui, 480.0, &mut pick));
+            out.textures_delta.clear();
+            assert!(
+                pick.automated.is_none(),
+                "nothing is picked without a click"
+            );
+        }
 
         chat.apply_pick(ThreadPick { automated: Some("s1".into()), ..Default::default() });
         assert!(chat.side_view_open());
@@ -2807,6 +2890,54 @@ mod tests {
         chat.viewer_root = false;
         chat.apply_pick(ThreadPick { automated: Some("s1".into()), ..Default::default() });
         assert!(!chat.side_view_open(), "only Root sees automated sessions");
+    }
+
+    #[test]
+    fn technician_groups_start_closed_unless_alone() {
+        assert!(
+            !group_is_open(None, false, false),
+            "a group among several starts closed"
+        );
+        assert!(
+            group_is_open(None, false, true),
+            "a list's one group starts open"
+        );
+        assert!(
+            group_is_open(Some(true), false, false),
+            "a group opened by hand stays open"
+        );
+        assert!(
+            !group_is_open(Some(false), false, true),
+            "a lone group closed by hand stays closed"
+        );
+        assert!(
+            group_is_open(Some(false), true, false),
+            "searching opens every group"
+        );
+    }
+
+    #[test]
+    fn the_list_opens_on_chats_and_only_root_switches_it() {
+        assert_eq!(
+            EnhancedAiPlayground::default().shown_view(),
+            ListView::Chats
+        );
+        let mut chat = EnhancedAiPlayground {
+            list_view: ListView::ZeroClaw,
+            ..Default::default()
+        };
+        assert_eq!(
+            chat.shown_view(),
+            ListView::Chats,
+            "a technician always sees the chats"
+        );
+        chat.viewer_root = true;
+        let zeroclaw = if cfg!(any(target_arch = "wasm32", feature = "tokio")) {
+            ListView::ZeroClaw
+        } else {
+            ListView::Chats
+        };
+        assert_eq!(chat.shown_view(), zeroclaw);
     }
 
     #[test]
