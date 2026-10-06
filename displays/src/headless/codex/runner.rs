@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION;
-use database::schema::agent_problem::{AGENT_ERROR_PREFIX, RECONNECTING_TEXT, RETRYING_PREFIX};
+use database::schema::agent_problem::{AGENT_ERROR_PREFIX, PLAN_LOOP_STOPPED, RECONNECTING_TEXT, RETRYING_PREFIX};
 use database::schema::agent_thread::AgentThreadState;
 use database::schema::agent_turn::APPROVALS_PROMPT;
 use database::schema::assistant::Person;
@@ -76,6 +76,15 @@ const APPROVED_ALL: &str = "Technician approved everything for this session.";
 pub(super) const PROMPTS_ON: &str = "Technician turned approval prompts back on; gated tool calls ask again.";
 /// Characters of a call's reason kept in its approval summary.
 const SUMMARY_REASON_CHARS: usize = 160;
+/// Plan updates in a row, with no other tool call between them, before the agent is told to move on.
+const PLAN_REPEATS_STEER: u32 = 3;
+/// Plan updates in a row before the turn is stopped.
+const PLAN_REPEATS_STOP: u32 = 6;
+/// Steer sent once the agent reaches [`PLAN_REPEATS_STEER`] plan updates in a row.
+const PLAN_LOOP_STEER: &str = "You've called update_plan several times in a row without doing anything else. \
+     The plan is current: don't call update_plan again until a step's status changes. \
+     Take the next step with another tool, or, if the tool you need isn't available in this session, \
+     reply to the technician and say what you need.";
 
 /// Starts the thread's runner task and registers its command channel; a thread
 /// that already has a runner gets that runner's channel back instead.
@@ -189,6 +198,8 @@ struct Runner {
     last_plan: Option<Plan>,
     /// Steps finished before the last compaction, shown ahead of the rebuilt plan.
     carried_steps: Vec<PlanStep>,
+    /// Plan updates since the turn started or since its last other tool call.
+    plan_calls: u32,
     /// The requester the assistant tools act for.
     owner: Option<Person>,
     /// The owner's persona block for the developer instructions.
@@ -278,6 +289,7 @@ impl Runner {
             compact_unstarted: false,
             last_plan: None,
             carried_steps: Vec::new(),
+            plan_calls: 0,
             owner,
             persona,
         };
@@ -598,18 +610,44 @@ impl Runner {
         seq
     }
 
-    /// Writes an `update_plan` checklist, led by the steps carried over a compaction, unless it repeats the last one.
+    /// Writes an `update_plan` checklist, led by the steps carried over a compaction, unless it repeats the last one; then checks for a plan loop.
     async fn plan_updated(&mut self, params: &Value) {
         let Some(plan) = Plan::from_value(params) else { return };
         if self.last_plan.as_ref().is_some_and(Plan::complete) {
             self.carried_steps.clear();
         }
         let plan = plan.with_carried(&self.carried_steps);
-        if self.last_plan.as_ref() == Some(&plan) {
-            return;
+        if self.last_plan.as_ref() != Some(&plan) {
+            self.marker("other", &plan.text(), Some(plan.to_item())).await;
+            self.last_plan = Some(plan);
         }
-        self.marker("other", &plan.text(), Some(plan.to_item())).await;
-        self.last_plan = Some(plan);
+        self.plan_calls += 1;
+        self.check_plan_loop().await;
+    }
+
+    /// Steers the agent on to its next step after [`PLAN_REPEATS_STEER`] plan updates in a row, and stops the turn after [`PLAN_REPEATS_STOP`].
+    async fn check_plan_loop(&mut self) {
+        match plan_loop_action(self.plan_calls) {
+            Some(PlanLoop::Steer) => {
+                let note = format!(
+                    "The agent updated its plan {} times in a row without doing anything else; it was asked to move on.",
+                    self.plan_calls
+                );
+                self.marker("other", &note, None).await;
+                if let Err(e) = self.send_text("steer", PLAN_LOOP_STEER).await {
+                    log::warn!("codex: plan-loop steer for {} failed: {e}", self.thread.id.key_string());
+                }
+            }
+            Some(PlanLoop::Stop) if !self.stopping => {
+                log::warn!("codex: stopping {}: {} plan updates in a row", self.thread.id.key_string(), self.plan_calls);
+                self.marker("error", PLAN_LOOP_STOPPED, None).await;
+                self.begin_stop(None);
+                if let Err(e) = self.write_status(self.busy.phase.status(), Some(PLAN_LOOP_STOPPED)).await {
+                    log::warn!("codex: status write failed: {e}");
+                }
+            }
+            _ => {}
+        }
     }
 
     /// A standalone transcript row with no codex item behind it, written after any buffered text.
@@ -818,6 +856,7 @@ impl Runner {
             }
             Event::TurnStarted { .. } => {
                 self.turn_no += 1;
+                self.plan_calls = 0;
                 self.compact_unstarted = false;
                 self.marker("turn_started", "", None).await;
                 self.signal(Signal::TurnStarted).await;
@@ -889,6 +928,9 @@ impl Runner {
     async fn on_item(&mut self, item_type: &str, completed: bool, mut item: Value) {
         let Some(item_id) = item.get("id").and_then(Value::as_str).map(str::to_string) else { return };
         let kind = kind_for(item_type);
+        if is_tool_work(kind) {
+            self.plan_calls = 0;
+        }
         let now = Instant::now();
         if !completed {
             if !self.transcript.contains(&item_id) && !self.completed.contains(&item_id) {
@@ -2019,6 +2061,27 @@ fn decision(status: &str) -> Decision {
 }
 
 /// Transcript kind for a codex item type.
+/// What the broker does about a run of plan updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanLoop {
+    Steer,
+    Stop,
+}
+
+/// The action due when `calls` plan updates in a row have arrived.
+fn plan_loop_action(calls: u32) -> Option<PlanLoop> {
+    match calls {
+        PLAN_REPEATS_STEER => Some(PlanLoop::Steer),
+        n if n >= PLAN_REPEATS_STOP => Some(PlanLoop::Stop),
+        _ => None,
+    }
+}
+
+/// True for an item kind that does work: a tool call, a command or a file change.
+fn is_tool_work(kind: &str) -> bool {
+    matches!(kind, "tool_call" | "command" | "file_change")
+}
+
 fn kind_for(item_type: &str) -> &'static str {
     match item_type {
         "userMessage" => "user",
@@ -2160,6 +2223,40 @@ fn find_record_key(text: &str, table: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plan_loop_is_steered_once_then_stopped() {
+        let actions: Vec<Option<PlanLoop>> = (1..=8).map(plan_loop_action).collect();
+        assert_eq!(
+            actions,
+            [
+                None,
+                None,
+                Some(PlanLoop::Steer),
+                None,
+                None,
+                Some(PlanLoop::Stop),
+                Some(PlanLoop::Stop),
+                Some(PlanLoop::Stop)
+            ]
+        );
+        assert_eq!(plan_loop_action(0), None);
+    }
+
+    #[test]
+    fn only_tool_work_counts_as_moving_on() {
+        for (item_type, resets) in [
+            ("dynamicToolCall", true),
+            ("mcpToolCall", true),
+            ("commandExecution", true),
+            ("fileChange", true),
+            ("agentMessage", false),
+            ("reasoning", false),
+            ("userMessage", false),
+        ] {
+            assert_eq!(is_tool_work(kind_for(item_type)), resets, "{item_type}");
+        }
+    }
 
     #[test]
     fn a_runner_ignores_events_of_other_codex_threads() {
