@@ -258,6 +258,13 @@ pub struct EnhancedAiPlayground {
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     #[serde(skip)]
     automated: super::automated::AutomatedView,
+    /// Failed AI requests and agent errors across every technician, listed for an active Root.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    #[serde(skip)]
+    problems: super::problems::ProblemsView,
+    /// Pins the session list on the next frame.
+    #[serde(skip)]
+    pin_sessions: bool,
     /// Whether the signed-in user was last seen as an active Root.
     #[serde(skip)]
     viewer_root: bool,
@@ -365,6 +372,9 @@ impl Default for EnhancedAiPlayground {
             zeroclaw: Default::default(),
             #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             automated: Default::default(),
+            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+            problems: Default::default(),
+            pin_sessions: false,
             viewer_root: false,
             viewer_id: None,
             show_everyone: false,
@@ -396,7 +406,10 @@ impl EnhancedAiPlayground {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         self.zeroclaw.deselect();
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-        self.automated.deselect();
+        {
+            self.automated.deselect();
+            self.problems.deselect();
+        }
         if self.is_blank_chat(&self.selected_thread) {
             return;
         }
@@ -470,9 +483,40 @@ impl EnhancedAiPlayground {
         false
     }
 
-    /// Whether a ZeroClaw item or an automated session fills the chat area instead of a chat.
+    /// Whether a problem with no session fills the chat area.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn problem_open(&self) -> bool {
+        self.viewer_root && self.problems.picked().is_some()
+    }
+
+    #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
+    fn problem_open(&self) -> bool {
+        false
+    }
+
+    /// Whether a ZeroClaw item, an automated session or a problem fills the chat area instead of a chat.
     fn side_view_open(&self) -> bool {
-        self.zeroclaw_open() || self.automated_open()
+        self.zeroclaw_open() || self.automated_open() || self.problem_open()
+    }
+
+    /// Shows a Root user the Problems list, pinned open, with `problem` picked when given.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    pub fn show_problems(&mut self, problem: Option<&str>) {
+        self.list_view = ListView::Problems;
+        self.pin_sessions = true;
+        if let Some(key) = problem {
+            self.pick_problem(key);
+        }
+    }
+
+    /// Fills the chat area with a problem that has no session.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn pick_problem(&mut self, key: &str) {
+        self.renaming = None;
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        self.zeroclaw.deselect();
+        self.automated.deselect();
+        self.problems.select(key);
     }
 
     /// Agent sessions the filters admit and the search matches, archived and closed ones only while shown; the open session is listed whatever the filters.
@@ -623,6 +667,11 @@ impl EnhancedAiPlayground {
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         if self.viewer_root {
             self.automated.tick(ui);
+            let shown = self.shown_view() == ListView::Problems;
+            self.problems.tick(ui, shown);
+        }
+        if std::mem::take(&mut self.pin_sessions) {
+            set_sessions_pinned(ui, true);
         }
         let rail = ui.max_rect();
 
@@ -662,6 +711,17 @@ impl EnhancedAiPlayground {
             CentralPanel::default()
                 .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
                 .show(ui, |ui| self.automated.detail_ui(ui));
+            self.handle_enhanced_ai_events(ui);
+            return;
+        }
+
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if self.problem_open() {
+            let roster = self.roster.take().unwrap_or_else(Roster::load);
+            CentralPanel::default()
+                .frame(Frame::central_panel(ui.style()).inner_margin(Margin::same(10)))
+                .show(ui, |ui| self.problems.detail_ui(ui, &roster));
+            self.roster = Some(roster);
             self.handle_enhanced_ai_events(ui);
             return;
         }
@@ -757,6 +817,12 @@ impl EnhancedAiPlayground {
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         if self.automated_open()
             && let Some(title) = self.automated.title()
+        {
+            return title;
+        }
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if self.problem_open()
+            && let Some(title) = self.problems.title()
         {
             return title;
         }
@@ -897,7 +963,7 @@ impl EnhancedAiPlayground {
         }
     }
 
-    /// The Chats and ZeroClaw buttons over a Root user's session list; ZeroClaw carries its count of new items.
+    /// The Chats, ZeroClaw and Problems buttons over a Root user's session list; ZeroClaw and Problems carry their counts of new items.
     fn view_switch(&mut self, ui: &mut Ui) {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         let unread = self.zeroclaw.unread_count();
@@ -907,6 +973,16 @@ impl EnhancedAiPlayground {
             format!("{} ZeroClaw \u{00b7} {unread} new", icons::ROBOT)
         } else {
             format!("{} ZeroClaw", icons::ROBOT)
+        };
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        let new_problems = self.problems.unseen_count();
+        #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
+        let new_problems = 0;
+        let problems = if new_problems > 0 {
+            RichText::new(format!("{} Problems \u{00b7} {new_problems} new", icons::STATUS_WARN))
+                .color(crate::ui_tools::theme::error(ui))
+        } else {
+            RichText::new(format!("{} Problems", icons::STATUS_WARN))
         };
         ui.horizontal_wrapped(|ui| {
             ui.framed_selectable_value(
@@ -919,6 +995,8 @@ impl EnhancedAiPlayground {
                 .on_hover_text(
                     "Automated diagnostic sessions, ZeroClaw automations and agent sessions",
                 );
+            ui.framed_selectable_value(&mut self.list_view, ListView::Problems, problems)
+                .on_hover_text("Failed AI requests and agent errors across every technician");
         });
     }
 
@@ -928,11 +1006,42 @@ impl EnhancedAiPlayground {
             self.view_switch(ui);
         }
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-        if self.shown_view() == ListView::ZeroClaw {
-            self.automation_rows(ui, max_height, pick);
-            return;
+        match self.shown_view() {
+            ListView::ZeroClaw => {
+                self.automation_rows(ui, max_height, pick);
+                return;
+            }
+            ListView::Problems => {
+                self.problem_rows(ui, max_height, pick);
+                return;
+            }
+            ListView::Chats => {}
         }
         self.chat_rows(ui, max_height, pick);
+    }
+
+    /// The search box, the range buttons and every technician's problems; clicks land in `pick`.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn problem_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
+        ui.add(
+            TextEdit::singleline(&mut self.list_filter)
+                .hint_text(format!("{} Search", icons::SEARCH))
+                .desired_width(ui.available_width()),
+        );
+        self.problems.range_ui(ui);
+        let filter = self.list_filter.clone();
+        let selected = if self.side_view_open() { String::new() } else { self.selected_thread.clone() };
+        let roster = self.roster.take().unwrap_or_else(Roster::load);
+        ScrollArea::vertical()
+            .id_salt("enhanced_ai_problem_rows")
+            .max_height(max_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                if let Some(problem) = self.problems.list_ui(ui, &filter, &roster, &selected) {
+                    pick.problem = Some(problem);
+                }
+            });
+        self.roster = Some(roster);
     }
 
     /// The search box, then automated diagnostic sessions and ZeroClaw's automations and sessions; clicks land in `pick`.
@@ -1090,12 +1199,13 @@ impl EnhancedAiPlayground {
         self.roster = Some(roster);
     }
 
-    /// Opens the picked thread, automated session or ZeroClaw item, starting a rename first when one was asked for.
+    /// Opens the picked thread, automated session, ZeroClaw item or problem, starting a rename first when one was asked for.
     fn apply_pick(&mut self, pick: ThreadPick) {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         if let Some(item) = &pick.zeroclaw {
             self.renaming = None;
             self.automated.deselect();
+            self.problems.deselect();
             self.zeroclaw.select(item);
             return;
         }
@@ -1104,8 +1214,22 @@ impl EnhancedAiPlayground {
             self.renaming = None;
             #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
             self.zeroclaw.deselect();
+            self.problems.deselect();
             self.automated.select(key);
             return;
+        }
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        match pick.problem {
+            Some(super::problems::ProblemPick::Session { thread, is_open }) => {
+                self.renaming = None;
+                self.open_session(&thread, is_open);
+                return;
+            }
+            Some(super::problems::ProblemPick::Detail(key)) => {
+                self.pick_problem(&key);
+                return;
+            }
+            None => {}
         }
         if let Some((keys, archive)) = pick.archive {
             self.set_archived(keys, archive);
@@ -1146,7 +1270,10 @@ impl EnhancedAiPlayground {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         self.zeroclaw.deselect();
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
-        self.automated.deselect();
+        {
+            self.automated.deselect();
+            self.problems.deselect();
+        }
         if self.selected_thread != id {
             self.open_row = None;
             self.waiting.clear();
@@ -2286,8 +2413,11 @@ fn session_row(
 ) {
     let key = thread.id.key_string();
     let (icon, color, _) = agent_chat::status_chip(ui, &thread.status);
+    let failed_turn = thread.failed_turn_error();
     let lead = if agent_chat::is_active(thread) {
         Lead::Spinner(Some(color))
+    } else if failed_turn.is_some() {
+        Lead::Icon(icons::STATUS_ERR, Some(crate::ui_tools::theme::error(ui)))
     } else {
         Lead::Icon(icon, Some(color))
     };
@@ -2295,6 +2425,9 @@ fn session_row(
     let tech = rows.roster.tech_of(thread);
     let archived = rows.archived.contains(&key);
     let mut detail = session_list::detail_line(thread, show_tech.then_some(tech.as_str()), &rows.now);
+    if failed_turn.is_some() {
+        detail.push_str(" \u{00b7} Last step failed");
+    }
     if archived {
         detail.push_str(" \u{00b7} Archived");
     }
@@ -2307,6 +2440,10 @@ fn session_row(
         .show_with_action(ui);
     let row = row.on_hover_ui(|ui| {
         ui.label(session_list::hover_text(thread, &tech, &rows.now));
+        if let Some(error) = failed_turn {
+            let line = database::schema::agent_problem::headline(database::schema::ProblemKind::AgentError, error);
+            ui.label(RichText::new(format!("{} {line}", icons::STATUS_ERR)).color(crate::ui_tools::theme::error(ui)));
+        }
     });
     if action.is_some_and(|button| button.clicked()) {
         pick.archive = Some((vec![key.clone()], !archived));
@@ -2363,6 +2500,8 @@ enum ListView {
     Chats,
     /// Automated diagnostic sessions and ZeroClaw's automations and sessions.
     ZeroClaw,
+    /// Failed AI requests and agent errors across every technician.
+    Problems,
 }
 
 /// Whether a technician group is drawn open: always while searching, else as last toggled, else only as the list's one group.
@@ -2384,6 +2523,9 @@ struct ThreadPick {
     /// An automated diagnostic session's key.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     automated: Option<String>,
+    /// A problem's session to open, or a problem without one to show.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    problem: Option<super::problems::ProblemPick>,
 }
 
 fn sessions_pinned_id() -> Id {
@@ -2890,6 +3032,58 @@ mod tests {
         chat.viewer_root = false;
         chat.apply_pick(ThreadPick { automated: Some("s1".into()), ..Default::default() });
         assert!(!chat.side_view_open(), "only Root sees automated sessions");
+    }
+
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    #[test]
+    fn root_lists_problems_and_a_pick_opens_the_session_or_the_problem() {
+        use super::super::problems::ProblemPick;
+        use database::schema::{AgentProblem, ProblemKind, RecordId};
+        use eframe::egui::{Context, RawInput, Rect, pos2, vec2};
+
+        let problem = |key: &str, thread: Option<&str>| AgentProblem {
+            key: key.into(),
+            kind: if thread.is_some() { ProblemKind::AgentError } else { ProblemKind::NotPickedUp },
+            at: None,
+            requested_by: Some("joshua.adams@pclaptops.com".into()),
+            store: Some("RIV".into()),
+            hostname: Some("JeffsComputer".into()),
+            connection_string: "JeffsComputer:663a3fd40".into(),
+            service_number: Some("2155485".into()),
+            title: None,
+            thread: thread.map(|t| RecordId::new("agent_thread", t)),
+            thread_status: thread.map(|_| "idle".into()),
+            request: None,
+            message: "the client stopped waiting".into(),
+        };
+        let mut chat = EnhancedAiPlayground { viewer_root: true, list_view: ListView::Problems, ..Default::default() };
+        chat.problems.set_rows(vec![problem("event:e1", Some("t1")), problem("request:r1", None)]);
+        let ctx = Context::default();
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(260.0, 500.0))),
+            ..Default::default()
+        };
+        let mut pick = ThreadPick::default();
+        let mut out = ctx.run_ui(input, |ui| chat.thread_rows(ui, 480.0, &mut pick));
+        out.textures_delta.clear();
+        assert!(pick.problem.is_none(), "nothing is picked without a click");
+
+        chat.apply_pick(ThreadPick { problem: Some(ProblemPick::Detail("request:r1".into())), ..Default::default() });
+        assert!(chat.side_view_open());
+        assert_eq!(chat.current_thread_title(), "Problem \u{00b7} #2155485 JeffsComputer");
+
+        let thread = RecordId::new("agent_thread", "t1");
+        chat.apply_pick(ThreadPick { problem: Some(ProblemPick::Session { thread, is_open: true }), ..Default::default() });
+        assert!(!chat.side_view_open(), "opening the session closes the problem");
+        assert_eq!(chat.selected_thread, "t1");
+
+        chat.show_problems(Some("request:r1"));
+        assert!(chat.side_view_open());
+        assert!(chat.pin_sessions, "a toast's button pins the list open");
+
+        chat.viewer_root = false;
+        assert!(!chat.side_view_open(), "only Root sees problems");
+        assert_eq!(chat.shown_view(), ListView::Chats);
     }
 
     #[test]

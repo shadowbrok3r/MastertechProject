@@ -182,6 +182,11 @@ pub fn take_open_request() -> Option<OpenRequest> {
     with_board(|b| b.open.take()).flatten()
 }
 
+/// Asks the Ai tab to show `thread`, as a toast's Open button does.
+pub fn request_open(thread: RecordId, is_open: bool) {
+    with_board(|b| b.open = Some(OpenRequest { thread, is_open }));
+}
+
 /// True while any viewport of the app has focus.
 fn app_focused(ctx: &Context) -> bool {
     ctx.input(|i| i.raw.focused || i.raw.viewports.values().any(|v| v.focused == Some(true)))
@@ -507,9 +512,7 @@ pub fn toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         .response;
 
     if open {
-        with_board(|b| {
-            b.open = Some(OpenRequest { thread: notice.thread.clone(), is_open: notice.is_open })
-        });
+        request_open(notice.thread.clone(), notice.is_open);
     }
     if open || dismiss {
         with_board(|b| b.notices.remove(&key));

@@ -63,6 +63,18 @@ impl crate::app_state::SharedContext {
             self.pending_activate_tab = Some(TabId::Ai);
         }
 
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        if let Some(request) = crate::ui_data::agent_problem_notify::take_problems_request() {
+            use crate::ui_data::agent_problem_notify::ProblemsRequest;
+            let problem = match &request {
+                ProblemsRequest::Problem(key) => Some(key.as_str()),
+                ProblemsRequest::List => None,
+            };
+            self.enhanced_ai_playground.show_problems(problem);
+            self.pending_tab_opens.push(TabId::Ai);
+            self.pending_activate_tab = Some(TabId::Ai);
+        }
+
         for tab in self.pending_tab_opens.drain(..) {
             if tree.find_tab(&tab).is_none() {
                 tree.push_to_focused_leaf(tab);
