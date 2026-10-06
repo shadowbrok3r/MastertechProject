@@ -164,6 +164,7 @@ minidump-processor = { version = "0.27", features = ["http"] }
 breakpad-symbols = { version = "0.27" }
 minidump-common = { version = "0.27" }
 minidump = { version = "0.27" }
+evtx = { version = "0.12", default-features = false }
 memmap2 = "0.9"
 windows_x86_64_msvc = "0.53"
 minidump-unwind = "0.27"

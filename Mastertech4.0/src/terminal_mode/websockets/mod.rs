@@ -16,6 +16,7 @@ use super::{data::LocalTermEvent, TerminalApp};
 use crate::utilities::no_window::NoWindow;
 
 pub mod command;
+mod crash_artifacts;
 
 const FILE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 
@@ -532,14 +533,13 @@ fn zip_directory(dir_path: &Path) -> Result<Vec<u8>, String> {
     Ok(buffer)
 }
 
-/// Every Windows kernel crash dump on this machine: MEMORY.DMP plus every
-/// `.dmp` under Minidump and LiveKernelReports.
-fn enumerate_crash_dumps() -> Vec<std::path::PathBuf> {
+/// Kernel crash dumps with their dump names; WER-queued dumps come last.
+fn enumerate_crash_dumps() -> Vec<(std::path::PathBuf, String)> {
     use walkdir::WalkDir;
-    let mut out = Vec::new();
+    let mut out: Vec<(std::path::PathBuf, String)> = Vec::new();
     let memdmp = Path::new(r"C:\Windows\MEMORY.DMP");
     if memdmp.is_file() {
-        out.push(memdmp.to_path_buf());
+        out.push((memdmp.to_path_buf(), "MEMORY.DMP".to_string()));
     }
     for dir in [r"C:\Windows\Minidump", r"C:\Windows\LiveKernelReports"] {
         let d = Path::new(dir);
@@ -551,17 +551,27 @@ fn enumerate_crash_dumps() -> Vec<std::path::PathBuf> {
             if p.is_file()
                 && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dmp"))
             {
-                out.push(p.to_path_buf());
+                let name = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                out.push((p.to_path_buf(), name));
             }
+        }
+    }
+    // Skips WER dumps whose file name and size match a dump already listed.
+    let listed: std::collections::HashSet<(String, u64)> = out
+        .iter()
+        .filter_map(|(p, name)| Some((name.to_ascii_lowercase(), std::fs::metadata(p).ok()?.len())))
+        .collect();
+    for dump in crash_artifacts::wer_kernel_dumps() {
+        let base = dump.path.file_name().map(|f| f.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if !listed.contains(&(base, dump.size)) {
+            out.push((dump.path, dump.name));
         }
     }
     out
 }
 
-/// Zip every crash artifact (MEMORY.DMP + Minidump\* + LiveKernelReports\* +
-/// UE/GPU crash folders under GpuCrashes/) into a temp file, streaming each
-/// source through the deflate encoder. Returns the temp zip path.
-fn build_crash_dump_zip() -> Result<std::path::PathBuf, String> {
+/// Zips every kernel, app and GPU crash artifact into a temp file; `streamed` selects the larger limits.
+fn build_crash_dump_zip(streamed: bool) -> Result<std::path::PathBuf, String> {
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
 
@@ -596,6 +606,22 @@ fn build_crash_dump_zip() -> Result<std::path::PathBuf, String> {
 
     // UE/GPU crash folders across every user profile, age- and size-capped.
     add_ue_crashes_to_zip(&mut zip, options, &mut added);
+
+    let limits = crash_artifacts::ZipLimits::for_transport(streamed);
+    let mut manifest = crash_artifacts::Manifest::default();
+    let groups = [
+        (crash_artifacts::wer_kernel_report_files(), limits.wer_kernel),
+        (crash_artifacts::app_dumps(crash_artifacts::MAX_AGE), limits.app_dumps),
+        (crash_artifacts::wer_app_report_files(crash_artifacts::MAX_AGE), limits.wer_app),
+    ];
+    for (files, limit) in groups {
+        let kept = crash_artifacts::select(files, limit, &mut manifest);
+        crash_artifacts::add_to_zip(&mut zip, options, &kept, &mut manifest, &mut added);
+    }
+    if crash_artifacts::add_json(&mut zip, options, "app_crashes.json", &crash_artifacts::app_crash_report()) {
+        added += 1;
+    }
+    crash_artifacts::add_json(&mut zip, options, "manifest.json", &manifest);
 
     zip.finish().map_err(|e| e.to_string())?;
     log::info!("Crash-dump zip built with {added} file(s): {}", out_path.display());
@@ -1804,7 +1830,7 @@ impl TerminalWebsocketClient {
                     // TCP path: build the zip on disk (streamed), then stream it
                     // down and delete it. Off the session loop so pongs flow.
                     tokio::spawn(async move {
-                        match tokio::task::spawn_blocking(build_crash_dump_zip).await {
+                        match tokio::task::spawn_blocking(|| build_crash_dump_zip(true)).await {
                             Ok(Ok(zip_path)) => {
                                 let p = zip_path.to_string_lossy().to_string();
                                 if let Err(e) = stream_file_download(&p, file_tx).await {
@@ -1818,7 +1844,7 @@ impl TerminalWebsocketClient {
                     });
                 } else {
                     // Relay path: build on disk, read + send inline, then delete.
-                    match build_crash_dump_zip() {
+                    match build_crash_dump_zip(false) {
                         Ok(zip_path) => {
                             match std::fs::read(&zip_path) {
                                 Ok(data) => send_file_chunks(data, sender),
@@ -4197,17 +4223,23 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                     paths.as_ref().map(|p| p.len()).unwrap_or(0)
                 );
                 let result_json = tokio::task::spawn_blocking(move || {
-                    let files: Vec<std::path::PathBuf> = match paths {
+                    let (files, app_crashes): (Vec<(std::path::PathBuf, String)>, Option<serde_json::Value>) = match paths {
                         Some(ps) if !ps.is_empty() => {
-                            ps.into_iter().map(std::path::PathBuf::from).collect()
+                            let files = ps
+                                .into_iter()
+                                .map(std::path::PathBuf::from)
+                                .map(|p| {
+                                    let name = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                                    (p, name)
+                                })
+                                .collect();
+                            (files, None)
                         }
-                        _ => enumerate_crash_dumps(),
+                        _ => (enumerate_crash_dumps(), Some(crash_artifacts::app_crash_report())),
                     };
                     let mut dumps: Vec<serde_json::Value> = Vec::with_capacity(files.len());
                     let mut triages: Vec<dump_triage::KernelDumpTriage> = Vec::new();
-                    for p in &files {
-                        let dump_name =
-                            p.file_name().map(|f| f.to_string_lossy().to_string());
+                    for (p, dump_name) in &files {
                         match dump_triage::analyze_file(p) {
                             Ok(triage) => {
                                 triages.push(triage.clone());
@@ -4225,7 +4257,11 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         }
                     }
                     let cross = dump_triage::diff::baseline_diffs(&triages);
-                    serde_json::json!({ "count": dumps.len(), "dumps": dumps, "cross_dump": cross }).to_string()
+                    let mut result = serde_json::json!({ "count": dumps.len(), "dumps": dumps, "cross_dump": cross });
+                    if let Some(app_crashes) = app_crashes {
+                        result["app_crashes"] = app_crashes;
+                    }
+                    result.to_string()
                 })
                 .await
                 .unwrap_or_else(|e| {

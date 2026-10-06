@@ -478,6 +478,45 @@ fn remote_dump_entries(result: &mut serde_json::Value) -> Vec<&mut serde_json::M
     }
 }
 
+/// Moves the client's `app_crashes` block out of a remote triage payload.
+fn take_app_crashes(result: &mut serde_json::Value) -> Option<serde_json::Value> {
+    let data = if result.get("data").is_some() { &mut result["data"] } else { result };
+    data.as_object_mut()?.remove("app_crashes")
+}
+
+/// Session tag the sweeper puts on an app-crash-spread finding.
+const APP_CRASH_SPREAD_TAG: &str = "app-crash-spread";
+
+/// Whether this client had a session tagged `APP_CRASH_SPREAD_TAG` in the last 7 days.
+async fn app_crash_spread_reported(connection_string: &str) -> Result<bool, ErrorData> {
+    let ids: Vec<database::schema::RecordId> = database::db()
+        .query(
+            "SELECT VALUE id FROM diagnostic_session WHERE connection_string = $cs \
+             AND tags CONTAINS $tag AND started_at > time::now() - 7d LIMIT 1",
+        )
+        .bind(("cs", connection_string.to_string()))
+        .bind(("tag", APP_CRASH_SPREAD_TAG.to_string()))
+        .await
+        .map_err(to_internal)?
+        .take(0)
+        .map_err(to_internal)?;
+    Ok(!ids.is_empty())
+}
+
+/// The warning an app crash summary's corruption spread raises, if any.
+fn app_crash_warning(app_crashes: &serde_json::Value) -> Option<super::tool_warnings::ToolWarning> {
+    use super::tool_warnings::ToolWarning;
+    let spread = app_crashes.pointer("/summary/corruption_spread")?;
+    let note = spread.get("note").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+    if spread.get("flag").and_then(serde_json::Value::as_bool) == Some(true) {
+        Some(ToolWarning::warn("app_crash_spread", note))
+    } else if spread.get("shared_module").is_some_and(|m| !m.is_null()) {
+        Some(ToolWarning::info("app_crash_shared_module", note))
+    } else {
+        None
+    }
+}
+
 fn remote_dump_names(result: &mut serde_json::Value) -> Vec<String> {
     remote_dump_entries(result)
         .iter()
@@ -523,6 +562,8 @@ struct RemoteDumpReport<'a> {
     new_dumps: Option<usize>,
     new_dump_names: Option<Vec<String>>,
     dumps: Vec<DumpSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_crashes: Option<serde_json::Value>,
     session_ref: Option<String>,
     ingested: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2079,7 +2120,7 @@ pub struct MinidumpAnalyzeParams {
     #[schemars(description = "Absolute path to a .dmp file. LOCAL mode (no connection_string): a file on THIS admin machine. REMOTE mode (with connection_string): a specific dump on the client; omit to analyze ALL of the client's dumps. Kernel/BSOD dumps only (PAGEDU64: triage minidumps, full, BMP, kernel, live); user-mode MDMP app-crash dumps are rejected.")]
     #[serde(default)]
     pub path: Option<String>,
-    #[schemars(description = "Web Console connection_string of a connected client. When set, analysis runs ON THAT CLIENT (built-in parser, no plugin/cdb) over MEMORY.DMP + Minidump + LiveKernelReports (or the single `path` if given). When omitted, analyzes the local `path` on this machine. Either way the results auto-log to fleet crash intel (crash_signature/crash_sighting).")]
+    #[schemars(description = "Web Console connection_string of a connected client. When set, analysis runs ON THAT CLIENT (built-in parser, no plugin/cdb) over MEMORY.DMP + Minidump + LiveKernelReports + WER-queued kernel dumps (or the single `path` if given), plus an app crash summary. When omitted, analyzes the local `path` on this machine. Either way the results auto-log to fleet crash intel (crash_signature/crash_sighting).")]
     #[serde(default)]
     pub connection_string: Option<String>,
     #[schemars(description = "LOCAL mode only: connection_string of the client the local dump file came from (e.g. after crash_dumps_fetch). Links the recorded sightings to that client's open diagnostic session and service task. Remote mode links automatically.")]
@@ -8505,7 +8546,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "minidump_analyze",
-        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. Open a diagnostic_session for the client FIRST so the recorded sightings link to it; running this before a session exists records them unlinked (a later create_diagnostic_session / intel_links_reap can claim them). LOCAL (path, no connection_string): parse a .dmp on this admin machine — pass link_connection_string so sightings link and dedup stays on. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its dumps (MEMORY.DMP + Minidump + LiveKernelReports), or a single `path` on the client — no plugin deploy required. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). REMOTE results open with `new_dumps` / `new_dump_names` and `dumps`, one entry per dump (already_recorded, bugcheck, module, has_fleet_verdict, path; unrecorded first), followed by warnings, fleet matches and the full per-dump triage in `result`. already_recorded is true when an earlier call already recorded that dump for this client: a repeat or scheduled pass should log, verdict or open tasks only for dumps with already_recorded: false. This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
+        description = "Analyze Windows kernel crash dumps (BSOD) — no cdb/WinDbg needed. Open a diagnostic_session for the client FIRST so the recorded sightings link to it; running this before a session exists records them unlinked (a later create_diagnostic_session / intel_links_reap can claim them). LOCAL (path, no connection_string): parse a .dmp on this admin machine — pass link_connection_string so sightings link and dedup stays on. REMOTE (connection_string): run the CLIENT's built-in parser over ALL its kernel dumps (MEMORY.DMP + Minidump + LiveKernelReports + WER-queued kernel dumps), or a single `path` on the client — no plugin deploy required. A full REMOTE pass also returns `app_crashes`: 30 days of Application Error events, WER app crash/hang reports and app dump exceptions, summarized by app, exception and faulting module. Its `corruption_spread.flag` is set when several unrelated apps crash with memory-corruption codes and share no fault module (a CPU/RAM instability pattern); a shared third-party module is named instead. When the flag is set, `app_crashes.already_reported` says whether this client already had a session tagged app-crash-spread in the last 7 days. Handles triage minidumps plus full/BMP/kernel/live dumps: bugcheck code/name, decoded parameters, crash-time RIP, driver-list blame, and fleet matches (prior verdicts, known-bad drivers). Results ALWAYS auto-log to fleet crash intel (crash_signature/crash_sighting). REMOTE results open with `new_dumps` / `new_dump_names` and `dumps`, one entry per dump (already_recorded, bugcheck, module, has_fleet_verdict, path; unrecorded first), followed by warnings, fleet matches and the full per-dump triage in `result`. already_recorded is true when an earlier call already recorded that dump for this client: a repeat or scheduled pass should log, verdict or open tasks only for dumps with already_recorded: false. This is the primary BSOD triage tool; use com.mastertech.dump-decode only for a deep cdb `!analyze` pass or Microsoft FAILURE_BUCKET_ID."
     )]
     async fn minidump_analyze(
         &self,
@@ -8549,10 +8590,22 @@ impl PluginToolProvider {
                 };
             let mut result: serde_json::Value =
                 serde_json::from_str(&result_json).unwrap_or(serde_json::json!(result_json));
+            let mut app_crashes = take_app_crashes(&mut result);
 
             // Fleet enrichment + completeness warnings (parity with LOCAL mode).
             use super::tool_warnings::ToolWarning;
-            let mut warnings: Vec<ToolWarning> = Vec::new();
+            let mut warnings: Vec<ToolWarning> = app_crashes.as_ref().and_then(app_crash_warning).into_iter().collect();
+            if let Some(app) = app_crashes.as_mut().filter(|a| {
+                a.pointer("/summary/corruption_spread/flag").and_then(serde_json::Value::as_bool) == Some(true)
+            }) {
+                match app_crash_spread_reported(cs).await {
+                    Ok(reported) => app["already_reported"] = serde_json::json!(reported),
+                    Err(e) => warnings.push(ToolWarning::warn(
+                        "app_crash_reported_check_failed",
+                        format!("Could not check for an earlier {APP_CRASH_SPREAD_TAG} session ({}).", e.message),
+                    )),
+                }
+            }
 
             let names = remote_dump_names(&mut result);
             let new_dumps = match dumps_recorded_before(cs, &names, &started).await {
@@ -8652,6 +8705,7 @@ impl PluginToolProvider {
                 new_dumps: new_dumps.as_ref().map(Vec::len),
                 new_dump_names: new_dumps,
                 dumps,
+                app_crashes,
                 session_ref: open_session.as_ref().map(|s| s.id.key_string()),
                 ingested: "auto → crash_signature/crash_sighting",
                 warnings,
@@ -8810,7 +8864,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "crash_dumps_fetch",
-        description = "Pull ALL of a connected client's Windows crash dumps (MEMORY.DMP + Minidump\\* + LiveKernelReports\\*) as one zip, streamed to THIS admin machine. Returns the saved path + size. Use this to hand raw dumps to WinDbg/cdb for a deep pass; for a bugcheck/blame verdict use minidump_analyze with connection_string instead (faster, and it auto-logs to fleet intel)."
+        description = "Pull a connected client's crash artifacts as one zip, streamed to THIS admin machine: MEMORY.DMP, Minidump, LiveKernelReports, WER-queued kernel dumps, app crash dumps (every profile's CrashDumps folder, service profiles and LocalDumps DumpFolder overrides, last 30 days), WER AppCrash/AppHang reports, UE/GPU crash folders, `app_crashes.json` (Application Error events, WER reports, each app dump's exception and faulting module, cross-app summary) and `manifest.json` (every file included, plus each file a size limit left out and why). Returns the saved path + size. Use this to hand raw dumps to WinDbg/cdb for a deep pass; for a bugcheck/blame verdict use minidump_analyze with connection_string instead (faster, and it auto-logs to fleet intel)."
     )]
     async fn crash_dumps_fetch(
         &self,
@@ -8859,7 +8913,7 @@ impl PluginToolProvider {
                     "connection_string": cs,
                     "saved_path": saved_path,
                     "size_bytes": size,
-                    "note": "zip of MEMORY.DMP + Minidump + LiveKernelReports",
+                    "note": "zip of kernel dumps, WER reports, app crash dumps and GPU crash folders; manifest.json lists anything a size limit left out",
                 }))
                 .map_err(to_internal)?]))
             }
@@ -12435,8 +12489,9 @@ call stack): com.mastertech.dump-decode runs real cdb `!analyze -v` on the clien
 WinDbg via winget on first use; cold symbol cache 2-4 min). Use decode_whea only on 0x124 dumps.
 
 Pull raw dumps to the bench: **crash_dumps_fetch { connection_string }** zips MEMORY.DMP + Minidump
-+ LiveKernelReports and streams them to this admin machine (default %USERPROFILE%\Downloads),
-returning the saved path — for handing to WinDbg manually. Prefer minidump_analyze for a verdict;
++ LiveKernelReports + WER kernel/app reports + app crash dumps + GPU crash folders, with
+app_crashes.json and manifest.json, and streams them to this admin machine (default
+%USERPROFILE%\Downloads), returning the saved path — for handing to WinDbg manually. Prefer minidump_analyze for a verdict;
 only fetch when you need the raw files. Multi-GB MEMORY.DMP transfers are streamed with backpressure
 (they no longer time the client out) but can take minutes.
 
@@ -12709,7 +12764,7 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - crash_intel_signature — exact lookup by bugcheck_code + module (sightings + verdicts).
 - minidump_analyze — parse kernel dumps LOCAL (path) or REMOTE (connection_string → all of a client's
   dumps, no plugin/cdb). Auto-logs to fleet intel. The primary BSOD triage tool.
-- crash_dumps_fetch — pull a client's raw dumps (MEMORY.DMP + Minidump + LiveKernelReports) as one zip
+- crash_dumps_fetch — pull a client's raw kernel and app crash dumps plus WER reports as one zip
   to this admin machine. Only for a manual WinDbg deep pass; use minidump_analyze for a verdict.
 - crash_verdict_record — record diagnosis+fix against a signature (surfaces on every future match).
 - known_bad_driver_add / known_bad_driver_list — fleet driver blocklist, cross-referenced on every crash.
@@ -13935,6 +13990,27 @@ mod broker_tool_tests {
     }
 
     #[test]
+    fn app_crashes_move_out_of_the_payload_and_raise_their_warning() {
+        let mut result = serde_json::json!({ "count": 0, "dumps": [], "app_crashes": { "summary": {
+            "corruption_spread": { "flag": true, "apps": ["a.exe", "b.exe", "c.exe", "d.exe"], "shared_module": null,
+                                   "note": "4 unrelated apps crashed" } } } });
+        let app = take_app_crashes(&mut result).expect("app_crashes");
+        assert!(result.get("app_crashes").is_none());
+        let warning = serde_json::to_value(app_crash_warning(&app).expect("warning")).unwrap();
+        assert_eq!(warning["code"], "app_crash_spread");
+
+        let shared = serde_json::json!({ "summary": { "corruption_spread": {
+            "flag": false, "shared_module": "overlay64.dll", "note": "share overlay64.dll" } } });
+        let info = serde_json::to_value(app_crash_warning(&shared).expect("info")).unwrap();
+        assert_eq!(info["code"], "app_crash_shared_module");
+
+        let quiet = serde_json::json!({ "summary": { "corruption_spread": { "flag": false, "shared_module": null } } });
+        assert!(app_crash_warning(&quiet).is_none());
+        let mut old_client = serde_json::json!({ "count": 1, "dumps": [] });
+        assert!(take_app_crashes(&mut old_client).is_none());
+    }
+
+    #[test]
     fn a_single_dump_payload_is_marked_in_place() {
         let mut result = serde_json::json!({ "dump_name": "MEMORY.DMP", "bugcheck_code": "0x133" });
         let recorded: std::collections::HashSet<String> = ["MEMORY.DMP".to_string()].into_iter().collect();
@@ -13972,6 +14048,7 @@ mod broker_tool_tests {
             new_dumps: Some(1),
             new_dump_names: Some(vec!["new.dmp".into()]),
             dumps,
+            app_crashes: None,
             session_ref: None,
             ingested: "auto",
             warnings: Vec::new(),
