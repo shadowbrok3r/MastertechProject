@@ -121,8 +121,8 @@ fn sas_scan(ctx: &ScriptContext, def: &ScriptDef) -> ScriptResult {
             for message in messages {
                 ctx.log_info(category.clone(), name, message);
             }
-            ctx.log_success(category, name, "SAS quick scan started");
-            ScriptResult::Success("SAS quick scan started".into())
+            ctx.log_success(category, name, "SAS quick scan running");
+            ScriptResult::Success("SAS quick scan running".into())
         }
         Err(e) => {
             let msg = format!("SAS scan failed: {e}");

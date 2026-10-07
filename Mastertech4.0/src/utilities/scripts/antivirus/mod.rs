@@ -10,7 +10,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use sha2::Digest;
 use log::info;
-use std::{io, path::PathBuf, time::Duration};
+use std::{io, path::PathBuf, time::{Duration, Instant}};
 
 use super::{get_running_processes, redact_key, InstalledProgram};
 
@@ -62,36 +62,45 @@ pub fn launch_sas_tray() -> anyhow::Result<()> {
 /// retains superseded pages, so it reports `InstallType FREE` alongside a valid
 /// `RegCodeEx` even when the product is fully activated.
 fn sas_pro_window_title() -> Option<String> {
+    window_titles_containing("superantispyware professional").into_iter().next()
+}
+
+/// Title of SAS's main window, which carries the edition and subscription state.
+fn sas_window_title() -> Option<String> {
+    let titles = window_titles_containing("superantispyware");
+    titles.iter().find(|t| t.contains('(')).or(titles.first()).cloned()
+}
+
+/// Titles of the top-level windows whose title contains `needle`, ignoring case.
+fn window_titles_containing(needle: &str) -> Vec<String> {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowTextLengthW, GetWindowTextW,
     };
 
+    struct Search {
+        needle: String,
+        found: Vec<String>,
+    }
+
     unsafe extern "system" fn scan(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let found = unsafe { &mut *(lparam.0 as *mut Option<String>) };
+        let search = unsafe { &mut *(lparam.0 as *mut Search) };
         let len = unsafe { GetWindowTextLengthW(hwnd) };
         if len > 0 {
             let mut buf = vec![0u16; len as usize + 1];
             let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
             let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
-            if title.to_lowercase().contains("superantispyware professional") {
-                *found = Some(title);
-                // Stop enumerating.
-                return BOOL(0);
+            if title.to_lowercase().contains(&search.needle) {
+                search.found.push(title);
             }
         }
         BOOL(1)
     }
 
-    let mut found: Option<String> = None;
-    let _ = unsafe {
-        EnumWindows(
-            Some(scan),
-            LPARAM(&mut found as *mut Option<String> as isize),
-        )
-    };
-    found
+    let mut search = Search { needle: needle.to_lowercase(), found: Vec::new() };
+    let _ = unsafe { EnumWindows(Some(scan), LPARAM(&mut search as *mut Search as isize)) };
+    search.found
 }
 
 /// [`sas_pro_window_title`] off the runtime, since `GetWindowTextW` on another
@@ -123,7 +132,52 @@ fn taskkill_tree(pid: u32) {
     }
 }
 
-/// Starts SAS's own Quick Scan scheduled task via `schtasks /Run`.
+/// How long [`run_sas_quick_scan`] waits for SAS to report a scan in progress.
+const SAS_SCAN_START_TIMEOUT: Duration = Duration::from_secs(90);
+/// Gap between two reads of SAS's `Scanning` flag.
+const SAS_SCAN_POLL: Duration = Duration::from_secs(2);
+
+/// SAS's own `Scanning` flag, or `None` when the key or value can't be read.
+fn sas_scanning() -> Option<bool> {
+    windows_registry::LOCAL_MACHINE
+        .open(r"SOFTWARE\SUPERAntiSpyware.com\SUPERAntiSpyware")
+        .and_then(|key| key.get_u32("Scanning"))
+        .ok()
+        .map(|flag| flag != 0)
+}
+
+/// Polls `probe` until it returns true or `timeout` passes; returns how long that took.
+fn wait_until(mut probe: impl FnMut() -> bool, timeout: Duration, every: Duration) -> Option<Duration> {
+    let started = Instant::now();
+    loop {
+        if probe() {
+            return Some(started.elapsed());
+        }
+        if started.elapsed() >= timeout {
+            return None;
+        }
+        std::thread::sleep(every);
+    }
+}
+
+/// Error for a quick-scan task that ran without SAS starting a scan.
+fn no_scan_started(task: &str, title: Option<&str>) -> String {
+    let shown = match title {
+        Some(t) if t.to_uppercase().contains("EXPIRED") => {
+            format!(" SAS shows \"{t}\"; an expired subscription can open SAS without scanning.")
+        }
+        Some(t) => format!(" SAS shows \"{t}\"."),
+        None => " No SAS window is open.".to_string(),
+    };
+    format!(
+        "SAS quick scan task {task} ran, but SAS reported no scan within {} s.{shown} \
+         Start Quick Scan from the SAS window and confirm it runs.",
+        SAS_SCAN_START_TIMEOUT.as_secs()
+    )
+}
+
+/// Starts SAS's own Quick Scan scheduled task via `schtasks /Run`, then waits for
+/// SAS's `Scanning` flag to confirm the scan is running.
 /// Reads the QUICK_SCAN task GUID from SAS_CURRENTUSER.DB3, configuring the
 /// SAS settings + tasks first when none exist yet.
 pub fn run_sas_quick_scan() -> anyhow::Result<Vec<String>> {
@@ -133,9 +187,12 @@ pub fn run_sas_quick_scan() -> anyhow::Result<Vec<String>> {
     if !std::path::Path::new(SAS_EXE).exists() {
         return Err(anyhow::anyhow!("SUPERAntiSpyware is not installed"));
     }
+    if sas_scanning() == Some(true) {
+        return Ok(vec!["SAS is already scanning; no new scan started".to_string()]);
+    }
 
     let mut messages = Vec::new();
-    let scan_guid = match sas_tasks::get_quick_scan_task_guid() {
+    let mut scan_guid = match sas_tasks::get_quick_scan_task_guid() {
         Ok(Some(guid)) => guid,
         _ => {
             messages.push("No SAS quick-scan task found; configuring SAS scheduled tasks...".to_string());
@@ -162,19 +219,24 @@ pub fn run_sas_quick_scan() -> anyhow::Result<Vec<String>> {
         let killed = kill_sas_processes();
         messages.push(format!("Killed {killed} SAS processes before configuring"));
         std::thread::sleep(Duration::from_secs(2));
-        let (_, scan_guid) = sas_tasks::configure_sas_scheduled_tasks()?;
+        scan_guid = sas_tasks::configure_sas_scheduled_tasks()?.1;
         let task_name = format!(r"\SUPERAntiSpyware\SUPERAntiSpyware Scheduled Task {scan_guid}");
         output = run_task(&task_name)?;
     }
 
-    if output.status.success() {
-        messages.push(format!("Started SAS quick scan (task {scan_guid})"));
-        Ok(messages)
-    } else {
-        Err(anyhow::anyhow!(
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
             "schtasks /Run failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
-        ))
+        ));
+    }
+    messages.push(format!("Ran SAS quick scan task {scan_guid}"));
+    match wait_until(|| sas_scanning() == Some(true), SAS_SCAN_START_TIMEOUT, SAS_SCAN_POLL) {
+        Some(took) => {
+            messages.push(format!("SAS reports a scan in progress after {} s", took.as_secs()));
+            Ok(messages)
+        }
+        None => Err(anyhow::anyhow!(no_scan_started(&scan_guid, sas_window_title().as_deref()))),
     }
 }
 
@@ -976,4 +1038,46 @@ pub async fn download_file(
     let hash = sha.finalize();
     info!("Download complete ({dest_path}). SHA-256: {:x}", hash);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_until_returns_once_the_probe_holds() {
+        let mut reads = 0;
+        let took = wait_until(
+            || {
+                reads += 1;
+                reads == 3
+            },
+            Duration::from_secs(5),
+            Duration::from_millis(1),
+        );
+        assert!(took.is_some());
+        assert_eq!(reads, 3);
+    }
+
+    #[test]
+    fn wait_until_gives_up_after_the_timeout() {
+        let took = wait_until(|| false, Duration::from_millis(20), Duration::from_millis(5));
+        assert_eq!(took, None);
+    }
+
+    #[test]
+    fn an_expired_sas_names_its_subscription_in_the_error() {
+        let text =
+            no_scan_started("ca53eb95", Some("SUPERAntiSpyware Professional Subscription (EXPIRED)"));
+        assert!(text.contains("task ca53eb95 ran, but SAS reported no scan within 90 s"), "{text}");
+        assert!(text.contains("an expired subscription can open SAS without scanning"), "{text}");
+        assert!(text.ends_with("Start Quick Scan from the SAS window and confirm it runs."), "{text}");
+    }
+
+    #[test]
+    fn without_a_sas_window_the_error_says_so() {
+        let text = no_scan_started("ca53eb95", None);
+        assert!(text.contains("No SAS window is open."), "{text}");
+        assert!(!text.contains("expired"), "{text}");
+    }
 }
