@@ -10,7 +10,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use sha2::Digest;
 use log::info;
-use std::{io, path::PathBuf, time::{Duration, Instant}};
+use std::{io, path::{Path, PathBuf}, time::{Duration, Instant}};
 
 use super::{get_running_processes, redact_key, InstalledProgram};
 
@@ -394,26 +394,32 @@ fn normalize_keycode(raw: &str) -> String {
         .collect()
 }
 
+/// Days left at or below which a licence is treated as due for renewal.
+const WEBROOT_RENEWAL_WINDOW_DAYS: u32 = 30;
+
+/// Expiration shift that counts as a new licence rather than drift.
+const WEBROOT_EXPIRATION_SLACK_SECS: u64 = 2 * 86_400;
+
 /// Licence state from `HKLM\SOFTWARE\WOW6432Node\WRData` and its `Status` subkey.
 #[derive(Debug, Clone, Default)]
 struct WebrootLicence {
     is_expired: Option<u32>,
     days_remaining: Option<u32>,
+    /// Unix seconds.
+    expiration_date: Option<u64>,
     license_cat: Option<String>,
-    /// Bound keycode, from `WRData\PULV`. The `Status` subkey never exposes it.
+    /// `WRData\PULV`: last keycode given to the installer, written even when it does not bind.
     keycode: Option<String>,
 }
 
 impl WebrootLicence {
-    /// Licensed means not expired AND a non-empty category. An activated
-    /// agent reports `IsExpired=0` with `license_cat=WSAV`; one that took an
-    /// installer run but never bound a keycode leaves the category empty.
+    /// Not expired and a non-empty licence category.
     fn is_licensed(&self) -> bool {
         self.is_expired == Some(0)
             && self.license_cat.as_deref().is_some_and(|c| !c.trim().is_empty())
     }
 
-    /// True when the agent has `activation_key` bound right now.
+    /// True when `PULV` matches `activation_key`.
     fn holds_keycode(&self, activation_key: &str) -> bool {
         let want = normalize_keycode(activation_key);
         !want.is_empty()
@@ -423,11 +429,33 @@ impl WebrootLicence {
                 .is_some_and(|k| normalize_keycode(k) == want)
     }
 
+    fn needs_renewal(&self) -> bool {
+        self.days_remaining.is_none_or(|d| d <= WEBROOT_RENEWAL_WINDOW_DAYS)
+    }
+
+    /// True when licensed now and either unlicensed in `before` or on a different expiration.
+    fn activated_since(&self, before: &WebrootLicence) -> bool {
+        if !self.is_licensed() {
+            return false;
+        }
+        if !before.is_licensed() {
+            return true;
+        }
+        match (before.expiration_date, self.expiration_date) {
+            (Some(b), Some(a)) => a.abs_diff(b) > WEBROOT_EXPIRATION_SLACK_SECS,
+            _ => matches!(
+                (before.days_remaining, self.days_remaining),
+                (Some(b), Some(a)) if a.abs_diff(b) > 1
+            ),
+        }
+    }
+
     fn summary(&self) -> String {
         format!(
-            "IsExpired={} DaysRemaining={} license_cat={:?} keycode={}",
+            "IsExpired={} DaysRemaining={} ExpirationDate={} license_cat={:?} keycode={}",
             self.is_expired.map_or_else(|| "?".into(), |v| v.to_string()),
             self.days_remaining.map_or_else(|| "?".into(), |v| v.to_string()),
+            self.expiration_date.map_or_else(|| "?".into(), |v| v.to_string()),
             self.license_cat.as_deref().unwrap_or(""),
             if self.keycode.as_deref().is_some_and(|k| !k.is_empty()) { "set" } else { "unset" }
         )
@@ -444,6 +472,7 @@ $d = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WRData' -ErrorAction SilentlyC
 [PSCustomObject]@{
   IsExpired     = $s.IsExpired
   DaysRemaining = $s.DaysRemaining
+  ExpirationDate = $s.ExpirationDate
   LicenseCat    = $s.license_cat
   Keycode       = ([string]$d.PULV).Trim([char]0)
 } | ConvertTo-Json -Compress
@@ -473,6 +502,13 @@ $d = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WRData' -ErrorAction SilentlyC
         })
     };
 
+    let as_u64 = |field: &str| -> Option<u64> {
+        v.get(field).and_then(|x| {
+            x.as_u64()
+                .or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
+        })
+    };
+
     let as_string = |field: &str| -> Option<String> {
         v.get(field).and_then(|x| x.as_str()).map(str::to_string)
     };
@@ -480,6 +516,7 @@ $d = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WRData' -ErrorAction SilentlyC
     WebrootLicence {
         is_expired: as_u32("IsExpired"),
         days_remaining: as_u32("DaysRemaining"),
+        expiration_date: as_u64("ExpirationDate"),
         license_cat: as_string("LicenseCat"),
         keycode: as_string("Keycode"),
     }
@@ -521,18 +558,31 @@ fn installed_wrsa_path() -> Option<PathBuf> {
 /// behind a CAPTCHA, so it cannot complete unattended. Verified on WRSA
 /// 9.0.45.63 (2026-08-01): the switch is parsed and opens the dialog, and the
 /// agent's window tree exposes no UI Automation elements to drive it with.
-fn webroot_rekey_command(exe: &PathBuf, activation_key: &str) -> String {
+fn webroot_rekey_command(exe: &Path, activation_key: &str) -> String {
     format!("\"{}\" -kcswap={activation_key}", exe.display())
 }
 
-/// Runs the in-place swap and polls for the keycode to bind, giving up quickly.
-///
-/// Worth attempting on an agent holding no licence, where there is nothing to
-/// lose and the swap may go through unprompted. When Webroot does raise its
-/// CAPTCHA this just times out, leaving the prompt on screen for a technician.
-async fn webroot_try_kcswap(exe: &PathBuf, activation_key: &str) -> WebrootLicence {
+/// Polls until the licence shows an activation `before` lacked, or `timeout` passes.
+async fn wait_for_webroot_activation(before: &WebrootLicence, timeout: Duration) -> WebrootLicence {
     const POLL_INTERVAL: Duration = Duration::from_secs(3);
-    const POLL_TIMEOUT: Duration = Duration::from_secs(45);
+
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let licence = webroot_licence_state().await;
+        if licence.activated_since(before) || tokio::time::Instant::now() >= deadline {
+            return licence;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Runs the in-place swap and polls for the licence to change; a CAPTCHA leaves it unchanged.
+async fn webroot_try_kcswap(
+    exe: &Path,
+    activation_key: &str,
+    before: &WebrootLicence,
+) -> WebrootLicence {
+    const POLL_TIMEOUT: Duration = Duration::from_secs(90);
 
     info!("Attempting in-place keycode swap: {} -kcswap=<key>", exe.display());
     // Not awaited: WRSA is a GUI process that outlives the swap.
@@ -545,16 +595,7 @@ async fn webroot_try_kcswap(exe: &PathBuf, activation_key: &str) -> WebrootLicen
         return webroot_licence_state().await;
     }
 
-    let deadline = tokio::time::Instant::now() + POLL_TIMEOUT;
-    loop {
-        tokio::time::sleep(POLL_INTERVAL).await;
-        let licence = webroot_licence_state().await;
-        if (licence.is_licensed() && licence.holds_keycode(activation_key))
-            || tokio::time::Instant::now() >= deadline
-        {
-            return licence;
-        }
-    }
+    wait_for_webroot_activation(before, POLL_TIMEOUT).await
 }
 
 /// Installs and activates Webroot with `activation_key`.
@@ -575,8 +616,7 @@ pub async fn install_webroot(
 
     info!("running install_webroot!");
 
-    let installed_exe = installed_wrsa_path();
-    let already_installed = installed_exe.is_some();
+    let already_installed = installed_wrsa_path().is_some();
     let version_before = if already_installed { wrsa_file_version().await } else { None };
     let licence_before = webroot_licence_state().await;
     info!(
@@ -584,9 +624,11 @@ pub async fn install_webroot(
         licence_before.summary()
     );
 
-    // Nothing to do when the requested keycode is already the bound one. Saves
-    // an 85 MB download, and avoids poking an agent that is already correct.
-    if already_installed && licence_before.is_licensed() && licence_before.holds_keycode(&activation_key) {
+    if already_installed
+        && licence_before.is_licensed()
+        && !licence_before.needs_renewal()
+        && licence_before.holds_keycode(&activation_key)
+    {
         info!("install_webroot outcome: {}", WebrootInstallOutcome::NoOp);
         return Ok(WebrootInstallOutcome::NoOp);
     }
@@ -660,10 +702,10 @@ pub async fn install_webroot(
 
     #[cfg(target_os = "windows")]
     {
-        // Verify rather than trust the exit code. `wsasme.exe` returns 0 when
-        // it short-circuits against a live agent of the same version, so a
-        // successful process says nothing about whether the keycode bound.
-        let mut licence = webroot_licence_state().await;
+        const INSTALLER_SETTLE: Duration = Duration::from_secs(60);
+
+        // Exit 0 and a matching PULV both occur without the keycode binding.
+        let mut licence = wait_for_webroot_activation(&licence_before, INSTALLER_SETTLE).await;
         let version_after = wrsa_file_version().await;
         let version_changed = already_installed && version_before != version_after;
         info!(
@@ -671,21 +713,17 @@ pub async fn install_webroot(
             licence.summary()
         );
 
-        let mut bound = licence.is_licensed() && licence.holds_keycode(&activation_key);
+        let mut bound = licence.activated_since(&licence_before);
+        let exe_after = installed_wrsa_path();
 
-        // The installer only binds a keycode while replacing binaries, so it is
-        // a silent no-op against an agent already on the CDN build. Try the
-        // agent's own in-place swap before giving up.
-        if !bound {
-            if let Some(exe) = installed_exe.as_ref() {
-                licence = webroot_try_kcswap(exe, &activation_key).await;
-                bound = licence.is_licensed() && licence.holds_keycode(&activation_key);
-                info!("install_webroot: after -kcswap {}", licence.summary());
-            }
+        if !bound && let Some(exe) = exe_after.as_deref() {
+            licence = webroot_try_kcswap(exe, &activation_key, &licence_before).await;
+            bound = licence.activated_since(&licence_before);
+            info!("install_webroot: after -kcswap {}", licence.summary());
         }
 
         if !bound {
-            let handoff = installed_exe.as_ref().map_or_else(
+            let handoff = exe_after.as_ref().map_or_else(
                 || " Webroot is not installed and the installer did not put it there.".to_string(),
                 |exe| {
                     format!(
@@ -1079,5 +1117,49 @@ mod tests {
         let text = no_scan_started("ca53eb95", None);
         assert!(text.contains("No SAS window is open."), "{text}");
         assert!(!text.contains("expired"), "{text}");
+    }
+
+    fn licensed(days: u32, expiration: u64, pulv: &str) -> WebrootLicence {
+        WebrootLicence {
+            is_expired: Some(0),
+            days_remaining: Some(days),
+            expiration_date: Some(expiration),
+            license_cat: Some("WSAV".into()),
+            keycode: Some(pulv.into()),
+        }
+    }
+
+    #[test]
+    fn pulv_write_without_licence_change_is_not_activation() {
+        let before = licensed(8, 1_791_920_868, "");
+        let after = licensed(8, 1_791_920_868, "SAB5TAOG9AC9EB4EBB88");
+        assert!(after.holds_keycode("SAB5-TAOG-9AC9-EB4E-BB88"));
+        assert!(!after.activated_since(&before));
+    }
+
+    #[test]
+    fn renewal_moves_expiration() {
+        let before = licensed(7, 1_791_920_868, "");
+        let after = licensed(372, 1_791_920_868 + 365 * 86_400, "SAB5TAOG9AC9EB4EBB88");
+        assert!(after.activated_since(&before));
+    }
+
+    #[test]
+    fn unlicensed_to_licensed_is_activation() {
+        let before = WebrootLicence {
+            is_expired: Some(1),
+            days_remaining: Some(0),
+            license_cat: Some(String::new()),
+            ..Default::default()
+        };
+        assert!(licensed(366, 1_823_000_000, "").activated_since(&before));
+        assert!(!before.activated_since(&before));
+    }
+
+    #[test]
+    fn near_expiry_key_is_not_a_noop() {
+        assert!(licensed(7, 1_791_920_868, "X").needs_renewal());
+        assert!(!licensed(300, 1_817_000_000, "X").needs_renewal());
+        assert!(WebrootLicence::default().needs_renewal());
     }
 }
