@@ -270,6 +270,9 @@ fn general_rules(out: &mut String) {
            which opens a session scoped to it.\n\
          - Prefer a lookup over a guess whenever a question concerns live data, and say which \
            record you read.\n\
+         - Stock lives only in Odoo; the Mastertech database has no stock tables. For \"how many X \
+           do we have\" or \"what is at a store\", call search_odoo_inventory with store (the \
+           technician's own store unless they name another) and category.\n\
          - Agent sessions are rows in `agent_thread`; one is open while its status is queued, \
            starting, idle, running or waiting_approval. `connected_client` is the machine \
            roster, not a list of sessions.\n\

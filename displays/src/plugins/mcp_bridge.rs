@@ -2450,8 +2450,15 @@ pub struct GetOutcomeRollupParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct SearchOdooInventoryParams {
-    #[schemars(description = "Words from the product name, or an internal reference, variant code or barcode")]
+    #[schemars(description = "Words from the product name, or an internal reference, variant code or barcode. Optional with category or store.")]
+    #[serde(default)]
     pub query: String,
+    #[schemars(description = "Odoo product category, e.g. GPUs, CPUs, RAM, SSDs, HDDs, Motherboards, Power, Laptops, Cases.")]
+    #[serde(default)]
+    pub category: Option<String>,
+    #[schemars(description = "RIV, LTN, MUR, SAN, ORE, WAR (warehouse shelves) or ALL: list what is on hand there instead of searching the catalog.")]
+    #[serde(default)]
+    pub store: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -10082,23 +10089,24 @@ matched, and an error when the lookup itself failed."
 
     #[tool(
         name = "search_odoo_inventory",
-        description = "Search the Odoo product catalog by product name or part number. Matches \
-products whose name contains every word of the query, or whose internal reference, variant code or \
-barcode contains the whole query. Returns at most 5 products; count 0 means nothing matched, and a \
-tool error means the search itself failed."
+        description = "Odoo stock and product catalog. Stock lives only in Odoo; the Mastertech database \
+has no stock or product tables. With `store` (RIV, LTN, MUR, SAN, ORE, WAR for the warehouse shelves, or \
+ALL) it lists every product on hand there with its count, most units first, after the total units: use \
+it for \"how many X do we have\" and \"what is at a store\". `category` narrows to an Odoo category such \
+as GPUs, CPUs, RAM, SSDs, HDDs or Laptops, and `query` to products whose name has every word or whose \
+code or barcode contains it. Without `store` it searches the catalog by query and/or category: at most \
+8 products, in-stock first, each with on_hand per store cage and warehouse shelf (WAR) plus \
+company_on_hand and company_forecast over every Odoo location, build and RMA bins included. count 0 \
+means nothing matched; a tool error means the search failed or a store or category is unknown, and \
+lists the valid ones."
     )]
     async fn search_odoo_inventory(
         &self,
         Parameters(p): Parameters<SearchOdooInventoryParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        match database::schema::odoo::search_odoo_products(&p.query).await {
-            Ok(products) => Ok(CallToolResult::success(vec![ContentBlock::json(
-                serde_json::json!({ "count": products.len(), "products": products }),
-            )
-            .map_err(to_internal)?])),
-            Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "Odoo product search failed: {e}"
-            ))])),
+        match database::schema::odoo::stock::lookup(p.store.as_deref(), p.category.as_deref(), &p.query).await {
+            Ok(report) => Ok(CallToolResult::success(vec![ContentBlock::json(report).map_err(to_internal)?])),
+            Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(e.to_string())])),
         }
     }
 
@@ -12784,6 +12792,7 @@ not yet anchored.
 Use search_customers / get_customer_details / search_service_orders to pull customer context and service history.
 Use get_computer_details to see full hardware info for a machine.
 Use search_prestashop_orders for purchase/invoice lookup and search_odoo_inventory for parts availability.
+Stock lives only in Odoo; the Mastertech database has no stock or product tables, so never look for them with query_surrealdb.
 Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 
 === Plugins & WASM ===
@@ -12828,7 +12837,7 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - orders_placed — orders PrestaShop took in on a day or range, by kind and store, in store time. service_order.created_at is only when MasterTech first loaded an order.
 - get_computer_details — full hardware record (CPU, GPU, RAM, drives, serials, programs).
 - search_prestashop_orders — search PrestaShop orders by reference, customer email, or customer name (email/name resolve the customer first, then their orders). count 0 means no orders; a tool error means the lookup failed.
-- search_odoo_inventory — search Odoo product catalog by part number or name.
+- search_odoo_inventory — Odoo stock. With store (RIV, LTN, MUR, SAN, ORE, WAR or ALL) it lists everything on hand there, most units first; category (GPUs, RAM, SSDs…) and query narrow it. Without store it searches the catalog by part number, name or category, in-stock first, with on-hand per store.
 - query_surrealdb — run arbitrary read-only SurrealQL (SELECT/RETURN only).
 
 === Assistant: tasks, reminders, parts, briefs ===

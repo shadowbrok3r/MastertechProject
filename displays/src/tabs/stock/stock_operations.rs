@@ -1,6 +1,7 @@
 use super::store_inventory_viewer::ExtraInventoryData;
 use super::row_viewer::{RawStockData, SerialData, SerialInfo, CostBreakdownData, SystemInStoreData, SystemType, BulkOrderData, BulkProductData};
 use database::{db, ODOO_API_KEY, ODOO_DB, ODOO_JSONRPC_URL, ODOO_UID, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, OrderType, Prestashop, PrestashopId}}};
+use database::schema::odoo::stock::{is_warehouse_location, WAR_STOCK_LOCATION};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -94,33 +95,11 @@ async fn odoo_read_group(
     odoo_execute_kw(model, "read_group", json!([domain, fields, groupby]), json!({ "lazy": false })).await
 }
 
-/// Odoo location id of `WAR/Stock`.
-pub const WAR_STOCK_LOCATION: i32 = 8;
-
 /// Forecasts leave out pending moves created more than this many months ago.
 pub const FORECAST_MONTHS: u32 = 6;
 
 /// Move states Odoo counts toward forecast quantities.
 const PENDING_MOVE_STATES: [&str; 4] = ["waiting", "confirmed", "assigned", "partially_available"];
-
-/// Whether `name` is a shelf bin such as `A1-S04-R2` or `A1-EC-R3`.
-fn is_shelf_bin(name: &str) -> bool {
-    let number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    let mut parts = name.split('-');
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some(aisle), Some(section), Some(row), None) => {
-            aisle.strip_prefix('A').is_some_and(number)
-                && (section == "EC" || section.strip_prefix('S').is_some_and(number))
-                && row.strip_prefix('R').is_some_and(number)
-        }
-        _ => false,
-    }
-}
-
-/// Whether a location counts as warehouse stock: `WAR/Stock` or one of its shelf bins.
-fn is_warehouse_location(location_id: i32, complete_name: &str) -> bool {
-    location_id == WAR_STOCK_LOCATION || complete_name.strip_prefix("WAR/Stock/").is_some_and(is_shelf_bin)
-}
 
 /// Ids of `WAR/Stock` and its shelf bins.
 async fn fetch_warehouse_locations() -> Result<Vec<i32>, Error> {
@@ -1849,26 +1828,6 @@ mod war_stock_tests {
         assert_eq!(sums.forecast(7), 10.0 + (5.0 - 1.0) - (8.0 - 3.0));
         assert_eq!(sums.on_hand(42), 0.0);
         assert_eq!(sums.forecast(42), 0.0);
-    }
-
-    #[test]
-    fn shelf_bins_are_aisle_section_row_names() {
-        for name in ["A0-S01-R1", "A1-S04-R2", "A7-S07-R3", "A1-EC-R3"] {
-            assert!(is_shelf_bin(name), "{name}");
-        }
-        for name in ["AMD", "Accesories", "BSDB-BUILT", "OREM-CASES", "A1-S04", "A1-S04-R2-X", "A1-SX-R2", "B1-S04-R2", "A1-S04-R"] {
-            assert!(!is_shelf_bin(name), "{name}");
-        }
-    }
-
-    #[test]
-    fn warehouse_is_war_stock_and_its_shelf_bins() {
-        assert!(is_warehouse_location(8, "WAR/Stock"));
-        assert!(is_warehouse_location(212, "WAR/Stock/A1-S04-R2"));
-        assert!(!is_warehouse_location(84, "WAR/Stock"));
-        assert!(!is_warehouse_location(90, "WAR/Stock/Build"));
-        assert!(!is_warehouse_location(347, "WAR/LTN Cage/A0-S01-R1"));
-        assert!(!is_warehouse_location(76, "WAR/RIV Cage"));
     }
 
     #[test]
