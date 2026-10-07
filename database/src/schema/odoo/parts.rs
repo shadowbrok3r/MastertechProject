@@ -33,13 +33,9 @@ fn client() -> reqwest::Client {
     }
 }
 
-/// Odoo `execute_kw` search_read; `domain` is the full positional domain argument.
-pub async fn search_read(model: &str, domain: Value, fields: Value, limit: Option<u32>) -> anyhow::Result<Vec<Value>> {
+/// Odoo `execute_kw`; `args` is the positional argument list.
+async fn execute_kw(model: &str, method: &str, args: Value, kwargs: Value) -> anyhow::Result<Vec<Value>> {
     let uid: u32 = ODOO_UID.parse().map_err(|_| anyhow::anyhow!("ODOO_UID must be a decimal u32"))?;
-    let mut kwargs = json!({ "fields": fields });
-    if let Some(l) = limit {
-        kwargs["limit"] = json!(l);
-    }
     let body = json!({
         "jsonrpc": "2.0",
         "method": "call",
@@ -47,15 +43,29 @@ pub async fn search_read(model: &str, domain: Value, fields: Value, limit: Optio
         "params": {
             "service": "object",
             "method": "execute_kw",
-            "args": [ODOO_DB, uid, ODOO_API_KEY, model, "search_read", domain, kwargs]
+            "args": [ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs]
         }
     });
     let env: Envelope = client().post(ODOO_JSONRPC_URL).json(&body).send().await?.json().await?;
     if let Some(err) = env.error {
         let msg = err.pointer("/data/message").or_else(|| err.get("message")).cloned().unwrap_or(err);
-        return Err(anyhow::anyhow!("Odoo {model} search_read failed: {msg}"));
+        return Err(anyhow::anyhow!("Odoo {model} {method} failed: {msg}"));
     }
     Ok(env.result.unwrap_or_default())
+}
+
+/// Odoo `execute_kw` search_read; `domain` is the full positional domain argument.
+pub async fn search_read(model: &str, domain: Value, fields: Value, limit: Option<u32>) -> anyhow::Result<Vec<Value>> {
+    let mut kwargs = json!({ "fields": fields });
+    if let Some(l) = limit {
+        kwargs["limit"] = json!(l);
+    }
+    execute_kw(model, "search_read", domain, kwargs).await
+}
+
+/// Odoo `read_group` with `lazy=false`: one row per combination of `groupby` values.
+pub async fn read_group(model: &str, domain: Value, fields: Value, groupby: Value) -> anyhow::Result<Vec<Value>> {
+    execute_kw(model, "read_group", json!([domain, fields, groupby]), json!({ "lazy": false })).await
 }
 
 /// A product that matched a part search.
@@ -86,13 +96,18 @@ fn m2o_id(v: Option<&Value>) -> Option<i64> {
 
 /// Domain terms matching every word of `query` in the name, or the whole query in any of `fields`.
 pub fn name_or_fields_domain(query: &str, fields: &[&str]) -> Vec<Value> {
+    words_or_fields_domain("name", query, fields)
+}
+
+/// Domain terms matching every word of `query` in `name_field`, or the whole query in any of `fields`.
+pub fn words_or_fields_domain(name_field: &str, query: &str, fields: &[&str]) -> Vec<Value> {
     let query = query.trim();
     let words: Vec<&str> = query.split_whitespace().collect();
     let mut domain: Vec<Value> = std::iter::repeat_n(json!("|"), fields.len()).collect();
     domain.extend(std::iter::repeat_n(json!("&"), words.len().saturating_sub(1)));
-    domain.extend(words.iter().map(|w| json!(["name", "ilike", w])));
+    domain.extend(words.iter().map(|w| json!([name_field, "ilike", w])));
     if words.is_empty() {
-        domain.push(json!(["name", "ilike", query]));
+        domain.push(json!([name_field, "ilike", query]));
     }
     domain.extend(fields.iter().map(|f| json!([f, "ilike", query])));
     domain

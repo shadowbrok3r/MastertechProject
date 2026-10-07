@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 pub mod inventory;
 pub mod parts;
+pub mod stock;
 
 /// Templates a product search returns at most.
 const TEMPLATE_LIMIT: u32 = 5;
