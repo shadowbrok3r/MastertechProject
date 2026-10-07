@@ -74,12 +74,15 @@ fn machine_rules(out: &mut String, cfg: &Config) {
            exactly as given there; calls for any other machine are refused.\n\
          - A technician may have to approve a tool call before it runs. If a call comes back \
            declined, a human said no: do not retry it, explain what you wanted and ask them in chat.\n\
-         - To let time pass (a reboot, an update install, a scan, a long RemoteExec job), call `wait`: it \
-           runs here, needs no approval and returns as soon as its condition holds. Around \
-           remote_reboot_client use `wait {{seconds: 300, until: client_offline}}` and then \
-           `wait {{seconds: 600, until: client_online}}`; for a job use `wait {{seconds: 600, until: \
-           exec_done, job_id}}`. Never start a sleep job with remote_exec_start to pass time, and never \
-           call remote_channel_health in a loop.\n\
+         - Keep working while something runs in the background (a scan, an update install, a long \
+           RemoteExec job): do every planned step that does not depend on it, and call `wait` only when \
+           nothing else is left. `wait` runs here, needs no approval and returns as soon as its \
+           condition holds. Around remote_reboot_client use `wait {{seconds: 300, until: \
+           client_offline}}` and then `wait {{seconds: 600, until: client_online}}`; for a job use \
+           `wait {{seconds: 600, until: exec_done, job_id}}`. Never start a sleep job with \
+           remote_exec_start to pass time, and never call remote_channel_health in a loop.\n\
+         - Before you report progress (a scan's percentage, a job's state), check it again with a \
+           screenshot or a quick script; never repeat an earlier reading.\n\
          - A tool call is cut off after {}s but keeps running on the machine. Wait, then check its \
            result (a quick script, remote_exec_tail, remote_exec_list) instead of starting it again.\n\
          - When you need something only a human at the bench can tell you (what the customer \
@@ -121,7 +124,11 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        the Webroot keycode has left and flag anything under about 30. Never write a license key \
        into a note, entry or reply.\n\
      - Scans: run-webroot-scan and run-superantispyware-scan. The SAS script runs SAS's Quick \
-       Scan, which is the shop standard; do not look for or run a full SAS scan.\n\
+       Scan, which is the shop standard; do not look for or run a full SAS scan. Start both scans \
+       early and do the rest of the pass while they run: junkware, PUP sweep, startup, drivers, \
+       SuperEasyBackup, temp cleanup, drive space and health_check do not need an idle machine, \
+       but hold any reboot they call for until the scans finish. Only QC Benchmark, Memory Test and \
+       stress tests wait for the scans, because the scan load skews their results.\n\
      - Junkware: run-junkware-category, and remove obvious bloat.\n\
      - PUP sweep: the scans and the junkware catalog only catch known, installed software, so run \
        the com.mastertech.tuneup plugin's pup_sweep (deploy the plugin first if the client lacks \
@@ -442,5 +449,13 @@ mod tests {
         let text = session_call(&thread(None), "codex/diagnostician");
         assert!(!text.contains("service_number `2155467`"), "{text}");
         assert!(text.contains("ensure_service_task with service_number `<number>`"), "{text}");
+    }
+
+    #[test]
+    fn machine_sessions_keep_working_while_scans_run() {
+        let text = developer_instructions(&cfg(), &thread(Some("2155467")), &[], &[], false, None);
+        assert!(text.contains("call `wait` only when nothing else is left"), "{text}");
+        assert!(text.contains("Start both scans early and do the rest of the pass while they run"), "{text}");
+        assert!(!text.contains("To let time pass"), "{text}");
     }
 }
