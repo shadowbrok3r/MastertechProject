@@ -24,6 +24,8 @@ DEFINE FIELD broker_node        ON agent_thread TYPE none | string              
 DEFINE FIELD closed_at          ON agent_thread TYPE none | datetime                   PERMISSIONS FOR select, create FULL, FOR update NONE;
 -- Thread id inside the codex app-server; set once thread/start returns.
 DEFINE FIELD codex_thread_id    ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
+-- Hash of the tool specs the codex thread started with.
+DEFINE FIELD tools_hash         ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD computer           ON agent_thread TYPE none | record<computer>           PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD connection_string  ON agent_thread TYPE string                            PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD created_at         ON agent_thread TYPE datetime DEFAULT time::now()      PERMISSIONS FOR select, create FULL, FOR update NONE;

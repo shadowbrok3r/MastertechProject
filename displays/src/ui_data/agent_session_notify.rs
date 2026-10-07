@@ -541,6 +541,7 @@ mod tests {
             customer: None,
             diagnostic_session: None,
             codex_thread_id: None,
+            tools_hash: None,
             model: None,
             provider: None,
             driven_by: None,

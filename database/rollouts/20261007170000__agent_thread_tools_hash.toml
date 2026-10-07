@@ -1,0 +1,24 @@
+# agent_thread.tools_hash: hash of the tool specs a session's codex thread started with.
+# An optional field on a SCHEMALESS table, so nothing needs a backfill.
+id = "20261007170000__agent_thread_tools_hash"
+name = "agent_thread_tools_hash"
+source_schema_hash = "438b29191cb5e656f5e88b846436e453c4537c8de9af25d1b7d6d6ac88bc1a40"
+target_schema_hash = "4b11f27ee74dd7c11b3b5ce21c9964cc6de3eba59f38c2e9b6aaaefbc1fadebe"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_agent_thread_tools_hash"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE tools_hash ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+"""
+
+[[steps]]
+id = "drop_agent_thread_tools_hash"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS tools_hash ON agent_thread;
+"""
