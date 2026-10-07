@@ -252,6 +252,10 @@ pub struct AgentThread {
     #[serde(default)]
     #[surreal(default)]
     pub codex_thread_id: Option<String>,
+    /// [`tools_hash`] of the tool specs the codex thread started with.
+    #[serde(default)]
+    #[surreal(default)]
+    pub tools_hash: Option<String>,
     #[serde(default)]
     #[surreal(default)]
     pub model: Option<String>,
@@ -358,6 +362,13 @@ pub fn general_connection(email: &str) -> String {
 /// A session with no machine in scope: records-only tools, no remote actions.
 pub fn is_general(connection_string: &str) -> bool {
     connection_string.starts_with("general:")
+}
+
+/// First 16 hex digits of the SHA-256 of the serialized tool specs.
+pub fn tools_hash(specs: &[serde_json::Value]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(serde_json::to_vec(specs).unwrap_or_default());
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 /// A voice-console session: `general:voice:<email>`, or `general:voice:<guest>:<ms>` per utterance.
@@ -505,12 +516,21 @@ impl AgentThread {
         Ok(rows.into_iter().next())
     }
 
-    pub async fn set_codex_thread(id: &RecordId, codex_thread_id: &str) -> anyhow::Result<()> {
-        db().query("UPDATE $id SET codex_thread_id = $t, updated_at = time::now()")
+    /// Records the codex thread and the [`tools_hash`] of the specs it started with.
+    pub async fn set_codex_thread(id: &RecordId, codex_thread_id: &str, tools_hash: &str) -> anyhow::Result<()> {
+        db().query("UPDATE $id SET codex_thread_id = $t, tools_hash = $h, updated_at = time::now()")
             .bind(("id", id.clone()))
             .bind(("t", codex_thread_id.to_string()))
+            .bind(("h", tools_hash.to_string()))
             .await?;
         Ok(())
+    }
+
+    /// Whether a general session at rest started its codex thread with tool specs other than `current`.
+    pub fn tools_outdated(&self, current: &str) -> bool {
+        is_general(&self.connection_string)
+            && !matches!(self.status.as_str(), "running" | "waiting_approval")
+            && self.tools_hash.as_deref() != Some(current)
     }
 
     /// Moves the thread to `status`; terminal statuses also stamp `closed_at`.
@@ -734,6 +754,7 @@ mod tests {
             customer: None,
             diagnostic_session: None,
             codex_thread_id: None,
+            tools_hash: None,
             model: None,
             provider: None,
             driven_by: None,
@@ -752,6 +773,28 @@ mod tests {
             last_event_at: None,
             closed_at: None,
         }
+    }
+
+    #[test]
+    fn a_general_session_at_rest_is_outdated_when_its_tools_hash_differs() {
+        let specs = vec![serde_json::json!({ "name": "search_odoo_inventory", "description": "old" })];
+        let current = tools_hash(&specs);
+        assert_eq!(current.len(), 16);
+        assert_eq!(current, tools_hash(&specs.clone()));
+        assert_ne!(current, tools_hash(&[serde_json::json!({ "name": "search_odoo_inventory", "description": "new" })]));
+
+        let mut row = thread(None, None);
+        row.connection_string = general_connection("tyler.naylor@pclaptops.com");
+        assert!(row.tools_outdated(&current), "a thread from before the hash was kept");
+        row.tools_hash = Some(current.clone());
+        assert!(!row.tools_outdated(&current));
+        row.tools_hash = Some("0123456789abcdef".into());
+        assert!(row.tools_outdated(&current));
+        row.status = "running".into();
+        assert!(!row.tools_outdated(&current), "a turn in progress keeps its thread");
+        row.status = "idle".into();
+        row.connection_string = "DESKTOP-K8U909G:77d56bd67".into();
+        assert!(!row.tools_outdated(&current), "machine sessions keep their thread");
     }
 
     #[test]

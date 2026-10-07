@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION;
 use database::schema::agent_problem::{AGENT_ERROR_PREFIX, PLAN_LOOP_STOPPED, RECONNECTING_TEXT, RETRYING_PREFIX};
-use database::schema::agent_thread::AgentThreadState;
+use database::schema::agent_thread::{tools_hash, AgentThreadState};
 use database::schema::agent_turn::APPROVALS_PROMPT;
 use database::schema::assistant::Person;
 use database::schema::AiProfile;
@@ -53,6 +53,9 @@ const RECONNECT_ATTEMPTS: u32 = 20;
 const APPROVAL_POLL: Duration = Duration::from_millis(750);
 /// Characters of tool output kept in a transcript row (the reply to codex is capped separately).
 const ROW_TEXT_CHARS: usize = 4_000;
+
+const TOOLS_CHANGED: &str =
+    "The agent's tools were updated, so this chat continues in a fresh context; the agent no longer sees the messages above.";
 /// Page size and page cap when a resumed thread's items are backfilled.
 const BACKFILL_PAGE: u32 = 100;
 const BACKFILL_MAX_PAGES: usize = 20;
@@ -405,7 +408,15 @@ impl Runner {
     async fn attach(&mut self) -> anyhow::Result<()> {
         let first = !self.attached;
         self.upload_dir = None;
-        if let Some(existing) = self.codex_thread_id.clone() {
+        let tools = tools_hash(&self.dynamic_tools(self.general()));
+        let outdated = first && self.thread.tools_outdated(&tools);
+        if let Some(existing) = &self.codex_thread_id
+            && outdated
+        {
+            log::info!("codex: tools changed since codex thread {existing} started; starting a fresh one for {}", self.thread.connection_string);
+            self.marker("other", TOOLS_CHANGED, None).await;
+        }
+        if let Some(existing) = self.codex_thread_id.clone().filter(|_| !outdated) {
             let mut params = self.thread_params();
             params["threadId"] = json!(existing);
             match self.client.request("thread/resume", params).await {
@@ -432,7 +443,8 @@ impl Runner {
             }
         }
         let id = self.client.thread_start(self.thread_params()).await?;
-        AgentThread::set_codex_thread(&self.thread.id, &id).await?;
+        AgentThread::set_codex_thread(&self.thread.id, &id, &tools).await?;
+        self.thread.tools_hash = Some(tools);
         self.busy = Busy::default();
         self.stopping = false;
         self.row.set_activity(self.busy.activity.to_db());
