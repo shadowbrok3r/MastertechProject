@@ -14,6 +14,9 @@ const DOT_W: f32 = 12.0;
 /// Width reserved for the action button.
 const ACTION_W: f32 = 20.0;
 const DOT_RADIUS: f32 = 3.5;
+const BAR_H: f32 = 3.0;
+/// Gap between the text and the progress bar.
+const BAR_GAP: f32 = 3.0;
 
 /// What sits in front of a row's title.
 #[derive(Clone, Copy, Debug)]
@@ -33,11 +36,18 @@ pub struct ListRow<'a> {
     pub unread: bool,
     /// Icon and tooltip of a right-aligned button shown while the row is hovered or selected.
     pub action: Option<(&'a str, &'a str)>,
+    /// Share done, 0.0 to 1.0, drawn as a thin bar under the text.
+    pub progress: Option<f32>,
 }
 
 impl<'a> ListRow<'a> {
     pub fn new(title: &'a str) -> Self {
-        Self { lead: Lead::None, title, detail: None, selected: false, unread: false, action: None }
+        Self { lead: Lead::None, title, detail: None, selected: false, unread: false, action: None, progress: None }
+    }
+
+    pub fn progress(mut self, share: f32) -> Self {
+        self.progress = Some(share.clamp(0.0, 1.0));
+        self
     }
 
     pub fn lead(mut self, lead: Lead<'a>) -> Self {
@@ -84,7 +94,9 @@ impl<'a> ListRow<'a> {
                 .into_galley(ui, Some(TextWrapMode::Truncate), text_w, TextStyle::Small)
         });
         let title_h = title.size().y;
-        let height = title_h + detail.as_ref().map_or(0.0, |g| g.size().y + 1.0) + 2.0 * pad.y;
+        let text_h = title_h + detail.as_ref().map_or(0.0, |g| g.size().y + 1.0);
+        let bar_h = if self.progress.is_some() { BAR_GAP + BAR_H } else { 0.0 };
+        let height = text_h + bar_h + 2.0 * pad.y;
 
         let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
         let inner = rect.shrink2(pad);
@@ -129,6 +141,16 @@ impl<'a> ListRow<'a> {
         ui.painter().galley(pos2(text_x, inner.min.y), title, visuals.text_color());
         if let Some(detail) = detail {
             ui.painter().galley(pos2(text_x, inner.min.y + title_h + 1.0), detail, theme::weak_text(ui));
+        }
+        if let Some(share) = self.progress {
+            let track = Rect::from_min_size(pos2(text_x, inner.min.y + text_h + BAR_GAP), vec2(text_w, BAR_H));
+            let radius = BAR_H / 2.0;
+            ui.painter().rect_filled(track, radius, theme::faint_text(ui).gamma_multiply(0.35));
+            if share > 0.0 {
+                let fill = if share >= 1.0 { theme::success(ui) } else { theme::accent(ui) };
+                let done = Rect::from_min_size(track.min, vec2(track.width() * share, BAR_H));
+                ui.painter().rect_filled(done, radius, fill);
+            }
         }
         if self.unread {
             let center = pos2(inner.max.x - DOT_W / 2.0, inner.min.y + title_h / 2.0);
@@ -175,6 +197,19 @@ mod tests {
         });
         let (available, width) = rects[0];
         assert!((width - available).abs() < 0.5, "row {width} vs available {available}");
+    }
+
+    #[test]
+    fn a_progress_bar_adds_its_height_below_the_text() {
+        let mut heights = Vec::new();
+        run(240.0, |ui| {
+            let plain = ListRow::new("Martin Empey - 2141021").detail("detail").show(ui);
+            let barred = ListRow::new("Martin Empey - 2141021").detail("detail").progress(0.4).show(ui);
+            heights.push((plain.rect.height(), barred.rect.height()));
+        });
+        let (plain, barred) = heights[0];
+        assert!((barred - plain - BAR_GAP - BAR_H).abs() < 0.5, "plain {plain} vs barred {barred}");
+        assert_eq!(ListRow::new("x").progress(1.7).progress, Some(1.0));
     }
 
     /// Runs one frame per event batch and returns what `f` recorded on the last one.

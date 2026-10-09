@@ -396,13 +396,22 @@ pub(super) fn working_first(rows: &mut [&AgentThread]) {
     });
 }
 
-/// Whether the lowercased `needle` is in the session's title, technician, machine, service number, store or status.
-pub(super) fn mentions(thread: &AgentThread, roster: &Roster, needle: &str) -> bool {
+/// What a session row shows beyond its thread: the customer and the plan's progress.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(super) struct RowExtra {
+    pub(super) customer: Option<String>,
+    /// Share of plan steps done and its hover line, e.g. `Plan: 3 of 9 done · Scans`.
+    pub(super) plan: Option<(f32, String)>,
+}
+
+/// Whether the lowercased `needle` is in the session's title, customer, technician, machine, service number, store or status.
+pub(super) fn mentions(thread: &AgentThread, roster: &Roster, needle: &str, customer: Option<&str>) -> bool {
     if needle.is_empty() {
         return true;
     }
     let hit = |field: &str| field.to_lowercase().contains(needle);
     let fields = [
+        customer,
         thread.requested_by.as_deref(),
         Some(thread.connection_string.as_str()),
         thread.hostname.as_deref(),
@@ -903,7 +912,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn the_search_reads_title_tech_machine_service_number_and_status() {
+    fn the_search_reads_title_customer_tech_machine_service_number_and_status() {
         let mut row = thread("a", "running", "JeffsComputer:663a3fd40", Some(JACOB));
         row.title = Some("Why is it slow".into());
         row.service_number = Some("2155485".into());
@@ -920,9 +929,11 @@ pub(super) mod tests {
             "2155485",
             "running get_client_info",
         ] {
-            assert!(mentions(&row, &roster, needle), "{needle}");
+            assert!(mentions(&row, &roster, needle, Some("Martin Empey")), "{needle}");
         }
-        assert!(!mentions(&row, &roster, "tyler"));
+        assert!(!mentions(&row, &roster, "tyler", Some("Martin Empey")));
+        assert!(mentions(&row, &roster, "empey", Some("Martin Empey")));
+        assert!(!mentions(&row, &roster, "empey", None));
     }
 
     #[test]

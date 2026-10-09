@@ -20,6 +20,39 @@ pub const AGENT_THREAD_OPEN_STATUSES: [&str; 5] =
 /// Open statuses of a thread that is working or waiting for a pool slot to start.
 pub const AGENT_THREAD_WORKING_STATUSES: [&str; 4] = ["queued", "starting", "running", "waiting_approval"];
 
+/// Customer names of the service orders `$sns` that link a customer.
+pub const CUSTOMER_NAMES_SQL: &str = "SELECT service_number, customer.name AS name FROM service_order \
+     WHERE service_number IN $sns AND customer != NONE";
+
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
+struct CustomerNameRow {
+    service_number: String,
+    #[serde(default)]
+    #[surreal(default)]
+    name: Option<String>,
+}
+
+/// `(service number, customer name)` for each of `sns` whose order names a customer.
+pub async fn customer_names(sns: &[String]) -> anyhow::Result<Vec<(String, String)>> {
+    if sns.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<CustomerNameRow> =
+        db().query(CUSTOMER_NAMES_SQL).bind(("sns", sns.to_vec())).await?.check()?.take(0)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let name = r.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty())?;
+            Some((r.service_number, name))
+        })
+        .collect())
+}
+
+/// A session title in the task-name form, `Customer Name - 2155035`.
+pub fn customer_label(name: &str, service_number: &str) -> String {
+    format!("{} - {}", name.trim(), service_number.trim())
+}
+
 /// The newest open thread for `$cs` that is working (`$working`) or was opened or asked something in the last 30 minutes.
 pub const RESUMABLE_SQL: &str = "SELECT * FROM agent_thread WHERE connection_string = $cs \
      AND status NOT IN ['closed', 'failed'] \
@@ -387,6 +420,18 @@ impl AgentThread {
             (Some(t), _) if !t.trim().is_empty() => t.clone(),
             (_, Some(sn)) => format!("#{sn} {}", self.hostname.clone().unwrap_or_default()).trim().to_string(),
             _ => self.connection_string.clone(),
+        }
+    }
+
+    /// The rename when there is one, else `Customer Name - SN` once `customer` is known, else [`Self::label`].
+    pub fn list_label(&self, customer: Option<&str>) -> String {
+        if self.title.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+            return self.label();
+        }
+        let customer = customer.map(str::trim).filter(|c| !c.is_empty());
+        match (customer, self.service_number.as_deref().map(str::trim).filter(|sn| !sn.is_empty())) {
+            (Some(name), Some(sn)) => customer_label(name, sn),
+            _ => self.label(),
         }
     }
 
@@ -773,6 +818,20 @@ mod tests {
             last_event_at: None,
             closed_at: None,
         }
+    }
+
+    #[test]
+    fn list_labels_name_the_customer_like_a_task() {
+        let mut row = thread(None, None);
+        row.connection_string = "DESKTOP-VD05O1K:6003b2f63".into();
+        row.hostname = Some("DESKTOP-VD05O1K".into());
+        assert_eq!(row.list_label(Some("Martin Empey")), "DESKTOP-VD05O1K:6003b2f63", "no service number");
+        row.service_number = Some("2141021".into());
+        assert_eq!(row.list_label(None), "#2141021 DESKTOP-VD05O1K");
+        assert_eq!(row.list_label(Some(" ")), "#2141021 DESKTOP-VD05O1K");
+        assert_eq!(row.list_label(Some(" Martin Empey ")), "Martin Empey - 2141021");
+        row.title = Some("Empey data move".into());
+        assert_eq!(row.list_label(Some("Martin Empey")), "Empey data move", "a rename wins");
     }
 
     #[test]

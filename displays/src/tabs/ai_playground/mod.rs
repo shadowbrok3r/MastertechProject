@@ -9,6 +9,8 @@ mod live_transcript;
 #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
 mod problems;
 mod session_list;
+#[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+mod session_meta;
 
 pub type ImageType = (String, Bytes);
 
