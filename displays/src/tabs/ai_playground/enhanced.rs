@@ -1922,7 +1922,7 @@ impl EnhancedAiPlayground {
             match live {
                 Ok(Some(thread)) if viewer.as_ref().is_some_and(|v| v.may_steer(thread.assignee.as_ref())) => {
                     let kind = if thread.is_busy() && kind == "start" {
-                        "queue"
+                        "steer"
                     } else {
                         kind
                     };
@@ -2046,7 +2046,7 @@ impl EnhancedAiPlayground {
         });
     }
 
-    /// Resumes the held queue, removes a queued message, or takes one back into the composer.
+    /// Resumes the held queue, or removes, sends now or takes back one queued message.
     fn apply_queue_action(&mut self, tid: &str, action: QueueAction) {
         let thread = RecordId::new("agent_thread", tid);
         match action {
@@ -2056,6 +2056,20 @@ impl EnhancedAiPlayground {
                 PlatformSpawner::spawn(async move {
                     if let Err(e) = AgentTurn::cancel(&id).await {
                         log::warn!("could not remove a queued message: {e}");
+                    }
+                });
+            }
+            QueueAction::SendNow(id) => {
+                self.waiting.retain(|w| w.id != id);
+                PlatformSpawner::spawn(async move {
+                    match AgentTurn::take_back(&id).await {
+                        Ok(Some(turn)) => {
+                            if let Err(e) = AgentTurn::ask_with(&thread, "steer", &turn.text, &turn.images).await {
+                                log::warn!("could not send a queued message now: {e}");
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::warn!("could not take a queued message out of the queue: {e}"),
                     }
                 });
             }
