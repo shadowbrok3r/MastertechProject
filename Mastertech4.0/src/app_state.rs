@@ -165,6 +165,13 @@ pub struct MastertechContext {
     pub copied_items_rx: Receiver<String>,
     pub github_releases: Vec<GithubRelease>,
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
+    /// Version of the release being downloaded.
+    pub announced_release: Option<String>,
+    pub pending_update: Option<crate::utilities::update_policy::PendingUpdate>,
+    /// The menu's Update was clicked, so the next finished download installs without a prompt.
+    pub update_requested: bool,
+    pub update_mode: crate::utilities::update_policy::UpdateMode,
+    pub next_update_check: Option<std::time::Instant>,
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     pub get_settings: bool,
     pub client_friendly_name: String,
@@ -388,6 +395,11 @@ impl MasterTechApp {
             progress: (0.0, 0.0),
             special_part_order: Default::default(),
             github_releases: Default::default(),
+            announced_release: None,
+            pending_update: None,
+            update_requested: false,
+            update_mode: crate::utilities::update_policy::load_mode(),
+            next_update_check: None,
             toolbox: FileSystem::new(),
 
             // Data table shit

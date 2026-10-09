@@ -243,6 +243,8 @@ impl MasterTechApp {
                         log::error!("Error getting github releases: {e:?}");
                     }
                 });
+
+                crate::utilities::update_policy::spawn_agent_poll();
             } 
         }
 
