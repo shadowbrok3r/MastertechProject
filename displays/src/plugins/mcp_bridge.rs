@@ -12439,30 +12439,33 @@ Scripts Tab Navigation section below). Activation scripts (Webroot, SAS, SEB) RE
 service number to be entered in the Scripts tab field before clicking Run, otherwise they
 short-circuit with "requires SO number" in the log.
 
-Always run, in this order (Tuneup / QC checklist column unless noted):
-   1. Run Prechecks                  (Informational column — connects Wi-Fi, aligns taskbar, scans network)
-   2. Install Windows Updates        (may require multiple reboots; re-check after each cycle until clean)
+The customer is waiting on a QC, so turnaround comes first: start the long jobs together and
+never leave the machine idle. Run in this order (Tuneup / QC checklist column unless noted):
+   1. Data Transfer                  (when the notes mention a transfer, an old drive or a trade-in;
+                                      start it first, then map UsersBackup into the new profile)
+   2. Install Windows Updates        (alongside the transfer, with the driver installs; may require
+                                      multiple reboots; re-check after each cycle until clean)
    3. Activate Webroot               (needs SO number → CPS keys)
    4. Activate SuperAnti + Change SuperAntiSpyware settings
                                      (CHECK BOTH in the same Run; the tab detects the combo and
                                       runs them as one sequential install→configure flow)
-   5. Activate SEB                   (needs SO number AND customer email)
-   6. Disable Sleep / Hibernation
-   7. Disable Startup Apps
-   8. Disable Notifications
-   9. Unpin Copilot
-  10. Align Taskbar to left
-  11. Change Timezone to Mountain
-  12. Disable proxy settings
-  13. Disable OneDrive Startup       (Junkware Removal column)
-  14. Disable Edge Startup Boost     (Junkware Removal column)
+   5. Disable Notifications
+   6. Turn on automatic updates      (Settings > Windows Update: nothing paused or turned off by policy)
+   7. Activate SEB                   (when the order includes it; needs SO number AND customer email)
+   8. Disable Startup Apps, Disable OneDrive Startup and Disable Edge Startup Boost (the last two
+      in the Junkware Removal column), and turn off the Windows Security notification icon in
+      Task Manager > Startup apps
+   9. Disable Sleep / Hibernation, Unpin Copilot, Align Taskbar to left, Change Timezone to
+      Mountain
+  10. What the task and customer notes ask for (software, keys, specific steps)
+  11. Run Prechecks                  (Informational column) as the final check; run it first only
+                                     when the machine has no network yet, since it connects Wi-Fi
 No Webroot or SuperAntiSpyware scans on a QC: the install is new, and transferred user data
-gets a PUP check instead when something in it looks off. ZeroClaw's qc-new-computer skill
-holds the full QC playbook: data transfer and mapping, software, drivers and tests.
+gets a PUP check instead when something in it looks off. QC Benchmark, Memory Test and stress
+tests run only when the technician asks, after everything else. ZeroClaw's qc-new-computer skill
+holds the full QC playbook: data transfer and mapping, software and drivers.
 
 Conditional, gated on task description / checkin_notes (see Service Context Identification Step 4):
-  - Data Transfer                    — only when notes mention transfer / old drive / migration;
-                                       then map UsersBackup into the new profile
   - Install LibreOffice              — only when explicitly requested
   - Disable BitLocker                — only if Informational shows BitLocker enabled
   - Run Junkware Category            — when prechecks/Informational flag PUPs, or notes name them
@@ -12752,6 +12755,9 @@ Workflow integration (customer QC / New Computer build on a REMOTE client):
   Updates, Disable OneDrive Startup, etc.
 - For multi-script combos like Activate SuperAnti + Change SuperAntiSpyware settings,
   run as two back-to-back scripts_run_remote calls.
+- One catalog script runs at a time per client; RemoteExec jobs and plugin calls run alongside
+  it. Keep the data transfer and driver installs going as RemoteExec jobs while Install Windows
+  Updates runs, and run the quick setup scripts between update passes.
 - Activation scripts require service_number; SEB also requires customer_email.
 - Always call remote_egui_list_targets first to confirm the client is connected.
 

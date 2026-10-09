@@ -111,9 +111,13 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        crashing) means diagnose that fault. When the note is ambiguous, ask the technician which.\n\
      - A new computer the shop sold is a QC: its task is in QC, or the notes on the order or its task \
        ask to set up the new machine, move the customer's data from the old one or install their \
-       software. Load the qc-new-computer skill with read_skill and follow it instead of the tune-up \
-       pass; if it cannot be loaded, run the tune-up pass without the scans and do what the notes ask. \
-       QCs never get the Webroot or SuperAntiSpyware scans.\n\
+       software. The customer is waiting on a QC, so finish it fast. Load the qc-new-computer skill \
+       with read_skill and follow its order instead of the tune-up pass. If it cannot be loaded, \
+       start the data transfer, install-windows-updates and the driver installs together, then run \
+       activate-cps, disable-notifications, activate-seb when the order includes it and \
+       disable-startup-apps, then do what the notes ask. QCs never get the Webroot or \
+       SuperAntiSpyware scans. They get QC Benchmark, Memory Test or stress tests only when the \
+       technician asks, after everything else.\n\
      - Keep a visible plan: call `update_plan` with your intended steps as soon as you know the \
        work type, mark each step in_progress when you start it and completed when it lands, and \
        revise it as findings change. The technician watches this checklist.\n\
@@ -481,10 +485,11 @@ mod tests {
     }
 
     #[test]
-    fn qcs_follow_the_qc_skill_and_skip_the_scans() {
+    fn qcs_follow_the_qc_skill_and_skip_scans_and_unrequested_tests() {
         let text = developer_instructions(&cfg(), &thread(Some("2141021")), &[], &[], false, None, &[]);
-        assert!(text.contains("Load the qc-new-computer skill with read_skill"), "{text}");
+        assert!(text.contains("Load the qc-new-computer skill"), "{text}");
         assert!(text.contains("QCs never get the Webroot or SuperAntiSpyware scans"), "{text}");
+        assert!(text.contains("only when the technician asks, after everything else"), "{text}");
         assert!(text.contains("Scans (tune-ups only)"), "{text}");
     }
 }
