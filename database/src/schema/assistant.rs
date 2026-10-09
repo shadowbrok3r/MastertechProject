@@ -335,6 +335,124 @@ impl AssignedTask {
     }
 }
 
+/// Most tasks one reassignment moves.
+pub const REASSIGN_MAX_TASKS: usize = 25;
+
+/// Open tasks a reassignment selects, not already with `$to`, oldest due first.
+pub const REASSIGN_CANDIDATES_SQL: &str = "SELECT id, task_name, status, service_number, due_date, assignee, \
+     assignee.name AS assignee_name, assignee.store AS assignee_store FROM task \
+     WHERE completed = false AND assignee != $to AND ($from = NONE OR assignee = $from) \
+     AND ($status = NONE OR string::lowercase(status ?? '') = $status) \
+     AND (array::len($ids) = 0 OR id IN $ids) AND (array::len($sns) = 0 OR service_number IN $sns) \
+     ORDER BY due_date ASC LIMIT $limit";
+
+/// Moves `$ids` to `$to` while still open and, with `$from`, still theirs; other fields are kept.
+pub const REASSIGN_SQL: &str = "UPDATE task SET assignee = $to WHERE id IN $ids AND completed = false \
+     AND ($from = NONE OR assignee = $from) RETURN VALUE id";
+
+/// An open task a reassignment selected.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SurrealValue)]
+pub struct ReassignCandidate {
+    pub id: RecordId,
+    #[serde(default)]
+    #[surreal(default)]
+    pub task_name: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub service_number: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub due_date: Option<Datetime>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub assignee: Option<RecordId>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub assignee_name: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub assignee_store: Option<String>,
+}
+
+/// Which open tasks a reassignment moves.
+#[derive(Clone, Debug, Default)]
+pub struct ReassignFilter {
+    pub from: Option<RecordId>,
+    pub status: Option<String>,
+    pub ids: Vec<RecordId>,
+    pub service_numbers: Vec<String>,
+}
+
+impl ReassignFilter {
+    /// True when no person, ticket or task narrows the selection.
+    pub fn is_unbounded(&self) -> bool {
+        self.from.is_none() && self.ids.is_empty() && self.service_numbers.is_empty()
+    }
+
+    /// Matching open tasks not already with `to`, at most one over [`REASSIGN_MAX_TASKS`].
+    pub async fn candidates(&self, to: &RecordId) -> anyhow::Result<Vec<ReassignCandidate>> {
+        Ok(db()
+            .query(REASSIGN_CANDIDATES_SQL)
+            .bind(("to", to.clone()))
+            .bind(("from", self.from.clone()))
+            .bind(("status", self.status.as_deref().map(|s| s.trim().to_lowercase())))
+            .bind(("ids", self.ids.clone()))
+            .bind(("sns", self.service_numbers.clone()))
+            .bind(("limit", (REASSIGN_MAX_TASKS + 1) as i64))
+            .await?
+            .check()?
+            .take(0)?)
+    }
+}
+
+/// Ok when `actor` may move `task` from its holder: their own, their store's, or anyone's for Root.
+pub fn may_take(actor: &Person, task: &ReassignCandidate) -> Result<(), String> {
+    if actor.is_root() || task.assignee.as_ref() == Some(&actor.id) {
+        return Ok(());
+    }
+    if task.assignee_store.as_deref().is_some_and(|store| same_store(&actor.store, store)) {
+        return Ok(());
+    }
+    Err(format!(
+        "{} can only move tasks of people at {}; \"{}\" is with {} ({}). A Root user can move any task.",
+        actor.name,
+        actor.store,
+        task.task_name.as_deref().unwrap_or("a task"),
+        task.assignee_name.as_deref().unwrap_or("nobody"),
+        task.assignee_store.as_deref().unwrap_or("no store"),
+    ))
+}
+
+/// The tasks `actor` may move to `to`; `Err` on the store rule or more than [`REASSIGN_MAX_TASKS`].
+pub fn plan_reassign<'a>(
+    actor: &Person,
+    to: &Person,
+    rows: &'a [ReassignCandidate],
+) -> Result<Vec<&'a ReassignCandidate>, String> {
+    may_assign(actor, to)?;
+    if rows.len() > REASSIGN_MAX_TASKS {
+        return Err(format!(
+            "more than {REASSIGN_MAX_TASKS} open tasks match; narrow it with status, service_numbers or task_ids"
+        ));
+    }
+    rows.iter().map(|t| may_take(actor, t).map(|()| t)).collect()
+}
+
+/// Moves `ids` to `to`; returns the ids actually moved.
+pub async fn reassign_tasks(ids: &[RecordId], to: &RecordId, from: Option<&RecordId>) -> anyhow::Result<Vec<RecordId>> {
+    Ok(db()
+        .query(REASSIGN_SQL)
+        .bind(("ids", ids.to_vec()))
+        .bind(("to", to.clone()))
+        .bind(("from", from.cloned()))
+        .await?
+        .check()?
+        .take(0)?)
+}
+
 /// Writes a notification row.
 pub async fn notify(
     user: &RecordId,
@@ -569,5 +687,50 @@ mod tests {
         };
         let back = PartRequest::from_value(req.clone().into_value()).unwrap();
         assert_eq!(back, req);
+    }
+
+    fn held(key: &str, name: &str, holder: Option<(&str, &str, &str)>) -> ReassignCandidate {
+        ReassignCandidate {
+            id: RecordId::new("task", key),
+            task_name: Some(name.into()),
+            status: Some("QC".into()),
+            service_number: None,
+            due_date: None,
+            assignee: holder.map(|(key, _, _)| RecordId::new("user", key)),
+            assignee_name: holder.map(|(_, name, _)| name.to_string()),
+            assignee_store: holder.map(|(_, _, store)| store.to_string()),
+        }
+    }
+
+    #[test]
+    fn reassignment_follows_the_store_rule() {
+        let people = roster();
+        let (sam, ana, logan, kim) = (&people[0], &people[2], &people[3], &people[4]);
+        let riv = [held("t1", "QC 2155035", Some(("sam.jones", "Sam Jones", "RIV")))];
+        assert_eq!(plan_reassign(ana, ana, &riv).unwrap().len(), 1);
+        let ltn = [held("t2", "Count paste", Some(("kim", "Kim Park", "LTN")))];
+        let err = plan_reassign(ana, ana, &ltn).unwrap_err();
+        assert!(err.contains("\"Count paste\" is with Kim Park (LTN)"), "{err}");
+        assert_eq!(plan_reassign(logan, logan, &ltn).unwrap().len(), 1);
+        assert!(plan_reassign(ana, kim, &riv).is_err());
+        assert!(plan_reassign(sam, sam, &[held("t3", "Loose", None)]).is_err());
+    }
+
+    #[test]
+    fn reassignment_caps_one_call() {
+        let people = roster();
+        let logan = &people[3];
+        let many: Vec<ReassignCandidate> =
+            (0..=REASSIGN_MAX_TASKS).map(|i| held(&format!("t{i}"), "x", None)).collect();
+        assert!(plan_reassign(logan, logan, &many).unwrap_err().contains("narrow it"));
+        assert_eq!(plan_reassign(logan, logan, &many[..REASSIGN_MAX_TASKS]).unwrap().len(), REASSIGN_MAX_TASKS);
+    }
+
+    #[test]
+    fn reassignment_needs_a_person_ticket_or_task() {
+        let status_only = ReassignFilter { status: Some("QC".into()), ..Default::default() };
+        assert!(status_only.is_unbounded());
+        let from = ReassignFilter { from: Some(RecordId::new("user", "kim")), ..status_only.clone() };
+        assert!(!from.is_unbounded());
     }
 }

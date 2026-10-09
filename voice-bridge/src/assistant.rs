@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 const POLL: Duration = Duration::from_millis(500);
 const INTERRUPT_WAIT: Duration = Duration::from_secs(10);
 /// Assistant tools a spoken "yes" may approve; every other gated tool needs a tap on the board.
-const VOICE_APPROVABLE: &[&str] = &["create_task", "notify_user", "schedule_task", "route_part"];
+const VOICE_APPROVABLE: &[&str] = &["create_task", "assign_task", "notify_user", "schedule_task", "route_part"];
 
 /// What a running turn reports.
 #[derive(Debug)]
