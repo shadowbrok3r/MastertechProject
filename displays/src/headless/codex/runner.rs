@@ -207,6 +207,8 @@ struct Runner {
     owner: Option<Person>,
     /// The owner's persona block for the developer instructions.
     persona: Option<String>,
+    /// Shop skills listed in the developer instructions.
+    skills: Vec<zeroclaw::Skill>,
 }
 
 impl Runner {
@@ -237,6 +239,10 @@ impl Runner {
             None => None,
         };
         let caller = owner.as_ref().map(|p| AssistantCaller { user: p.id.clone() });
+        let skills = match &cfg.zeroclaw {
+            Some(mem) => session_skills(mem).await,
+            None => Vec::new(),
+        };
         let tools = match ToolHost::start(
             manager,
             ToolPolicy::from_env(),
@@ -295,6 +301,7 @@ impl Runner {
             plan_calls: 0,
             owner,
             persona,
+            skills,
         };
         if let Err(e) = me.attach().await {
             me.write_status("failed", Some(&format!("thread start: {e}"))).await?;
@@ -390,7 +397,7 @@ impl Runner {
             "sandbox": "read-only",
             "developerInstructions": prompt::developer_instructions(
                 &self.cfg, &self.thread, &offered, &self.tools.policy.prompt, self.memory.is_some(),
-                self.persona.as_deref()),
+                self.persona.as_deref(), &self.skills),
             "dynamicTools": self.dynamic_tools(general),
             "config": {
                 "features.shell_tool": false,
@@ -1122,8 +1129,8 @@ impl Runner {
             self.start_wait(request_id, &arguments).await;
             return;
         }
-        if zeroclaw::is_memory_tool(&tool) {
-            let outcome = self.memory_tool(&tool, &arguments).await;
+        if zeroclaw::is_zeroclaw_tool(&tool) {
+            let outcome = self.zeroclaw_tool(&tool, &arguments).await;
             self.respond(&request_id, outcome.response()).await;
             return;
         }
@@ -1371,8 +1378,8 @@ impl Runner {
         }
     }
 
-    /// `zeroclaw_recall` / `zeroclaw_remember` against the session's memory alias.
-    async fn memory_tool(&self, tool: &str, arguments: &Value) -> ToolOutcome {
+    /// `zeroclaw_recall` / `zeroclaw_remember` against the session's memory alias, and `read_skill`.
+    async fn zeroclaw_tool(&self, tool: &str, arguments: &Value) -> ToolOutcome {
         let Some(mem) = &self.memory else {
             return ToolOutcome::failure("ZeroClaw memory is not configured on this broker".into());
         };
@@ -1416,6 +1423,19 @@ impl Runner {
                 match mem.store(agent, &key, &content, &category).await {
                     Ok(()) => ToolOutcome::ok(format!("remembered `{key}` ({category}) for agent {agent}")),
                     Err(e) => ToolOutcome::failure(format!("memory store failed: {e}")),
+                }
+            }
+            zeroclaw::SKILL_TOOL => {
+                let name = arg("name");
+                let offered = if self.skills.is_empty() { session_skills(mem).await } else { self.skills.clone() };
+                if !zeroclaw::valid_skill_name(&name) || !offered.iter().any(|s| s.name == name) {
+                    let names: Vec<&str> = offered.iter().map(|s| s.name.as_str()).collect();
+                    let names = if names.is_empty() { "none".to_string() } else { names.join(", ") };
+                    return ToolOutcome::failure(format!("no skill named `{name}`; available: {names}"));
+                }
+                match mem.read_skill(&name).await {
+                    Ok(text) => ToolOutcome::ok(text),
+                    Err(e) => ToolOutcome::failure(format!("skill read failed: {e}")),
                 }
             }
             other => ToolOutcome::failure(format!("unknown memory tool {other}")),
@@ -2138,6 +2158,21 @@ fn join_texts(v: Option<&Value>) -> String {
             .join("\n"),
         Some(Value::String(s)) => s.clone(),
         _ => String::new(),
+    }
+}
+
+/// The shop skills offered to a session; empty when the gateway does not answer in time.
+async fn session_skills(mem: &ZeroclawMemory) -> Vec<zeroclaw::Skill> {
+    match tokio::time::timeout(Duration::from_secs(8), mem.session_skills()).await {
+        Ok(Ok(skills)) => skills,
+        Ok(Err(e)) => {
+            log::warn!("codex: skill list failed: {e}");
+            Vec::new()
+        }
+        Err(_) => {
+            log::warn!("codex: skill list timed out");
+            Vec::new()
+        }
     }
 }
 

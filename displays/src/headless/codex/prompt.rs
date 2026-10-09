@@ -4,6 +4,7 @@ use database::schema::assistant::Person;
 use database::schema::{AgentThread, AiProfile};
 
 use super::Config;
+use super::zeroclaw::{self, Skill};
 
 /// Heads the per-session part that follows the shared rules and playbook.
 const SESSION_HEADER: &str = "\n\n=== THIS SESSION ===\n";
@@ -22,6 +23,7 @@ pub fn developer_instructions(
     prompt_tools: &[String],
     memory: bool,
     persona: Option<&str>,
+    skills: &[Skill],
 ) -> String {
     let general = super::is_general(&thread.connection_string);
     let mut out = String::new();
@@ -38,6 +40,9 @@ pub fn developer_instructions(
 
 ",
         );
+    }
+    if memory {
+        out.push_str(&zeroclaw::skills_block(skills));
     }
     out.push_str("TOOLS AVAILABLE IN THIS SESSION:\n");
     for name in offered {
@@ -104,6 +109,11 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        up\", \"tune up\", \"maintenance\" or \"CPS\" means this is a MAINTENANCE job, not a fault \
        hunt: run the tune-up pass below. A note describing a specific fault (no boot, no sound, \
        crashing) means diagnose that fault. When the note is ambiguous, ask the technician which.\n\
+     - A new computer the shop sold is a QC: its task is in QC, or the notes on the order or its task \
+       ask to set up the new machine, move the customer's data from the old one or install their \
+       software. Load the qc-new-computer skill with read_skill and follow it instead of the tune-up \
+       pass; if it cannot be loaded, run the tune-up pass without the scans and do what the notes ask. \
+       QCs never get the Webroot or SuperAntiSpyware scans.\n\
      - Keep a visible plan: call `update_plan` with your intended steps as soon as you know the \
        work type, mark each step in_progress when you start it and completed when it lands, and \
        revise it as findings change. The technician watches this checklist.\n\
@@ -123,7 +133,7 @@ const WORK_TYPE_PLAYBOOK: &str = "WORK TYPE — READ THE ORDER FIRST\n\
        in the note means both were just done — verify rather than reinstall. Report how many days \
        the Webroot keycode has left and flag anything under about 30. Never write a license key \
        into a note, entry or reply.\n\
-     - Scans: run-webroot-scan and run-superantispyware-scan. The SAS script runs SAS's Quick \
+     - Scans (tune-ups only): run-webroot-scan and run-superantispyware-scan. The SAS script runs SAS's Quick \
        Scan, which is the shop standard; do not look for or run a full SAS scan. Start both scans \
        early and do the rest of the pass while they run: junkware, PUP sweep, startup, drivers, \
        SuperEasyBackup, temp cleanup, drive space and health_check do not need an idle machine, \
@@ -346,23 +356,34 @@ mod tests {
     fn sessions_of_a_kind_share_everything_before_the_session_block() {
         let cfg = cfg();
         let tools = vec!["get_service_order".to_string()];
-        let first = developer_instructions(&cfg, &thread(Some("2155467")), &tools, &[], true, Some("WHO YOU WORK FOR\nDerek"));
+        let skills = vec![Skill { name: "qc-new-computer".into(), description: "QC a new computer.".into() }];
+        let first = developer_instructions(
+            &cfg,
+            &thread(Some("2155467")),
+            &tools,
+            &[],
+            true,
+            Some("WHO YOU WORK FOR\nDerek"),
+            &skills,
+        );
         let mut other = thread(None);
         other.connection_string = "LAPTOP-1:abc".into();
         other.requested_by = Some("jacob.hardy@pclaptops.com".into());
-        let second = developer_instructions(&cfg, &other, &tools, &[], true, Some("WHO YOU WORK FOR\nJacob"));
+        let second = developer_instructions(&cfg, &other, &tools, &[], true, Some("WHO YOU WORK FOR\nJacob"), &skills);
         let (shared, tail) = first.split_once(SESSION_HEADER).expect("session header");
         assert_eq!(Some(shared), second.split_once(SESSION_HEADER).map(|(s, _)| s));
         assert!(!shared.contains("DESKTOP-787KAB8") && !shared.contains("derek.anderson"), "session text in the shared part");
+        assert!(shared.contains("SKILLS\n") && shared.contains("- qc-new-computer: QC a new computer.\n"), "{shared}");
         assert!(tail.contains("TARGET MACHINE: connection_string `DESKTOP-787KAB8:8d3db801f`"), "{tail}");
         assert!(tail.trim_end().ends_with("Derek"), "{tail}");
 
         let mut general = thread(None);
         general.connection_string = "general:derek.anderson@pclaptops.com".into();
-        let text = developer_instructions(&cfg, &general, &tools, &[], false, None);
+        let text = developer_instructions(&cfg, &general, &tools, &[], false, None, &skills);
         let (shared, tail) = text.split_once(SESSION_HEADER).expect("session header");
         assert!(!shared.contains("derek.anderson"), "email in the shared part");
         assert!(tail.contains("STANDING SESSION OF: derek.anderson@pclaptops.com"), "{tail}");
+        assert!(!shared.contains("SKILLS\n"), "skills listed without the ZeroClaw gateway");
     }
 
     #[test]
@@ -453,9 +474,17 @@ mod tests {
 
     #[test]
     fn machine_sessions_keep_working_while_scans_run() {
-        let text = developer_instructions(&cfg(), &thread(Some("2155467")), &[], &[], false, None);
+        let text = developer_instructions(&cfg(), &thread(Some("2155467")), &[], &[], false, None, &[]);
         assert!(text.contains("call `wait` only when nothing else is left"), "{text}");
         assert!(text.contains("Start both scans early and do the rest of the pass while they run"), "{text}");
         assert!(!text.contains("To let time pass"), "{text}");
+    }
+
+    #[test]
+    fn qcs_follow_the_qc_skill_and_skip_the_scans() {
+        let text = developer_instructions(&cfg(), &thread(Some("2141021")), &[], &[], false, None, &[]);
+        assert!(text.contains("Load the qc-new-computer skill with read_skill"), "{text}");
+        assert!(text.contains("QCs never get the Webroot or SuperAntiSpyware scans"), "{text}");
+        assert!(text.contains("Scans (tune-ups only)"), "{text}");
     }
 }
