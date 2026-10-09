@@ -9,6 +9,7 @@ pub mod scripts;
 
 pub mod network;
 pub mod no_window;
+pub mod update_policy;
 
 pub use crypto::{load_encrypted_user_data, save_encrypted_user_data};
 

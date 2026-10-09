@@ -2972,6 +2972,7 @@ if (Test-Path $path) {{
                 // (CPS key fetch, antivirus installs) execute in the background.
                 let tx = self.command_tx.clone();
                 tokio::spawn(async move {
+                let _script_run = crate::utilities::update_policy::ScriptRunGuard::start();
 
                 let task_epoch = Instant::now();
                 // Millis from task_epoch when the current script started; AtomicU64 keeps the future Send.

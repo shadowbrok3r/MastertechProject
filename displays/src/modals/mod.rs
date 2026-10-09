@@ -14,6 +14,7 @@ pub mod open_service_confirm_modal;
 pub mod ai_attention_modal;
 pub mod agent_approval_modal;
 pub mod approval_toast;
+pub mod update_toast;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod entity_link_resolution_modal;
 

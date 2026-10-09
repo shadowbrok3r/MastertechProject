@@ -2,6 +2,7 @@ use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, S
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store}, db};
 use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::tabs::github::self_updater::run;
+use crate::utilities::update_policy::{self, UpdateMode};
 use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
@@ -169,12 +170,36 @@ impl MasterTechApp {
                                 .ui(ui)
                                 .clicked()
                                 {
-                                    let client = self.context.client.clone();
-                                    let tx = self.context.bytes_tx.clone();
-        
-                                    spawn(async move {
-                                        let _ = run(client, tx.clone()).await;
-                                    });
+                                    if let Some(pending) = self.context.pending_update.as_mut() {
+                                        pending.accepted = true;
+                                    } else {
+                                        self.context.update_requested = true;
+                                        let client = self.context.client.clone();
+                                        let tx = self.context.bytes_tx.clone();
+
+                                        spawn(async move {
+                                            let _ = run(client, tx.clone()).await;
+                                        });
+                                    }
+                                }
+
+                                let mut auto = self.context.update_mode == UpdateMode::Auto;
+                                if ui
+                                    .checkbox(&mut auto, "Install updates automatically")
+                                    .on_hover_text(
+                                        "Off: a notification asks before updating. Either way, updates wait \
+                                         while remote work or an AI session runs on this computer.",
+                                    )
+                                    .changed()
+                                {
+                                    let mode = if auto { UpdateMode::Auto } else { UpdateMode::Prompt };
+                                    self.context.update_mode = mode;
+                                    if let Err(e) = update_policy::save_mode(mode) {
+                                        error!("menu_bar -> saving the update mode failed: {e}");
+                                        let _ = displays::get_toast_sender().try_send(displays::ToastMessage::Error(
+                                            format!("Couldn't save the update setting: {e}"),
+                                        ));
+                                    }
                                 }
 
                                 if Button::new(
