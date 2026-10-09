@@ -262,6 +262,9 @@ pub struct EnhancedAiPlayground {
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     #[serde(skip)]
     problems: super::problems::ProblemsView,
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    #[serde(skip)]
+    session_meta: super::session_meta::SessionMeta,
     /// Pins the session list on the next frame.
     #[serde(skip)]
     pin_sessions: bool,
@@ -374,6 +377,8 @@ impl Default for EnhancedAiPlayground {
             automated: Default::default(),
             #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
             problems: Default::default(),
+            #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+            session_meta: Default::default(),
             pin_sessions: false,
             viewer_root: false,
             viewer_id: None,
@@ -535,8 +540,20 @@ impl EnhancedAiPlayground {
                     || (self.session_filter.admits(t, now)
                         && (self.show_archived || (t.is_open() && !self.is_archived(&key))))
             })
-            .filter(|t| session_list::mentions(t, roster, &needle))
+            .filter(|t| session_list::mentions(t, roster, &needle, self.session_customer(t)))
             .collect()
+    }
+
+    /// The customer named on `thread`'s service order, once fetched.
+    fn session_customer(&self, thread: &AgentThread) -> Option<&str> {
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        let found = self.session_meta.customer(thread);
+        #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
+        let found = {
+            let _ = thread;
+            None
+        };
+        found
     }
 
     /// Whether the signed-in user archived the session `key`, counting changes not yet written.
@@ -731,6 +748,7 @@ impl EnhancedAiPlayground {
             .clone()
             .filter(|r| r.id.key_string() == self.selected_thread)
         {
+            let customer = self.session_customer(&row).map(str::to_string);
             eframe::egui::Panel::top("enhanced_ai_context")
                 .frame(Frame::default().inner_margin(Margin::symmetric(8, 1)))
                 .show_separator_line(false)
@@ -743,7 +761,7 @@ impl EnhancedAiPlayground {
                         let prompt = database::schema::agent_turn::APPROVALS_PROMPT.to_string();
                         self.ask_agent(&row.id, "approvals", prompt, Vec::new());
                     }
-                    session_details(ui, &row);
+                    session_details(ui, &row, customer.as_deref());
                 });
         }
 
@@ -1091,6 +1109,10 @@ impl EnhancedAiPlayground {
         let roster = self.roster.take().unwrap_or_else(Roster::load);
         let now = Local::now();
         let sessions = self.listed_sessions(&agent_index, &roster, &now);
+        #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+        let extras = self.session_meta.extras(&sessions);
+        #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
+        let extras = HashMap::new();
         let session_keys: std::collections::HashSet<String> = agent_index.iter().map(|t| t.id.key_string()).collect();
         let needle = self.list_filter.trim().to_lowercase();
         let narrowed = self.session_filter.narrows();
@@ -1112,6 +1134,7 @@ impl EnhancedAiPlayground {
             now,
             roster: &roster,
             archived: &archived_now,
+            extras: &extras,
         };
         ScrollArea::vertical()
             .id_salt("enhanced_ai_thread_rows")
@@ -1622,6 +1645,7 @@ impl EnhancedAiPlayground {
             self.live.follow(followed);
             self.live.tick(ui.ctx());
             self.poll_agent_index(ui);
+            self.poll_session_meta(ui);
             self.poll_agent_replies(ui);
             self.poll_agent_state(ui);
         }
@@ -2077,6 +2101,14 @@ impl EnhancedAiPlayground {
         self.last_state_poll = None;
     }
 
+    /// Reads customer names and latest plans for the indexed sessions and the open one in the background.
+    #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
+    fn poll_session_meta(&mut self, ui: &Ui) {
+        self.session_meta.receive();
+        let threads: Vec<&AgentThread> = self.agent_index.iter().chain(self.open_row.as_ref()).collect();
+        self.session_meta.request(&threads, ui.ctx());
+    }
+
     /// Re-reads the open agent chat's session row and its queue.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn poll_agent_state(&mut self, ui: &Ui) {
@@ -2376,9 +2408,12 @@ fn pending_rows(messages: &[ChatMessage], newest: i64) -> Vec<ChatMessage> {
     messages.iter().filter(|m| m.ts > newest).cloned().collect()
 }
 
-/// The session's requester, machine and model on one line, and its last error when it has one.
-fn session_details(ui: &mut Ui, row: &AgentThread) {
+/// The session's customer, requester, machine and model on one line, and its last error when it has one.
+fn session_details(ui: &mut Ui, row: &AgentThread, customer: Option<&str>) {
     let mut line = format!("{} \u{00b7} {}", row.requested_by.as_deref().unwrap_or("unattributed"), row.connection_string);
+    if let (Some(name), Some(sn)) = (customer, row.service_number.as_deref()) {
+        line = format!("{} \u{00b7} {line}", database::schema::agent_thread::customer_label(name, sn));
+    }
     if let Some(model) = row.model.as_deref().filter(|m| !m.trim().is_empty()) {
         line.push_str(&format!(" \u{00b7} {model}"));
     }
@@ -2401,6 +2436,8 @@ struct RowContext<'a> {
     roster: &'a Roster,
     /// Thread keys the signed-in user archived.
     archived: &'a std::collections::HashSet<String>,
+    /// Customer and plan progress by thread key.
+    extras: &'a HashMap<String, session_list::RowExtra>,
 }
 
 /// One agent session with its status lead, detail line, archive button and Rename / Archive / Close session menu; clicks land in `pick`.
@@ -2421,7 +2458,9 @@ fn session_row(
     } else {
         Lead::Icon(icon, Some(color))
     };
-    let title = thread.label();
+    let extra = rows.extras.get(&key);
+    let title = thread.list_label(extra.and_then(|e| e.customer.as_deref()));
+    let plan = extra.and_then(|e| e.plan.as_ref());
     let tech = rows.roster.tech_of(thread);
     let archived = rows.archived.contains(&key);
     let mut detail = session_list::detail_line(thread, show_tech.then_some(tech.as_str()), &rows.now);
@@ -2432,14 +2471,20 @@ fn session_row(
         detail.push_str(" \u{00b7} Archived");
     }
     let (archive_icon, archive_word) = if archived { (icons::UNARCHIVE, "Unarchive") } else { (icons::ARCHIVE, "Archive") };
-    let (row, action) = ListRow::new(&title)
+    let mut list_row = ListRow::new(&title)
         .lead(lead)
         .detail(&detail)
         .selected(rows.selected == key)
-        .action(archive_icon, archive_word)
-        .show_with_action(ui);
+        .action(archive_icon, archive_word);
+    if let Some((share, _)) = plan {
+        list_row = list_row.progress(*share);
+    }
+    let (row, action) = list_row.show_with_action(ui);
     let row = row.on_hover_ui(|ui| {
         ui.label(session_list::hover_text(thread, &tech, &rows.now));
+        if let Some((_, line)) = plan {
+            ui.label(line);
+        }
         if let Some(error) = failed_turn {
             let line = database::schema::agent_problem::headline(database::schema::ProblemKind::AgentError, error);
             ui.label(RichText::new(format!("{} {line}", icons::STATUS_ERR)).color(crate::ui_tools::theme::error(ui)));

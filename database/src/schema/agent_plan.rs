@@ -1,9 +1,40 @@
 //! The agent's `update_plan` checklist, stored as an `other` agent_event whose item type is `planUpdate`.
 
+use serde::Deserialize;
 use serde_json::{Value, json};
+
+use super::{RecordId, SurrealValue};
+use crate::db;
 
 /// `item.type` of a stored plan update.
 pub const PLAN_ITEM_TYPE: &str = "planUpdate";
+
+/// The latest stored plan item of each of `$threads` as `{ thread, item }`; `item` is NONE without one.
+pub const LATEST_PLANS_SQL: &str = "RETURN array::map($threads, |$t| { thread: $t, item: (SELECT VALUE item \
+     FROM agent_event WHERE thread = $t AND kind = 'other' AND item.type = $kind ORDER BY seq DESC LIMIT 1)[0] })";
+
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
+struct LatestPlanRow {
+    thread: RecordId,
+    #[serde(default)]
+    #[surreal(default)]
+    item: Option<Value>,
+}
+
+/// The latest plan of each of `threads`; threads without one are left out.
+pub async fn latest_plans(threads: &[RecordId]) -> anyhow::Result<Vec<(RecordId, Plan)>> {
+    if threads.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<LatestPlanRow> = db()
+        .query(LATEST_PLANS_SQL)
+        .bind(("threads", threads.to_vec()))
+        .bind(("kind", PLAN_ITEM_TYPE))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(rows.into_iter().filter_map(|r| Some((r.thread, Plan::from_value(r.item.as_ref()?)?))).collect())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanStatus {
@@ -82,6 +113,11 @@ impl Plan {
 
     pub fn complete(&self) -> bool {
         self.done() == self.steps.len()
+    }
+
+    /// Share of steps done, 0.0 to 1.0.
+    pub fn share(&self) -> f32 {
+        self.done() as f32 / self.steps.len().max(1) as f32
     }
 
     pub fn completed_steps(&self) -> Vec<PlanStep> {
@@ -171,6 +207,7 @@ mod tests {
     fn progress_and_the_current_step() {
         let plan = Plan::from_value(&notification()).expect("plan");
         assert_eq!((plan.done(), plan.complete()), (1, false));
+        assert!((plan.share() - 1.0 / 3.0).abs() < f32::EPSILON);
         assert_eq!(plan.current().map(|s| s.step.as_str()), Some("Windows updates"));
         assert_eq!(
             plan.text(),
