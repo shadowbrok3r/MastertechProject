@@ -12843,7 +12843,8 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 === Assistant: tasks, reminders, parts, briefs ===
 These act for the signed-in person, or the technician whose agent session is calling.
 - create_task — a to-do for someone now, optional due time. notify_user — an FYI popup now, no task.
-- list_tasks — a person's tasks, open by default, with the full open count and overdue flags.
+- list_tasks — a person's tasks, open by default, with the full open count, overdue flags and task_ids.
+- assign_task — move open tasks to someone (default the requester), keeping status, due time and priority. Pick them by from (+ status), service_numbers or task_ids; at most 25 per call.
 - schedule_task — a task delivered later (every=once + when) or on repeat (day = Mon-Sat, week + weekdays, month + month_day). list_task_schedules / cancel_task_schedule manage them; list before adding to avoid duplicates.
 - People resolve by email, full or first name; "me" is the requester. Non-Root users assign only within their own store and the tools refuse otherwise.
 - Times are store-local (America/Denver): "tomorrow 3pm", "friday", "2026-09-28 09:30", "in 2 hours". Every reply carries store_time_now.

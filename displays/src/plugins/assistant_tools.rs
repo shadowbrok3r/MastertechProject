@@ -2,8 +2,9 @@
 
 use chrono::{DateTime, NaiveTime, Utc};
 use database::schema::assistant::{
-    AssignedTask, PartRequest, Person, TASK_TEXT_MAX_CHARS, TASK_TITLE_MAX_CHARS, TYPE_REMINDER, TicketBrief,
-    clean_line, match_person, may_assign, open_task_counts, part_due, pick_sender, post_private_note, store_from_code,
+    AssignedTask, PartRequest, Person, ReassignFilter, TASK_TEXT_MAX_CHARS, TASK_TITLE_MAX_CHARS, TYPE_REMINDER,
+    TicketBrief, clean_line, match_person, may_assign, open_task_counts, part_due, pick_sender, plan_reassign,
+    post_private_note, reassign_tasks, store_from_code,
 };
 use database::schema::business_calendar::{CLOSE_HOUR, OPEN_HOUR};
 use database::schema::order_status::{self, OrderLookup};
@@ -212,6 +213,27 @@ pub struct ListTasksParams {
     #[schemars(description = "Most tasks to list, 1 to 50, default 20. `open` is always the full open count.")]
     #[serde(default)]
     pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct AssignTaskParams {
+    #[schemars(description = "Who gets the tasks: email, full or first name, or \"me\". Defaults to the requester.")]
+    #[serde(default)]
+    pub to: Option<String>,
+    #[schemars(
+        description = "Move only open tasks now assigned to this person: email, full or first name, or \"me\"."
+    )]
+    #[serde(default)]
+    pub from: Option<String>,
+    #[schemars(description = "Move only tasks in this status, e.g. \"QC\", \"Todo\" or \"Pending SPO\".")]
+    #[serde(default)]
+    pub status: Option<String>,
+    #[schemars(description = "Move only the tasks of these service numbers.")]
+    #[serde(default)]
+    pub service_numbers: Vec<String>,
+    #[schemars(description = "Move only these tasks: `task_id` values from list_tasks.")]
+    #[serde(default)]
+    pub task_ids: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -426,7 +448,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "list_tasks",
-        description = "List a person's tasks in one call: open ones by default, oldest due first, with the full open count, due times in store time and overdue flags. Use for \"what's on my plate\", \"do I have any tasks\" or \"what does Jacob have due\" instead of querying the task table."
+        description = "List a person's tasks in one call: open ones by default, oldest due first, with the full open count, due times in store time, overdue flags and each task_id (for assign_task). Use for \"what's on my plate\", \"do I have any tasks\" or \"what does Jacob have due\" instead of querying the task table."
     )]
     async fn list_tasks(&self, Parameters(p): Parameters<ListTasksParams>) -> Result<CallToolResult, ErrorData> {
         let actor = self.assistant_actor().await?;
@@ -437,6 +459,65 @@ impl PluginToolProvider {
             .map_err(internal)?;
         let now = Utc::now();
         reply(order_status::tasks_json(&person.label(), open, &rows, now), now)
+    }
+
+    #[tool(
+        name = "assign_task",
+        description = "Move open tasks to someone (default: you), keeping their status, due time and priority; the new assignee is notified. Pick them with `from` (whose board, narrowed by `status` if given), `service_numbers`, or `task_ids` from list_tasks; at least one of those is required and at most 25 tasks move per call. Non-Root users move only tasks held in their own store, to people in their store."
+    )]
+    async fn assign_task(&self, Parameters(p): Parameters<AssignTaskParams>) -> Result<CallToolResult, ErrorData> {
+        let actor = self.assistant_actor().await?;
+        let (to, people) = self.resolve_assignee(&actor, p.to.as_deref()).await?;
+        let from = match p.from.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+            Some(query) => Some(match_person(query, &actor, &people).map_err(invalid)?),
+            None => None,
+        };
+        let service_numbers = p
+            .service_numbers
+            .iter()
+            .map(|raw| normalize_service_number(raw).ok_or_else(|| invalid(format!("`{raw}` is not a service number"))))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ids = p
+            .task_ids
+            .iter()
+            .map(|raw| task_record(raw).ok_or_else(|| invalid(format!("`{raw}` is not a task id"))))
+            .collect::<Result<Vec<_>, _>>()?;
+        let filter = ReassignFilter {
+            from: from.as_ref().map(|f| f.id.clone()),
+            status: p.status.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string),
+            ids,
+            service_numbers,
+        };
+        if filter.is_unbounded() {
+            return Err(invalid(
+                "say whose tasks (`from`), which tickets (`service_numbers`) or which tasks (`task_ids`)",
+            ));
+        }
+        let now = Utc::now();
+        let rows = filter.candidates(&to.id).await.map_err(internal)?;
+        let moving = plan_reassign(&actor, &to, &rows).map_err(invalid)?;
+        if moving.is_empty() {
+            return reply(
+                json!({ "moved": 0, "to": to.label(), "note": "no open task matches that is not already theirs" }),
+                now,
+            );
+        }
+        let ids: Vec<RecordId> = moving.iter().map(|t| t.id.clone()).collect();
+        let moved = reassign_tasks(&ids, &to.id, filter.from.as_ref()).await.map_err(internal)?;
+        let tasks: Vec<Value> = moving
+            .iter()
+            .filter(|t| moved.contains(&t.id))
+            .map(|t| {
+                json!({
+                    "task_id": t.id.key_string(),
+                    "name": t.task_name,
+                    "service_number": t.service_number,
+                    "status": t.status,
+                    "from": t.assignee_name,
+                })
+            })
+            .collect();
+        reply(json!({ "moved": tasks.len(), "to": to.label(), "tasks": tasks }), now)
     }
 
     #[tool(
@@ -761,6 +842,12 @@ impl PluginToolProvider {
     }
 }
 
+/// A task record from a `task_id` as list_tasks prints it, with or without the `task:` prefix.
+fn task_record(raw: &str) -> Option<RecordId> {
+    let key = raw.trim().trim_start_matches("task:").trim_matches(|c| matches!(c, '`' | '⟨' | '⟩'));
+    (!key.is_empty() && !key.contains(char::is_whitespace)).then(|| RecordId::new("task", key.to_string()))
+}
+
 /// The store of the technician assigned to a ticket's task.
 async fn ticket_tech_store(task: &RecordId) -> Result<Option<Store>, ErrorData> {
     let stores: Vec<Option<String>> = database::db()
@@ -789,6 +876,15 @@ mod tests {
         let days = weekday_numbers(&[json!("mon"), json!(4), json!("Saturday")]).unwrap();
         assert_eq!(days, vec![1, 4, 6]);
         assert!(weekday_numbers(&[json!("someday")]).is_err());
+    }
+
+    #[test]
+    fn task_ids_parse_with_or_without_the_table() {
+        let id = RecordId::new("task", "05c10fc5-6aac-4661-898e-ae53a3f6d716".to_string());
+        assert_eq!(task_record("05c10fc5-6aac-4661-898e-ae53a3f6d716"), Some(id.clone()));
+        assert_eq!(task_record(" task:`05c10fc5-6aac-4661-898e-ae53a3f6d716` "), Some(id));
+        assert!(task_record("task:").is_none());
+        assert!(task_record("two words").is_none());
     }
 
     #[test]

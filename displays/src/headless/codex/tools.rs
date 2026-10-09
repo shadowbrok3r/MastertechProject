@@ -89,6 +89,7 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "desktop_key",
     "desktop_scroll",
     "create_task",
+    "assign_task",
     "notify_user",
     "schedule_task",
     "list_tasks",
@@ -141,6 +142,7 @@ pub const GENERAL_TOOLS: &[&str] = &[
     "remove_ai_task_item",
     "repair_entity_links",
     "create_task",
+    "assign_task",
     "notify_user",
     "schedule_task",
     "list_tasks",
@@ -176,6 +178,7 @@ pub const PROMPT_TOOLS: &[&str] = &[
     "desktop_scroll",
     "desktop_activate_window",
     "create_task",
+    "assign_task",
     "notify_user",
     "schedule_task",
     "route_part",
@@ -191,7 +194,8 @@ pub const PROMPT_TOOLS: &[&str] = &[
 ];
 
 /// Assistant tools and the argument naming the person they act on.
-const PEOPLE_ARGUMENT: &[(&str, &str)] = &[("create_task", "assignee"), ("schedule_task", "assignee"), ("notify_user", "person")];
+const PEOPLE_ARGUMENT: &[(&str, &str)] =
+    &[("create_task", "assignee"), ("assign_task", "to"), ("schedule_task", "assignee"), ("notify_user", "person")];
 
 /// True when an assistant call acts only for the session's requester, or `route_part` only reads stock.
 pub fn serves_only_owner(tool: &str, arguments: &Value, owner: Option<&Person>) -> bool {
@@ -230,6 +234,30 @@ pub fn assistant_summary(tool: &str, arguments: &Value) -> Option<String> {
                 .map(|d| format!(" on {}", d.iter().map(|v| v.to_string().trim_matches('"').to_string()).collect::<Vec<_>>().join(", ")))
                 .unwrap_or_default();
             Some(format!("Schedule for {}: \"{}\" ({every}{days}{when})", who("assignee"), arg("title").unwrap_or("")))
+        }
+        "assign_task" => {
+            let listed = |k: &str| {
+                arguments
+                    .get(k)
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                    .filter(|a| !a.is_empty())
+            };
+            let mut what = Vec::new();
+            if let Some(from) = arg("from") {
+                what.push(format!("{from}'s"));
+            }
+            if let Some(status) = arg("status") {
+                what.push(status.to_string());
+            }
+            what.push("tasks".to_string());
+            if let Some(sns) = listed("service_numbers") {
+                what.push(format!("for {}", sns.join(", ")));
+            }
+            if let Some(ids) = listed("task_ids") {
+                what.push(format!("({} picked)", ids.len()));
+            }
+            Some(format!("Move {} to {}", what.join(" "), who("to")))
         }
         "notify_user" => Some(format!("Notify {}: \"{}\"", who("person"), arg("message").unwrap_or(""))),
         "route_part" => {
@@ -814,7 +842,7 @@ mod tests {
     #[test]
     fn assistant_calls_for_the_requester_run_and_others_ask() {
         let (p, none, me) = (policy(), HashSet::new(), owner());
-        for tool in ["create_task", "schedule_task", "notify_user", "route_part"] {
+        for tool in ["create_task", "assign_task", "schedule_task", "notify_user", "route_part"] {
             assert!(PROMPT_TOOLS.contains(&tool), "{tool} must be gated");
             assert!(GENERAL_TOOLS.contains(&tool) && DIAGNOSTICIAN_TOOLS.contains(&tool), "{tool} must be offered");
         }
@@ -827,6 +855,10 @@ mod tests {
         assert!(p.gate_for("schedule_task", &json!({ "assignee": "Sam" }), false, &none, Some(&me)).needs_human());
         assert!(p.gate_for("notify_user", &json!({ "person": "me" }), false, &none, Some(&me)).needs_human());
         assert!(p.gate_for("create_task", &json!({ "assignee": "sam.jones" }), false, &none, None).needs_human());
+        let take = json!({ "from": "Tyler", "status": "QC" });
+        assert_eq!(p.gate_for("assign_task", &take, false, &none, Some(&me)), Gate::Run);
+        let hand_off = json!({ "from": "Tyler", "status": "QC", "to": "Kim" });
+        assert!(p.gate_for("assign_task", &hand_off, false, &none, Some(&me)).needs_human());
         assert_eq!(p.gate_for("route_part", &json!({ "part": "SSD" }), false, &none, Some(&me)), Gate::Run);
         assert!(p.gate_for("route_part", &json!({ "part": "SSD", "create_task": true }), false, &none, Some(&me)).needs_human());
         for tool in [
@@ -855,6 +887,10 @@ mod tests {
         );
         let part = json!({ "part": "1TB NVMe", "quantity": 2, "service_number": "2155144", "create_task": true });
         assert_eq!(assistant_summary("route_part", &part).unwrap(), "Ask another store to send 2× 1TB NVMe for 2155144");
+        let qc = json!({ "from": "Tyler", "status": "QC" });
+        assert_eq!(assistant_summary("assign_task", &qc).unwrap(), "Move Tyler's QC tasks to me");
+        let tickets = json!({ "service_numbers": ["2155144", "2155145"], "to": "Kim" });
+        assert_eq!(assistant_summary("assign_task", &tickets).unwrap(), "Move tasks for 2155144, 2155145 to Kim");
         assert_eq!(assistant_summary("query_surrealdb", &json!({})), None);
     }
 }

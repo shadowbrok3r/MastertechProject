@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use super::business_calendar::{STORE_TZ, parse_store_local};
 use super::prestashop::{Order, OrderState, OrderType, Prestashop};
 use super::task_schedule::{local_label, weekday_from_name};
-use super::{Datetime, RecordId, Store, SurrealValue};
+use super::{Datetime, RecordId, RecordIdExt, Store, SurrealValue};
 use crate::db;
 
 /// Longest free-text field a reply carries, in characters.
@@ -210,6 +210,9 @@ pub struct OrderAiTask {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, SurrealValue)]
 pub struct TaskRow {
+    #[serde(default)]
+    #[surreal(default)]
+    pub id: Option<RecordId>,
     #[serde(default)]
     #[surreal(default)]
     pub task_name: Option<String>,
@@ -621,6 +624,7 @@ pub fn tasks_json(person: &str, open: i64, rows: &[TaskRow], now: DateTime<Utc>)
         .iter()
         .map(|t| {
             let mut m = Map::new();
+            put(&mut m, "task_id", t.id.as_ref().map(|id| id.key_string()));
             put(&mut m, "name", text(&t.task_name));
             put(&mut m, "status", text(&t.status));
             put(&mut m, "priority", text(&t.priority));
@@ -732,10 +736,17 @@ mod tests {
     #[test]
     fn task_list_flags_overdue_and_keeps_the_full_open_count() {
         let rows = [
-            TaskRow { task_name: Some("Call Jennie".into()), due_date: at(2026, 9, 28, 1), ..Default::default() },
+            TaskRow {
+                id: Some(RecordId::new("task", "abc123")),
+                task_name: Some("Call Jennie".into()),
+                due_date: at(2026, 9, 28, 1),
+                ..Default::default()
+            },
             TaskRow { task_name: Some("Order SSD".into()), due_date: at(2026, 10, 2, 1), ..Default::default() },
         ];
         let v = tasks_json("Logan Lees (WAR)", 16, &rows, now());
+        assert_eq!(v["tasks"][0]["task_id"], "abc123");
+        assert!(v["tasks"][1].get("task_id").is_none());
         assert_eq!(v["open"], 16);
         assert_eq!(v["shown"], 2);
         assert_eq!(v["overdue_shown"], 1);
