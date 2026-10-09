@@ -1,12 +1,14 @@
-//! ZeroClaw's memory through its gateway REST API, offered to the agent as two
-//! tools and used by the broker for a brief at start and a note at close, so a
-//! Codex session reads and writes the same store ZeroClaw's own agents use.
+//! ZeroClaw's memory and shop skills through its gateway REST API, offered to the
+//! agent as tools and used by the broker for a brief at start and a note at close,
+//! so a Codex session shares the store and playbooks ZeroClaw's own agents use.
 
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
-pub const TOOL_NAMES: [&str; 2] = ["zeroclaw_recall", "zeroclaw_remember"];
+/// Loads a shop skill's instructions.
+pub const SKILL_TOOL: &str = "read_skill";
+pub const TOOL_NAMES: [&str; 3] = ["zeroclaw_recall", "zeroclaw_remember", SKILL_TOOL];
 /// Memory alias for machine sessions.
 pub const MACHINE_AGENT: &str = "diagnostician";
 /// Memory alias for a technician's session with no machine in scope.
@@ -14,6 +16,12 @@ pub const GENERAL_AGENT: &str = "tech_chat";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const RECALL_LIMIT: usize = 12;
 const ENTRY_CHARS: usize = 600;
+/// ZeroClaw skill bundle that holds the shop's playbooks.
+const SKILL_BUNDLE: &str = "mastertech";
+/// Frontmatter tag that offers a bundle skill to MasterTech sessions.
+const SESSION_TAG: &str = "mastertech-session";
+const SKILL_SUMMARY_CHARS: usize = 600;
+const SKILL_BODY_CHARS: usize = 24_000;
 
 #[derive(Debug, Clone)]
 pub struct ZeroclawMemory {
@@ -29,6 +37,13 @@ pub struct Entry {
     pub category: String,
     pub content: String,
     pub when: String,
+}
+
+/// A shop skill offered to MasterTech sessions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Skill {
+    pub name: String,
+    pub description: String,
 }
 
 fn env(key: &str) -> Option<String> {
@@ -89,6 +104,81 @@ impl ZeroclawMemory {
         }
         Ok(())
     }
+
+    /// The shop bundle's skills tagged for MasterTech sessions.
+    pub async fn session_skills(&self) -> anyhow::Result<Vec<Skill>> {
+        let body: Value = self
+            .http
+            .get(format!("{}/api/skills/bundles/{SKILL_BUNDLE}/skills", self.base))
+            .bearer_auth(&self.token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(session_skills_from(&body))
+    }
+
+    /// The instructions of the shop skill `name`, clipped.
+    pub async fn read_skill(&self, name: &str) -> anyhow::Result<String> {
+        let body: Value = self
+            .http
+            .get(format!("{}/api/skills/bundles/{SKILL_BUNDLE}/skills/{name}", self.base))
+            .bearer_auth(&self.token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        skill_text(&body).ok_or_else(|| anyhow::anyhow!("skill {name} has no instructions"))
+    }
+}
+
+/// Tagged skills from a bundle listing, each with a one-line description.
+fn session_skills_from(body: &Value) -> Vec<Skill> {
+    let Some(skills) = body.get("skills").and_then(Value::as_array) else { return Vec::new() };
+    skills
+        .iter()
+        .filter_map(|s| {
+            let front = s.get("frontmatter")?;
+            let tags = front.get("tags").and_then(Value::as_array)?;
+            if !tags.iter().any(|t| t.as_str() == Some(SESSION_TAG)) {
+                return None;
+            }
+            let name = s.get("name").or_else(|| front.get("name")).and_then(Value::as_str)?.trim();
+            let description = front.get("description").and_then(Value::as_str).unwrap_or_default();
+            let description = description.split_whitespace().collect::<Vec<_>>().join(" ");
+            (!name.is_empty())
+                .then(|| Skill { name: name.to_string(), description: clip(&description, SKILL_SUMMARY_CHARS) })
+        })
+        .collect()
+}
+
+/// A skill's markdown body under a heading with its name and version.
+fn skill_text(body: &Value) -> Option<String> {
+    let text = body.get("body").and_then(Value::as_str)?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let name = body.get("name").and_then(Value::as_str).unwrap_or("skill");
+    let version =
+        body.pointer("/frontmatter/version").and_then(Value::as_str).map(|v| format!(" v{v}")).unwrap_or_default();
+    Some(clip(&format!("SKILL {name}{version}\n\n{text}"), SKILL_BODY_CHARS))
+}
+
+/// `text` cut to `max` characters, marked when cut.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// Whether `name` is a plain skill name that is safe to put in a URL path.
+pub fn valid_skill_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn text_of(v: &Value) -> String {
@@ -183,11 +273,27 @@ pub fn render_entries(entries: &[Entry]) -> String {
         .join("\n")
 }
 
-pub fn is_memory_tool(name: &str) -> bool {
+pub fn is_zeroclaw_tool(name: &str) -> bool {
     TOOL_NAMES.contains(&name)
 }
 
-/// `thread/start.dynamicTools` entries for the two memory tools.
+/// The SKILLS block of the developer instructions, empty without skills.
+pub fn skills_block(skills: &[Skill]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "SKILLS\n- Shop playbooks kept in ZeroClaw. When the work matches one, load it with `{SKILL_TOOL}` before you \
+         plan and follow it; the order's own notes win where they differ.\n"
+    );
+    for skill in skills {
+        out.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+    }
+    out.push('\n');
+    out
+}
+
+/// `thread/start.dynamicTools` entries for the memory tools and `read_skill`.
 pub fn tool_specs() -> Vec<Value> {
     vec![
         json!({
@@ -215,6 +321,19 @@ pub fn tool_specs() -> Vec<Value> {
                     "category": { "type": "string", "enum": ["core", "daily", "conversation"], "description": "core for lasting facts (default), daily for session notes." }
                 },
                 "required": ["key", "content"]
+            },
+            "deferLoading": false,
+        }),
+        json!({
+            "type": "function",
+            "name": SKILL_TOOL,
+            "description": "Load the full instructions of a shop skill named in the SKILLS list of your instructions.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "The skill's name, for example qc-new-computer." }
+                },
+                "required": ["name"]
             },
             "deferLoading": false,
         }),
@@ -290,6 +409,46 @@ mod tests {
     fn the_general_session_uses_the_tech_chat_alias() {
         assert_eq!(ZeroclawMemory::agent_for("general:logan@x"), GENERAL_AGENT);
         assert_eq!(ZeroclawMemory::agent_for("DESKTOP-1:abc"), MACHINE_AGENT);
-        assert!(is_memory_tool("zeroclaw_recall") && !is_memory_tool("query_surrealdb"));
+        assert!(
+            is_zeroclaw_tool("zeroclaw_recall")
+                && is_zeroclaw_tool("read_skill")
+                && !is_zeroclaw_tool("query_surrealdb")
+        );
+    }
+
+    #[test]
+    fn only_skills_tagged_for_sessions_are_offered() {
+        let listing = json!({ "skills": [
+            { "bundle": "mastertech", "name": "qc-new-computer", "directory": "/x",
+              "frontmatter": { "name": "qc-new-computer", "description": "QC a new computer:\n  data transfer, setup.", "tags": ["qc", "mastertech-session"] } },
+            { "bundle": "mastertech", "name": "surrealql", "directory": "/y",
+              "frontmatter": { "name": "surrealql", "description": "Write SurrealQL." } },
+            { "bundle": "mastertech", "name": "shelf-triage", "directory": "/z",
+              "frontmatter": { "name": "shelf-triage", "description": "Shelf.", "tags": ["cron"] } }
+        ]});
+        let skills = session_skills_from(&listing);
+        assert_eq!(
+            skills,
+            vec![Skill {
+                name: "qc-new-computer".into(),
+                description: "QC a new computer: data transfer, setup.".into()
+            }]
+        );
+        assert!(session_skills_from(&json!({ "error": "no bundle" })).is_empty());
+
+        let block = skills_block(&skills);
+        assert!(block.starts_with("SKILLS\n"), "{block}");
+        assert!(block.contains("- qc-new-computer: QC a new computer: data transfer, setup.\n"), "{block}");
+        assert!(skills_block(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_read_skill_returns_its_body_under_a_heading() {
+        let read = json!({ "bundle": "mastertech", "name": "qc-new-computer",
+            "frontmatter": { "name": "qc-new-computer", "description": "d", "version": "1.0.0" }, "body": "\n# QC\nSteps.\n" });
+        assert_eq!(skill_text(&read).as_deref(), Some("SKILL qc-new-computer v1.0.0\n\n# QC\nSteps."));
+        assert!(skill_text(&json!({ "name": "x", "body": "  " })).is_none());
+        assert!(valid_skill_name("qc-new-computer") && valid_skill_name("bsod_triage"));
+        assert!(!valid_skill_name("../config") && !valid_skill_name("a b") && !valid_skill_name(""));
     }
 }

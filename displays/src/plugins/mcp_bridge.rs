@@ -12456,11 +12456,13 @@ Always run, in this order (Tuneup / QC checklist column unless noted):
   12. Disable proxy settings
   13. Disable OneDrive Startup       (Junkware Removal column)
   14. Disable Edge Startup Boost     (Junkware Removal column)
-  15. Run Webroot Scan
-  16. Run SuperAntiSpyware Scan
+No Webroot or SuperAntiSpyware scans on a QC: the install is new, and transferred user data
+gets a PUP check instead when something in it looks off. ZeroClaw's qc-new-computer skill
+holds the full QC playbook: data transfer and mapping, software, drivers and tests.
 
 Conditional, gated on task description / checkin_notes (see Service Context Identification Step 4):
-  - Data Transfer                    — only when notes mention transfer / old drive / migration
+  - Data Transfer                    — only when notes mention transfer / old drive / migration;
+                                       then map UsersBackup into the new profile
   - Install LibreOffice              — only when explicitly requested
   - Disable BitLocker                — only if Informational shows BitLocker enabled
   - Run Junkware Category            — when prechecks/Informational flag PUPs, or notes name them
