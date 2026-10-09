@@ -115,7 +115,7 @@ impl Composer {
         ui.add_enabled_ui(enabled, |ui| {
             self.attachment_strip(ui);
             let hint = if busy {
-                "The agent is working: Enter queues this for when it finishes"
+                "The agent is working: Enter tells it now; the queue button holds a message for after this turn"
             } else {
                 "Message the agent (Shift+Enter for a new line; paste or drop pictures and files)"
             };
@@ -169,7 +169,7 @@ impl Composer {
         });
         if enter {
             action = self
-                .submit(text, if busy { "queue" } else { "start" })
+                .submit(text, if busy { "steer" } else { "start" })
                 .or(action);
             ui.memory_mut(|m| m.request_focus(text_id));
         }
@@ -264,7 +264,7 @@ impl Composer {
             ui.vertical(|ui| {
                 if ui
                     .add_enabled(ready, Button::new(icons::SEND_NOW).min_size(half))
-                    .on_hover_text("Send now: tell the agent while it works")
+                    .on_hover_text("Send now: the agent reads it after its current step (Enter)")
                     .clicked()
                 {
                     action = self.submit(text, "steer");
@@ -300,11 +300,7 @@ impl Composer {
             #[cfg(any(target_os = "ios", target_os = "android"))]
             let send_size = vec2(SIDE_BUTTON_W, height);
             let (icon, hover, kind) = if busy {
-                (
-                    icons::QUEUE,
-                    "Queue: send when the agent finishes this turn (Enter)",
-                    "queue",
-                )
+                (icons::QUEUE, "Queue: send when the agent finishes this turn", "queue")
             } else {
                 (icons::SEND, "Send (Enter)", "start")
             };
@@ -471,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_sends_when_idle_and_queues_while_busy() {
+    fn enter_sends_when_idle_and_steers_while_busy() {
         let ctx = Context::default();
         let mut composer = Composer::default();
         let mut text = "check the disks".to_string();
@@ -493,7 +489,7 @@ mod tests {
         assert!(text.is_empty(), "the box is cleared once sent");
 
         text = "then the event log".to_string();
-        let queued = frame(
+        let steered = frame(
             &ctx,
             &mut composer,
             &mut text,
@@ -501,8 +497,8 @@ mod tests {
             vec![enter(Modifiers::NONE)],
         );
         assert!(
-            matches!(queued, Some(ComposerAction::Send { kind: "queue", .. })),
-            "{queued:?}"
+            matches!(steered, Some(ComposerAction::Send { kind: "steer", .. })),
+            "{steered:?}"
         );
     }
 

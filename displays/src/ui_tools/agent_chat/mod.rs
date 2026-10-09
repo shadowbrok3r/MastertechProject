@@ -187,6 +187,7 @@ pub fn approve_all_chip(ui: &mut Ui, thread: &AgentThread, steerable: bool) -> b
 pub enum QueueAction {
     Remove(RecordId),
     Edit(RecordId),
+    SendNow(RecordId),
     Resume,
 }
 
@@ -229,7 +230,7 @@ pub fn queue_strip(ui: &mut Ui, waiting: &[QueuedTurn]) -> Option<QueueAction> {
     for turn in waiting {
         ui.push_id(turn.id.key_string(), |ui| {
             ui.horizontal(|ui| {
-                let buttons = 2.0 * (24.0 + ui.spacing().item_spacing.x);
+                let buttons = 3.0 * (24.0 + ui.spacing().item_spacing.x);
                 let first = turn
                     .text
                     .lines()
@@ -262,6 +263,13 @@ pub fn queue_strip(ui: &mut Ui, waiting: &[QueuedTurn]) -> Option<QueueAction> {
                         .clicked()
                     {
                         action = Some(QueueAction::Edit(turn.id.clone()));
+                    }
+                    if ui
+                        .small_button(icons::SEND_NOW)
+                        .on_hover_text("Send now: the agent reads it after its current step")
+                        .clicked()
+                    {
+                        action = Some(QueueAction::SendNow(turn.id.clone()));
                     }
                 });
             });
@@ -401,7 +409,62 @@ pub fn hovered(ui: &Ui, rect: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Context, RawInput};
+    use eframe::egui::{Context, Event, Modifiers, PointerButton, RawInput, pos2};
+
+    /// Every action the strip answers to a click anywhere in its top 80 points, right to left.
+    fn strip_actions(waiting: &[QueuedTurn]) -> Vec<QueueAction> {
+        let ctx = Context::default();
+        let run = |events: Vec<Event>| {
+            let input = RawInput {
+                events,
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 200.0))),
+                ..Default::default()
+            };
+            let mut action = None;
+            let mut out = ctx.run_ui(input, |ui| action = queue_strip(ui, waiting));
+            out.textures_delta.clear();
+            action
+        };
+        let mut found: Vec<QueueAction> = Vec::new();
+        for y in (2..80).step_by(4) {
+            for x in (2..420).rev().step_by(4) {
+                let pos = pos2(x as f32, y as f32);
+                let button = |pressed| Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                };
+                let action =
+                    run(vec![Event::PointerMoved(pos), button(true)]).or(run(vec![button(false)]));
+                if let Some(action) = action.filter(|a| !found.contains(a)) {
+                    found.push(action);
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn each_queued_message_can_be_removed_taken_back_or_sent_now() {
+        let id = RecordId::new("agent_turn", "q1");
+        let waiting = vec![QueuedTurn {
+            id: id.clone(),
+            text: "i plugged in the customer's two drives as well".into(),
+            status: "queued".into(),
+            tech: None,
+            image_names: Vec::new(),
+            created_at: None,
+        }];
+        assert_eq!(
+            strip_actions(&waiting),
+            vec![
+                QueueAction::Remove(id.clone()),
+                QueueAction::Edit(id.clone()),
+                QueueAction::SendNow(id)
+            ]
+        );
+    }
 
     #[test]
     fn the_context_colour_ramps_from_green_through_amber_to_red() {
