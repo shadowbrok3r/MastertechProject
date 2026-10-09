@@ -245,6 +245,25 @@ impl MasterTechApp {
                 });
 
                 crate::utilities::update_policy::spawn_agent_poll();
+                // Reopens this machine's AI session in the Ai tab.
+                spawn(async move {
+                    let Ok(cs) = tokio::task::spawn_blocking(|| {
+                        crate::filesystem::get_client_hash().connection_string
+                    })
+                    .await
+                    else {
+                        return;
+                    };
+                    match database::schema::agent_thread::AgentThread::reopen_for_connection(&cs)
+                        .await
+                    {
+                        Ok(Some(thread)) => {
+                            displays::ui_data::agent_session_notify::request_open(thread.id, true)
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::debug!("first_run -> session reopen lookup failed: {e}"),
+                    }
+                });
             } 
         }
 

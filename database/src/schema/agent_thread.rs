@@ -61,6 +61,13 @@ pub const RESUMABLE_SQL: &str = "SELECT * FROM agent_thread WHERE connection_str
          > time::now() - 30m) \
      ORDER BY created_at DESC LIMIT 1";
 
+/// The session MasterTech reopens when it starts on a machine: open, changed in the last three days,
+/// and not archived by the signed-in user.
+pub const REOPEN_SQL: &str = "SELECT * FROM agent_thread WHERE connection_string = $cs \
+     AND status NOT IN ['closed', 'failed'] AND updated_at > time::now() - 3d \
+     AND id NOT IN (SELECT VALUE thread FROM agent_thread_archive WHERE user = $auth.id) \
+     ORDER BY updated_at DESC LIMIT 1";
+
 /// Threads of the signed-in technician: assigned to them, or asked for with their email.
 const SIGNED_IN_TECH_THREADS: &str =
     "$auth != NONE AND (assignee = $auth.id OR requested_by = $auth.email)";
@@ -672,6 +679,16 @@ impl AgentThread {
             .bind(("cs", connection_string.to_string()))
             .await?;
         let rows: Vec<Self> = res.take(0).unwrap_or_default();
+        Ok(rows.into_iter().next())
+    }
+
+    /// The session to reopen when MasterTech starts on this machine; see [`REOPEN_SQL`].
+    pub async fn reopen_for_connection(connection_string: &str) -> anyhow::Result<Option<Self>> {
+        let mut res = db()
+            .query(REOPEN_SQL)
+            .bind(("cs", connection_string.to_string()))
+            .await?;
+        let rows: Vec<Self> = res.take(0)?;
         Ok(rows.into_iter().next())
     }
 
