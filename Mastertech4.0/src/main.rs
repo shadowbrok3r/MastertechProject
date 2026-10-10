@@ -416,6 +416,8 @@ async fn run_gui(opts: LaunchOptions, minidump: MinidumpArgs) -> eframe::Result<
     // This path can fall back to terminal mode, so it needs the same guarantees.
     mtech_tui::panic_guard::install_hook();
     init_logging(vec![egui_logger, tui_drain_logger()], opts, "gui");
+    #[cfg(target_os = "windows")]
+    utilities::windows::watchdog::log_launch();
 
     // A stale job the registry still calls running belongs to a dead process.
     remote_exec::recover_on_start();
@@ -454,6 +456,8 @@ async fn run_gui(opts: LaunchOptions, minidump: MinidumpArgs) -> eframe::Result<
     };
 
     if gui_ok {
+        #[cfg(target_os = "windows")]
+        utilities::windows::watchdog::remove_on_exit();
         displays::signal_shutdown();
         tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         log::info!("main -> GUI closed; forcing process exit to release the launching terminal");
@@ -470,9 +474,13 @@ async fn run_gui(opts: LaunchOptions, minidump: MinidumpArgs) -> eframe::Result<
         if !console::ensure_console() {
             error!("terminal mode has no console to draw on; nothing further can be shown");
         }
+        #[cfg(target_os = "windows")]
+        utilities::windows::watchdog::set_terminal_mode();
         if let Err(e) = terminal_mode::run_terminal_mode().await {
             error!("Error running terminal app: {e:?}");
         }
+        #[cfg(target_os = "windows")]
+        utilities::windows::watchdog::remove_on_exit();
     }
     Ok(())
 }
@@ -522,11 +530,29 @@ fn cli() -> clap::Command {
                 .help("Disable the glass backdrop-blur pass (same as setting MTECH_NO_FROST=1)")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            clap::Arg::new("watchdog")
+                .long("watchdog")
+                .help("Scheduled relaunch: exit at once when MasterTech is already running")
+                .hide(true)
+                .action(clap::ArgAction::SetTrue),
+        )
         .args(MinidumpArgs::clap_args())
 }
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use utilities::windows::watchdog;
+        if !std::env::args().any(|a| a == "--mcp-stdio")
+            && !watchdog::claim_instance()
+            && std::env::args().any(|a| a == watchdog::WATCHDOG_FLAG)
+        {
+            std::process::exit(0);
+        }
+    }
+
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Adopt the launching terminal's console, if there is one. Never allocates, so a double-click
@@ -619,8 +645,15 @@ async fn main() -> eframe::Result<()> {
             ..opts
         };
         init_terminal_mode_logging(opts);
+        #[cfg(target_os = "windows")]
+        {
+            utilities::windows::watchdog::set_terminal_mode();
+            utilities::windows::watchdog::log_launch();
+        }
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
+        #[cfg(target_os = "windows")]
+        utilities::windows::watchdog::remove_on_exit();
     } else {
         run_gui(opts, minidump).await?;
     }

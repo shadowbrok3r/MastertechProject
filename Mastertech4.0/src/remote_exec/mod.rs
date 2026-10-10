@@ -98,6 +98,11 @@ pub fn arm(
 ) -> GateStatus {
     journal::record_gate("armed", &tech, &diagnostic_session_id, Some(ttl_secs));
     let status = gate::arm(session_id, tech, diagnostic_session_id, reason, ttl_secs);
+    #[cfg(target_os = "windows")]
+    if status.armed {
+        let lease = std::time::Duration::from_secs(status.expires_in_secs.unwrap_or(ttl_secs));
+        crate::utilities::windows::watchdog::arm(lease);
+    }
     wake_ui();
     status
 }
@@ -109,6 +114,8 @@ pub fn disarm(kill_running: bool) -> GateStatus {
         log::warn!("[remote_exec] disarm terminated {killed} running job(s)");
     }
     gate::disarm();
+    #[cfg(target_os = "windows")]
+    crate::utilities::windows::watchdog::disarm();
     wake_ui();
     gate::status(registry::running_count())
 }
