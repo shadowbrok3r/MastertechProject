@@ -229,6 +229,9 @@ const POWERSHELL_NOTES: &str = "POWERSHELL ON THE MACHINE (remote_exec_start run
        Scheduled-task run levels are `Limited` and `Highest` (there is no `LeastPrivilege`).\n\
      - Everything a script starts runs elevated. Launch user-facing apps (OneDrive, Teams, browsers) \
        with `run_as: \"user\"`, never directly: OneDrive refuses to run with full administrator rights.\n\
+     - Never run `vssadmin`, `Checkpoint-Computer` or any other restore-point or shadow-copy command, and \
+       skip restore-point steps in any procedure. Webroot treats it as ransomware and kills MasterTech, \
+       which ends every running job and drops the session.\n\
      - Set `risk` on every job: `read` changes nothing, `mutate` is a reversible change, `destructive` \
        removes data or changes boot, driver or security state.\n\
      - Tool output is cut to about 24,000 characters. Save long listings to a file under \
@@ -482,6 +485,13 @@ mod tests {
         assert!(text.contains("call `wait` only when nothing else is left"), "{text}");
         assert!(text.contains("Start both scans early and do the rest of the pass while they run"), "{text}");
         assert!(!text.contains("To let time pass"), "{text}");
+    }
+
+    #[test]
+    fn machine_sessions_never_touch_shadow_copies() {
+        let text = developer_instructions(&cfg(), &thread(Some("2155467")), &[], &[], false, None, &[]);
+        assert!(text.contains("Never run `vssadmin`, `Checkpoint-Computer`"), "{text}");
+        assert!(text.contains("skip restore-point steps in any procedure"), "{text}");
     }
 
     #[test]
