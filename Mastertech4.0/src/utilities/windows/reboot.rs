@@ -4,7 +4,7 @@ pub const RELAUNCH_TASK_NAME: &str = "MastertechAutoRestart";
 
 /// Escapes a value for a single-quoted PowerShell string literal.
 #[cfg(target_os = "windows")]
-fn ps_quote(s: &str) -> String {
+pub(crate) fn ps_quote(s: &str) -> String {
     s.replace('\'', "''")
 }
 
@@ -20,10 +20,11 @@ pub async fn schedule_mastertech_relaunch(terminal_mode: bool) -> anyhow::Result
 
     let exe = ps_quote(&exe_path.to_string_lossy());
     let dir = ps_quote(&exe_dir.to_string_lossy());
+    let flag = super::watchdog::WATCHDOG_FLAG;
     let action = if terminal_mode {
-        format!("New-ScheduledTaskAction -Execute '{exe}' -Argument '-t' -WorkingDirectory '{dir}'")
+        format!("New-ScheduledTaskAction -Execute '{exe}' -Argument '-t {flag}' -WorkingDirectory '{dir}'")
     } else {
-        format!("New-ScheduledTaskAction -Execute '{exe}' -WorkingDirectory '{dir}'")
+        format!("New-ScheduledTaskAction -Execute '{exe}' -Argument '{flag}' -WorkingDirectory '{dir}'")
     };
     let script = format!(
         "$a={action};$t=New-ScheduledTaskTrigger -AtLogOn;Register-ScheduledTask -TaskName '{RELAUNCH_TASK_NAME}' -Action $a -Trigger $t -RunLevel Highest -Force | Out-Null"

@@ -4587,7 +4587,9 @@ impl PluginToolProvider {
         description = "Open the consent gate on a client so RemoteExec jobs may run. Fails closed: until the client paints its consent banner \
                        (which names you and your stated reason to whoever is at the machine), every remote_exec_start is refused. \
                        If start keeps reporting 'consent banner not rendering', the client's UI is minimised, wedged, or on a build without the banner. \
-                       Arm once per diagnostic session, not per job, and call remote_exec_disarm when you are done."
+                       Arm once per diagnostic session, not per job, and call remote_exec_disarm when you are done. \
+                       While armed, the client relaunches MasterTech within about five minutes if it dies or Windows restarts, until an hour \
+                       after the lease ends; it comes back disarmed with its jobs gone, so re-arm once it reconnects."
     )]
     async fn remote_exec_arm(
         &self,

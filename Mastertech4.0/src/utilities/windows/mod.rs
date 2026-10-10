@@ -7,6 +7,8 @@ pub mod net_adapter;
 pub mod power;
 #[cfg(target_os = "windows")]
 pub mod reboot;
+#[cfg(target_os = "windows")]
+pub mod watchdog;
 pub mod registry;
 pub mod windows_update;
 pub mod drivers;
