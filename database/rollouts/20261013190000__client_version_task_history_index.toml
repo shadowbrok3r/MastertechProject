@@ -2,7 +2,7 @@
 # task_history_task: task_history lookup by task_id ordered by created_at, built CONCURRENTLY.
 id = "20261013190000__client_version_task_history_index"
 name = "client_version_task_history_index"
-state = "planned"
+state = "completed"
 source_schema_hash = "4b11f27ee74dd7c11b3b5ce21c9964cc6de3eba59f38c2e9b6aaaefbc1fadebe"
 target_schema_hash = "ac45df5f1566dfe23cdc76aa99b7cad2236ae3a280cfdfee6d90f523bcb91a44"
 compatibility = "phased"
