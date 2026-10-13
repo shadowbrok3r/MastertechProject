@@ -850,6 +850,7 @@ pub async fn upsert_self_identity(connected: bool) {
              connection_string = $cs, computer = $computer, \
              connected = $connected, assigned_user = $auth.id, \
              boot_environment = $boot_environment, \
+             client_version = $client_version, \
              last_update = time::now()",
         )
         .bind(("id", identity.id.clone()))
@@ -858,7 +859,9 @@ pub async fn upsert_self_identity(connected: bool) {
         .bind(("computer", computer))
         .bind(("connected", connected))
         .bind(("boot_environment", identity.boot_environment.as_str()))
-        .await;
+        .bind(("client_version", displays::shape_fp::BUILD_VERSION))
+        .await
+        .and_then(|r| r.check());
     if let Err(e) = res {
         // Startup runs this before the DB websocket signs in; not a failure.
         if e.to_string().contains("Connection uninitialised") {
@@ -888,12 +891,14 @@ async fn clear_tcp_coords(client_uuid: database::schema::RecordId) {
             "UPSERT $client SET local_ip = NONE, tcp_port = NONE, \
              connection_string = $cs, client_hash = $client_hash, \
              computer = $computer, connected = true, \
+             client_version = $client_version, \
              assigned_user = $auth.id, last_update = time::now()",
         )
         .bind(("client", client_uuid))
         .bind(("cs", identity.connection_string.clone()))
         .bind(("client_hash", identity.client_hash.clone()))
         .bind(("computer", computer))
+        .bind(("client_version", displays::shape_fp::BUILD_VERSION))
         .await
         // Statement errors only surface via check(); see the publisher task.
         .and_then(|r| r.check());
@@ -1022,6 +1027,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                     "UPSERT $client SET local_ip = $ip, tcp_port = $port, \
                      connection_string = $cs, client_hash = $client_hash, \
                      computer = $computer, boot_environment = $boot_environment, \
+                     client_version = $client_version, \
                      connected = true, assigned_user = $auth.id, \
                      last_update = time::now()",
                 )
@@ -1032,6 +1038,7 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 .bind(("client_hash", client_hash.clone()))
                 .bind(("computer", computer.clone()))
                 .bind(("boot_environment", boot_environment.as_str()))
+                .bind(("client_version", displays::shape_fp::BUILD_VERSION))
                 .await
                 // `query().await` is Ok as long as the request round-tripped;
                 // a statement error (field coercion, ASSERT) only surfaces via
@@ -1079,8 +1086,12 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
                 }
                 _ = tokio::time::sleep(Duration::from_secs(15 * 60)) => {
                     let res = db()
-                        .query("UPDATE $client SET connected = true, last_update = time::now()")
+                        .query(
+                            "UPDATE $client SET connected = true, \
+                             client_version = $client_version, last_update = time::now()",
+                        )
                         .bind(("client", heartbeat_uuid.clone()))
+                        .bind(("client_version", displays::shape_fp::BUILD_VERSION))
                         .await
                         // Statement errors only surface via check(); see publisher.
                         .and_then(|r| r.check());

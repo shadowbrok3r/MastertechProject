@@ -74,10 +74,12 @@ pub fn reassert_connected(connection_string: &str) {
     tokio::spawn(async move {
         let res = database::db()
             .query(
-                "UPDATE connected_client SET connected = true, last_update = time::now() \
+                "UPDATE connected_client SET connected = true, \
+                 client_version = $client_version, last_update = time::now() \
                  WHERE connection_string == $cs AND connected == false",
             )
             .bind(("cs", cs.clone()))
+            .bind(("client_version", displays::shape_fp::BUILD_VERSION))
             .await
             .and_then(|r| r.check());
         match res {

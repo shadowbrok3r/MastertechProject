@@ -67,3 +67,5 @@ DEFINE FIELD boot_environment ON connected_client TYPE string DEFAULT 'installed
 -- absence of this field means eligible; DEFAULT does not backfill existing rows,
 -- so readers must coalesce NONE to false.
 DEFINE FIELD autopilot_opt_out ON connected_client TYPE bool DEFAULT false PERMISSIONS FULL;
+-- MasterTech build (`<semver>+<hash>`) the client last checked in with.
+DEFINE FIELD client_version   ON connected_client TYPE option<string> PERMISSIONS FULL;

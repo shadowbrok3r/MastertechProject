@@ -202,6 +202,10 @@ pub struct ConnectedClient {
     #[serde(default)]
     #[surreal(default)]
     pub autopilot_opt_out: bool,
+    /// MasterTech build (`<semver>+<hash>`) the client last checked in with.
+    /// Absent on rows written by older builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_version: Option<String>,
 }
 
 impl Default for ConnectedClient {
@@ -225,6 +229,7 @@ impl Default for ConnectedClient {
             capabilities: Vec::new(),
             boot_environment: BootEnvironment::Installed,
             autopilot_opt_out: false,
+            client_version: None,
         }
     }
 }
@@ -477,6 +482,33 @@ mod deser_tests {
             .expect("a winpe row round-trips");
         assert_eq!(parsed.boot_environment, BootEnvironment::WinPe);
         assert!(parsed.boot_environment.is_preboot());
+    }
+
+    #[test]
+    fn missing_client_version_deserializes_as_none() {
+        let original = ConnectedClient {
+            client_version: Some("5.0.1+4b4c5500".to_string()),
+            ..sample()
+        };
+        let mut v = original.into_value();
+        if let Value::Object(obj) = &mut v {
+            obj.remove("client_version");
+        }
+        let parsed = ConnectedClient::from_value(v)
+            .expect("a row written before client_version existed must deserialize");
+        assert_eq!(parsed.client_version, None);
+        assert_eq!(parsed.connection_string, "DeWittHome:0419a2598");
+    }
+
+    #[test]
+    fn client_version_round_trips() {
+        let original = ConnectedClient {
+            client_version: Some("5.0.1+4b4c5500".to_string()),
+            ..sample()
+        };
+        let parsed = ConnectedClient::from_value(original.into_value())
+            .expect("a row with client_version round-trips");
+        assert_eq!(parsed.client_version.as_deref(), Some("5.0.1+4b4c5500"));
     }
 
     #[test]

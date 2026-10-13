@@ -71,7 +71,7 @@
     },
     {
       "path": "database/schema/connected_client.surql",
-      "hash": "1fd0a3f75a5f711aa3a13f997b73a2287d2a8662cdf506e1eaef5beacce376c6"
+      "hash": "5b427530884932e4bf354a22b53f86479d545be12ba9d0b6fbd8cab13dde642f"
     },
     {
       "path": "database/schema/crash_intel.surql",
@@ -191,7 +191,7 @@
     },
     {
       "path": "database/schema/task_history.surql",
-      "hash": "852325a9b21a8799df66fd0addf53aaf9ee597a1f2139fdd1298f06e0931ba8b"
+      "hash": "a9432a4ad77c01d7e76e897fb162ed17632ad2bab56562ed7d96297b0ebb9062"
     },
     {
       "path": "database/schema/task_note.surql",
