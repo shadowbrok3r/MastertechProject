@@ -77,7 +77,7 @@ exclude = [
 # Shipped MasterTech release version. `displays` and `Mastertech4.0` inherit it so
 # the build version the agent reports over the wire matches the app it ships in.
 [workspace.package]
-version = "5.0.0"
+version = "5.0.1"
 
 [workspace.dependencies]
 egui-snarl = { version = "0.12", features = ["serde"] }

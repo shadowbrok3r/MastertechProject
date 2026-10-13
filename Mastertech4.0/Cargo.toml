@@ -9,7 +9,7 @@ build = "build.rs"
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2025"
-ProductVersion = "5.0.0"
+ProductVersion = "5.0.1"
 FileDescription = "Mastertech"
 
 [package.metadata]

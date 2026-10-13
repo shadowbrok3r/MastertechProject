@@ -1,6 +1,6 @@
 [package]
 name = "plugin_builder"
-version = "5.0.0"
+version = "5.0.1"
 edition = "2024"
 
 [lib]
