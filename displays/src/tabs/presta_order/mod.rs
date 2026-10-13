@@ -1,9 +1,17 @@
-use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, User, assignable_users}, PlatformSpawner, Spawner};
-use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Frame, Grid, Id, Layout, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Widget};
+use crate::ui_tools::controls::IconLabel;
+use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, RecordId, User, assignable_users}, PlatformSpawner, Spawner};
+use eframe::egui::{Align, CentralPanel, Frame, Grid, Layout, Panel, Rect, RichText, ScrollArea, Ui};
 use crate::{get_current_user_from_auth, get_database_users, modals::tabs::return_colors};
+use crate::ui_tools::controls::{self, BarKind, Metrics, TextField};
+use crate::ui_tools::icons::svg::{self};
+use crate::ui_tools::{glass_card, theme};
 use crossbeam::channel::{Receiver, Sender};
 use web_time::{Duration, Instant};
-use itertools::Itertools;
+
+/// Width of each picker in the Device Details card.
+const DEVICE_PICKER_W: f32 = 104.0;
+/// Width of the rep and order-type pickers.
+const REP_PICKER_W: f32 = 160.0;
 
 pub struct PrestashopOrderForm {
     order: Order,
@@ -198,59 +206,55 @@ impl PrestashopOrderForm {
 
     pub fn ui(&mut self, ui: &mut Ui) {
         self.receive(ui);
+        let m = Metrics::get(ui.ctx());
 
-        eframe::egui::Panel::top("PrestashopOrderTopPanel")
-        .exact_size(25.)
-        .frame(Frame::dark_canvas(ui.style()))
+        Panel::top("PrestashopOrderTopPanel")
+        .exact_size(m.bar_h)
+        .frame(Frame::NONE.fill(ui.visuals().panel_fill))
+        .show_separator_line(false)
         .show(ui, |ui|{
-            ui.horizontal_top(|ui| {
-                ui.add_space(5.);
-                if ui.button("New Order +").clicked() {
+            controls::bar(ui, BarKind::Tool, |ui| {
+                if controls::icon_text_button(ui, svg::PLUS, "New Order").clicked() {
                     let _ = self.action_tx.try_send(UiAction::NewState(UiState::SelectCustomer));
                 }
-                
-                ui.add_space(5.);
-                if ui.button("Create Customer +").clicked() {
+
+                if controls::icon_text_button(ui, svg::USER_PLUS, "Create Customer").clicked() {
                     let _ = self.action_tx.try_send(UiAction::NewState(UiState::CreateCustomer));
                 }
-                
-                ui.add_space(5.);
 
                 match self.state {
                     UiState::CreateOrder => {
-                        ui.add_space(ui.available_width()/4.);
-                        ui.label("Creating Order for ");
-                        ui.add_space(5.);
-                        if ui.button(
-                            RichText::new(
-                            format!("{} {}", self.customer.firstname, self.customer.lastname)
-                            )
-                            .color(ui.style().visuals.error_fg_color)
-                        ).clicked() {
+                        controls::vline(ui, m.control_h);
+                        ui.label(RichText::new("Creating Order for").color(theme::weak_text(ui)));
+                        let name = format!("{} {}", self.customer.firstname, self.customer.lastname);
+                        if controls::pill(ui, svg::USER, &name, true)
+                            .on_hover_text("Change customer")
+                            .clicked()
+                        {
                             let _ = self.action_tx.try_send(UiAction::NewState(UiState::SelectCustomer));
                         }
                     },
                     UiState::SelectCustomer => {
-                        ui.add_space(ui.available_width()/4.);
-                        TextEdit::singleline(&mut self.customer.email)
-                        .hint_text("Customer Email")
-                        .ui(ui);
+                        controls::vline(ui, m.control_h);
+                        TextField::new(&mut self.customer.email)
+                            .hint("Customer Email")
+                            .icon(svg::ENVELOPE_SIMPLE)
+                            .width(200.)
+                            .show(ui);
 
-                        ui.add_space(10.);
-                        
-                        TextEdit::singleline(&mut self.address.phone)
-                        .hint_text("Customer Phone #")
-                        .ui(ui);
+                        TextField::new(&mut self.address.phone)
+                            .hint("Customer Phone #")
+                            .icon(svg::PHONE)
+                            .width(160.)
+                            .show(ui);
 
-                        ui.add_space(10.);
+                        TextField::new(&mut self.serial_search)
+                            .hint("Serial #")
+                            .icon(svg::BARCODE)
+                            .width(160.)
+                            .show(ui);
 
-                        TextEdit::singleline(&mut self.serial_search)
-                        .hint_text("Serial #")
-                        .ui(ui);
-
-                        ui.add_space(10.);
-
-                        let search_btn = ui.button("Search");
+                        let search_btn = controls::icon_text_button(ui, svg::MAGNIFYING_GLASS, "Search");
 
                         // Serial first: it is scanned, so it is the most specific
                         // of the three and the least likely to be left over.
@@ -286,29 +290,43 @@ impl PrestashopOrderForm {
 
     // 8013914625
     pub fn select_customer(&mut self, ui: &mut Ui) {
-        ui.add_space(20.);
+        let m = Metrics::get(ui.ctx());
+        ui.add_space(m.gap.y);
 
         if !self.search_status.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                ui.colored_label(ui.style().visuals.warn_fg_color, &self.search_status);
+                let warn = theme::warn(ui);
+                ui.add(svg::WARNING.image(m.icon_sm).tint(warn));
+                ui.colored_label(warn, &self.search_status);
             });
-            ui.add_space(10.);
+            ui.add_space(m.gap.y);
         }
 
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
+            glass_card::card_header(ui, svg::USERS, "Customers", None);
+            if self.data.is_empty() {
+                controls::empty_state(
+                    ui,
+                    svg::USERS,
+                    "No customers to show",
+                    "Search by email, phone or serial above.",
+                    &[],
+                );
+                return;
+            }
             Grid::new("Customer Selection Grid")
             .num_columns(6)
-            .spacing([5.0, 8.])
+            .spacing(m.gap)
             .min_col_width(ui.available_width()/6.1)
             .max_col_width(ui.available_width()/6.1)
             .striped(true)
             .with_row_color(return_colors)
             .show(ui, |ui| {
-                ui.colored_label(ui.style().visuals.error_fg_color, "First Name");
-                ui.colored_label(ui.style().visuals.error_fg_color, "Last Name");
-                ui.colored_label(ui.style().visuals.error_fg_color, "Phone #");
-                ui.colored_label(ui.style().visuals.error_fg_color, "Email");
-                ui.colored_label(ui.style().visuals.error_fg_color, "Address");
+                controls::section_label(ui, "First Name");
+                controls::section_label(ui, "Last Name");
+                controls::section_label(ui, "Phone #");
+                controls::section_label(ui, "Email");
+                controls::section_label(ui, "Address");
                 ui.label("");
                 ui.end_row();
 
@@ -318,40 +336,38 @@ impl PrestashopOrderForm {
                     ui.label(&address.phone);
                     ui.label(&customer.email);
                     ui.label(&address.address1);
-                    if ui.button("Select").clicked() {
+                    if controls::icon_text_button(ui, svg::USER_CHECK, "Select").clicked() {
                         let _ = self.action_tx.try_send(UiAction::SetSelectedCustomer((customer.clone(), address.clone())));
                     }
                     ui.end_row();
                 }
-                
-                ui.end_row();
             });
         });
     }
 
     pub fn create_customer(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui|{
-            let email_search = TextEdit::singleline(&mut self.customer.email)
-            .hint_text("Customer Email")
-            .ui(ui);
+            let email_search = TextField::new(&mut self.customer.email)
+            .hint("Customer Email")
+            .icon(svg::ENVELOPE_SIMPLE)
+            .width(220.)
+            .show(ui);
 
             if email_search.lost_focus() && !self.customer.email.is_empty() {
                 let _ = self.action_tx.try_send(UiAction::SearchCustomerEmail(self.customer.email.clone()));
             }
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let phone_search = TextEdit::singleline(&mut self.address.phone)
-                .hint_text("Customer Phone #")
-                .ui(ui);
+                let phone_search = TextField::new(&mut self.address.phone)
+                .hint("Customer Phone #")
+                .icon(svg::PHONE)
+                .width(220.)
+                .show(ui);
 
                 if phone_search.lost_focus() && !self.address.phone.is_empty() {
                     let _ = self.action_tx.try_send(UiAction::SearchCustomerPhone(self.address.phone.clone()));
                 }
             });
-        });
-
-        ui.vertical_centered(|_ui| {
-
         });
     }
 
@@ -365,20 +381,20 @@ impl PrestashopOrderForm {
             self.first_ui_run = false;
         }
 
-        ui.add_space(10.);
+        let m = Metrics::get(ui.ctx());
+        ui.add_space(m.gap.y);
 
         #[allow(const_item_mutation)]
         let product_search_rect = &mut Rect::ZERO;
 
         ui.columns(2, |ui| {
             ui[0].vertical_centered(|ui| {
-                ui.spacing_mut().combo_height = 300.;
-
                 ui.horizontal_top(|ui| {
-                    ui.group(|ui| {    
+                    glass_card::group(ui, |ui| {
+                        glass_card::card_header(ui, svg::USER, "Customer", None);
                         Grid::new("Selected Customer Grid")
                         .num_columns(2)
-                        .spacing([5.0, 8.])
+                        .spacing(m.gap)
                         .min_col_width(180.)
                         .max_col_width(180.)
                         .striped(true)
@@ -386,352 +402,213 @@ impl PrestashopOrderForm {
                         .show(ui, |ui| {
                             let customer = &self.customer;
                             let address = &self.address;
-                            ui.colored_label(ui.style().visuals.error_fg_color, "ID");
+                            IconLabel::new(svg::IDENTIFICATION_CARD, "ID").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&customer.id);
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Name");
+                            IconLabel::new(svg::USER, "Name").tone(theme::weak_text(ui)).show(ui);
                             ui.label(format!("{} {}", customer.firstname, customer.lastname));
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Phone #");
+                            IconLabel::new(svg::PHONE, "Phone #").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&address.phone);
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Mobile #");
+                            IconLabel::new(svg::DEVICE_MOBILE, "Mobile #").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&address.phone_mobile);
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Email");
+                            IconLabel::new(svg::ENVELOPE_SIMPLE, "Email").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&customer.email);
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "City");
+                            IconLabel::new(svg::BUILDINGS, "City").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&address.city);
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Address");
+                            IconLabel::new(svg::MAP_PIN, "Address").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&address.address1);
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Address 2");
+                            IconLabel::new(svg::MAP_PIN, "Address 2").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&address.address2);
                             ui.end_row();
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Zipcode");
+                            IconLabel::new(svg::HASH, "Zipcode").tone(theme::weak_text(ui)).show(ui);
                             ui.label(&address.postcode);
                             ui.end_row();
                         });
                     });
 
-                    ui.add_space(50.);
+                    ui.add_space(2.0 * m.gap.x);
 
                     ui.vertical_centered(|ui| {
                         ui.set_width(350.);
-                        ui.group(|ui| {
-                            ui.heading(RichText::new("Device Details").underline().font(FontId::monospace(15.)));
-                            ui.add_space(10.);
-                            ui.separator();
-                            ui.add_space(10.);
-                        
-                            ui.scope_builder(
-                            UiBuilder::new()
-                            .layout(Layout::from_main_dir_and_cross_align(Direction::LeftToRight, Align::Min)), 
-                            |ui| {
-                                let is_sizing_pass = ui.is_sizing_pass();
-                                let available_width = ui.available_width();
-                                let combo_width = 115.0; // Fixed width of each ComboBox
-                                let total_content_width = combo_width * 3.0; // Two ComboBoxes side by side
+                        glass_card::group(ui, |ui| {
+                            glass_card::card_header(ui, svg::LAPTOP, "Device Details", None);
+                            ui.add_space(m.gap.y);
 
-                                // In the rendering pass, add spacing to center the content
-                                if !is_sizing_pass && available_width > total_content_width {
-                                    let padding = (available_width - total_content_width) / 2.0;
-                                    ui.add_space(padding);
-                                }
+                            ui.horizontal(|ui| {
+                                let devices = Device::VALUES;
+                                let device_options: Vec<(Device, &str)> =
+                                    devices.iter().map(|d| (d.clone(), d.as_str())).collect();
+                                controls::dropdown(ui, "Device Selection", &mut self.service_details.device, &device_options, DEVICE_PICKER_W);
 
-                                let selected_text = self.service_details.device.as_str().to_string();
-                                let device_selected = &mut self.service_details.device;
+                                let makers = DeviceMfg::VALUES;
+                                let maker_options: Vec<(DeviceMfg, &str)> =
+                                    makers.iter().map(|d| (d.clone(), d.as_str())).collect();
+                                controls::dropdown(ui, "Device Mfg Selection", &mut self.service_details.device_mfg, &maker_options, DEVICE_PICKER_W);
 
-                                ui.add_space(5.);
-
-                                ComboBox::new("Device Selection", "")
-                                .selected_text(selected_text)
-                                .show_ui(ui, |ui| {
-                                    for device in Device::VALUES {
-                                        ui.selectable_value(
-                                            device_selected,
-                                            device.clone(),
-                                            device.as_str(),
-                                        );
+                                if self.service_details.device_mfg == DeviceMfg::PcLaptops {
+                                    if self.service_details.device == Device::Desktop {
+                                        let models = DesktopModel::VALUES;
+                                        let model_options: Vec<(DesktopModel, &str)> =
+                                            models.iter().map(|d| (d.clone(), d.as_str())).collect();
+                                        controls::dropdown(ui, "Desktop Selection", &mut self.service_details.device_desktop, &model_options, DEVICE_PICKER_W);
+                                    } else if self.service_details.device == Device::Laptop {
+                                        let models = LaptopModel::VALUES;
+                                        let model_options: Vec<(LaptopModel, &str)> =
+                                            models.iter().map(|d| (d.clone(), d.as_str())).collect();
+                                        controls::dropdown(ui, "Laptop Selection", &mut self.service_details.device_laptop, &model_options, DEVICE_PICKER_W);
                                     }
-                                });
-
-                                ui.add_space(5.);
-
-                                let selected_text = self.service_details.device_mfg.as_str().to_string();
-                                let selected = &mut self.service_details.device_mfg;
-                                let _current_selection = selected.clone();
-
-                                ComboBox::new("Device Mfg Selection", "")
-                                .selected_text(selected_text)
-                                .width(115.)
-                                .show_ui(ui, |ui| {
-                                    for device in DeviceMfg::VALUES {
-                                        ui.selectable_value(
-                                            selected,
-                                            device.clone(),
-                                            device.as_str(),
-                                        );
-                                    }
-                                });
-
-                                if *selected == DeviceMfg::PcLaptops {
-                                    let selected_text = self.service_details.device_desktop.as_str().to_string();
-                                    let selected = &mut self.service_details.device_desktop;
-                                    let current_selection = selected.clone();
-
-                                    ui.add_space(5.);
-
-                                    if *device_selected == Device::Desktop {
-                                        ComboBox::new("Desktop Selection", "")
-                                        .selected_text(selected_text)
-                                        .show_ui(ui, |ui| {
-                                            for device in DesktopModel::VALUES {
-                                                ui.selectable_value(
-                                                    selected,
-                                                    device.clone(),
-                                                    device.as_str(),
-                                                );
-                                            }
-                                        });
-
-                                        if current_selection != *selected {
-                                            // let _ = self.data_selection_tx.try_send(selected.clone());
-                                        }
-                                    } else if *device_selected == Device::Laptop {
-                                        let selected_text = self.service_details.device_laptop.as_str().to_string();
-                                        let selected = &mut self.service_details.device_laptop;
-                                        let current_selection = selected.clone();
-
-                                        ui.add_space(5.);
-
-                                        ComboBox::new("Laptop Selection", "")
-                                        .selected_text(selected_text)
-                                        .show_ui(ui, |ui| {
-                                            for device in LaptopModel::VALUES {
-                                                ui.selectable_value(
-                                                    selected,
-                                                    device.clone(),
-                                                    device.as_str(),
-                                                );
-                                            }
-                                        });
-
-                                        if current_selection != *selected {
-                                            // let _ = self.data_selection_tx.try_send(selected.clone());
-                                        }
-                                    }
-                                }
-                        
-                                // Use egui memory to track if we've already done the sizing pass
-                                let sizing_pass_done = ui.memory(|mem| mem.data.get_temp::<bool>(Id::new("combo_sizing_done")).unwrap_or(false));
-
-                                if is_sizing_pass && !sizing_pass_done {
-                                    ui.ctx().request_discard("Centering ComboBox sizing pass");
-                                    ui.ctx().request_repaint();
-                                    ui.memory_mut(|mem| mem.data.insert_temp(Id::new("combo_sizing_done"), true));
-                                }
-
-                                // Reset the flag if the UI is repainted for other reasons (e.g., window resize)
-                                if !is_sizing_pass && sizing_pass_done {
-                                    ui.memory_mut(|mem| mem.data.insert_temp(Id::new("combo_sizing_done"), false));
                                 }
                             });
 
-                            ui.add_space(5.);
-                            TextEdit::singleline(&mut self.service_details.device_pw).hint_text("Device Password").ui(ui);
-                            ui.add_space(5.);
-                            let rect = TextEdit::singleline(&mut self.service_details.device_serial).hint_text("Device Serial").ui(ui).rect;
-                            ui.add_space(5.);
-                            ui.horizontal_top(|ui| {
-                                let cord = &mut self.service_details.power_cord;
-                                let checkbox_pos = pos2(rect.min.x, rect.max.y + 5.0); // 5.0 for a small gap
-                                let new_rect = Rect::from_min_size(checkbox_pos, vec2(100., 20.));
-                                ui.put(new_rect, Checkbox::new(cord, "Power Cord?"));
-                                // ui.add_space(ui.available_width()/3.5);
-                                ui.add_space(10.);
-                                if *cord {
-                                    TextEdit::singleline(&mut self.service_details.power_cord_serial)
-                                        .hint_text("Power Cord Serial")
-                                        .desired_width(150.)
-                                        .ui(ui);
+                            ui.add_space(m.gap.y);
+                            TextField::new(&mut self.service_details.device_pw)
+                                .hint("Device Password")
+                                .icon(svg::PASSWORD)
+                                .width(ui.available_width())
+                                .show(ui);
+                            ui.add_space(m.gap.y);
+                            TextField::new(&mut self.service_details.device_serial)
+                                .hint("Device Serial")
+                                .icon(svg::BARCODE)
+                                .width(ui.available_width())
+                                .show(ui);
+                            ui.add_space(m.gap.y);
+                            ui.horizontal(|ui| {
+                                controls::toggle(ui, &mut self.service_details.power_cord, "Power Cord?");
+                                if self.service_details.power_cord {
+                                    TextField::new(&mut self.service_details.power_cord_serial)
+                                        .hint("Power Cord Serial")
+                                        .icon(svg::PLUG)
+                                        .width(150.)
+                                        .show(ui);
                                 }
                             });
-                            ui.add_space(5.);
-                            TextEdit::multiline(&mut self.service_details.checkin_notes).hint_text("Check-In Notes").desired_rows(6).ui(ui);
-
-                            ui.add_space(13.);
+                            ui.add_space(m.gap.y);
+                            controls::TextArea::new(&mut self.service_details.checkin_notes).hint("Check-In Notes").rows(6).show(ui);
                         });
                     });
-
-                    ui.add_space(10.);
                 });
 
-                ui.add_space(30.);
+                ui.add_space(2.0 * m.gap.y);
 
-                ui.horizontal_top(|ui| {
-                    ui.add_space(ui.available_width()/2.8);
-                    let res = TextEdit::singleline(&mut self.odoo_product_search)
-                    .desired_width(150.)
-                    .hint_text("Search for a product")
-                    .ui(ui);
+                let res = controls::search_field(ui, &mut self.odoo_product_search, "Search for a product", 220.);
 
-                    if res.has_focus() && res.changed() && self.odoo_product_search.len() > 1  {
-                        if self.last_search_time.elapsed() > Duration::from_millis(50) {
-                            self.last_search_time = Instant::now();
-                            let _ = self.action_tx.try_send(UiAction::SearchProduct(self.odoo_product_search.clone()));
-                        }
+                if res.has_focus()
+                    && res.changed()
+                    && self.odoo_product_search.len() > 1
+                    && self.last_search_time.elapsed() > Duration::from_millis(50)
+                {
+                    self.last_search_time = Instant::now();
+                    let _ = self.action_tx.try_send(UiAction::SearchProduct(self.odoo_product_search.clone()));
+                }
+
+                ui.add_space(m.gap.y);
+
+                *product_search_rect = glass_card::group(ui, |ui| {
+                    glass_card::card_header(ui, svg::MAGNIFYING_GLASS, "Product Search Results", None);
+
+                    let products: Vec<&ExtraInventoryData> = self
+                        .searched_products
+                        .iter()
+                        .filter(|p|
+                            !p.default_code
+                            .as_deref()
+                            .is_some_and(|c| c.to_lowercase().ends_with("/xidax"))
+                        )
+                        .collect();
+                    if products.is_empty() {
+                        controls::empty_state(ui, svg::PACKAGE, "No products", "Search for a product above.", &[]);
+                        return;
                     }
-                    ui.add_space(5.);
-                    if ui.button("Clear").clicked() {
-                        self.odoo_product_search.clear();
-                    }                                
-                });
 
-                ui.add_space(10.);
-
-                *product_search_rect = ui.group(|ui| {
-                    ui.heading(RichText::new("Product Search Results").underline().font(FontId::monospace(15.)));
-                    ui.add_space(10.);
-                    ui.separator();
-                    ui.add_space(10.);
-                    
                     Grid::new("Product Selection Grid")
                     .num_columns(5)
-                    .spacing([5., 8.])
+                    .spacing(m.gap)
                     .min_col_width(ui.available_width()/5.1)
                     .max_col_width(ui.available_width()/5.1)
                     .striped(true)
                     .with_row_color(return_colors)
                     .show(ui, |ui| {
-                        // ui.colored_label(ui.style().visuals.error_fg_color, "Product Name");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Product Code");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Qty Avail");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Cost");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Standard Price");
+                        controls::section_label(ui, "Product Code");
+                        controls::section_label(ui, "Qty Avail");
+                        controls::section_label(ui, "Cost");
+                        controls::section_label(ui, "Standard Price");
                         ui.label("");
                         ui.end_row();
 
-                        for product in self
-                            .searched_products
-                            .iter()
-                            .filter(|p|
-                                !p.default_code
-                                .as_deref()
-                                .is_some_and(|c| c.to_lowercase().ends_with("/xidax"))
-                            )
-                        {
-                            // ui.label(&product.name);
+                        for product in products {
                             ui.label(product.default_code.as_deref().unwrap_or(&product.name));
                             ui.label(product.qty_available.to_string());
                             ui.label(format!(" $ {:.2}", product.list_price));
                             ui.label(format!(" $ {:.2}", product.standard_price));
-                            if ui.button("Add +").clicked() {
+                            if controls::icon_text_button(ui, svg::PLUS, "Add").clicked() {
                                 let _ = self.action_tx.try_send(UiAction::AddProduct(product.clone()));
                             }
                             ui.end_row();
                         }
-                        ui.label("");
-                        ui.label("");
-                        ui.label("");
-                        ui.label("");
-                        ui.label("");
-                        ui.end_row();
                     });
                 }).response.rect;
             });
-            
+
             ui[1].vertical_centered(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.set_width(435.);
-                    ui.group(|ui| {
-                        ui.heading(RichText::new("Service Details").underline().font(FontId::monospace(15.)));
-                        ui.add_space(10.);
-                        ui.separator();
-                        ui.add_space(10.);
-
-                        let current_name = self.store_users
-                            .iter()
-                            .find(|u| u.get_id() == self.sales_rep.get_id())
-                            .map(|u| u.get_username().to_owned())
-                            .unwrap_or_else(|| "Sales Rep".to_string());
-
-                        let current_split_rep = self.store_users
-                            .iter()
-                            .filter(|u| u.get_id() != self.sales_rep.get_id())
-                            .find_or_first(|u| u.get_id() == self.split_rep.get_id())
-                            .map(|u| u.get_username().to_owned())
-                            .unwrap_or_else(|| "Split Rep".to_string());
+                    glass_card::group(ui, |ui| {
+                        glass_card::card_header(ui, svg::CLIPBOARD_TEXT, "Service Details", None);
+                        ui.add_space(m.gap.y);
 
                         let sorted_users = assignable_users(&self.store_users, self.sales_rep.get_store());
+                        let user_options: Vec<(RecordId, &str)> = sorted_users
+                            .iter()
+                            .map(|u| (u.get_id(), u.get_username()))
+                            .collect();
 
-                        ui.horizontal(|ui| {
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Sales Rep:");
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ComboBox::from_id_salt("Sales Rep Selection")
-                                .selected_text(&current_name)
-                                .width(125.)
-                                .show_ui(ui, |ui| {
-                                    for user in sorted_users.iter().cloned() {
-                                        ui.selectable_value(
-                                            &mut self.sales_rep,       // current_value: &mut RecordId
-                                            user.clone(),    // selected_value: RecordId
-                                            user.get_username(),      // text: &str or String
-                                        );
-                                    }
-                                });
-                            });
-                        });
+                        Grid::new("Service Details Grid")
+                        .num_columns(2)
+                        .spacing(m.gap)
+                        .show(ui, |ui| {
+                            IconLabel::new(svg::USER, "Sales Rep").tone(theme::weak_text(ui)).show(ui);
+                            let mut rep_id = self.sales_rep.get_id();
+                            if controls::dropdown(ui, "Sales Rep Selection", &mut rep_id, &user_options, REP_PICKER_W).changed()
+                                && let Some(user) = sorted_users.iter().copied().find(|u| u.get_id() == rep_id)
+                            {
+                                self.sales_rep = user.clone();
+                            }
+                            ui.end_row();
 
-                        ui.add_space(5.);
-
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut self.add_split_rep, RichText::new("Split Rep:").color(ui.style().visuals.error_fg_color));
-                            
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if self.add_split_rep {
-                                    ComboBox::from_id_salt("Split Rep Selection")
-                                    .selected_text(&current_split_rep)
-                                    .width(125.)
-                                    .show_ui(ui, |ui| {
-                                        // let users = sorted_users.clone
-                                        for user in sorted_users.iter().filter(|u| u.get_id() != self.sales_rep.get_id()).cloned() {
-                                            ui.selectable_value(
-                                                &mut self.split_rep,       // current_value: &mut RecordId
-                                                user.clone(),    // selected_value: RecordId
-                                                user.get_username(),      // text: &str or String
-                                            );
-                                        }
-                                    });
+                            controls::toggle(ui, &mut self.add_split_rep, "Split Rep");
+                            if self.add_split_rep {
+                                let split_options: Vec<(RecordId, &str)> = sorted_users
+                                    .iter()
+                                    .filter(|u| u.get_id() != self.sales_rep.get_id())
+                                    .map(|u| (u.get_id(), u.get_username()))
+                                    .collect();
+                                let mut split_id = self.split_rep.get_id();
+                                if controls::dropdown(ui, "Split Rep Selection", &mut split_id, &split_options, REP_PICKER_W).changed()
+                                    && let Some(user) = sorted_users.iter().copied().find(|u| u.get_id() == split_id)
+                                {
+                                    self.split_rep = user.clone();
                                 }
-                            });
-                        });
+                            } else {
+                                ui.label("");
+                            }
+                            ui.end_row();
 
-                        ui.add_space(5.);
-
-                        ui.horizontal(|ui| {
-                            ui.colored_label(ui.style().visuals.error_fg_color, "Order Type:");
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ComboBox::new("Order State", "")
-                                .selected_text(self.order_state.as_str())
-                                .width(125.)
-                                .show_ui(ui, |ui| {
-                                    for status in PrestashopOrderType::VALUES.iter() {
-                                        ui.selectable_value(
-                                            &mut self.order_state, 
-                                            status.clone(), 
-                                            status.as_str()
-                                        );
-                                    }
-                                });
-                            });
+                            IconLabel::new(svg::TAG, "Order Type").tone(theme::weak_text(ui)).show(ui);
+                            let order_types = PrestashopOrderType::VALUES;
+                            let type_options: Vec<(PrestashopOrderType, &str)> = order_types
+                                .iter()
+                                .map(|t| (t.clone(), t.as_str()))
+                                .collect();
+                            controls::dropdown(ui, "Order State", &mut self.order_state, &type_options, REP_PICKER_W);
+                            ui.end_row();
                         });
-                            
-                        ui.add_space(5.);
-                        ui.add_space(30.);
-                        ui.add_space(13.);
                     });
                 });
 
@@ -744,37 +621,42 @@ impl PrestashopOrderForm {
                     ui.add_space(space_to_add); // Add space to push "Added Products" down
                 }
 
-                ui.group(|ui| {
-                    ui.heading(RichText::new("Added Products").underline().font(FontId::monospace(15.)));
-                    ui.add_space(10.);
-                    ui.separator();
-                    ui.add_space(10.);
+                glass_card::group(ui, |ui| {
+                    glass_card::card_header(ui, svg::SHOPPING_CART, "Added Products", None);
+                    if self.added_products.is_empty() {
+                        controls::empty_state(
+                            ui,
+                            svg::SHOPPING_CART,
+                            "No products added",
+                            "Add products from the search results.",
+                            &[],
+                        );
+                        return;
+                    }
 
                     Grid::new("Added Products Grid")
                     .num_columns(5)
-                    .spacing([5.0, 8.])
+                    .spacing(m.gap)
                     .min_col_width(ui.available_width()/5.1)
                     .max_col_width(ui.available_width()/5.1)
                     .striped(true)
                     .with_row_color(return_colors)
                     .show(ui, |ui| {
-                        // ui.colored_label(ui.style().visuals.error_fg_color, "Product Name");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Product Code");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Qty Avail");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Cost");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "Standard Price");
+                        controls::section_label(ui, "Product Code");
+                        controls::section_label(ui, "Qty Avail");
+                        controls::section_label(ui, "Cost");
+                        controls::section_label(ui, "Standard Price");
                         ui.label("");
                         ui.end_row();
 
                         let total = &mut 0.0;
                         for product in self.added_products.iter() {
                             *total += product.list_price;
-                            // ui.label(&product.name);
                             ui.label(product.default_code.as_deref().unwrap_or(&product.name));
                             ui.label(product.qty_available.to_string());
                             ui.label(format!(" $ {:.2}", product.list_price));
                             ui.label(format!(" $ {:.2}", product.standard_price));
-                            if ui.button("Remove -").clicked() {
+                            if controls::icon_text_button(ui, svg::MINUS_CIRCLE, "Remove").clicked() {
                                 let _ = self.action_tx.try_send(UiAction::RemoveProduct(product.clone()));
                             }
                             ui.end_row();
@@ -784,8 +666,12 @@ impl PrestashopOrderForm {
                         ui.label("");
                         ui.label("");
                         ui.label("");
-                        ui.colored_label(ui.style().visuals.error_fg_color, format!("Subtotal: $ {:.2}", total));
-                        
+                        ui.label(
+                            RichText::new(format!("Subtotal: $ {:.2}", total))
+                                .strong()
+                                .color(theme::primary(ui)),
+                        );
+
                         ui.end_row();
                     });
                 });

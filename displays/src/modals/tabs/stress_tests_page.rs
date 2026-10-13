@@ -4,10 +4,14 @@
 
 use chrono::{DateTime, Utc};
 use database::schema::{Datetime, RecordId, RecordIdExt, StressTestRun};
-use eframe::egui::{
-    CollapsingHeader, Grid, RichText, ScrollArea, Spinner, Ui, Vec2, Widget,
+use eframe::egui::{Grid, RichText, ScrollArea, Ui, Vec2};
+
+use super::diagnostics_page::status_section;
+use crate::ui_tools::{
+    controls::{self, BarKind, Icon, IconLabel, Metrics, SpinnerSize},
+    icons::svg,
+    theme,
 };
-use crate::ui_tools::theme;
 
 /// Render the stress-tests page: a scrollable list of runs for the task's
 /// computer, each expandable into verdict, timing, and rolled-up telemetry.
@@ -21,40 +25,36 @@ pub fn display_stress_tests_page(
     selected: &mut Option<RecordId>,
 ) {
     ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("Stress Tests ({})", runs.len()))
-                    .strong()
-                    .size(14.0),
-            );
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::icon_label(ui, svg::MT_STRESS, &format!("Stress Tests ({})", runs.len()));
             if loading {
-                Spinner::new().size(14.0).ui(ui);
+                controls::spinner(ui, SpinnerSize::Sm);
             }
         });
 
         if let Some(err) = error {
-            ui.colored_label(theme::error(ui), err);
+            controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
         }
-
-        ui.separator();
 
         if runs.is_empty() && !loading {
             if computer_linked {
-                ui.colored_label(
-                    theme::weak_text(ui),
+                controls::empty_state(
+                    ui,
+                    svg::MT_STRESS,
+                    "No stress tests yet",
                     "No stress tests recorded for this computer yet.",
+                    &[],
                 );
             } else {
                 // Computer still resolving from its async fetch; avoid a
                 // false "none recorded" verdict before the query can run.
-                ui.horizontal(|ui| {
-                    Spinner::new().size(14.0).ui(ui);
-                    ui.colored_label(theme::weak_text(ui), "Loading…");
-                });
+                controls::loading_state(ui, "Loading…");
             }
             return;
         }
 
+        ui.add_space(m.pad.y);
         // Fill nearly all remaining vertical space with the run list.
         let list_h = ui.available_height() * 0.99;
         ScrollArea::vertical()
@@ -69,10 +69,21 @@ pub fn display_stress_tests_page(
                     render_run(ui, run, idx, is_selected, |id| {
                         *selected = Some(id);
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(m.gap.y);
                 }
             });
     });
+}
+
+/// Icon for a run or stage result.
+fn result_icon(result: &str) -> Icon {
+    match result {
+        "pass" => svg::CHECK_CIRCLE,
+        "fail" => svg::X_CIRCLE,
+        "aborted" => svg::MINUS_CIRCLE,
+        "inconclusive" => svg::QUESTION,
+        _ => svg::CIRCLE_DASHED,
+    }
 }
 
 fn render_run(
@@ -82,6 +93,7 @@ fn render_run(
     selected: bool,
     mut on_select: impl FnMut(RecordId),
 ) {
+    let m = Metrics::get(ui.ctx());
     let result_color = match run.result.as_str() {
         "pass" => theme::result_pass(ui),
         "fail" => theme::result_fail(ui),
@@ -97,10 +109,15 @@ fn render_run(
         run.result.as_str(),
     );
 
-    let resp = CollapsingHeader::new(RichText::new(header).strong().size(13.0))
-        .id_salt(format!("stress_run_{idx}_{}", run.id.key_string()))
-        .default_open(idx == 0 || selected)
-        .show(ui, |ui| {
+    let salt = format!("stress_run_{idx}_{}", run.id.key_string());
+    let (clicked, _) = status_section(
+        ui,
+        &salt,
+        result_icon(run.result.as_str()),
+        result_color,
+        &header,
+        idx == 0 || selected,
+        |ui| {
             Grid::new(format!("stress_meta_grid_{idx}"))
                 .num_columns(2)
                 .striped(false)
@@ -157,9 +174,11 @@ fn render_run(
             render_summary(ui, run, idx);
 
             if !run.scenario_stages.is_empty() {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!("Stages ({})", run.scenario_stages.len())).strong(),
+                ui.add_space(m.gap.y);
+                controls::icon_label(
+                    ui,
+                    svg::STACK,
+                    &format!("Stages ({})", run.scenario_stages.len()),
                 );
                 for stage in run.scenario_stages.iter() {
                     let stage_color = match stage.result.as_deref() {
@@ -169,10 +188,10 @@ fn render_run(
                         _ => theme::result_unknown(ui),
                     };
                     ui.horizontal_wrapped(|ui| {
-                        ui.colored_label(
-                            stage_color,
-                            format!("{}. {}", stage.index, stage.label),
-                        );
+                        let stage_text = format!("{}. {}", stage.index, stage.label);
+                        IconLabel::new(result_icon(stage.result.as_deref().unwrap_or("")), &stage_text)
+                            .tone(stage_color)
+                            .show(ui);
                         if stage.had_error {
                             if let Some(err) = stage.last_error.as_deref() {
                                 ui.colored_label(theme::result_fail(ui), err);
@@ -187,14 +206,15 @@ fn render_run(
 
             if let Some(notes) = run.notes.as_deref() {
                 if !notes.trim().is_empty() {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Notes").strong());
+                    ui.add_space(m.pad.y);
+                    controls::icon_label(ui, svg::NOTE, "Notes");
                     ui.label(notes);
                 }
             }
-        });
+        },
+    );
 
-    if resp.header_response.clicked() {
+    if clicked {
         on_select(run.id.clone());
     }
 }
@@ -203,8 +223,8 @@ fn render_run(
 /// the fields that are populated.
 fn render_summary(ui: &mut Ui, run: &StressTestRun, idx: usize) {
     let s = &run.summary;
-    ui.add_space(4.0);
-    ui.label(RichText::new("Summary").strong());
+    ui.add_space(Metrics::get(ui.ctx()).pad.y);
+    controls::icon_label(ui, svg::CHART_BAR, "Summary");
     Grid::new(format!("stress_summary_grid_{idx}"))
         .num_columns(2)
         .striped(false)
@@ -270,7 +290,7 @@ fn render_summary(ui: &mut Ui, run: &StressTestRun, idx: usize) {
             }
             if s.thermal_throttle_detected {
                 ui.label(RichText::new("Thermal throttle").weak());
-                ui.colored_label(theme::warn(ui), "yes");
+                controls::status_label(ui, svg::THERMOMETER_HOT, "yes", theme::warn(ui));
                 ui.end_row();
             }
         });

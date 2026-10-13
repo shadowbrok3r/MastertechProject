@@ -5,16 +5,21 @@
 //! sortable by clicking column headers (TableBuilder default), and styled
 //! consistently across views.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
+use mtech_ui::controls::{self, Icon, Metrics, Tokens};
+use mtech_ui::icons::svg;
+use mtech_ui::theme;
 use stress_kit::telemetry::{
     DiskRateSample, GpuSample, MemorySample, NetworkRateSample, ProcessSample, ThermalReading,
     WheaCounters,
 };
 
-use super::{temp_color, usage_color};
-
 const ROW_HEIGHT: f32 = 18.0;
+/// Height of a usage bar.
+const BAR_H: f32 = 10.0;
+/// Widest a usage bar runs.
+const BAR_MAX_W: f32 = 360.0;
 
 pub fn show_cores(
     ui: &mut egui::Ui,
@@ -33,7 +38,7 @@ pub fn show_cores(
         .collect();
 
     if visible.is_empty() {
-        empty_state(ui, "No cores match the filter.");
+        controls::empty_state(ui, svg::CPU, "No cores", "No cores match the filter.", &[]);
         return;
     }
 
@@ -59,10 +64,8 @@ pub fn show_cores(
             for c in visible {
                 body.row(ROW_HEIGHT, |mut r| {
                     r.col(|ui| {
-                        ui.colored_label(
-                            ui.style().visuals.warn_fg_color,
-                            format!("{}", c.index),
-                        );
+                        let tone = theme::warn(ui);
+                        ui.colored_label(tone, format!("{}", c.index));
                     });
                     r.col(|ui| {
                         ui.label(&c.name);
@@ -71,10 +74,8 @@ pub fn show_cores(
                         ui.label(&c.brand);
                     });
                     r.col(|ui| {
-                        ui.colored_label(
-                            usage_color(c.usage_pct),
-                            format!("{:.1}%", c.usage_pct),
-                        );
+                        let tone = theme::usage_level(ui, c.usage_pct);
+                        ui.colored_label(tone, format!("{:.1}%", c.usage_pct));
                     });
                     r.col(|ui| {
                         ui.label(format!("{} MHz", c.freq_mhz));
@@ -92,11 +93,10 @@ pub fn show_cores(
                         });
                         match temp {
                             Some(t) => {
-                                ui.colored_label(temp_color(t), format!("{t:.1} °C"));
+                                let tone = theme::temp_level(ui, t);
+                                ui.colored_label(tone, format!("{t:.1} °C"));
                             }
-                            None => {
-                                ui.colored_label(Color32::GRAY, "N/A");
-                            }
+                            None => missing(ui, "N/A"),
                         }
                     });
                 });
@@ -105,40 +105,38 @@ pub fn show_cores(
 }
 
 pub fn show_memory(ui: &mut egui::Ui, m: &MemorySample) {
-    ui.add_space(8.0);
+    let gap = Metrics::get(ui.ctx()).gap;
+    ui.add_space(gap.x);
     ui.vertical(|ui| {
         bar_row(
             ui,
+            svg::MEMORY,
             "RAM",
             &format!("{} / {} MB", m.used_mb, m.total_mb),
             m.used_pct,
         );
-        ui.add_space(8.0);
+        ui.add_space(gap.x);
         bar_row(
             ui,
+            svg::SWAP,
             "Page file",
             &format!("{} / {} MB", m.page_file_used_mb, m.page_file_total_mb),
             m.page_file_used_pct,
         );
-        ui.add_space(8.0);
+        ui.add_space(gap.x);
 
         ui.horizontal(|ui| {
             ui.label(RichText::new("vmmem").strong());
-            ui.add_space(8.0);
             match m.vmmem_mb {
                 Some(mb) => {
-                    ui.colored_label(
-                        Color32::from_rgb(140, 180, 230),
-                        format!("{mb} MB resident (WSL / Hyper-V)"),
-                    );
+                    let tone = theme::info(ui);
+                    ui.colored_label(tone, format!("{mb} MB resident (WSL / Hyper-V)"));
                 }
-                None => {
-                    ui.colored_label(Color32::GRAY, "not running");
-                }
+                None => missing(ui, "not running"),
             }
         });
 
-        ui.add_space(12.0);
+        ui.add_space(gap.y * 2.0);
         ui.label(
             RichText::new(
                 "Page-file numbers on Windows are derived from \
@@ -158,7 +156,13 @@ pub fn show_disks(ui: &mut egui::Ui, disks: &[DiskRateSample], filter: &str) {
         .collect();
 
     if visible.is_empty() {
-        empty_state(ui, "No disks reported in the latest snapshot.");
+        controls::empty_state(
+            ui,
+            svg::HARD_DRIVES,
+            "No disks",
+            "No disks reported in the latest snapshot.",
+            &[],
+        );
         return;
     }
 
@@ -199,7 +203,13 @@ pub fn show_networks(ui: &mut egui::Ui, nets: &[NetworkRateSample], filter: &str
         .collect();
 
     if visible.is_empty() {
-        empty_state(ui, "No network interfaces reported.");
+        controls::empty_state(
+            ui,
+            svg::NETWORK_SLASH,
+            "No network interfaces reported",
+            "",
+            &[],
+        );
         return;
     }
 
@@ -233,43 +243,36 @@ pub fn show_networks(ui: &mut egui::Ui, nets: &[NetworkRateSample], filter: &str
 }
 
 pub fn show_whea(ui: &mut egui::Ui, whea: &Option<WheaCounters>) {
-    ui.add_space(8.0);
+    let gap = Metrics::get(ui.ctx()).gap;
+    ui.add_space(gap.x);
     match whea {
         None => {
-            ui.colored_label(
-                Color32::GRAY,
-                "WHEA counters unavailable on this platform \
-                 (Windows only, requires readable WHEA log).",
+            controls::empty_state(
+                ui,
+                svg::WARNING_OCTAGON,
+                "WHEA counters unavailable on this platform",
+                "Windows only, requires readable WHEA log.",
+                &[],
             );
         }
         Some(w) => {
             let delta_color = if w.delta_since_program_start > 0 {
-                Color32::from_rgb(220, 80, 60)
+                theme::error(ui)
             } else {
-                Color32::from_rgb(140, 200, 140)
+                theme::success(ui)
             };
             ui.vertical(|ui| {
-                ui.label(
-                    RichText::new("Windows Hardware Error Architecture")
-                        .strong()
-                        .size(15.0),
-                );
-                ui.add_space(8.0);
+                controls::subheading(ui, svg::CIRCUITRY, "Windows Hardware Error Architecture");
+                ui.add_space(gap.x);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("New since program start:").strong());
-                    ui.colored_label(
-                        delta_color,
-                        format!("{}", w.delta_since_program_start),
-                    );
+                    ui.colored_label(delta_color, format!("{}", w.delta_since_program_start));
                 });
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Total retained (spans reboots):").strong());
-                    ui.colored_label(
-                        Color32::from_rgb(180, 180, 200),
-                        format!("{}", w.total_retained),
-                    );
+                    ui.label(format!("{}", w.total_retained));
                 });
-                ui.add_space(8.0);
+                ui.add_space(gap.x);
                 ui.label(
                     RichText::new(
                         "Any non-zero delta during a stress run is a hardware-error \
@@ -292,9 +295,12 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
         .collect();
 
     if visible.is_empty() {
-        empty_state(
+        controls::empty_state(
             ui,
+            svg::LIST_BULLETS,
+            "No processes yet",
             "No processes in the latest snapshot. (The first tick may take a few seconds.)",
+            &[],
         );
         return;
     }
@@ -325,10 +331,8 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
                         ui.label(&p.name);
                     });
                     r.col(|ui| {
-                        ui.colored_label(
-                            usage_color(p.cpu_pct.min(100.0)),
-                            format!("{:.1}", p.cpu_pct),
-                        );
+                        let tone = theme::usage_level(ui, p.cpu_pct.min(100.0));
+                        ui.colored_label(tone, format!("{:.1}", p.cpu_pct));
                     });
                     r.col(|ui| {
                         ui.label(format!("{}", p.mem_mb));
@@ -337,9 +341,7 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
                         Some(pp) => {
                             ui.label(format!("{pp}"));
                         }
-                        None => {
-                            ui.colored_label(Color32::GRAY, "—");
-                        }
+                        None => missing(ui, "—"),
                     });
                 });
             }
@@ -348,7 +350,13 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
 
 pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
     if gpus.is_empty() {
-        empty_state(ui, "No GPU visible to NVML, WDDM, or sysinfo.");
+        controls::empty_state(
+            ui,
+            svg::GRAPHICS_CARD,
+            "No GPU",
+            "No GPU visible to NVML, WDDM, or sysinfo.",
+            &[],
+        );
         return;
     }
 
@@ -384,32 +392,26 @@ pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
                     });
                     r.col(|ui| match g.temp_c {
                         Some(t) => {
-                            ui.colored_label(temp_color(t), format!("{t:.1} °C"));
+                            let tone = theme::temp_level(ui, t);
+                            ui.colored_label(tone, format!("{t:.1} °C"));
                         }
-                        None => {
-                            ui.colored_label(Color32::GRAY, "N/A");
-                        }
+                        None => missing(ui, "N/A"),
                     });
                     r.col(|ui| match g.usage_pct {
                         Some(u) => {
-                            ui.colored_label(usage_color(u), format!("{u:.1}"));
+                            let tone = theme::usage_level(ui, u);
+                            ui.colored_label(tone, format!("{u:.1}"));
                         }
-                        None => {
-                            ui.colored_label(Color32::GRAY, "—");
-                        }
+                        None => missing(ui, "—"),
                     });
-                    r.col(|ui| {
-                        match (g.memory_used_mb, g.memory_total_mb) {
-                            (Some(u), Some(t)) => {
-                                ui.label(format!("{u} / {t} MB"));
-                            }
-                            (Some(u), None) => {
-                                ui.label(format!("{u} MB"));
-                            }
-                            _ => {
-                                ui.colored_label(Color32::GRAY, "—");
-                            }
+                    r.col(|ui| match (g.memory_used_mb, g.memory_total_mb) {
+                        (Some(u), Some(t)) => {
+                            ui.label(format!("{u} / {t} MB"));
                         }
+                        (Some(u), None) => {
+                            ui.label(format!("{u} MB"));
+                        }
+                        _ => missing(ui, "—"),
                     });
                 });
             }
@@ -424,11 +426,14 @@ pub fn show_thermals(ui: &mut egui::Ui, thermals: &[ThermalReading], filter: &st
         .collect();
 
     if visible.is_empty() {
-        empty_state(
+        controls::empty_state(
             ui,
+            svg::THERMOMETER,
+            "No temperature sensors",
             "No temperature sensors in the latest snapshot. CPU/board temps need a kernel-mode \
              sensor backend and an elevated run; NVMe/SATA disk temps need no driver. See the \
              Logs tab for which backend was tried and why it declined.",
+            &[],
         );
         return;
     }
@@ -450,7 +455,8 @@ pub fn show_thermals(ui: &mut egui::Ui, thermals: &[ThermalReading], filter: &st
                         ui.label(&t.label);
                     });
                     r.col(|ui| {
-                        ui.colored_label(temp_color(t.temp_c), format!("{:.1} °C", t.temp_c));
+                        let tone = theme::temp_level(ui, t.temp_c);
+                        ui.colored_label(tone, format!("{:.1} °C", t.temp_c));
                     });
                 });
             }
@@ -463,27 +469,29 @@ fn header_label(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).strong());
 }
 
-fn empty_state(ui: &mut egui::Ui, msg: &str) {
-    ui.add_space(12.0);
-    ui.colored_label(Color32::GRAY, msg);
+/// Faint placeholder for a missing reading.
+fn missing(ui: &mut egui::Ui, text: &str) {
+    let tone = theme::faint_text(ui);
+    ui.colored_label(tone, text);
 }
 
-fn bar_row(ui: &mut egui::Ui, label: &str, value: &str, pct: f32) {
+fn bar_row(ui: &mut egui::Ui, icon: Icon, label: &str, value: &str, pct: f32) {
     let pct = pct.clamp(0.0, 100.0);
-    let color = usage_color(pct);
+    let color = theme::usage_level(ui, pct);
+    let t = Tokens::get(ui.ctx());
+    let m = Metrics::get(ui.ctx());
     ui.horizontal(|ui| {
+        let (slot, _) = ui.allocate_exact_size(egui::Vec2::splat(m.icon_md), egui::Sense::hover());
+        icon.paint(ui, slot, m.icon_md, t.icon);
         ui.label(RichText::new(label).strong());
-        ui.add_space(8.0);
         ui.colored_label(color, format!("{pct:.1}%"));
-        ui.add_space(8.0);
         ui.label(RichText::new(value).weak());
     });
-    let bar_h = 10.0;
-    let bar_w = ui.available_width().min(360.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
+    let bar_w = ui.available_width().min(BAR_MAX_W);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, BAR_H), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
+    painter.rect_filled(rect, t.radius_sm, t.sunken);
     let filled_w = rect.width() * (pct / 100.0);
     let filled = egui::Rect::from_min_size(rect.min, egui::vec2(filled_w, rect.height()));
-    painter.rect_filled(filled, 4.0, color);
+    painter.rect_filled(filled, t.radius_sm, color);
 }

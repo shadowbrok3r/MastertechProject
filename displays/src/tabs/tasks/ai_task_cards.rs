@@ -8,11 +8,16 @@
 use crate::modals::tabs::ai_checklist_panel::{
     ai_checklist_progress, can_close_ai_task, display_ai_checklist,
 };
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{
+    self, ButtonKind, IconBox, IconButton, IconLabel, MenuButton, Metrics, Section, TextButton,
+    Tokens,
+};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use crate::TaskUiActions;
 use crossbeam::channel::Sender;
 use database::schema::{AiTask, AiTaskItem, AiTaskStatus, LiveTaskPayload, RecordIdExt, TaskNotePayload, User, assignable_users};
-use eframe::egui::{Button, CollapsingHeader, ComboBox, Frame, Margin, RichText, Shadow, Ui, Vec2, Widget};
+use eframe::egui::{Frame, Margin, RichText, Shadow, Ui};
 
 #[derive(Clone, PartialEq)]
 pub enum AiCardRole {
@@ -52,11 +57,12 @@ impl AiTaskCardView {
         let key = task.id.key_string();
         let done = self.items.len() > 0 && self.items.iter().all(|i| i.checked);
 
+        let m = Metrics::get(ui.ctx());
         let mut frame = Frame::default()
             .fill(style.visuals.extreme_bg_color)
             .inner_margin(Margin::same(8))
-            .outer_margin(Margin::same(5))
-            .corner_radius(eframe::egui::CornerRadius::same(15))
+            .outer_margin(Margin::same(4))
+            .corner_radius(eframe::egui::CornerRadius::same(Tokens::get(ui.ctx()).radius_md))
             .shadow(Shadow::NONE)
             .begin(ui);
 
@@ -71,14 +77,8 @@ impl AiTaskCardView {
                 ui.with_layout(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                     |ui| {
-                        ui.style_mut().spacing.button_padding.x = 6.0;
-                        ui.style_mut().spacing.button_padding.y = 4.0;
-
                         // Jump straight to the diagnostics hub for this handoff.
-                        if Button::new(icons::DIAGNOSTICS)
-                            .min_size(Vec2::new(25.0, 20.0))
-                            .ui(ui)
-                            .on_hover_text("Open Diagnostics tab")
+                        if controls::icon_button(ui, svg::MICROSCOPE, IconBox::Sm, false, "Open Diagnostics tab")
                             .clicked()
                         {
                             let _ = tx.try_send(TaskUiActions::OpenTaskDiagnostics {
@@ -87,10 +87,7 @@ impl AiTaskCardView {
                             });
                         }
 
-                        if Button::new("⮫")
-                            .min_size(Vec2::new(25.0, 20.0))
-                            .ui(ui)
-                            .on_hover_text("Open Task Modal")
+                        if controls::icon_button(ui, svg::ARROW_SQUARE_OUT, IconBox::Sm, false, "Open Task Modal")
                             .clicked()
                         {
                             let _ = tx.try_send(TaskUiActions::OpenTaskModalById(
@@ -109,22 +106,15 @@ impl AiTaskCardView {
                                     && last_read.map(|lr| created > lr).unwrap_or(true)
                             })
                         };
-                        let label = if count > 0 {
-                            let color = if has_unread {
-                                eframe::egui::Color32::from_rgb(250, 100, 80)
-                            } else {
-                                style.visuals.warn_fg_color
-                            };
-                            RichText::new(format!("{count} 💬")).color(color)
-                        } else {
-                            RichText::new("  💬")
-                        };
-                        if Button::new(label)
-                            .min_size(Vec2::new(25.0, 20.0))
-                            .ui(ui)
-                            .on_hover_text("Open Task Notes")
-                            .clicked()
-                        {
+                        let tone = if has_unread { theme::error(ui) } else { theme::warn(ui) };
+                        let mut notes_button =
+                            IconButton::new(svg::CHAT_TEXT, IconBox::Sm).tip("Open Task Notes");
+                        if count > 0 {
+                            notes_button = notes_button.tint(tone);
+                        }
+                        let notes_resp = notes_button.show(ui);
+                        controls::count_badge(ui, notes_resp.rect, count, tone);
+                        if notes_resp.clicked() {
                             let _ = tx.try_send(TaskUiActions::OpenChatModal((
                                 task.task_ref.clone(),
                                 notes.clone(),
@@ -132,9 +122,7 @@ impl AiTaskCardView {
                             )));
                         }
 
-                        // Remaining width: robot + one-line truncated headline
-                        // (always "{customer} - {service#}  —  {summary}") so a
-                        // long title can never grow the card / column.
+                        // One-line headline cut at the remaining width.
                         let headline = format!(
                             "{} - {}  —  {}",
                             task.customer_name, task.service_number, task.title
@@ -142,37 +130,40 @@ impl AiTaskCardView {
                         ui.with_layout(
                             eframe::egui::Layout::left_to_right(eframe::egui::Align::Center),
                             |ui| {
-                                ui.add(
-                                    eframe::egui::Label::new(
-                                        RichText::new(format!("{} {}", icons::ROBOT, headline))
-                                            .strong(),
-                                    )
-                                    .truncate(),
-                                )
-                                .on_hover_text(&headline);
+                                IconLabel::new(svg::ROBOT, &headline)
+                                    .icon_tone(theme::accent_secondary(ui))
+                                    .strong(true)
+                                    .truncate(true)
+                                    .show(ui);
                             },
                         );
                     },
                 );
             });
             if self.linked_task.is_none() {
-                ui.label(RichText::new("(task deleted)").weak().small().italics());
+                IconLabel::new(svg::TRASH, "Task deleted")
+                    .tone(theme::faint_text(ui))
+                    .small(true)
+                    .show(ui);
             }
 
-            ui.separator();
+            controls::hairline(ui);
 
             ui.horizontal(|ui| {
                 // Assignee combo — reassignment clears the attention ack.
                 let assignee_name = user_name(store_users, &task.assignee);
                 ui.push_id(("ai_assignee", &key), |ui| {
-                    ComboBox::from_id_salt(("ai_assignee_cb", &key))
-                        .selected_text(assignee_name)
-                        .show_ui(ui, |ui| {
+                    MenuButton::new(&assignee_name)
+                        .icon(svg::USER_GEAR)
+                        .tip("Reassign this AI task")
+                        .show(ui, |ui| {
                             let roster = crate::get_database_users();
                             for u in assignable_users(&roster, current_user.get_store()) {
-                                if ui.selectable_label(
-                                    u.get_id() == task.assignee,
+                                if controls::menu_check_item(
+                                    ui,
+                                    svg::USER,
                                     u.get_name(),
+                                    u.get_id() == task.assignee,
                                 ).clicked() && u.get_id() != task.assignee {
                                     let _ = tx.try_send(TaskUiActions::ReassignAiTask {
                                         ai_task_id: task.id.clone(),
@@ -183,6 +174,7 @@ impl AiTaskCardView {
                         });
                 });
 
+                ui.add(svg::USER_CIRCLE.image(m.icon_sm).tint(theme::faint_text(ui)));
                 ui.label(
                     RichText::new(format!(
                         "requested by {}",
@@ -193,16 +185,9 @@ impl AiTaskCardView {
                 );
 
                 if task.status == AiTaskStatus::AwaitingFollowup {
-                    ui.label(
-                        RichText::new("• AWAITING OPERATOR")
-                            .color(theme::warn(ui))
-                            .strong()
-                            .small(),
-                    );
+                    controls::badge(ui, "AWAITING OPERATOR", theme::warn(ui));
                 }
             });
-
-            ui.separator();
 
             if let Some(theory) = task
                 .current_theory
@@ -210,7 +195,12 @@ impl AiTaskCardView {
                 .map(str::trim)
                 .filter(|t| !t.is_empty())
             {
-                ui.label(RichText::new(format!("{} {theory}", icons::LIGHTBULB)).strong());
+                controls::hairline(ui);
+                IconLabel::new(svg::LIGHTBULB, theory)
+                    .icon_tone(theme::warn(ui))
+                    .strong(true)
+                    .wrap(true)
+                    .show(ui);
                 if let Some(next) = task
                     .theory_next_step
                     .as_deref()
@@ -219,71 +209,59 @@ impl AiTaskCardView {
                 {
                     ui.label(RichText::new(next).weak().small());
                 }
-                ui.separator();
             }
 
             let (checked, total) = ai_checklist_progress(ui, &self.items);
 
             if self.in_grace && done {
-                ui.label(
-                    RichText::new(format!(
-                        "{} All done — {} notified",
-                        icons::CHECK,
-                        user_name(store_users, &task.requested_by)
-                    ))
-                    .color(theme::success(ui))
-                    .strong(),
-                );
+                ui.horizontal(|ui| {
+                    let color = theme::success(ui);
+                    ui.add(svg::CHECK_CIRCLE.image(m.icon_sm).tint(color));
+                    ui.label(
+                        RichText::new(format!(
+                            "All done — {} notified",
+                            user_name(store_users, &task.requested_by)
+                        ))
+                        .color(color)
+                        .strong(),
+                    );
+                });
             }
 
             let interactive = task.status != AiTaskStatus::Closed
                 && (current_user.get_id() == task.assignee
                     || current_user.get_id() == task.requested_by);
             let default_open = self.role == AiCardRole::AssignedTech;
-            CollapsingHeader::new(format!("Checklist ({checked}/{total})"))
-                .id_salt(("ai_checklist", &key))
+            let checklist_title = format!("Checklist ({checked}/{total})");
+            if Section::new(("ai_checklist", &key), &checklist_title)
+                .icon(svg::LIST_CHECKS)
                 .default_open(default_open)
-                .show_unindented(ui, |ui| {
-                    display_ai_checklist(ui, task, &self.items, store_users, interactive, tx);
-                });
+                .header(ui)
+            {
+                display_ai_checklist(ui, task, &self.items, store_users, interactive, tx);
+            }
 
             // Handback actions — requester always, assignee once complete.
             if can_close_ai_task(task, &current_user.get_id(), &self.items) {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if Button::new(crate::ui_tools::icons::menu_item(
-                        icons::DIAGNOSTICS,
-                        "Open diagnostics",
-                    ))
-                    .small()
-                    .ui(ui)
-                    .clicked()
-                    {
+                controls::hairline(ui);
+                ui.horizontal_wrapped(|ui| {
+                    if controls::icon_text_button(ui, svg::MICROSCOPE, "Open diagnostics").clicked() {
                         let _ = tx.try_send(TaskUiActions::OpenTaskDiagnostics {
                             task_id: task.task_ref.clone(),
                             session: Some(task.session_ref.clone()),
                         });
                     }
-                    if let Some(cs) = task.connection_string.as_ref().filter(|c| !c.is_empty()) {
-                        if Button::new(crate::ui_tools::icons::menu_item(
-                            icons::MONITOR,
-                            "Resume session",
-                        ))
-                        .small()
-                        .ui(ui)
-                        .clicked()
-                        {
-                            let _ = tx.try_send(TaskUiActions::OpenAdminConsole(cs.clone()));
-                        }
+                    if let Some(cs) = task.connection_string.as_ref().filter(|c| !c.is_empty())
+                        && controls::icon_text_button(ui, svg::MONITOR, "Resume session").clicked()
+                    {
+                        let _ = tx.try_send(TaskUiActions::OpenAdminConsole(cs.clone()));
                     }
-                    if Button::new(crate::ui_tools::icons::menu_item(
-                        icons::CHECK,
-                        "Accept & close",
-                    ))
-                    .small()
-                    .ui(ui)
-                    .on_hover_text("Close this AI task and record the outcome in the session log")
-                    .clicked()
+                    if TextButton::new("Accept & close")
+                        .kind(ButtonKind::Primary)
+                        .icon(svg::CHECK)
+                        .show(ui)
+                        .on_hover_text("Close this AI task and record the outcome in the session log")
+                        .clicked()
                     {
                         let _ = tx.try_send(TaskUiActions::CloseAiTask(task.id.clone()));
                     }
@@ -293,7 +271,7 @@ impl AiTaskCardView {
 
         let response = frame.allocate_space(ui);
         if self.in_grace && done {
-            frame.frame.stroke = eframe::egui::Stroke::new(1.2, theme::success(ui));
+            frame.frame.stroke = eframe::egui::Stroke::new(1.0, theme::success(ui));
         } else if response.hovered() {
             frame.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
             frame.frame.shadow = style.visuals.window_shadow;

@@ -14,19 +14,18 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{
-    Align, Button, Color32, DragValue, Grid, Layout, RichText, ScrollArea, TextEdit, Ui,
-};
+use eframe::egui::{Align, Color32, Grid, Layout, RichText, ScrollArea, Ui};
 use egui_extras::{Column, TableBuilder};
 use serde::Deserialize;
 use web_time::Instant;
 
 use crate::tabs::admin_console::current_user_is_root;
-use crate::ui_tools::icons;
+use crate::ui_tools::controls::{
+    self, BarKind, ButtonKind, IconBox, Metrics, SpinnerSize, TextArea, TextButton, TextField,
+};
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::theme;
 use crate::{PlatformSpawner, Spawner};
-
-const ROW_HEIGHT: f32 = 20.0;
-const HEADER_HEIGHT: f32 = 22.0;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CaptureConfig {
@@ -186,6 +185,15 @@ impl Section {
             Self::PreBoot => "Pre-Boot",
             Self::Requests => "Requests",
             Self::Paths => "Paths",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            Self::Overview => svg::GAUGE,
+            Self::PreBoot => svg::MT_FIRMWARE,
+            Self::Requests => svg::LIST_MAGNIFYING_GLASS,
+            Self::Paths => svg::TREE_STRUCTURE,
         }
     }
 }
@@ -457,15 +465,13 @@ impl ServerConsole {
 
     pub fn ui(&mut self, ui: &mut Ui) {
         if !current_user_is_root() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(48.0);
-                ui.label(
-                    RichText::new(format!("{} Root authorization required", icons::LOCK))
-                        .heading()
-                        .color(ui.style().visuals.error_fg_color),
-                );
-                ui.label(RichText::new("This console exposes raw request data from the orchestrator.").weak());
-            });
+            controls::empty_state(
+                ui,
+                svg::LOCK_KEY,
+                "Root authorization required",
+                "This console exposes raw request data from the orchestrator.",
+                &[],
+            );
             return;
         }
 
@@ -491,7 +497,6 @@ impl ServerConsole {
         }
 
         self.toolbar(ui);
-        ui.separator();
         match self.section {
             Section::Overview => self.overview_ui(ui),
             Section::PreBoot => self.preboot_ui(ui),
@@ -501,55 +506,55 @@ impl ServerConsole {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        ui.horizontal_wrapped(|ui| {
+        controls::bar(ui, BarKind::Tool, |ui| {
             for section in [Section::Overview, Section::PreBoot, Section::Requests, Section::Paths] {
-                if ui
-                    .selectable_label(self.section == section, section.label())
+                if controls::pill(ui, section.icon(), section.label(), self.section == section)
                     .clicked()
                 {
                     self.section = section;
                     self.refresh();
                 }
             }
-            ui.separator();
-            ui.label("Relay:");
-            ui.add(TextEdit::singleline(&mut self.base_url).desired_width(240.0));
-            if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
-                self.refresh();
-            }
-            ui.checkbox(&mut self.auto_refresh, "Auto");
-            if self.auto_refresh {
-                ui.add(
-                    DragValue::new(&mut self.interval_secs)
-                        .range(2..=300)
-                        .suffix("s"),
-                );
-            }
-            if self.inflight > 0 {
-                ui.spinner();
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
+                    self.refresh();
+                }
+                if self.auto_refresh {
+                    controls::value_field(ui, &mut self.interval_secs, 2..=300, "s", 64.0)
+                        .on_hover_text("Refresh interval");
+                }
+                controls::toggle(ui, &mut self.auto_refresh, "Auto");
+                if self.inflight > 0 {
+                    controls::spinner(ui, SpinnerSize::Sm);
+                }
+            });
+        });
+        controls::bar(ui, BarKind::Header, |ui| {
+            TextField::new(&mut self.base_url)
+                .icon(svg::GLOBE)
+                .width(280.0)
+                .hint("Relay URL")
+                .show(ui)
+                .on_hover_text("Relay");
             let base = self.base();
             let insecure = !base.is_empty()
                 && !base.starts_with("https://")
                 && !base.contains("localhost")
                 && !base.contains("127.0.0.1");
             if insecure {
-                ui.colored_label(
-                    ui.style().visuals.warn_fg_color,
-                    format!("{} plaintext relay — session token sent unencrypted", icons::STATUS_WARN),
-                );
+                controls::status_label(ui, svg::LOCK_OPEN, "plaintext relay — session token sent unencrypted", theme::warn(ui));
             }
         });
         if !self.status.is_empty() {
             let error = self.status.starts_with("HTTP") || self.status.contains("failed");
-            let color = if error {
-                ui.style().visuals.error_fg_color
+            let (icon, color) = if error {
+                (svg::WARNING_CIRCLE, theme::error(ui))
             } else {
-                ui.style().visuals.weak_text_color()
+                (svg::INFO, theme::weak_text(ui))
             };
-            ui.horizontal(|ui| {
-                ui.colored_label(color, &self.status);
-                if ui.small_button(icons::CLOSE).clicked() {
+            controls::bar(ui, BarKind::Status, |ui| {
+                controls::status_label(ui, icon, &self.status, color);
+                if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Dismiss").clicked() {
                     self.status.clear();
                 }
             });
@@ -558,78 +563,104 @@ impl ServerConsole {
 
     fn overview_ui(&mut self, ui: &mut Ui) {
         let Some(info) = self.info.clone() else {
-            ui.label(RichText::new("No server info yet.").weak());
+            controls::empty_state(ui, svg::HARD_DRIVES, "No server info yet", "", &[]);
             return;
         };
         let mut draft = self.capture_draft.clone().unwrap_or_else(|| info.capture.clone());
         let mut body_paths = self.body_paths_draft.clone();
         let mut apply = false;
         let mut clear = false;
+        let m = Metrics::get(ui.ctx());
 
         ScrollArea::vertical().show(ui, |ui| {
-            Grid::new("server_console_info").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                let mut row = |k: &str, v: String| {
-                    ui.label(RichText::new(k).strong());
-                    ui.label(v);
-                    ui.end_row();
-                };
-                row("Signed in as", format!("{} <{}>", info.viewer.name, info.viewer.email));
-                row("Version", info.version.clone());
-                row("PID", info.pid.to_string());
-                row("Started", info.started_at.clone());
-                row("Uptime", human_secs(info.uptime_secs));
-                row("Server time", info.now.clone());
-                row("RUST_LOG", info.rust_log.clone());
-                row(
-                    "SurrealDB",
-                    format!(
-                        "{} ({})",
-                        info.db_url,
-                        if info.db_connected { "connected" } else { "unreachable" }
-                    ),
-                );
-                row("Fleet agents", info.fleet_agents.to_string());
-                row("Pre-boot sessions", info.preboot_sessions.to_string());
-                row("Pre-boot consoles", info.preboot_consoles.to_string());
-                row("Rejected adverts", info.preboot_rejects.to_string());
-                row("Recorded requests", format!("{} (next seq {})", info.recorded, info.next_seq));
-            });
+            if controls::section_header(ui, "server_console_info", svg::HARD_DRIVES, "Server") {
+                Grid::new("server_console_info").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+                    let mut row = |icon: Icon, k: &str, v: String| {
+                        controls::icon_label(ui, icon, k);
+                        ui.label(v);
+                        ui.end_row();
+                    };
+                    row(
+                        svg::USER_CIRCLE,
+                        "Signed in as",
+                        format!("{} <{}>", info.viewer.name, info.viewer.email),
+                    );
+                    row(svg::TAG, "Version", info.version.clone());
+                    row(svg::HASH, "PID", info.pid.to_string());
+                    row(svg::CALENDAR, "Started", info.started_at.clone());
+                    row(svg::TIMER, "Uptime", human_secs(info.uptime_secs));
+                    row(svg::CLOCK, "Server time", info.now.clone());
+                    row(svg::TERMINAL, "RUST_LOG", info.rust_log.clone());
+                    row(
+                        svg::DATABASE,
+                        "SurrealDB",
+                        format!(
+                            "{} ({})",
+                            info.db_url,
+                            if info.db_connected { "connected" } else { "unreachable" }
+                        ),
+                    );
+                    row(svg::ROBOT, "Fleet agents", info.fleet_agents.to_string());
+                    row(svg::MT_FIRMWARE, "Pre-boot sessions", info.preboot_sessions.to_string());
+                    row(svg::MONITOR, "Pre-boot consoles", info.preboot_consoles.to_string());
+                    row(svg::PROHIBIT, "Rejected adverts", info.preboot_rejects.to_string());
+                    row(
+                        svg::LIST_NUMBERS,
+                        "Recorded requests",
+                        format!("{} (next seq {})", info.recorded, info.next_seq),
+                    );
+                });
+            }
 
-            ui.add_space(12.0);
-            ui.label(RichText::new("Request capture").heading());
-            ui.label(
-                RichText::new(
-                    "Bodies are buffered only for the listed path prefixes; every other path records metadata only.",
-                )
-                .weak(),
-            );
-            Grid::new("server_console_capture").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                ui.label("Recording");
-                ui.checkbox(&mut draft.enabled, "enabled");
-                ui.end_row();
-                ui.label("Ring capacity");
-                ui.add(DragValue::new(&mut draft.capacity).range(1..=10_000));
-                ui.end_row();
-                ui.label("Max body bytes");
-                ui.add(DragValue::new(&mut draft.max_body).range(0..=1_048_576));
-                ui.end_row();
-                ui.label("Body path prefixes");
-                ui.add(
-                    TextEdit::singleline(&mut body_paths)
-                        .desired_width(360.0)
-                        .hint_text("/api/v1/qc/preboot/console, * for all"),
+            ui.add_space(m.gap.y);
+            if controls::section_header(
+                ui,
+                "server_console_capture",
+                svg::TRAY_ARROW_DOWN,
+                "Request capture",
+            ) {
+                ui.label(
+                    RichText::new(
+                        "Bodies are buffered only for the listed path prefixes; every other path records metadata only.",
+                    )
+                    .weak(),
                 );
-                ui.end_row();
-                ui.label("Record admin API");
-                ui.checkbox(&mut draft.record_admin, "include /api/v1/admin traffic");
-                ui.end_row();
-            });
-            ui.horizontal(|ui| {
-                apply = ui.button("Apply").clicked();
-                clear = ui
-                    .add(Button::new(format!("{} Clear recorded requests", icons::TRASH)))
-                    .clicked();
-            });
+                Grid::new("server_console_capture").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+                    controls::icon_label(ui, svg::PULSE, "Recording");
+                    controls::toggle(ui, &mut draft.enabled, "enabled");
+                    ui.end_row();
+                    controls::icon_label(ui, svg::STACK, "Ring capacity");
+                    controls::value_field(ui, &mut draft.capacity, 1..=10_000, "", 96.0);
+                    ui.end_row();
+                    controls::icon_label(ui, svg::FILE_TEXT, "Max body bytes");
+                    controls::value_field(ui, &mut draft.max_body, 0..=1_048_576, "B", 120.0);
+                    ui.end_row();
+                    controls::icon_label(ui, svg::TREE_STRUCTURE, "Body path prefixes");
+                    controls::text_field(
+                        ui,
+                        &mut body_paths,
+                        "/api/v1/qc/preboot/console, * for all",
+                        360.0,
+                    );
+                    ui.end_row();
+                    controls::icon_label(ui, svg::SHIELD_CHECK, "Record admin API");
+                    controls::toggle(ui, &mut draft.record_admin, "include /api/v1/admin traffic");
+                    ui.end_row();
+                });
+                ui.add_space(m.gap.y);
+                ui.horizontal(|ui| {
+                    apply = TextButton::new("Apply")
+                        .kind(ButtonKind::Primary)
+                        .icon(svg::CHECK)
+                        .show(ui)
+                        .clicked();
+                    clear = TextButton::new("Clear recorded requests")
+                        .kind(ButtonKind::Danger)
+                        .icon(svg::TRASH)
+                        .show(ui)
+                        .clicked();
+                });
+            }
         });
 
         self.body_paths_draft = body_paths;
@@ -656,232 +687,236 @@ impl ServerConsole {
 
     fn preboot_ui(&mut self, ui: &mut Ui) {
         let Some(pb) = self.preboot.clone() else {
-            ui.label(RichText::new("No pre-boot snapshot yet.").weak());
+            controls::empty_state(ui, svg::MT_FIRMWARE, "No pre-boot snapshot yet", "", &[]);
             return;
         };
         let mut evict: Option<String> = None;
+        let m = Metrics::get(ui.ctx());
         ScrollArea::vertical().show(ui, |ui| {
-            ui.label(RichText::new("Console advertisements").heading());
-            ui.label(
-                RichText::new(format!(
-                    "{} accepted since start · entries expire after {}s of silence",
-                    pb.advert_total, pb.console_ttl_secs
-                ))
-                .weak(),
-            );
-            if pb.consoles.is_empty() {
-                ui.label(RichText::new("No console has advertised.").weak());
-            } else {
-                TableBuilder::new(ui)
-                    .id_salt("preboot_consoles")
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(Layout::left_to_right(Align::Center))
-                    .column(Column::auto().at_least(150.0))
-                    .column(Column::auto().at_least(150.0))
-                    .column(Column::auto().at_least(110.0))
-                    .column(Column::initial(200.0).at_least(120.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::auto().at_least(70.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::auto().at_least(170.0))
-                    .column(Column::remainder().at_least(120.0))
-                    .header(HEADER_HEIGHT, |mut h| {
-                        for title in [
-                            "Advertised addr",
-                            "Socket peer",
-                            "Forwarded for",
-                            "User-Agent",
-                            "Adverts",
-                            "Interval",
-                            "Age",
-                            "First seen",
-                            "Raw body",
-                        ] {
-                            h.col(|ui| {
-                                ui.label(RichText::new(title).strong());
-                            });
-                        }
-                    })
-                    .body(|mut body| {
-                        for c in &pb.consoles {
-                            body.row(ROW_HEIGHT, |mut r| {
-                                r.col(|ui| {
-                                    let color = if c.fresh {
-                                        ui.style().visuals.hyperlink_color
-                                    } else {
-                                        ui.style().visuals.warn_fg_color
-                                    };
-                                    ui.colored_label(color, &c.addr);
-                                });
-                                r.col(|ui| {
-                                    ui.label(opt(&c.origin.peer));
-                                });
-                                r.col(|ui| {
-                                    ui.label(opt(&c.origin.forwarded_for));
-                                });
-                                r.col(|ui| {
-                                    ui.label(opt(&c.origin.user_agent))
-                                        .on_hover_text(opt(&c.origin.user_agent));
-                                });
-                                r.col(|ui| {
-                                    ui.label(c.advert_count.to_string());
-                                });
-                                r.col(|ui| {
-                                    ui.label(
-                                        c.last_interval_secs
-                                            .map(|s| format!("{s}s"))
-                                            .unwrap_or_else(|| "—".to_string()),
-                                    );
-                                });
-                                r.col(|ui| {
-                                    ui.label(format!("{}s", c.age_secs));
-                                });
-                                r.col(|ui| {
-                                    ui.label(&c.first_seen_at)
-                                        .on_hover_text(format!("last {}", c.last_seen_at));
-                                });
-                                r.col(|ui| {
-                                    ui.horizontal(|ui| {
-                                        if ui.small_button(icons::COPY).on_hover_text("Copy body").clicked() {
-                                            ui.ctx().copy_text(c.raw_body.clone());
-                                        }
-                                        if ui
-                                            .small_button(icons::TRASH)
-                                            .on_hover_text("Evict this endpoint")
-                                            .clicked()
-                                        {
-                                            evict = Some(c.addr.clone());
-                                        }
-                                        ui.label(RichText::new(&c.raw_body).monospace());
-                                    });
-                                });
-                            });
-                        }
-                    });
-            }
-
-            ui.add_space(12.0);
-            ui.label(RichText::new("Rejected advertisements").heading());
-            if pb.rejects.is_empty() {
-                ui.label(RichText::new("None — every POST parsed to a usable addr.").weak());
-            } else {
-                TableBuilder::new(ui)
-                    .id_salt("preboot_rejects")
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(Layout::left_to_right(Align::Center))
-                    .column(Column::auto().at_least(170.0))
-                    .column(Column::auto().at_least(150.0))
-                    .column(Column::initial(200.0).at_least(120.0))
-                    .column(Column::auto().at_least(180.0))
-                    .column(Column::remainder().at_least(140.0))
-                    .header(HEADER_HEIGHT, |mut h| {
-                        for title in ["At", "Socket peer", "User-Agent", "Reason", "Raw body"] {
-                            h.col(|ui| {
-                                ui.label(RichText::new(title).strong());
-                            });
-                        }
-                    })
-                    .body(|mut body| {
-                        for j in &pb.rejects {
-                            body.row(ROW_HEIGHT, |mut r| {
-                                r.col(|ui| {
-                                    ui.label(&j.at);
-                                });
-                                r.col(|ui| {
-                                    ui.label(opt(&j.origin.peer));
-                                });
-                                r.col(|ui| {
-                                    ui.label(opt(&j.origin.user_agent));
-                                });
-                                r.col(|ui| {
-                                    ui.colored_label(ui.style().visuals.error_fg_color, &j.reason);
-                                });
-                                r.col(|ui| {
-                                    ui.label(
-                                        RichText::new(format!("{} ({} bytes)", j.raw_body, j.body_bytes))
-                                            .monospace(),
-                                    );
-                                });
-                            });
-                        }
-                    });
-            }
-
-            ui.add_space(12.0);
-            ui.label(RichText::new("Firmware sessions").heading());
-            ui.label(
-                RichText::new(format!("Swept after {}s without firmware traffic", pb.session_idle_secs))
-                    .weak(),
-            );
-            if pb.sessions.is_empty() {
-                ui.label(RichText::new("No firmware is checking in.").weak());
-            } else {
-                TableBuilder::new(ui)
-                    .id_salt("preboot_sessions")
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(Layout::left_to_right(Align::Center))
-                    .column(Column::auto().at_least(160.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::auto().at_least(90.0))
-                    .column(Column::auto().at_least(70.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::auto().at_least(60.0))
-                    .column(Column::auto().at_least(140.0))
-                    .column(Column::remainder().at_least(140.0))
-                    .header(HEADER_HEIGHT, |mut h| {
-                        for title in [
-                            "Serial", "Idle", "Frame", "Streaming", "Viewer", "Logs", "Socket peer",
-                            "User-Agent",
-                        ] {
-                            h.col(|ui| {
-                                ui.label(RichText::new(title).strong());
-                            });
-                        }
-                    })
-                    .body(|mut body| {
-                        for s in &pb.sessions {
-                            body.row(ROW_HEIGHT, |mut r| {
-                                r.col(|ui| {
-                                    ui.label(&s.serial);
-                                });
-                                r.col(|ui| {
-                                    ui.label(format!("{}s", s.idle_secs));
-                                });
-                                r.col(|ui| {
-                                    ui.label(format!("#{} / {}B", s.frame_seq, s.frame_bytes));
-                                });
-                                r.col(|ui| {
-                                    ui.label(yes_no(s.streaming));
-                                });
-                                r.col(|ui| {
-                                    ui.label(yes_no(s.viewer));
-                                });
-                                r.col(|ui| {
-                                    ui.label(s.log_lines.to_string());
-                                });
-                                r.col(|ui| {
-                                    ui.label(opt(&s.origin.peer));
-                                });
-                                r.col(|ui| {
-                                    ui.label(opt(&s.origin.user_agent));
-                                });
-                            });
-                        }
-                    });
-            }
-
-            if !pb.orphan_logs.is_empty() {
-                ui.add_space(8.0);
+            if controls::section_header(ui, "preboot_consoles", svg::BROADCAST, "Console advertisements") {
                 ui.label(
                     RichText::new(format!(
-                        "Retained logs with no live session: {}",
-                        pb.orphan_logs.join(", ")
+                        "{} accepted since start · entries expire after {}s of silence",
+                        pb.advert_total, pb.console_ttl_secs
                     ))
                     .weak(),
                 );
+                if pb.consoles.is_empty() {
+                    controls::status_label(ui, svg::BROADCAST, "No console has advertised.", theme::faint_text(ui));
+                } else {
+                    TableBuilder::new(ui)
+                        .id_salt("preboot_consoles")
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(Layout::left_to_right(Align::Center))
+                        .column(Column::auto().at_least(150.0))
+                        .column(Column::auto().at_least(150.0))
+                        .column(Column::auto().at_least(110.0))
+                        .column(Column::initial(200.0).at_least(120.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(70.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(170.0))
+                        .column(Column::remainder().at_least(120.0))
+                        .header(m.row_h, |mut h| {
+                            for title in [
+                                "Advertised addr",
+                                "Socket peer",
+                                "Forwarded for",
+                                "User-Agent",
+                                "Adverts",
+                                "Interval",
+                                "Age",
+                                "First seen",
+                                "Raw body",
+                            ] {
+                                h.col(|ui| {
+                                    ui.label(RichText::new(title).strong());
+                                });
+                            }
+                        })
+                        .body(|mut body| {
+                            for c in &pb.consoles {
+                                body.row(m.row_h, |mut r| {
+                                    r.col(|ui| {
+                                        let (icon, color) = if c.fresh {
+                                            (svg::BROADCAST, theme::info(ui))
+                                        } else {
+                                            (svg::HOURGLASS, theme::warn(ui))
+                                        };
+                                        controls::status_label(ui, icon, &c.addr, color);
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(opt(&c.origin.peer));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(opt(&c.origin.forwarded_for));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(opt(&c.origin.user_agent))
+                                            .on_hover_text(opt(&c.origin.user_agent));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(c.advert_count.to_string());
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(
+                                            c.last_interval_secs
+                                                .map(|s| format!("{s}s"))
+                                                .unwrap_or_else(|| "—".to_string()),
+                                        );
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(format!("{}s", c.age_secs));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(&c.first_seen_at)
+                                            .on_hover_text(format!("last {}", c.last_seen_at));
+                                    });
+                                    r.col(|ui| {
+                                        ui.horizontal(|ui| {
+                                            if controls::icon_button(ui, svg::COPY, IconBox::Sm, false, "Copy body")
+                                                .clicked()
+                                            {
+                                                ui.ctx().copy_text(c.raw_body.clone());
+                                            }
+                                            if controls::icon_button(
+                                                ui,
+                                                svg::TRASH,
+                                                IconBox::Sm,
+                                                false,
+                                                "Evict this endpoint",
+                                            )
+                                            .clicked()
+                                            {
+                                                evict = Some(c.addr.clone());
+                                            }
+                                            ui.label(RichText::new(&c.raw_body).monospace());
+                                        });
+                                    });
+                                });
+                            }
+                        });
+                }
+            }
+
+            ui.add_space(m.gap.y);
+            if controls::section_header(ui, "preboot_rejects", svg::PROHIBIT, "Rejected advertisements") {
+                if pb.rejects.is_empty() {
+                    controls::status_label(ui, svg::CHECK_CIRCLE, "None — every POST parsed to a usable addr.", theme::faint_text(ui));
+                } else {
+                    TableBuilder::new(ui)
+                        .id_salt("preboot_rejects")
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(Layout::left_to_right(Align::Center))
+                        .column(Column::auto().at_least(170.0))
+                        .column(Column::auto().at_least(150.0))
+                        .column(Column::initial(200.0).at_least(120.0))
+                        .column(Column::auto().at_least(180.0))
+                        .column(Column::remainder().at_least(140.0))
+                        .header(m.row_h, |mut h| {
+                            for title in ["At", "Socket peer", "User-Agent", "Reason", "Raw body"] {
+                                h.col(|ui| {
+                                    ui.label(RichText::new(title).strong());
+                                });
+                            }
+                        })
+                        .body(|mut body| {
+                            for j in &pb.rejects {
+                                body.row(m.row_h, |mut r| {
+                                    r.col(|ui| {
+                                        ui.label(&j.at);
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(opt(&j.origin.peer));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(opt(&j.origin.user_agent));
+                                    });
+                                    r.col(|ui| {
+                                        controls::status_label(ui, svg::WARNING_CIRCLE, &j.reason, theme::error(ui));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(
+                                            RichText::new(format!("{} ({} bytes)", j.raw_body, j.body_bytes))
+                                                .monospace(),
+                                        );
+                                    });
+                                });
+                            }
+                        });
+                }
+            }
+
+            ui.add_space(m.gap.y);
+            if controls::section_header(ui, "preboot_sessions", svg::MT_FIRMWARE, "Firmware sessions") {
+                ui.label(
+                    RichText::new(format!("Swept after {}s without firmware traffic", pb.session_idle_secs))
+                        .weak(),
+                );
+                if pb.sessions.is_empty() {
+                    controls::status_label(ui, svg::MT_FIRMWARE, "No firmware is checking in.", theme::faint_text(ui));
+                } else {
+                    TableBuilder::new(ui)
+                        .id_salt("preboot_sessions")
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(Layout::left_to_right(Align::Center))
+                        .column(Column::auto().at_least(160.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(90.0))
+                        .column(Column::auto().at_least(70.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(60.0))
+                        .column(Column::auto().at_least(140.0))
+                        .column(Column::remainder().at_least(140.0))
+                        .header(m.row_h, |mut h| {
+                            for title in [
+                                "Serial", "Idle", "Frame", "Streaming", "Viewer", "Logs", "Socket peer",
+                                "User-Agent",
+                            ] {
+                                h.col(|ui| {
+                                    ui.label(RichText::new(title).strong());
+                                });
+                            }
+                        })
+                        .body(|mut body| {
+                            for s in &pb.sessions {
+                                body.row(m.row_h, |mut r| {
+                                    r.col(|ui| {
+                                        ui.label(&s.serial);
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(format!("{}s", s.idle_secs));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(format!("#{} / {}B", s.frame_seq, s.frame_bytes));
+                                    });
+                                    r.col(|ui| {
+                                        yes_no(ui, s.streaming);
+                                    });
+                                    r.col(|ui| {
+                                        yes_no(ui, s.viewer);
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(s.log_lines.to_string());
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(opt(&s.origin.peer));
+                                    });
+                                    r.col(|ui| {
+                                        ui.label(opt(&s.origin.user_agent));
+                                    });
+                                });
+                            }
+                        });
+                }
+            }
+
+            if !pb.orphan_logs.is_empty() {
+                ui.add_space(m.gap.y);
+                controls::status_label(ui, svg::SCROLL, &format!("Retained logs with no live session: {}", pb.orphan_logs.join(", ")), theme::faint_text(ui));
             }
         });
 
@@ -895,30 +930,53 @@ impl ServerConsole {
     }
 
     fn requests_ui(&mut self, ui: &mut Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Path");
-            ui.add(TextEdit::singleline(&mut self.filter_path).desired_width(180.0).hint_text("/api/v1/qc"));
-            ui.label("Method");
-            ui.add(TextEdit::singleline(&mut self.filter_method).desired_width(60.0).hint_text("POST"));
-            ui.label("Status");
-            ui.add(TextEdit::singleline(&mut self.filter_status).desired_width(50.0).hint_text("400"));
-            ui.label("Contains");
-            ui.add(
-                TextEdit::singleline(&mut self.filter_contains)
-                    .desired_width(160.0)
-                    .hint_text("body / UA / peer"),
-            );
-            ui.add(DragValue::new(&mut self.limit).range(10..=2000).prefix("limit "));
-            if ui.button(format!("{} Apply", icons::SEARCH)).clicked() {
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Tool, |ui| {
+            TextField::new(&mut self.filter_path)
+                .icon(svg::TREE_STRUCTURE)
+                .hint("/api/v1/qc")
+                .width(180.0)
+                .show(ui)
+                .on_hover_text("Path");
+            TextField::new(&mut self.filter_method)
+                .hint("POST")
+                .width(64.0)
+                .show(ui)
+                .on_hover_text("Method");
+            TextField::new(&mut self.filter_status)
+                .hint("400")
+                .width(56.0)
+                .show(ui)
+                .on_hover_text("Status");
+            controls::search_field(ui, &mut self.filter_contains, "body / UA / peer", 180.0)
+                .on_hover_text("Contains");
+            controls::icon_label(ui, svg::LIST_NUMBERS, "Limit");
+            controls::value_field(ui, &mut self.limit, 10..=2000, "", 64.0);
+            if controls::icon_text_button(ui, svg::FUNNEL, "Apply").clicked() {
                 self.refresh();
             }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} shown of {} recorded",
+                        self.requests.len(),
+                        self.requests_total
+                    ))
+                    .weak(),
+                );
+            });
         });
-        ui.label(
-            RichText::new(format!("{} shown of {} recorded", self.requests.len(), self.requests_total))
-                .weak(),
-        );
-        ui.separator();
 
+        if self.requests.is_empty() {
+            controls::empty_state(
+                ui,
+                svg::TRAY,
+                "No recorded requests",
+                "Recording is configured under Overview, Request capture.",
+                &[],
+            );
+            return;
+        }
         let selected = self.selected_seq;
         let mut clicked: Option<u64> = None;
         let available = ui.available_height();
@@ -940,7 +998,7 @@ impl ServerConsole {
                     .column(Column::auto().at_least(60.0))
                     .column(Column::auto().at_least(150.0))
                     .column(Column::remainder().at_least(140.0))
-                    .header(HEADER_HEIGHT, |mut h| {
+                    .header(m.row_h, |mut h| {
                         for title in
                             ["Seq", "At", "Method", "Path", "Status", "ms", "Socket peer", "User-Agent"]
                         {
@@ -951,7 +1009,7 @@ impl ServerConsole {
                     })
                     .body(|mut body| {
                         for rec in self.requests.iter().rev() {
-                            body.row(ROW_HEIGHT, |mut r| {
+                            body.row(m.row_h, |mut r| {
                                 r.set_selected(selected == Some(rec.seq));
                                 r.col(|ui| {
                                     ui.label(rec.seq.to_string());
@@ -997,14 +1055,14 @@ impl ServerConsole {
         let Some(rec) = self.requests.iter().find(|r| r.seq == seq).cloned() else {
             return;
         };
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("#{} {} {}", rec.seq, rec.method, rec.path)).heading());
+        controls::bar(ui, BarKind::Header, |ui| {
+            let title = format!("#{} {} {}", rec.seq, rec.method, rec.path);
+            controls::subheading(ui, svg::FILE_MAGNIFYING_GLASS, &title);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.small_button(icons::CLOSE).clicked() {
+                if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Close").clicked() {
                     self.selected_seq = None;
                 }
-                if ui.button(format!("{} Copy body", icons::COPY)).clicked() {
+                if controls::icon_text_button(ui, svg::COPY, "Copy body").clicked() {
                     ui.ctx().copy_text(rec.body.clone().unwrap_or_default());
                 }
             });
@@ -1033,8 +1091,8 @@ impl ServerConsole {
                     row("Handler error", err.clone());
                 }
             });
-            ui.add_space(6.0);
-            ui.label(RichText::new("Headers").strong());
+            ui.add_space(m.gap.y);
+            controls::section_label(ui, "Headers");
             Grid::new("request_headers_grid").num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
                 for (k, v) in &rec.headers {
                     ui.label(RichText::new(k).monospace());
@@ -1042,39 +1100,39 @@ impl ServerConsole {
                     ui.end_row();
                 }
             });
-            ui.add_space(6.0);
+            ui.add_space(m.gap.y);
             match &rec.body {
                 Some(body) => {
-                    ui.label(RichText::new(format!(
-                        "Body ({} bytes{})",
-                        rec.body_bytes,
-                        if rec.body_truncated { ", truncated" } else { "" }
-                    ))
-                    .strong());
-                    ui.add(
-                        TextEdit::multiline(&mut body.as_str())
-                            .code_editor()
-                            .desired_width(f32::INFINITY),
+                    controls::section_label(
+                        ui,
+                        &format!(
+                            "Body ({} bytes{})",
+                            rec.body_bytes,
+                            if rec.body_truncated { ", truncated" } else { "" }
+                        ),
                     );
+                    TextArea::new(&mut body.as_str()).mono(true).show(ui);
                 }
                 None => {
-                    ui.label(
-                        RichText::new(
-                            "Body not captured — add this path prefix under Overview → Request capture.",
-                        )
-                        .weak(),
-                    );
+                    controls::status_label(ui, svg::INFO, "Body not captured — add this path prefix under Overview → Request capture.", theme::faint_text(ui));
                 }
             }
         });
     }
 
     fn paths_ui(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
         if self.paths_overflow > 0 {
-            ui.colored_label(
-                ui.style().visuals.warn_fg_color,
-                format!("{} requests not counted — distinct path limit reached", self.paths_overflow),
-            );
+            ui.horizontal(|ui| {
+                controls::status_label(ui, svg::WARNING, &format!(
+                        "{} requests not counted — distinct path limit reached",
+                        self.paths_overflow
+                    ), theme::warn(ui));
+            });
+        }
+        if self.paths.is_empty() {
+            controls::empty_state(ui, svg::TREE_STRUCTURE, "No paths counted yet", "", &[]);
+            return;
         }
         ScrollArea::vertical().show(ui, |ui| {
             TableBuilder::new(ui)
@@ -1088,7 +1146,7 @@ impl ServerConsole {
                 .column(Column::auto().at_least(80.0))
                 .column(Column::auto().at_least(80.0))
                 .column(Column::remainder().at_least(170.0))
-                .header(HEADER_HEIGHT, |mut h| {
+                .header(m.row_h, |mut h| {
                     for title in ["Method + path", "Count", "Statuses", "Avg ms", "Max ms", "Last seen"] {
                         h.col(|ui| {
                             ui.label(RichText::new(title).strong());
@@ -1097,7 +1155,7 @@ impl ServerConsole {
                 })
                 .body(|mut body| {
                     for p in &self.paths {
-                        body.row(ROW_HEIGHT, |mut r| {
+                        body.row(m.row_h, |mut r| {
                             r.col(|ui| {
                                 ui.label(&p.key);
                             });
@@ -1138,16 +1196,22 @@ fn opt(v: &Option<String>) -> String {
     v.clone().unwrap_or_else(|| "—".to_string())
 }
 
-fn yes_no(v: bool) -> String {
-    if v { icons::CHECK.to_string() } else { "—".to_string() }
+/// Success-tinted check for `true`, a dash otherwise.
+fn yes_no(ui: &mut Ui, v: bool) {
+    if v {
+        let size = Metrics::get(ui.ctx()).icon_sm;
+        ui.add(svg::CHECK.image(size).tint(theme::success(ui)));
+    } else {
+        ui.label("—");
+    }
 }
 
 fn status_color(ui: &Ui, status: u16) -> Color32 {
     match status {
-        200..=299 => ui.style().visuals.hyperlink_color,
-        300..=399 => ui.style().visuals.weak_text_color(),
-        400..=499 => ui.style().visuals.warn_fg_color,
-        _ => ui.style().visuals.error_fg_color,
+        200..=299 => theme::info(ui),
+        300..=399 => theme::weak_text(ui),
+        400..=499 => theme::warn(ui),
+        _ => theme::error(ui),
     }
 }
 

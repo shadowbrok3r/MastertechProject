@@ -1,7 +1,4 @@
-use eframe::egui::{
-    self, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
-    Widget, scroll_area,
-};
+use eframe::egui::{self, KeyboardShortcut, RichText, ScrollArea, Ui, Widget, scroll_area};
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
     viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext, CustomActionContext, CustomActionEditor},
@@ -10,8 +7,8 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, StartupApp};
-use crate::ui_tools::framed_controls::FramedSelectable;
-use crate::ui_tools::icons;
+use crate::ui_tools::controls::{self, BarKind, Metrics};
+use crate::ui_tools::icons::{self, svg};
 use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 5;
@@ -164,47 +161,53 @@ impl StartupAppsViewer {
             }
         }
 
-        ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+        controls::bar(ui, BarKind::Tool, |ui| {
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                 self.loading = true;
                 self.table.clear();
                 self.entries.clear();
                 let _ = cmd_tx.try_send(Cmd::ListStartupApps);
             }
 
-            ui.label("Filter:");
-            TextEdit::singleline(&mut self.viewer.filter)
-                .hint_text("Search startup apps...")
-                .desired_width(200.)
-                .show(ui);
+            controls::search_field(ui, &mut self.viewer.filter, "Search startup apps...", 200.);
 
-            ui.separator();
-            ui.framed_selectable_value(&mut self.viewer.show_mode, ShowMode::All, "All");
-            ui.framed_selectable_value(&mut self.viewer.show_mode, ShowMode::EnabledOnly, "Enabled");
-            ui.framed_selectable_value(
-                &mut self.viewer.show_mode,
-                ShowMode::DisabledOnly,
-                "Disabled",
-            );
+            controls::vline(ui, Metrics::get(ui.ctx()).control_h);
+            let modes = [
+                (ShowMode::All, svg::LIST, "All"),
+                (ShowMode::EnabledOnly, svg::CHECK_CIRCLE, "Enabled"),
+                (ShowMode::DisabledOnly, svg::MINUS_CIRCLE, "Disabled"),
+            ];
+            for (mode, icon, label) in modes {
+                if controls::pill(ui, icon, label, self.viewer.show_mode == mode).clicked() {
+                    self.viewer.show_mode = mode;
+                }
+            }
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { theme::success(ui) } else { theme::error(ui) };
-                ui.colored_label(color, msg);
+                let (icon, color) = if *success {
+                    (svg::CHECK_CIRCLE, theme::success(ui))
+                } else {
+                    (svg::WARNING_CIRCLE, theme::error(ui))
+                };
+                controls::note(ui, icon, msg.as_str(), color);
             }
         });
 
         ui.add_space(4.);
 
         if self.loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading startup apps...");
-            });
+            controls::loading_state(ui, "Loading startup apps...");
             return;
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No startup apps loaded. Click Refresh to fetch.").italics().color(theme::weak_text(ui)));
+            controls::empty_state(
+                ui,
+                svg::ROCKET_LAUNCH,
+                "No startup apps loaded",
+                "Click Refresh to fetch.",
+                &[],
+            );
             return;
         }
 
@@ -272,11 +275,14 @@ impl RowViewer<StartupApp> for StartupAppRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.state.as_str() {
-                    "Enabled" => (icons::STATUS_DOT, theme::success(ui)),
-                    "Disabled" | "DisabledByUser" => (icons::STATUS_OFF, theme::error(ui)),
-                    _ => (icons::STATUS_IDLE, theme::weak_text(ui)),
+                    "Enabled" => (svg::CHECK_CIRCLE, theme::success(ui)),
+                    "Disabled" | "DisabledByUser" => (svg::MINUS_CIRCLE, theme::error(ui)),
+                    _ => (svg::CIRCLE, theme::weak_text(ui)),
                 };
-                ui.label(RichText::new(format!("{icon} {}", row.state)).color(color));
+                ui.horizontal(|ui| {
+                    icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+                    ui.label(RichText::new(&row.state).color(color));
+                });
             }
             1 => {
                 ui.label(RichText::new(&row.name).color(theme::text(ui)));

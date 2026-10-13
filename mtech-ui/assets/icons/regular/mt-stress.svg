@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" data-glyph="FLAME">
+<defs><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"><rect width="256" height="256" fill="#ffffff" stroke="none"/><path d="M184,120c-24,18-36,42-36,68a36,36,0,0,0,72,0c0-26-12-50-36-68Z" fill="#000000" stroke="#000000" stroke-width="48"/></mask></defs>
+<g mask="url(#cut)">
+<rect x="48" y="48" width="120" height="120" rx="8"/>
+<rect x="88" y="88" width="40" height="40" rx="4"/>
+<path d="M88,48V24M128,48V24M48,88H24M48,128H24M168,88H192M88,168V192"/>
+</g>
+<path d="M184,120c-24,18-36,42-36,68a36,36,0,0,0,72,0c0-26-12-50-36-68Z"/>
+<path d="M168,208c0-16,16-28,16-28s16,12,16,28a16,16,0,0,1-32,0Z"/>
+</svg>

@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Context, Error, Result};
 use crossbeam::channel::Sender;
 use database::{ODOO_API_KEY, ODOO_JSONRPC_URL, SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER};
-use eframe::egui::{Button, Color32, Response, RichText, Ui, Widget};
+use eframe::egui::{Response, RichText, Ui};
+use crate::ui_tools::controls::{ButtonKind, TextButton};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use egui_data_table::{
     viewer::{DecodeErrorBehavior, RowCodec},
     RowViewer,
@@ -790,19 +793,9 @@ impl RowViewer<EverestItemRow> for EverestItemViewer {
                 if let Some((bracket, name)) = row.item_code.split_once(']') {
                     let parts = bracket.split_terminator('/').collect::<Vec<_>>();
                     ui.horizontal_centered(|ui| {
-                        match parts.len() {
-                            2 => {
-                                ui.colored_label(Color32::LIGHT_GREEN, format!("{}/", parts[0]));
-                                ui.colored_label(Color32::from_rgb(42, 195, 222), format!("{}]", parts[1]));
-                            }
-                            3 => {
-                                ui.colored_label(Color32::LIGHT_GREEN, format!("{}/", parts[0]));
-                                ui.colored_label(Color32::LIGHT_BLUE, format!("{}/", parts[1]));
-                                ui.colored_label(Color32::from_rgb(42, 195, 222), format!("{}]", parts[2]));
-                            }
-                            _ => { ui.label(&row.item_code); }
+                        if !super::code_parts(ui, &parts) {
+                            ui.label(&row.item_code);
                         }
-                        ui.add_space(6.);
                         ui.label(name);
                     });
                 } else {
@@ -811,30 +804,30 @@ impl RowViewer<EverestItemRow> for EverestItemViewer {
             }
             2 => { ui.label(format!("{:.0}", row.qty)); }
             3 => {
-                let color = if row.unit_price > 0.0 { Color32::LIGHT_GREEN } else { Color32::GRAY };
+                let color = if row.unit_price > 0.0 { theme::success(ui) } else { theme::weak_text(ui) };
                 ui.label(RichText::new(format!("$ {:.2}", row.unit_price)).color(color));
             }
-            4 => { ui.label(RichText::new(&row.stock_serial).color(Color32::from_rgb(160, 200, 220))); }
+            4 => { ui.label(RichText::new(&row.stock_serial).color(theme::tertiary(ui))); }
             5 => {
                 if row.mfg_serial.is_empty() {
-                    ui.label(RichText::new("—").color(Color32::GRAY));
-                } else {
-                    let label = RichText::new(&row.mfg_serial).color(Color32::from_rgb(42, 195, 222));
-                    if Button::new(label).ui(ui)
-                        .on_hover_text("Click to load Odoo movement history")
-                        .clicked()
-                    {
-                        if let Some(tx) = self.serial_click_tx.as_ref() {
-                            let _ = tx.try_send(row.mfg_serial.clone());
-                        }
-                    }
+                    ui.label(RichText::new("—").color(theme::faint_text(ui)));
+                } else if TextButton::new(&row.mfg_serial)
+                    .icon(svg::BARCODE)
+                    .kind(ButtonKind::Ghost)
+                    .ink(theme::info(ui))
+                    .show(ui)
+                    .on_hover_text("Click to load Odoo movement history")
+                    .clicked()
+                    && let Some(tx) = self.serial_click_tx.as_ref()
+                {
+                    let _ = tx.try_send(row.mfg_serial.clone());
                 }
             }
             6 => {
                 if row.kit_code.is_empty() {
-                    ui.label(RichText::new("—").color(Color32::GRAY));
+                    ui.label(RichText::new("—").color(theme::faint_text(ui)));
                 } else {
-                    ui.label(RichText::new(&row.kit_code).color(Color32::from_rgb(255, 180, 80)));
+                    ui.label(RichText::new(&row.kit_code).color(theme::secondary(ui)));
                 }
             }
             _ => unreachable!(),

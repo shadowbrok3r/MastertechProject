@@ -7,10 +7,13 @@
 
 use std::time::Duration;
 
-use crossbeam::channel::Sender;
-use eframe::egui::{Color32, Grid, Label, RichText, Ui};
 use crate::app_state::{FleetAgentSummary, SharedContext};
+use crate::ui_tools::controls::{self, BarKind, ButtonKind, Metrics, TextButton};
+use crate::ui_tools::icons::svg::{self};
+use crate::ui_tools::theme;
 use crate::{PlatformSpawner, Spawner};
+use crossbeam::channel::Sender;
+use eframe::egui::{Grid, Label, RichText, Ui};
 
 /// Poll cadence for `/api/v1/qc/agents`. 15 s matches the cadence the
 /// warehouse dashboard needs (fast enough to spot a machine going dark
@@ -31,10 +34,8 @@ async fn fleet_sleep(duration: Duration) {
         let ms = duration.as_millis().min(i32::MAX as u128) as f64;
         let promise = Promise::new(&mut |resolve, _reject| {
             if let Some(window) = web_sys::window() {
-                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    &resolve,
-                    ms as i32,
-                );
+                let _ = window
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
             }
         });
         let _ = JsFuture::from(promise).await;
@@ -158,39 +159,54 @@ impl SharedContext {
     pub fn fleet_dashboard(&mut self, ui: &mut Ui) {
         self.drain_fleet_updates();
 
-        ui.heading("Fleet Dashboard");
-        ui.add_space(4.0);
+        let m = Metrics::get(ui.ctx());
+        controls::panel_header(ui, svg::DEVICES, "Fleet Dashboard", |_| {});
         ui.label(
             RichText::new(
                 "Live QC machine status. Use the Admin Console tab to connect to a specific machine.",
             )
             .weak(),
         );
-        ui.add_space(6.0);
 
         let url = database::orchestrator_url();
-        ui.horizontal(|ui| {
+        controls::bar(ui, BarKind::Tool, |ui| {
             if url.is_empty() {
-                ui.colored_label(
-                    Color32::GRAY,
+                controls::status_label(
+                    ui,
+                    svg::WARNING,
                     "Orchestrator URL not configured — set ORCHESTRATOR_URL in .env.",
+                    theme::weak_text(ui),
                 );
             } else if self.fleet_poller_running {
-                ui.colored_label(Color32::LIGHT_GREEN, format!("Connected to {url}"));
-                if ui.button("Refresh now").clicked() {
+                controls::status_label(
+                    ui,
+                    svg::PLUGS_CONNECTED,
+                    &format!("Connected to {url}"),
+                    theme::success(ui),
+                );
+                if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh now").clicked() {
                     // Poller already running; next poll within 15 s.
                 }
-            } else if ui.button("Connect to orchestrator").clicked() {
+            } else if TextButton::new("Connect to orchestrator")
+                .kind(ButtonKind::Primary)
+                .icon(svg::PLUGS)
+                .show(ui)
+                .clicked()
+            {
                 self.start_fleet_poller_manual();
             }
         });
-
-        ui.separator();
-        ui.add_space(8.0);
+        ui.add_space(m.gap.y);
 
         if let Some(ref agents) = self.fleet_agents {
             if agents.is_empty() {
-                ui.colored_label(Color32::YELLOW, "No agents registered with the orchestrator yet.");
+                controls::empty_state(
+                    ui,
+                    svg::ROBOT,
+                    "No agents registered with the orchestrator yet",
+                    "",
+                    &[],
+                );
                 return;
             }
             Grid::new("fleet_dashboard_grid")
@@ -198,20 +214,20 @@ impl SharedContext {
                 .striped(true)
                 .spacing([16.0, 4.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Machine").strong());
-                    ui.label(RichText::new("Version").strong());
-                    ui.label(RichText::new("CPU %").strong());
-                    ui.label(RichText::new("Last Heartbeat").strong());
-                    ui.label(RichText::new("Last Report").strong());
+                    controls::icon_label(ui, svg::DESKTOP_TOWER, "Machine");
+                    controls::icon_label(ui, svg::TAG, "Version");
+                    controls::icon_label(ui, svg::CPU, "CPU %");
+                    controls::icon_label(ui, svg::HEARTBEAT, "Last Heartbeat");
+                    controls::icon_label(ui, svg::CLIPBOARD_TEXT, "Last Report");
                     ui.end_row();
 
                     for agent in agents {
                         let cpu_color = if agent.cpu_avg_pct > 90.0 {
-                            Color32::LIGHT_RED
+                            theme::error(ui)
                         } else if agent.cpu_avg_pct > 60.0 {
-                            Color32::YELLOW
+                            theme::warn(ui)
                         } else {
-                            Color32::LIGHT_GREEN
+                            theme::success(ui)
                         };
 
                         ui.add(Label::new(&agent.machine_id));
@@ -221,25 +237,26 @@ impl SharedContext {
                             RichText::new(&agent.last_heartbeat).monospace().small(),
                         ));
                         ui.add(Label::new(
-                            RichText::new(
-                                agent.last_report_at.as_deref().unwrap_or("—"),
-                            )
-                            .monospace()
-                            .small(),
+                            RichText::new(agent.last_report_at.as_deref().unwrap_or("—"))
+                                .monospace()
+                                .small(),
                         ));
                         ui.end_row();
                     }
                 });
         } else if !self.fleet_poller_running {
-            ui.colored_label(
-                Color32::GRAY,
+            controls::empty_state(
+                ui,
+                svg::PLUGS,
+                "Not connected",
                 "Click Connect to orchestrator to load fleet data.",
+                &[],
             );
         } else {
             let url = database::orchestrator_url();
-            ui.colored_label(
-                Color32::GRAY,
-                format!("Waiting for first /api/v1/qc/agents response from {url} …"),
+            controls::loading_state(
+                ui,
+                &format!("Waiting for first /api/v1/qc/agents response from {url} …"),
             );
         }
     }

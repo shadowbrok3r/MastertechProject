@@ -1,24 +1,29 @@
-use eframe::egui::{Id, Modal};
+use eframe::egui::{Id, Label};
 
 use crate::app_state::SharedContext;
-
+use crate::ui_tools::{
+    controls::{self, ModalWidth, Role},
+    icons::svg,
+};
 
 impl SharedContext {
     pub fn admin_notification_ui(&mut self, ctx: &eframe::egui::Context) {
-        if let Some(notif) = &self.notification_modal {
-            let modal = Modal::new(Id::new("Admin Notification")).show(ctx, |ui| {
-                    ui.set_width(200.0);
-                    ui.vertical_centered(|ui| {
-                        ui.heading("Admin Notification");
-                        ui.separator();
-                        ui.add_space(10.);
-                        ui.heading(notif.notification_description.clone());
-                    });
-                });
-
-                if modal.should_close() {
-                    self.notification_modal = None;
-                }
-            }
+        let Some(notif) = &self.notification_modal else {
+            return;
+        };
+        let out = controls::modal(
+            ctx,
+            Id::new("Admin Notification"),
+            svg::MEGAPHONE,
+            "Admin Notification",
+            ModalWidth::Narrow,
+            &[(Role::Primary, "OK")],
+            |ui| {
+                ui.add(Label::new(&notif.notification_description).wrap());
+            },
+        );
+        if out.should_close || out.clicked.is_some() {
+            self.notification_modal = None;
+        }
     }
 }

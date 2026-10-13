@@ -10,24 +10,26 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 use eframe::egui::{
-    self, Align, Align2, Atom, Color32, CornerRadius, FontId, Frame, Id, Label, Layout, Margin,
-    RichText, Sense, Spinner, Stroke, TextFormat, TextStyle, TextWrapMode, Ui, UiBuilder,
-    text::LayoutJob, vec2,
+    self, Align, Align2, Color32, CornerRadius, FontId, Frame, Id, Label, Layout, Margin, Rect,
+    Response, RichText, Sense, Stroke, StrokeKind, TextFormat, TextStyle, Ui, UiBuilder, Vec2,
+    pos2, text::LayoutJob, vec2,
 };
 use serde_json::Value;
 
+use super::controls::{self, IconBox, IconButton, Metrics, SpinnerSize, Tokens};
+use super::icons::svg::{self, Icon};
 use super::mtech_glass::{edge, lift, pane};
-use super::{icons, theme};
+use super::theme;
 pub use plan::{floating_plan, plan_progress, plan_steps, plan_summary};
-pub use shell::is_command_key;
 use shell::ShellColors;
+pub use shell::is_command_key;
 
-/// Width reserved for a header's copy button.
-const COPY_W: f32 = 30.0;
-/// Width reserved for the streaming spinner.
-const SPIN_W: f32 = 20.0;
 const HEADER_H: f32 = 22.0;
-const ROW_GAP: f32 = 6.0;
+/// Opacity of the theme's sunken tone in the text plate and the code plate.
+const PLATE_ALPHA: f32 = 0.6;
+const CODE_PLATE_ALPHA: f32 = 0.45;
+/// Fill and outline opacity of a tinted row at rest, hovered and pressed.
+const ROW_TINT: [(f32, f32); 3] = [(0.10, 0.30), (0.18, 0.62), (0.24, 0.85)];
 /// Seconds the copy button shows a check after a press.
 const COPIED_SECS: f64 = 1.5;
 /// Longest monospace payload drawn in a row.
@@ -66,17 +68,17 @@ impl ChatKind {
         )
     }
 
-    pub fn icon(self) -> &'static str {
+    pub fn icon(self) -> Icon {
         match self {
-            Self::User => icons::USER,
-            Self::Agent => icons::ROBOT,
-            Self::Reasoning => icons::LIGHTBULB,
-            Self::Tool => icons::WRENCH,
-            Self::Command => icons::TERMINAL,
-            Self::FileChange => icons::FILE_TEXT,
-            Self::Approval => icons::LOCK,
-            Self::Error => icons::STATUS_WARN,
-            Self::Plan => icons::PLAN,
+            Self::User => svg::USER,
+            Self::Agent => svg::ROBOT,
+            Self::Reasoning => svg::LIGHTBULB,
+            Self::Tool => svg::WRENCH,
+            Self::Command => svg::TERMINAL,
+            Self::FileChange => svg::FILE_TEXT,
+            Self::Approval => svg::LOCK,
+            Self::Error => svg::WARNING,
+            Self::Plan => svg::LIST_CHECKS,
         }
     }
 }
@@ -116,21 +118,15 @@ impl ChatStyle {
         let dark = v.dark_mode;
         let text = v.text_color();
         let hue = |c: Color32| hue_of(c).unwrap_or(text);
-        let primary_hue = hue(theme::accent(ui));
-        let secondary_hue = hue(theme::accent_secondary(ui));
-        let tertiary_hue = hue(theme::warn(ui));
+        let primary_hue = hue(theme::primary(ui));
+        let secondary_hue = hue(theme::secondary(ui));
+        let tertiary_hue = hue(theme::tertiary(ui));
         let error_hue = hue(theme::error(ui));
-        let (plate, code_plate) = if dark {
-            (
-                Color32::from_black_alpha(150),
-                Color32::from_black_alpha(110),
-            )
-        } else {
-            (
-                Color32::from_white_alpha(170),
-                Color32::from_black_alpha(16),
-            )
-        };
+        let sunken = Tokens::get(ui.ctx()).sunken;
+        let (plate, code_plate) = (
+            sunken.gamma_multiply(PLATE_ALPHA),
+            sunken.gamma_multiply(CODE_PLATE_ALPHA),
+        );
         let style = ui.style();
         Self {
             text,
@@ -219,21 +215,47 @@ fn wrap_width(ui: &Ui) -> f32 {
     ui.available_width().min(ui.clip_rect().width()).max(48.0)
 }
 
-/// Runs `add` with buttons filled and outlined by `hue` in every interaction state.
-fn tinted<R>(ui: &mut Ui, hue: Color32, add: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.scope(|ui| {
-        let w = &mut ui.style_mut().visuals.widgets;
-        for (state, fill, outline) in [
-            (&mut w.inactive, 0.10, 0.30),
-            (&mut w.hovered, 0.18, 0.62),
-            (&mut w.active, 0.24, 0.85),
-        ] {
-            state.weak_bg_fill = pane(hue, fill);
-            state.bg_stroke = Stroke::new(1.0, edge(hue, outline));
-        }
-        add(ui)
-    })
-    .inner
+/// A clickable row `size` big, filled and outlined by `hue` for its interaction state.
+fn tinted_row(ui: &mut Ui, size: Vec2, hue: Color32, radius: u8) -> Response {
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    if ui.is_rect_visible(rect) {
+        let state = if response.is_pointer_button_down_on() {
+            2
+        } else if response.hovered() {
+            1
+        } else {
+            0
+        };
+        let (fill, outline) = ROW_TINT[state];
+        ui.painter().rect(
+            rect,
+            radius,
+            pane(hue, fill),
+            Stroke::new(1.0, edge(hue, outline)),
+            StrokeKind::Inside,
+        );
+    }
+    response
+}
+
+/// Paints `icon` at the small icon size centred vertically at `x`; returns the x after it and a gap.
+fn row_icon(ui: &Ui, icon: Icon, x: f32, rect: Rect, ink: Color32) -> f32 {
+    let m = Metrics::get(ui.ctx());
+    let slot = Rect::from_min_size(
+        pos2(x, rect.center().y - m.icon_sm / 2.0),
+        Vec2::splat(m.icon_sm),
+    );
+    icon.paint(ui, slot, m.icon_sm, ink);
+    slot.right() + m.gap.x / 2.0
+}
+
+/// Lays `job` on one row no wider than `width`, cut with '…'.
+fn one_row(ui: &Ui, mut job: LayoutJob, width: f32) -> std::sync::Arc<egui::Galley> {
+    job.wrap.max_width = width.max(1.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    ui.ctx().fonts_mut(|f| f.layout_job(job))
 }
 
 fn plate(style: &ChatStyle) -> Frame {
@@ -371,7 +393,8 @@ impl<'a> ChatRow<'a> {
         if copied && let Some(text) = self.copy {
             ui.ctx().copy_text(text.to_string());
         }
-        ui.add_space(if self.nested { 2.0 } else { ROW_GAP });
+        let gap = Metrics::get(ui.ctx()).gap.y;
+        ui.add_space(if self.nested { gap / 3.0 } else { gap });
         copied
     }
 
@@ -399,37 +422,53 @@ impl<'a> ChatRow<'a> {
         open: bool,
     ) -> (bool, bool) {
         let (hue, ink) = style.accent(self.kind);
+        let m = Metrics::get(ui.ctx());
         let mut toggled = false;
         let mut copied = false;
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let tail = COPY_W + if self.streaming { SPIN_W } else { 0.0 };
-            let head_w = (ui.available_width() - tail).max(48.0);
-            let job = self.header_job(style, ink, collapsible.then_some(open));
-            if collapsible {
-                let button =
-                    egui::Button::new((job, Atom::grow())).wrap_mode(TextWrapMode::Truncate);
-                toggled = tinted(ui, hue, |ui| ui.add_sized([head_w, HEADER_H], button)).clicked();
+            ui.spacing_mut().item_spacing.x = m.gap.x / 2.0;
+            let gap = ui.spacing().item_spacing.x;
+            let spin = if self.streaming {
+                SpinnerSize::Sm.side() + gap
             } else {
-                ui.allocate_ui_with_layout(
-                    vec2(head_w, HEADER_H),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        ui.add(Label::new(job).truncate());
-                    },
-                );
+                0.0
+            };
+            let tail = IconBox::Sm.side(&m) + gap + spin;
+            let size = vec2((ui.available_width() - tail).max(48.0), HEADER_H);
+            let (rect, response) = if collapsible {
+                let response = tinted_row(ui, size, hue, style.radius);
+                (response.rect, Some(response))
+            } else {
+                (ui.allocate_exact_size(size, Sense::hover()).0, None)
+            };
+            toggled = response.is_some_and(|r| r.clicked());
+            if ui.is_rect_visible(rect) {
+                let mut x = rect.left() + if collapsible { m.gap.x / 2.0 } else { 0.0 };
+                if collapsible {
+                    let chevron = if open {
+                        svg::CARET_DOWN
+                    } else {
+                        svg::CARET_RIGHT
+                    };
+                    x = row_icon(ui, chevron, x, rect, ink);
+                }
+                x = row_icon(ui, self.kind.icon(), x, rect, ink);
+                let job = self.header_job(style, ink, collapsible.then_some(open));
+                let galley = one_row(ui, job, rect.right() - x - m.gap.x / 2.0);
+                let y = (rect.center().y - galley.size().y / 2.0).round();
+                ui.painter().galley(pos2(x, y), galley, ink);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                copied = copy_button(ui, style, id);
+                copied = copy_button(ui, id);
                 if self.streaming {
-                    ui.add(Spinner::new().size(14.0).color(ink));
+                    controls::spinner(ui, SpinnerSize::Sm);
                 }
             });
         });
         (toggled, copied)
     }
 
-    /// Marker, icon and label in the kind's ink, then badge, time and, while closed, the summary.
+    /// Label in the kind's ink, then badge, time and, while closed, the summary.
     fn header_job(&self, style: &ChatStyle, ink: Color32, marker: Option<bool>) -> LayoutJob {
         let fmt = |font: &FontId, color: Color32| TextFormat {
             font_id: font.clone(),
@@ -437,20 +476,6 @@ impl<'a> ChatRow<'a> {
             ..Default::default()
         };
         let mut job = LayoutJob::default();
-        if let Some(open) = marker {
-            job.append(
-                if open {
-                    icons::CHEV_OPEN
-                } else {
-                    icons::CHEV_CLOSED
-                },
-                0.0,
-                fmt(&style.label, ink),
-            );
-            job.append(" ", 0.0, fmt(&style.label, ink));
-        }
-        job.append(self.kind.icon(), 0.0, fmt(&style.label, ink));
-        job.append(" ", 0.0, fmt(&style.label, ink));
         job.append(self.label, 0.0, fmt(&style.label, ink));
         if let Some((badge, color)) = &self.badge {
             job.append(badge, 8.0, fmt(&style.small, *color));
@@ -468,20 +493,15 @@ impl<'a> ChatRow<'a> {
 }
 
 /// The header's copy button, showing a check for a moment after a press; true when pressed.
-fn copy_button(ui: &mut Ui, style: &ChatStyle, id: Id) -> bool {
+fn copy_button(ui: &mut Ui, id: Id) -> bool {
     let at_id = id.with("copied_at");
     let now = ui.input(|i| i.time);
     let since = ui.data(|d| d.get_temp::<f64>(at_id)).map(|t| now - t);
     let recent = since.is_some_and(|s| s < COPIED_SECS);
-    let glyph = if recent { icons::CHECK } else { icons::COPY };
-    let button = egui::Button::new(
-        RichText::new(glyph)
-            .font(style.label.clone())
-            .color(style.weak),
-    );
-    let pressed = ui
-        .add_sized([COPY_W - 4.0, HEADER_H], button)
-        .on_hover_text("Copy")
+    let icon = if recent { svg::CHECK } else { svg::COPY };
+    let pressed = IconButton::new(icon, IconBox::Sm)
+        .tip("Copy")
+        .show(ui)
         .clicked();
     if pressed {
         ui.data_mut(|d| d.insert_temp(at_id, now));
@@ -496,7 +516,8 @@ fn copy_button(ui: &mut Ui, style: &ChatStyle, id: Id) -> bool {
 
 /// A turn boundary: a centred caption on a hairline.
 pub fn divider(ui: &mut Ui, style: &ChatStyle, caption: &str) {
-    ui.add_space(4.0);
+    let gap = Metrics::get(ui.ctx()).gap.y;
+    ui.add_space(gap / 2.0);
     let galley = ui
         .painter()
         .layout_no_wrap(caption.to_string(), style.small.clone(), style.weak);
@@ -512,26 +533,32 @@ pub fn divider(ui: &mut Ui, style: &ChatStyle, caption: &str) {
             .hline(text.right() + 8.0..=rect.right(), y, stroke);
     }
     ui.painter().galley(text.min, galley, style.weak);
-    ui.add_space(2.0);
+    ui.add_space(gap / 3.0);
 }
 
-/// A marker line outside any row: an info glyph, weak wrapped text and the time.
+/// A marker line outside any row: an info icon, weak wrapped text and the time.
 pub fn notice(ui: &mut Ui, style: &ChatStyle, text: &str, time: Option<&str>) {
+    let m = Metrics::get(ui.ctx());
     let fmt = |color: Color32| TextFormat {
         font_id: style.small.clone(),
         color,
         ..Default::default()
     };
-    let mut job = LayoutJob::default();
-    job.wrap.max_width = wrap_width(ui);
-    job.append(icons::INFO, 0.0, fmt(style.weak));
-    job.append(text.trim(), 6.0, fmt(style.weak));
-    if let Some(time) = time {
-        job.append(time, 8.0, fmt(style.weak.gamma_multiply(0.7)));
-    }
-    let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
-    ui.add(Label::new(galley));
-    ui.add_space(2.0);
+    let width = wrap_width(ui);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = m.gap.x / 2.0;
+        let (slot, _) = ui.allocate_exact_size(Vec2::splat(m.icon_sm), Sense::hover());
+        svg::INFO.paint(ui, slot, m.icon_sm, style.weak);
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = (width - m.icon_sm - m.gap.x / 2.0).max(48.0);
+        job.append(text.trim(), 0.0, fmt(style.weak));
+        if let Some(time) = time {
+            job.append(time, 8.0, fmt(style.weak.gamma_multiply(0.7)));
+        }
+        let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+        ui.add(Label::new(galley));
+    });
+    ui.add_space(m.gap.y / 3.0);
 }
 
 /// Markdown body in `ink`; trees and code blocks are keyed under `id`.

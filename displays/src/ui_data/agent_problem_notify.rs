@@ -6,11 +6,13 @@ use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::schema::{AgentProblem, ApprovalViewer, RecordId, User};
-use eframe::egui::{Align, Context, Frame, Layout, Margin, Response, RichText, Sense, Ui, Vec2};
+use eframe::egui::{Context, Response, RichText, Sense, Ui, Vec2};
 use web_time::Instant;
 
+use super::agent_session_notify::{toast_action, toast_card};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
-use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 
 /// `ToastKind::Custom` discriminant for AI-problem toasts.
@@ -23,7 +25,6 @@ const POLL_WINDOW: &str = "15m";
 const MAX_SINGLE_TOASTS: usize = 3;
 /// How recently the Problems list must have been drawn to count as on screen.
 const IN_VIEW_FOR: Duration = Duration::from_millis(1500);
-const TOAST_WIDTH: f32 = 340.0;
 
 /// What one toast shows.
 #[derive(Debug, Clone)]
@@ -233,11 +234,7 @@ pub fn toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
 
     let (title, subject, detail, button) = match &notice {
         Notice::One(p) => (
-            format!(
-                "{} AI problem \u{00b7} {}",
-                icons::STATUS_ERR,
-                p.kind.label()
-            ),
+            format!("AI problem \u{00b7} {}", p.kind.label()),
             Some(format!("{} \u{00b7} {}", who(p), p.subject())),
             p.headline(),
             if p.thread.is_some() {
@@ -247,38 +244,23 @@ pub fn toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
             },
         ),
         Notice::Many(n) => (
-            format!("{} {n} new AI problems", icons::STATUS_ERR),
+            format!("{n} new AI problems"),
             None,
             "Several requests or sessions failed at once.".to_string(),
             "View problems",
         ),
     };
     let mut open = false;
-    let mut dismiss = false;
-    let response = Frame::window(ui.style())
-        .inner_margin(Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_width(TOAST_WIDTH);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&title).strong().color(theme::error(ui)));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    dismiss = ui
-                        .small_button(icons::CLOSE)
-                        .on_hover_text("Dismiss")
-                        .clicked();
-                });
-            });
-            if let Some(subject) = &subject {
-                ui.label(RichText::new(subject).small().color(theme::weak_text(ui)));
-            }
-            ui.add_space(2.0);
-            ui.label(&detail);
-            ui.add_space(4.0);
-            open = ui
-                .button(format!("{} {button}", icons::ARROW_RIGHT))
-                .clicked();
-        })
-        .response;
+    let tone = theme::error(ui);
+    let (response, dismiss) = toast_card(ui, svg::WARNING_OCTAGON, tone, &title, |ui| {
+        if let Some(subject) = &subject {
+            ui.label(RichText::new(subject).small().color(theme::weak_text(ui)));
+        }
+        ui.add_space(2.0);
+        ui.label(&detail);
+        ui.add_space(4.0);
+        open = toast_action(ui, button);
+    });
 
     if open {
         match &notice {

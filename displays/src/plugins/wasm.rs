@@ -38,6 +38,12 @@
 //! | `host_run_command_v2` | `(cmd_ptr, cmd_len, timeout_ms, out_ptr, out_max) -> i32` | Run a shell command with a timeout; writes a JSON `{stdout,stderr,exit,truncated,timed_out}` envelope; returns byte length |
 
 use super::{MastertechPlugin, PluginEvent, PluginHost, PluginToolDescriptor};
+use crate::ui_tools::{
+    controls::{self, Metrics, Tokens},
+    fonts,
+    icons::{p, svg},
+};
+use eframe::egui::{Sense, Vec2};
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -704,7 +710,8 @@ impl MastertechPlugin for WasmPlugin {
 
         let ctx = ui.ctx().clone();
         let mut open = true;
-        eframe::egui::Window::new(format!("📋 {} Report", self.name))
+        let title = format!("{} Report", self.name);
+        controls::icon_window(&ctx, svg::CLIPBOARD_TEXT, &title)
             .id(eframe::egui::Id::new(format!("plugin_ui_window_{}", self.id)))
             .default_width(680.0)
             .default_height(500.0)
@@ -793,9 +800,11 @@ impl MastertechPlugin for WasmPlugin {
 fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginUiEntry]) {
     use eframe::egui;
 
+    let t = Tokens::get(ui.ctx());
     for entry in entries {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&entry.json) else {
-            ui.colored_label(ui.style().visuals.error_fg_color, format!("⚠ Bad UI entry: {}", &entry.json[..entry.json.len().min(80)]));
+            let text = format!("Bad UI entry: {}", &entry.json[..entry.json.len().min(80)]);
+            controls::status_label(ui, svg::WARNING_CIRCLE, &text, t.error);
             continue;
         };
         let entry_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("text");
@@ -805,7 +814,12 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
                 let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("Report");
                 let subtitle = v.get("subtitle").and_then(|t| t.as_str());
                 ui.add_space(4.0);
-                ui.heading(egui::RichText::new(title).strong().size(20.0));
+                ui.horizontal(|ui| {
+                    let size = Metrics::get(ui.ctx()).icon_lg;
+                    let (slot, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+                    svg::CLIPBOARD_TEXT.paint_duo(ui, slot, size, t.primary, t.primary_soft);
+                    ui.label(egui::RichText::new(title).font(fonts::semibold(20.0)).strong());
+                });
                 if let Some(sub) = subtitle {
                     ui.label(egui::RichText::new(sub).weak().italics());
                 }
@@ -816,19 +830,18 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
                 let header = v.get("header").and_then(|t| t.as_str()).unwrap_or("Section");
                 let default_open = v.get("default_open").and_then(|b| b.as_bool()).unwrap_or(true);
                 let status = v.get("status").and_then(|t| t.as_str());
-                let badge = match status {
-                    Some("pass") => "✅ ",
-                    Some("fail") => "❌ ",
-                    Some("warn") => "⚠️ ",
-                    _ => "",
+                let mark = match status {
+                    Some("pass") => Some((svg::CHECK_CIRCLE, t.success)),
+                    Some("fail") => Some((svg::X_CIRCLE, t.error)),
+                    Some("warn") => Some((svg::WARNING, t.warn)),
+                    _ => None,
                 };
                 let id = egui::Id::new(format!("plugin_section_{}", header));
-                egui::CollapsingHeader::new(
-                    egui::RichText::new(format!("{badge}{header}")).strong()
-                )
-                .id_salt(id)
-                .default_open(default_open)
-                .show(ui, |ui| {
+                let mut section = controls::Section::new(id, header).default_open(default_open);
+                if let Some((icon, tone)) = mark {
+                    section = section.icon(icon).icon_tone(tone);
+                }
+                section.show(ui, |ui| {
                     if let Some(items) = v.get("items").and_then(|a| a.as_array()) {
                         let sub_entries: Vec<super::PluginUiEntry> = items
                             .iter()
@@ -844,14 +857,13 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
                 let status = v.get("status").and_then(|t| t.as_str()).unwrap_or("info");
                 let detail = v.get("detail").and_then(|t| t.as_str()).unwrap_or("");
                 let (icon, color) = match status {
-                    "pass" => ("✅", egui::Color32::from_rgb(80, 200, 80)),
-                    "fail" => ("❌", egui::Color32::from_rgb(220, 60, 60)),
-                    "warn" => ("⚠️", egui::Color32::from_rgb(220, 180, 40)),
-                    _ =>      ("ℹ️", egui::Color32::from_rgb(120, 170, 220)),
+                    "pass" => (svg::CHECK_CIRCLE, t.success),
+                    "fail" => (svg::X_CIRCLE, t.error),
+                    "warn" => (svg::WARNING, t.warn),
+                    _ => (svg::INFO, t.info),
                 };
                 ui.horizontal(|ui| {
-                    ui.label(icon);
-                    ui.colored_label(color, egui::RichText::new(label).strong());
+                    controls::status_label(ui, icon, label, color);
                     if !detail.is_empty() {
                         ui.label(egui::RichText::new(format!("— {detail}")).weak());
                     }
@@ -898,14 +910,20 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
                                 if let Some(cells) = row.as_array() {
                                     for cell in cells {
                                         let text = cell.as_str().unwrap_or("");
-                                        let rt = if text.contains("PASS") || text.contains("CLEAN") {
-                                            egui::RichText::new(text).color(egui::Color32::from_rgb(80, 200, 80))
+                                        let mark = if text.contains("PASS") || text.contains("CLEAN") {
+                                            Some((p::CHECK_CIRCLE, t.success))
                                         } else if text.contains("FAIL") {
-                                            egui::RichText::new(text).color(egui::Color32::from_rgb(220, 60, 60))
+                                            Some((p::X_CIRCLE, t.error))
                                         } else if text.contains("WARN") || text.contains("ATTENTION") {
-                                            egui::RichText::new(text).color(egui::Color32::from_rgb(220, 180, 40))
+                                            Some((p::WARNING, t.warn))
                                         } else {
-                                            egui::RichText::new(text)
+                                            None
+                                        };
+                                        let rt = match mark {
+                                            Some((glyph, tone)) => {
+                                                egui::RichText::new(format!("{glyph} {text}")).color(tone)
+                                            }
+                                            None => egui::RichText::new(text),
                                         };
                                         ui.label(rt);
                                     }
@@ -921,10 +939,10 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
                 let level = v.get("level").and_then(|t| t.as_str()).unwrap_or("info");
                 let msg = v.get("message").and_then(|t| t.as_str()).unwrap_or("");
                 let color = match level {
-                    "error" => egui::Color32::from_rgb(220, 60, 60),
-                    "warn"  => egui::Color32::from_rgb(220, 180, 40),
-                    "pass" | "success" => egui::Color32::from_rgb(80, 200, 80),
-                    _ =>       egui::Color32::from_rgb(160, 160, 160),
+                    "error" => t.error,
+                    "warn"  => t.warn,
+                    "pass" | "success" => t.success,
+                    _ => t.text_dim,
                 };
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(ts).monospace().weak().size(11.0));
@@ -938,10 +956,10 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
                 let value = v.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
                 ui.horizontal(|ui| {
                     ui.label(label);
-                    let bar = egui::ProgressBar::new(value)
-                        .text(format!("{:.0}%", value * 100.0))
-                        .desired_width(200.0);
-                    ui.add(bar);
+                    controls::ProgressBar::new(value)
+                        .text(&format!("{:.0}%", value * 100.0))
+                        .width(200.0)
+                        .show(ui);
                 });
             }
 
@@ -951,7 +969,8 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
             }
 
             _ => {
-                ui.label(egui::RichText::new(format!("Unknown UI type: {entry_type}")).weak());
+                let text = format!("Unknown UI type: {entry_type}");
+                controls::status_label(ui, svg::QUESTION, &text, t.text_faint);
             }
         }
     }

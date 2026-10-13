@@ -5,17 +5,29 @@
 
 use eframe::egui::{self, RichText, Ui};
 use stress_runner::{
-    info_for, mode_info, cert_preset_info, PanelMode, ScenarioStageConfig, StressPanelConfig,
-    StressorChoice, Subsystem, CERT_PRESET_NAMES,
+    CERT_PRESET_NAMES, PanelMode, ScenarioStageConfig, StressPanelConfig, StressorChoice,
+    Subsystem, cert_preset_info, info_for, mode_info,
 };
 
-use super::{DashboardAction, StressDashboard};
-use crate::{icons, theme};
+use super::{DashboardAction, StressDashboard, mode_icon, subsystem_icon};
+use crate::controls::{self, IconBox, IconButton, MenuButton, Metrics, TextField};
+use crate::icons::svg;
+use crate::theme;
+
+/// Width of a duration or size field.
+const VALUE_W: f32 = 96.0;
+/// Width of a thread-count field.
+const THREADS_W: f32 = 64.0;
+/// Width of a stage label field.
+const STAGE_LABEL_W: f32 = 96.0;
+/// Widest a hover card runs.
+const HINT_W: f32 = 340.0;
 
 /// Compact segmented mode control with a hover hint per mode.
 pub(super) fn mode_selector(ui: &mut Ui, cfg: &mut StressPanelConfig, running: bool) {
     ui.add_enabled_ui(!running, |ui| {
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = Metrics::get(ui.ctx()).pad.y;
             for mode in [
                 PanelMode::Single,
                 PanelMode::Scenario,
@@ -25,8 +37,7 @@ pub(super) fn mode_selector(ui: &mut Ui, cfg: &mut StressPanelConfig, running: b
             ] {
                 let info = mode_info(mode.clone());
                 let selected = cfg.mode == mode;
-                if ui
-                    .selectable_label(selected, info.label)
+                if controls::pill(ui, mode_icon(&mode), info.label, selected)
                     .on_hover_ui(|ui| hint(ui, info.label, info.what, Some(info.when), None, None))
                     .clicked()
                 {
@@ -44,10 +55,11 @@ pub(super) fn show(
     running: bool,
     _action: &mut DashboardAction,
 ) {
+    let m = Metrics::get(ui.ctx());
     let info = mode_info(cfg.mode.clone());
-    ui.label(RichText::new(info.label).strong());
+    controls::subheading(ui, mode_icon(&cfg.mode), info.label);
     ui.label(RichText::new(info.what).weak());
-    ui.add_space(6.0);
+    ui.add_space(m.gap.y);
 
     ui.add_enabled_ui(!running, |ui| match cfg.mode {
         PanelMode::Single => single(dash, ui, cfg),
@@ -72,6 +84,7 @@ enum PickMode<'a> {
 
 /// Subsystem-grouped, collapsible stressor picker with per-test hover hints.
 fn stressor_picker(dash: &mut StressDashboard, ui: &mut Ui, mut pick: PickMode<'_>) {
+    let m = Metrics::get(ui.ctx());
     for group in Subsystem::ALL {
         let label = group.label();
         let selected_in_group = group
@@ -84,68 +97,67 @@ fn stressor_picker(dash: &mut StressDashboard, ui: &mut Ui, mut pick: PickMode<'
             .count();
         let open = dash.group_open(label, selected_in_group > 0);
 
-        ui.horizontal(|ui| {
-            let chev = if open {
-                icons::CHEV_OPEN
+        let header = controls::fold_header(ui, open, subsystem_icon(group), label)
+            .on_hover_ui(|ui| hint(ui, label, group.blurb(), None, None, None));
+        if header.clicked() {
+            dash.toggle_group(label, open);
+        }
+        let row = header.rect.shrink2(egui::vec2(m.pad.y, 0.0));
+        let mut trailing = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(row)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        if let PickMode::Many(lanes) = &mut pick {
+            let all_on = group.stressors().iter().all(|c| lanes.contains(c));
+            let (icon, verb) = if all_on {
+                (svg::SQUARE, "none")
             } else {
-                icons::CHEV_CLOSED
+                (svg::CHECK_SQUARE, "all")
             };
-            if ui
-                .selectable_label(false, format!("{chev}  {label}"))
-                .on_hover_ui(|ui| hint(ui, label, group.blurb(), None, None, None))
+            let tip = format!("Select {verb} in {label}");
+            if IconButton::new(icon, IconBox::Sm)
+                .tip(&tip)
+                .show(&mut trailing)
                 .clicked()
             {
-                dash.toggle_group(label, open);
-            }
-            if selected_in_group > 0 {
-                let col = theme::accent(ui);
-                ui.colored_label(col, format!("{selected_in_group}"));
-            }
-            if let PickMode::Many(lanes) = &mut pick {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let all_on = group.stressors().iter().all(|c| lanes.contains(c));
-                    let verb = if all_on { "none" } else { "all" };
-                    if ui
-                        .small_button(verb)
-                        .on_hover_text(format!("Select {verb} in {label}"))
-                        .clicked()
-                    {
-                        for c in group.stressors() {
-                            lanes.retain(|l| l != c);
-                            if !all_on {
-                                lanes.push(*c);
-                            }
-                        }
+                for c in group.stressors() {
+                    lanes.retain(|l| l != c);
+                    if !all_on {
+                        lanes.push(*c);
                     }
-                });
+                }
             }
-        });
+        }
+        if selected_in_group > 0 {
+            let tone = theme::primary(&trailing);
+            controls::badge(&mut trailing, &selected_in_group.to_string(), tone);
+        }
 
         if !open {
             continue;
         }
 
         ui.indent(label, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             for choice in group.stressors() {
                 let info = info_for(*choice);
                 let on = match &pick {
                     PickMode::One(cur) => **cur == *choice,
                     PickMode::Many(lanes) => lanes.contains(choice),
                 };
-                let text = match info.caveat {
-                    Some(_) => format!("{}  {}", choice.label(), icons::INFO),
-                    None => choice.label().to_string(),
-                };
-                let resp = ui.selectable_label(on, text).on_hover_ui(|ui| {
-                    hint(
-                        ui,
-                        choice.label(),
-                        info.what,
-                        Some(info.when),
-                        info.pass,
-                        info.caveat,
-                    )
-                });
+                let icon = info.caveat.map(|_| svg::INFO);
+                let resp =
+                    controls::menu_check_item(ui, icon, choice.label(), on).on_hover_ui(|ui| {
+                        hint(
+                            ui,
+                            choice.label(),
+                            info.what,
+                            Some(info.when),
+                            info.pass,
+                            info.caveat,
+                        )
+                    });
                 if resp.clicked() {
                     match &mut pick {
                         PickMode::One(cur) => **cur = *choice,
@@ -160,7 +172,7 @@ fn stressor_picker(dash: &mut StressDashboard, ui: &mut Ui, mut pick: PickMode<'
                 }
             }
         });
-        ui.add_space(2.0);
+        ui.add_space(m.pad.y);
     }
 }
 
@@ -173,22 +185,24 @@ fn hint(
     pass: Option<&str>,
     caveat: Option<&str>,
 ) {
-    ui.set_max_width(340.0);
+    let m = Metrics::get(ui.ctx());
+    ui.set_max_width(HINT_W);
     ui.label(RichText::new(title).strong());
     ui.label(what);
     if let Some(when) = when {
-        ui.add_space(3.0);
-        let col = theme::accent(ui);
-        ui.label(RichText::new(format!("Use when: {when}")).color(col));
+        ui.add_space(m.pad.y);
+        let col = theme::primary(ui);
+        controls::status_label(ui, svg::LIGHTBULB, &format!("Use when: {when}"), col);
     }
     if let Some(pass) = pass {
-        ui.add_space(3.0);
-        ui.label(RichText::new(format!("Passes if: {pass}")).weak());
+        ui.add_space(m.pad.y);
+        let col = theme::weak_text(ui);
+        controls::status_label(ui, svg::SEAL_CHECK, &format!("Passes if: {pass}"), col);
     }
     if let Some(caveat) = caveat {
-        ui.add_space(3.0);
+        ui.add_space(m.pad.y);
         let col = theme::warn(ui);
-        ui.label(RichText::new(format!("{}  {caveat}", icons::STATUS_WARN)).color(col));
+        controls::status_label(ui, svg::WARNING, caveat, col);
     }
 }
 
@@ -196,7 +210,18 @@ fn hint(
 // Per-mode config
 // ---------------------------------------------------------------------------
 
+/// "Stop after" row: an on/off switch and the seconds it stops at.
+fn stop_after(ui: &mut Ui, enabled: &mut bool, secs: &mut u64) {
+    ui.horizontal(|ui| {
+        controls::toggle(ui, enabled, "");
+        ui.add_enabled_ui(*enabled, |ui| {
+            controls::value_field(ui, secs, 1..=86_400, "s", VALUE_W);
+        });
+    });
+}
+
 fn single(dash: &mut StressDashboard, ui: &mut Ui, cfg: &mut StressPanelConfig) {
+    let m = Metrics::get(ui.ctx());
     let chosen = cfg.single.stressor;
     let info = info_for(chosen);
 
@@ -204,84 +229,81 @@ fn single(dash: &mut StressDashboard, ui: &mut Ui, cfg: &mut StressPanelConfig) 
     ui.label(RichText::new(info.what).weak().small());
     if let Some(caveat) = info.caveat {
         let col = theme::warn(ui);
-        ui.label(RichText::new(format!("{}  {caveat}", icons::STATUS_WARN)).color(col).small());
+        controls::IconLabel::new(svg::WARNING, caveat)
+            .tone(col)
+            .small(true)
+            .selectable(true)
+            .show(ui);
     }
-    ui.add_space(6.0);
+    ui.add_space(m.gap.y);
 
     egui::Grid::new("stress_single_grid")
         .num_columns(2)
-        .spacing([10.0, 6.0])
+        .spacing([m.gap.x, m.gap.y])
         .show(ui, |ui| {
             let c = &mut cfg.single;
 
-            ui.label("Threads").on_hover_text("0 uses every logical core");
-            ui.add(
-                egui::DragValue::new(&mut c.threads)
-                    .range(0..=1024)
-                    .custom_formatter(|n, _| {
-                        if n <= 0.0 {
-                            "auto".to_owned()
-                        } else {
-                            format!("{n:.0}")
-                        }
-                    }),
-            );
+            ui.label("Threads")
+                .on_hover_text("0 uses every logical core");
+            controls::ValueField::new(&mut c.threads, 0..=1024)
+                .formatter(|n| {
+                    if n <= 0.0 {
+                        "auto".to_owned()
+                    } else {
+                        format!("{n:.0}")
+                    }
+                })
+                .parser(|text| {
+                    let text = text.trim();
+                    if text.eq_ignore_ascii_case("auto") {
+                        Some(0.0)
+                    } else {
+                        text.parse().ok()
+                    }
+                })
+                .show(ui);
             ui.end_row();
 
             ui.label("Stop after")
                 .on_hover_text("Leave off to run until stopped by hand");
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut c.use_timeout, "");
-                ui.add_enabled(
-                    c.use_timeout,
-                    egui::DragValue::new(&mut c.timeout_secs)
-                        .suffix(" s")
-                        .range(1..=86_400),
-                );
-            });
+            stop_after(ui, &mut c.use_timeout, &mut c.timeout_secs);
             ui.end_row();
 
             if uses_memory_cap(chosen) {
                 ui.label("Memory cap")
                     .on_hover_text("Per-worker heap ceiling");
-                ui.add(
-                    egui::DragValue::new(&mut c.memory_cap_mb)
-                        .suffix(" MB")
-                        .range(16..=1_048_576),
-                );
+                controls::value_field(ui, &mut c.memory_cap_mb, 16..=1_048_576, "MB", VALUE_W);
                 ui.end_row();
             }
 
             if chosen == StressorChoice::Disk {
-                ui.label("Disk file").on_hover_text("Temp file size written per worker");
-                ui.add(
-                    egui::DragValue::new(&mut c.disk_file_mb)
-                        .suffix(" MB")
-                        .range(1..=1_048_576),
-                );
+                ui.label("Disk file")
+                    .on_hover_text("Temp file size written per worker");
+                controls::value_field(ui, &mut c.disk_file_mb, 1..=1_048_576, "MB", VALUE_W);
                 ui.end_row();
             }
         });
 
-    ui.add_space(8.0);
-    ui.label(RichText::new("Test").strong());
+    ui.add_space(m.gap.x);
+    controls::subheading(ui, svg::FLASK, "Test");
     stressor_picker(dash, ui, PickMode::One(&mut cfg.single.stressor));
 }
 
 fn concurrent(dash: &mut StressDashboard, ui: &mut Ui, cfg: &mut StressPanelConfig) {
+    let m = Metrics::get(ui.ctx());
     ui.label(
         RichText::new("Every selected test runs at the same time, in its own lane.")
             .weak()
             .small(),
     );
-    ui.add_space(4.0);
+    ui.add_space(m.pad.y);
 
     let lanes = cfg.concurrent.lanes.clone();
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(format!("{} lane(s):", lanes.len())).strong());
         if lanes.is_empty() {
             let col = theme::warn(ui);
-            ui.colored_label(col, "pick at least one test");
+            controls::status_label(ui, svg::WARNING, "pick at least one test", col);
         } else {
             for c in &lanes {
                 ui.label(RichText::new(c.label()).small());
@@ -290,61 +312,49 @@ fn concurrent(dash: &mut StressDashboard, ui: &mut Ui, cfg: &mut StressPanelConf
     });
 
     if lanes.len() > 1 && !lanes.iter().any(|c| c.is_gpu()) {
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new("No GPU lane selected — this only loads CPU, RAM, and disk.")
-                .weak()
-                .small(),
-        );
+        ui.add_space(m.pad.y / 2.0);
+        let col = theme::weak_text(ui);
+        controls::IconLabel::new(
+            svg::INFO,
+            "No GPU lane selected — this only loads CPU, RAM, and disk.",
+        )
+        .tone(col)
+        .small(true)
+        .selectable(true)
+        .show(ui);
     }
 
-    ui.add_space(6.0);
+    ui.add_space(m.gap.y);
     egui::Grid::new("stress_concurrent_grid")
         .num_columns(2)
-        .spacing([10.0, 6.0])
+        .spacing([m.gap.x, m.gap.y])
         .show(ui, |ui| {
             let c = &mut cfg.concurrent;
             ui.label("Stop after")
                 .on_hover_text("Shared by every lane — per-lane durations are ignored");
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut c.use_timeout, "");
-                ui.add_enabled(
-                    c.use_timeout,
-                    egui::DragValue::new(&mut c.duration_secs)
-                        .suffix(" s")
-                        .range(1..=86_400),
-                );
-            });
+            stop_after(ui, &mut c.use_timeout, &mut c.duration_secs);
             ui.end_row();
 
             ui.label("Memory cap / lane");
-            ui.add(
-                egui::DragValue::new(&mut c.memory_cap_mb)
-                    .suffix(" MB")
-                    .range(16..=1_048_576),
-            );
+            controls::value_field(ui, &mut c.memory_cap_mb, 16..=1_048_576, "MB", VALUE_W);
             ui.end_row();
 
             ui.label("Disk file / lane");
-            ui.add(
-                egui::DragValue::new(&mut c.disk_file_mb)
-                    .suffix(" MB")
-                    .range(1..=1_048_576),
-            );
+            controls::value_field(ui, &mut c.disk_file_mb, 1..=1_048_576, "MB", VALUE_W);
             ui.end_row();
         });
 
-    ui.add_space(8.0);
-    ui.label(RichText::new("Lanes").strong());
+    ui.add_space(m.gap.x);
+    controls::subheading(ui, svg::ROWS, "Lanes");
     stressor_picker(dash, ui, PickMode::Many(&mut cfg.concurrent.lanes));
 }
 
 fn scenario(ui: &mut Ui, cfg: &mut StressPanelConfig) {
+    let m = Metrics::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(RichText::new("Stages run in order").weak());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button(format!("{}  Add", icons::PLUS))
+            if controls::icon_text_button(ui, svg::PLUS, "Add")
                 .on_hover_text("Append a stage")
                 .clicked()
             {
@@ -352,7 +362,7 @@ fn scenario(ui: &mut Ui, cfg: &mut StressPanelConfig) {
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(m.pad.y);
 
     let mut remove = None;
     let mut move_up = None;
@@ -363,25 +373,32 @@ fn scenario(ui: &mut Ui, cfg: &mut StressPanelConfig) {
                 let s = &mut cfg.scenario.stages[i];
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{}.", i + 1)).strong());
-                    ui.add(
-                        egui::TextEdit::singleline(&mut s.label)
-                            .desired_width(96.0)
-                            .hint_text("label"),
-                    );
+                    TextField::new(&mut s.label)
+                        .hint("label")
+                        .width(STAGE_LABEL_W)
+                        .show(ui);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if count > 1
-                            && ui
-                                .small_button(icons::TRASH)
-                                .on_hover_text("Remove stage")
-                                .clicked()
+                            && controls::icon_button(
+                                ui,
+                                svg::TRASH,
+                                IconBox::Sm,
+                                false,
+                                "Remove stage",
+                            )
+                            .clicked()
                         {
                             remove = Some(i);
                         }
                         if i > 0
-                            && ui
-                                .small_button(icons::UP)
-                                .on_hover_text("Move earlier")
-                                .clicked()
+                            && controls::icon_button(
+                                ui,
+                                svg::ARROW_UP,
+                                IconBox::Sm,
+                                false,
+                                "Move earlier",
+                            )
+                            .clicked()
                         {
                             move_up = Some(i);
                         }
@@ -389,17 +406,32 @@ fn scenario(ui: &mut Ui, cfg: &mut StressPanelConfig) {
                 });
 
                 let info = info_for(s.stressor);
-                egui::ComboBox::from_id_salt("stage_stressor")
-                    .selected_text(s.stressor.label())
-                    .show_ui(ui, |ui| {
+                let current = Subsystem::ALL
+                    .into_iter()
+                    .find(|g| g.stressors().contains(&s.stressor))
+                    .map_or(svg::FLASK, subsystem_icon);
+                MenuButton::new(s.stressor.label())
+                    .icon(current)
+                    .tip("Stressor for this stage")
+                    .show(ui, |ui| {
                         for group in Subsystem::ALL {
-                            ui.label(RichText::new(group.label()).weak().small());
+                            controls::section_label(ui, group.label());
                             for choice in group.stressors() {
                                 let i = info_for(*choice);
-                                ui.selectable_value(&mut s.stressor, *choice, choice.label())
-                                    .on_hover_ui(|ui| {
-                                        hint(ui, choice.label(), i.what, Some(i.when), i.pass, i.caveat)
-                                    });
+                                let picked = s.stressor == *choice;
+                                if controls::menu_check_item(
+                                    ui,
+                                    subsystem_icon(group),
+                                    choice.label(),
+                                    picked,
+                                )
+                                .on_hover_ui(|ui| {
+                                    hint(ui, choice.label(), i.what, Some(i.when), i.pass, i.caveat)
+                                })
+                                .clicked()
+                                {
+                                    s.stressor = *choice;
+                                }
                             }
                         }
                     });
@@ -407,13 +439,9 @@ fn scenario(ui: &mut Ui, cfg: &mut StressPanelConfig) {
 
                 ui.horizontal(|ui| {
                     ui.label("for");
-                    ui.add(
-                        egui::DragValue::new(&mut s.duration_secs)
-                            .suffix(" s")
-                            .range(1..=86_400),
-                    );
+                    controls::value_field(ui, &mut s.duration_secs, 1..=86_400, "s", VALUE_W);
                     ui.label("threads");
-                    ui.add(egui::DragValue::new(&mut s.threads).range(0..=1024));
+                    controls::value_field(ui, &mut s.threads, 0..=1024, "", THREADS_W);
                 });
             });
         });
@@ -425,44 +453,46 @@ fn scenario(ui: &mut Ui, cfg: &mut StressPanelConfig) {
         cfg.scenario.stages.swap(i - 1, i);
     }
 
-    ui.add_space(6.0);
+    ui.add_space(m.gap.y);
     let sc = &mut cfg.scenario;
-    ui.checkbox(&mut sc.use_total, "Total wall-clock cap")
+    controls::toggle(ui, &mut sc.use_total, "Total wall-clock cap")
         .on_hover_text("Stop the whole scenario at this point regardless of stage progress");
     ui.add_enabled_ui(sc.use_total, |ui| {
         ui.horizontal(|ui| {
-            ui.add(
-                egui::DragValue::new(&mut sc.total_wall_secs)
-                    .suffix(" s")
-                    .range(1..=604_800),
-            );
-            ui.checkbox(&mut sc.repeat_until_total, "Repeat")
+            controls::value_field(ui, &mut sc.total_wall_secs, 1..=604_800, "s", VALUE_W);
+            controls::toggle(ui, &mut sc.repeat_until_total, "Repeat")
                 .on_hover_text("Loop the stage list until the cap is reached");
         });
     });
 
     let planned: u64 = sc.stages.iter().map(|s| s.duration_secs).sum();
-    ui.add_space(4.0);
-    ui.label(RichText::new(format!("{} stages, {}", sc.stages.len(), fmt_dur(planned))).weak());
+    ui.add_space(m.pad.y);
+    let col = theme::weak_text(ui);
+    controls::status_label(
+        ui,
+        svg::TIMER,
+        &format!("{} stages, {}", sc.stages.len(), fmt_dur(planned)),
+        col,
+    );
 }
 
 fn qc_benchmark(ui: &mut Ui, cfg: &mut StressPanelConfig) {
+    let m = Metrics::get(ui.ctx());
     let mult = &mut cfg.qc_benchmark.duration_multiplier;
     ui.horizontal(|ui| {
         ui.label("Duration");
-        ui.add(egui::Slider::new(mult, 0.1..=10.0).suffix("x"));
+        controls::Slider::new(mult, 0.1..=10.0).value("x").show(ui);
     });
     let per_stage = (20.0 * *mult).round() as u64;
-    ui.label(
-        RichText::new(format!(
-            "{}s per stage, {} total",
-            per_stage,
-            fmt_dur(per_stage * 8)
-        ))
-        .weak(),
+    let col = theme::weak_text(ui);
+    controls::status_label(
+        ui,
+        svg::TIMER,
+        &format!("{}s per stage, {} total", per_stage, fmt_dur(per_stage * 8)),
+        col,
     );
-    ui.add_space(6.0);
-    ui.label(RichText::new("Stages").strong());
+    ui.add_space(m.gap.y);
+    controls::subheading(ui, svg::LIST_NUMBERS, "Stages");
     for (n, s) in [
         "cpu", "matrix", "fp", "stream", "cache", "branch", "memory", "vm",
     ]
@@ -474,55 +504,64 @@ fn qc_benchmark(ui: &mut Ui, cfg: &mut StressPanelConfig) {
 }
 
 fn certification(ui: &mut Ui, cfg: &mut StressPanelConfig) {
-    ui.label(RichText::new("Tier").strong());
-    for name in CERT_PRESET_NAMES {
-        let selected = cfg.certification.preset_name == *name;
-        let info = cert_preset_info(name);
-        let label = info.map(|i| i.label).unwrap_or(name);
-        let resp = ui.selectable_label(selected, label).on_hover_ui(|ui| {
-            match info {
-                Some(i) => hint(ui, i.label, i.what, Some(i.when), None, None),
-                None => {
-                    ui.label(*name);
-                }
+    let m = Metrics::get(ui.ctx());
+    controls::subheading(ui, svg::MEDAL, "Tier");
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for name in CERT_PRESET_NAMES {
+            let selected = cfg.certification.preset_name == *name;
+            let info = cert_preset_info(name);
+            let label = info.map(|i| i.label).unwrap_or(name);
+            let resp = controls::menu_check_item(ui, svg::CERTIFICATE, label, selected)
+                .on_hover_ui(|ui| match info {
+                    Some(i) => hint(ui, i.label, i.what, Some(i.when), None, None),
+                    None => {
+                        ui.label(*name);
+                    }
+                });
+            if resp.clicked() {
+                cfg.certification.preset_name = (*name).to_string();
             }
-        });
-        if resp.clicked() {
-            cfg.certification.preset_name = (*name).to_string();
-        }
-        if let Some(i) = info {
-            if selected {
+            if let Some(i) = info
+                && selected
+            {
                 ui.indent(name, |ui| {
                     ui.label(RichText::new(i.what).weak().small());
                 });
             }
         }
-    }
+    });
 
-    ui.add_space(8.0);
-    let m = &mut cfg.certification.duration_multiplier;
+    ui.add_space(m.gap.x);
+    let mult = &mut cfg.certification.duration_multiplier;
     ui.horizontal(|ui| {
         ui.label("Duration");
-        ui.add(egui::Slider::new(m, 0.001..=1.0).suffix("x"));
+        controls::Slider::new(mult, 0.001..=1.0).value("x").show(ui);
     });
-    if *m < 1.0 {
+    if *mult < 1.0 {
         let col = theme::warn(ui);
-        ui.label(
-            RichText::new(format!(
-                "{}  Shortened to {:.1}% — a smoke test, not a valid certification.",
-                icons::STATUS_WARN,
-                *m * 100.0
-            ))
-            .color(col)
-            .small(),
-        );
+        controls::IconLabel::new(
+            svg::WARNING,
+            &format!(
+                "Shortened to {:.1}% — a smoke test, not a valid certification.",
+                *mult * 100.0
+            ),
+        )
+        .tone(col)
+        .small(true)
+        .selectable(true)
+        .show(ui);
     }
-    ui.add_space(4.0);
-    ui.label(
-        RichText::new("Each stage carries verdict rules for temperature, WHEA, TDR, and throughput stability.")
-            .weak()
-            .small(),
-    );
+    ui.add_space(m.pad.y);
+    let col = theme::weak_text(ui);
+    controls::IconLabel::new(
+        svg::SHIELD_CHECK,
+        "Each stage carries verdict rules for temperature, WHEA, TDR, and throughput stability.",
+    )
+    .tone(col)
+    .small(true)
+    .selectable(true)
+    .show(ui);
 }
 
 /// Stressors whose plan actually reads `memory_cap_mb`.

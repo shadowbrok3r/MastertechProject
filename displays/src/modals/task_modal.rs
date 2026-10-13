@@ -1,8 +1,16 @@
-use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, Ui, UiBuilder, Vec2, Widget};
-use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, ui_tools::theme, DisplayModal, Interaction, PlatformSpawner, Spawner};
+use eframe::egui::{Align, Direction, Id, Layout, RichText, ScrollArea, Ui, UiBuilder, Vec2};
+use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
+use crate::ui_tools::{
+    controls::{
+        self, BarKind, ButtonKind, IconBox, IconButton, IconLabel, Metrics, ModalWidth, Role,
+        SpinnerSize, TextArea, TextButton, TextField, Tokens,
+    },
+    glass_card,
+    icons::svg,
+    theme,
+};
 use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, StressTestRun, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
-use database::schema::prestashop::{Prestashop, Customer, Address};
-use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
+use database::schema::prestashop::{Customer, Address};
 use database::schema::prestashop_schema::PrestashopPayload;
 use database::schema::helper_traits::parse_email_user;
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
@@ -16,6 +24,17 @@ use std::sync::Arc;
 use bytes::Bytes;
 use core::f32;
 use log::info;
+
+/// Tallest a picker list in a task sub-modal grows before it scrolls.
+const LIST_MAX_H: f32 = 240.0;
+/// Width of the import-computer search field.
+const IMPORT_SEARCH_W: f32 = 260.0;
+/// Width of the change-customer search field.
+const CUSTOMER_SEARCH_W: f32 = 250.0;
+/// Width of the special-part-order form column.
+const SPO_FORM_W: f32 = 200.0;
+/// Width of each special-part-order dropdown.
+const SPO_PICKER_W: f32 = 96.0;
 
 use super::tabs::{display_computer_page_with_search, display_diagnostics_page, display_history_page, display_job_builder_page, display_software_page, display_stress_tests_page, display_ticket_page, ComputerSearchData, DiagnosticSessionView};
 
@@ -711,296 +730,265 @@ impl TaskModal {
             return;
         }
 
-        let screen_rect = ui.ctx().content_rect();
-        ui.painter().rect_filled(
-            screen_rect,
-            0.0,
-            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        let title = match self.import_computer_source {
+            ImportComputerSource::Prestashop => "Import Computer from PrestaShop",
+            ImportComputerSource::Everest => "Import Computer from Everest",
+        };
+        let outcome = controls::modal(
+            ui.ctx(),
+            Id::new("import_computer_modal"),
+            svg::ARROW_SQUARE_IN,
+            title,
+            ModalWidth::Narrow,
+            &[(Role::Cancel, "Close")],
+            |ui| self.import_computer_body(ui),
         );
+        if outcome.should_close {
+            self.import_computer_open = false;
+            self.import_computer_step = ImportComputerStep::SearchCustomer;
+            self.import_search_query.clear();
+            self.import_customer_results.clear();
+            self.import_computer_results.clear();
+            self.import_error = None;
+        }
+    }
 
-        Area::new(Id::new("import_computer_modal"))
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .order(Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                Frame::popup(ui.style())
-                    .fill(theme::bg_surface(ui))
-                    .inner_margin(20.0)
-                    .show(ui, |ui| {
-                        ui.set_min_width(420.0);
-                        ui.set_min_height(280.0);
-
-                        ui.vertical(|ui| {
-                            // Header
-                            ui.horizontal(|ui| {
-                                let title = match self.import_computer_source {
-                                    ImportComputerSource::Prestashop => "Import Computer from PrestaShop",
-                                    ImportComputerSource::Everest => "Import Computer from Everest",
-                                };
-                                ui.heading(RichText::new(title).color(Color32::LIGHT_BLUE));
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.button("✕").clicked() {
-                                        self.import_computer_open = false;
-                                        self.import_computer_step = ImportComputerStep::SearchCustomer;
-                                        self.import_search_query.clear();
-                                        self.import_customer_results.clear();
-                                        self.import_computer_results.clear();
-                                        self.import_error = None;
-                                    }
-                                });
-                            });
-                            ui.separator();
-
-                            match self.import_computer_step {
-                                ImportComputerStep::SearchCustomer => {
-                                    ui.label("Search by customer email or phone:");
-                                    ui.add_space(6.0);
-                                    ui.horizontal(|ui| {
-                                        let response = TextEdit::singleline(&mut self.import_search_query)
-                                            .hint_text("Email or phone number...")
-                                            .desired_width(260.0)
-                                            .ui(ui);
-                                        let can_search = !self.import_search_query.is_empty() && !self.import_loading;
-                                        if ui.add_enabled(can_search, Button::new("Search")).clicked()
-                                            || (response.lost_focus()
-                                                && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter))
-                                                && can_search)
-                                        {
-                                            self.import_loading = true;
-                                            self.import_error = None;
-                                            self.import_customer_results.clear();
-                                            let query = self.import_search_query.trim().to_string();
-                                            let tx = self.import_customer_tx.clone();
-                                            PlatformSpawner::spawn(async move {
-                                                let results = if query.contains('@') {
-                                                    Customer::find_customer_by_email(&query).await
-                                                } else {
-                                                    Customer::find_customer_by_phone(&query).await
-                                                };                                                match results {
-                                                    Ok(r) => { let _ = tx.try_send(r); },
-                                                    Err(e) => {
-                                                        log::error!("Import customer search error: {e:?}");
-                                                        let _ = tx.try_send(vec![]);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    });
-
-                                    if self.import_loading {
-                                        ui.add_space(8.0);
-                                        ui.horizontal(|ui| {
-                                            ui.spinner();
-                                            ui.label("Searching...");
-                                        });
-                                    }
-
-                                    if let Some(err) = &self.import_error {
-                                        ui.add_space(6.0);
-                                        ui.colored_label(Color32::LIGHT_RED, err.clone());
-                                    }
-
-                                    if !self.import_customer_results.is_empty() {
-                                        ui.add_space(8.0);
-                                        ui.label(RichText::new("Select customer:").strong());
-                                        ScrollArea::vertical().max_width(180.0).show(ui, |ui| {
-                                            let results = self.import_customer_results.clone();
-                                            for (customer, address) in &results {
-                                                let label = format!(
-                                                    "[{}] {} {} — {}",
-                                                    customer.id,
-                                                    customer.firstname,
-                                                    customer.lastname,
-                                                    address.city
-                                                );
-                                                if ui.button(&label).clicked() {
-                                                    self.import_loading = true;
-                                                    self.import_error = None;
-                                                    let cust_id = customer.id.clone();
-                                                    let tx = self.import_computers_tx.clone();
-                                                    PlatformSpawner::spawn(async move {
-                                                        match ComputerData::get_computers_by_customer_id(cust_id).await {
-                                                            Ok(computers) => { let _ = tx.try_send(computers); },
-                                                            Err(e) => {
-                                                                log::error!("Import computers error: {e:?}");
-                                                                let _ = tx.try_send(vec![]);
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        });
-                                    }
-                                },
-                                ImportComputerStep::SelectComputer => {
-                                    if self.import_loading {
-                                        ui.horizontal(|ui| {
-                                            ui.spinner();
-                                            ui.label("Loading computers...");
-                                        });
-                                    }
-
-                                    if let Some(err) = &self.import_error {
-                                        ui.colored_label(Color32::LIGHT_RED, err.clone());
-                                    }
-
-                                    if !self.import_computer_results.is_empty() {
-                                        ui.label(RichText::new("Select computer:").strong());
-                                        ui.add_space(6.0);
-                                        ScrollArea::vertical().max_width(220.0).show(ui, |ui| {
-                                            let computers = self.import_computer_results.clone();
-                                            for comp in &computers {
-                                                let label = format!(
-                                                    "{} | {} | {} | {}",
-                                                    comp.hostname,
-                                                    comp.cpu,
-                                                    comp.ram,
-                                                    comp.id.key_string()
-                                                );
-                                                if ui.button(&label).clicked() {
-                                                    self.computer = Some(comp.clone());
-                                                    if let Some(ticket) = self.service_ticket.as_mut() {
-                                                        ticket.computer = Some(comp.id.clone());
-                                                    }
-                                                    self.import_computer_open = false;
-                                                    self.import_computer_step = ImportComputerStep::SearchCustomer;
-                                                    self.import_search_query.clear();
-                                                    self.import_customer_results.clear();
-                                                    self.import_computer_results.clear();
-                                                }
-                                            }
-                                        });
-                                    }
-
-                                    ui.add_space(8.0);
-                                    if ui.button("← Back to customer search").clicked() {
-                                        self.import_computer_step = ImportComputerStep::SearchCustomer;
-                                        self.import_computer_results.clear();
-                                        self.import_error = None;
-                                    }
+    fn import_computer_body(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
+        match self.import_computer_step {
+            ImportComputerStep::SearchCustomer => {
+                ui.label("Search by customer email or phone:");
+                ui.add_space(m.gap.y);
+                ui.horizontal(|ui| {
+                    let response = TextField::new(&mut self.import_search_query)
+                        .hint("Email or phone number...")
+                        .width(IMPORT_SEARCH_W)
+                        .icon(svg::MAGNIFYING_GLASS)
+                        .id_salt(("import_computer_search", self.task.id.key_string()))
+                        .show(ui);
+                    let can_search = !self.import_search_query.is_empty() && !self.import_loading;
+                    let search = TextButton::new("Search")
+                        .icon(svg::MAGNIFYING_GLASS)
+                        .enabled(can_search)
+                        .show(ui);
+                    if search.clicked()
+                        || (response.lost_focus()
+                            && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter))
+                            && can_search)
+                    {
+                        self.import_loading = true;
+                        self.import_error = None;
+                        self.import_customer_results.clear();
+                        let query = self.import_search_query.trim().to_string();
+                        let tx = self.import_customer_tx.clone();
+                        PlatformSpawner::spawn(async move {
+                            let results = if query.contains('@') {
+                                Customer::find_customer_by_email(&query).await
+                            } else {
+                                Customer::find_customer_by_phone(&query).await
+                            };
+                            match results {
+                                Ok(r) => { let _ = tx.try_send(r); },
+                                Err(e) => {
+                                    log::error!("Import customer search error: {e:?}");
+                                    let _ = tx.try_send(vec![]);
                                 }
                             }
                         });
-                    });
-            });
+                    }
+                });
+
+                if self.import_loading {
+                    ui.add_space(m.gap.y);
+                    controls::loading_row(ui, "Searching...");
+                }
+
+                if let Some(err) = &self.import_error {
+                    ui.add_space(m.gap.y);
+                    controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
+                }
+
+                if !self.import_customer_results.is_empty() {
+                    ui.add_space(m.gap.y);
+                    controls::section_label(ui, "Select customer");
+                    ScrollArea::vertical()
+                        .id_salt("import_customer_results")
+                        .max_height(LIST_MAX_H)
+                        .show(ui, |ui| {
+                            let results = self.import_customer_results.clone();
+                            for (customer, address) in &results {
+                                let label = format!(
+                                    "[{}] {} {} — {}",
+                                    customer.id,
+                                    customer.firstname,
+                                    customer.lastname,
+                                    address.city
+                                );
+                                if controls::menu_item(ui, svg::USER, &label).clicked() {
+                                    self.import_loading = true;
+                                    self.import_error = None;
+                                    let cust_id = customer.id.clone();
+                                    let tx = self.import_computers_tx.clone();
+                                    PlatformSpawner::spawn(async move {
+                                        match ComputerData::get_computers_by_customer_id(cust_id).await {
+                                            Ok(computers) => { let _ = tx.try_send(computers); },
+                                            Err(e) => {
+                                                log::error!("Import computers error: {e:?}");
+                                                let _ = tx.try_send(vec![]);
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                }
+            },
+            ImportComputerStep::SelectComputer => {
+                if self.import_loading {
+                    controls::loading_row(ui, "Loading computers...");
+                }
+
+                if let Some(err) = &self.import_error {
+                    controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
+                }
+
+                if !self.import_computer_results.is_empty() {
+                    controls::section_label(ui, "Select computer");
+                    ui.add_space(m.gap.y);
+                    ScrollArea::vertical()
+                        .id_salt("import_computer_results")
+                        .max_height(LIST_MAX_H)
+                        .show(ui, |ui| {
+                            let computers = self.import_computer_results.clone();
+                            for comp in &computers {
+                                let label = format!(
+                                    "{} | {} | {} | {}",
+                                    comp.hostname,
+                                    comp.cpu,
+                                    comp.ram,
+                                    comp.id.key_string()
+                                );
+                                if controls::menu_item(ui, svg::DESKTOP_TOWER, &label).clicked() {
+                                    self.computer = Some(comp.clone());
+                                    if let Some(ticket) = self.service_ticket.as_mut() {
+                                        ticket.computer = Some(comp.id.clone());
+                                    }
+                                    self.import_computer_open = false;
+                                    self.import_computer_step = ImportComputerStep::SearchCustomer;
+                                    self.import_search_query.clear();
+                                    self.import_customer_results.clear();
+                                    self.import_computer_results.clear();
+                                }
+                            }
+                        });
+                }
+
+                ui.add_space(m.gap.y);
+                if controls::icon_text_button(ui, svg::ARROW_LEFT, "Back to customer search").clicked() {
+                    self.import_computer_step = ImportComputerStep::SearchCustomer;
+                    self.import_computer_results.clear();
+                    self.import_error = None;
+                }
+            }
+        }
     }
 
-    /// Show service history popup for customer or computer (#217)
     /// Show one of the customer's other computers in a separate modal, leaving
     /// the task's current computer untouched.
     pub fn show_second_computer_modal(&mut self, ui: &mut Ui) {
-        if self.second_computer_modal.is_none() {
+        let Some(comp) = self.second_computer_modal.as_mut() else {
             return;
-        }
-
-        let screen_rect = ui.ctx().content_rect();
-        ui.painter().rect_filled(
-            screen_rect,
-            0.0,
-            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
-        );
-        let max_h = screen_rect.height() * 0.85;
-
-        let mut close = false;
-        if let Some(ref mut comp) = self.second_computer_modal {
-            let title = if comp.hostname.is_empty() {
-                comp.id.key_string()
-            } else {
-                comp.hostname.clone()
-            };
-            Area::new(Id::new("second_computer_modal"))
-                .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-                .order(Order::Foreground)
-                .show(ui.ctx(), |ui| {
-                    Frame::popup(ui.style())
-                        .fill(theme::bg_surface(ui))
-                        .inner_margin(20.0)
-                        .show(ui, |ui| {
-                            ui.set_min_width(660.0);
-                            ui.set_max_height(max_h);
-                            ui.horizontal(|ui| {
-                                ui.heading(RichText::new(format!("Customer Computer — {title}")).color(Color32::LIGHT_BLUE));
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.button("✕").clicked() {
-                                        close = true;
-                                    }
-                                });
-                            });
-                            ui.separator();
-                            let avail = ui.available_size();
-                            display_computer_page_with_search(ui, None, Some(comp), avail, None, None);
-                        });
+        };
+        let m = Metrics::get(ui.ctx());
+        let title = if comp.hostname.is_empty() {
+            comp.id.key_string()
+        } else {
+            comp.hostname.clone()
+        };
+        let chrome = m.header_h + m.footer_h + 4.0 * m.gap.y;
+        let body_h = (ui.ctx().content_rect().height() * 0.85 - chrome).max(LIST_MAX_H);
+        let outcome = controls::modal(
+            ui.ctx(),
+            Id::new("second_computer_modal"),
+            svg::DESKTOP_TOWER,
+            &format!("Customer Computer — {title}"),
+            ModalWidth::Wide,
+            &[(Role::Cancel, "Close")],
+            |ui| {
+                let size = Vec2::new(ui.available_width(), body_h);
+                ui.allocate_ui(size, |ui| {
+                    ui.set_max_height(body_h);
+                    display_computer_page_with_search(ui, None, Some(comp), size, None, None);
                 });
-        }
-        if close {
+            },
+        );
+        if outcome.should_close {
             self.second_computer_modal = None;
         }
     }
 
+    /// Show service history popup for customer or computer (#217)
     pub fn show_service_history_modal(&mut self, ui: &mut Ui) {
         if !self.service_history_open {
             return;
         }
 
-        let screen_rect = ui.ctx().content_rect();
-        ui.painter().rect_filled(
-            screen_rect,
-            0.0,
-            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        let title = match self.service_history_mode {
+            ServiceHistoryMode::Customer => "All Services for Customer",
+            ServiceHistoryMode::Computer => "All Services for Computer",
+        };
+        let outcome = controls::modal(
+            ui.ctx(),
+            Id::new("service_history_modal"),
+            svg::CLOCK_COUNTER_CLOCKWISE,
+            title,
+            ModalWidth::Regular,
+            &[(Role::Cancel, "Close")],
+            |ui| self.service_history_body(ui),
         );
+        if outcome.should_close {
+            self.service_history_open = false;
+            self.service_history_tasks.clear();
+            self.service_history_error = None;
+        }
+    }
 
-        Area::new(Id::new("service_history_modal"))
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .order(Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                Frame::popup(ui.style())
-                    .fill(theme::bg_surface(ui))
-                    .inner_margin(20.0)
-                    .show(ui, |ui| {
-                        ui.set_min_width(500.0);
-                        ui.set_min_height(300.0);
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                let title = match self.service_history_mode {
-                                    ServiceHistoryMode::Customer => "All Services for Customer",
-                                    ServiceHistoryMode::Computer => "All Services for Computer",
-                                };
-                                ui.heading(RichText::new(title).color(Color32::LIGHT_BLUE));
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.button("✕").clicked() {
-                                        self.service_history_open = false;
-                                        self.service_history_tasks.clear();
-                                        self.service_history_error = None;
-                                    }
-                                });
-                            });
-                            ui.separator();
+    fn service_history_body(&self, ui: &mut Ui) {
+        let t = Tokens::get(ui.ctx());
+        if self.service_history_loading {
+            controls::loading_row(ui, "Loading...");
+        }
 
-                            if self.service_history_loading {
-                                ui.horizontal(|ui| { ui.spinner(); ui.label("Loading..."); });
+        if let Some(err) = &self.service_history_error {
+            controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
+        }
+
+        ScrollArea::vertical()
+            .id_salt("service_history_list")
+            .max_height(1.5 * LIST_MAX_H)
+            .show(ui, |ui| {
+                if self.service_history_tasks.is_empty() && !self.service_history_loading {
+                    controls::empty_state(
+                        ui,
+                        svg::CLOCK_COUNTER_CLOCKWISE,
+                        "No services found.",
+                        "",
+                        &[],
+                    );
+                }
+                for task in &self.service_history_tasks {
+                    glass_card::group(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            controls::icon_label(ui, svg::CLIPBOARD_TEXT, &task.task_name);
+                            if let Some(sn) = &task.service_number {
+                                IconLabel::new(svg::RECEIPT, &format!("Order: {sn}"))
+                                    .tone(t.text_dim)
+                                    .show(ui);
                             }
-
-                            if let Some(err) = &self.service_history_error {
-                                ui.colored_label(Color32::LIGHT_RED, err.clone());
-                            }
-
-                            ScrollArea::vertical().max_width(400.0).show(ui, |ui| {
-                                if self.service_history_tasks.is_empty() && !self.service_history_loading {
-                                    ui.label("No services found.");
-                                }
-                                for task in &self.service_history_tasks {
-                                    ui.group(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.strong(&task.task_name);
-                                            if let Some(sn) = &task.service_number {
-                                                ui.label(format!("Order: {sn}"));
-                                            }
-                                            ui.label(format!("Status: {}", task.status.as_str()));
-                                        });
-                                    });
-                                }
-                            });
+                            controls::badge(ui, task.status.as_str(), t.tertiary);
                         });
                     });
+                }
             });
     }
 
@@ -1028,170 +1016,164 @@ impl TaskModal {
             return;
         }
 
-        // Dim background
-        let screen_rect = ui.ctx().content_rect();
-        ui.painter().rect_filled(
-            screen_rect,
-            0.0,
-            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        let outcome = controls::modal(
+            ui.ctx(),
+            Id::new("task_customer_change_modal"),
+            svg::USER_SWITCH,
+            "Change Customer",
+            ModalWidth::Narrow,
+            &[(Role::Cancel, "Cancel")],
+            |ui| self.customer_modal_body(ui),
         );
+        if outcome.should_close {
+            self.customer_modal_open = false;
+        }
+    }
 
-        Area::new(Id::new("task_customer_change_modal"))
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .order(Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                Frame::popup(ui.style())
-                    .fill(theme::bg_surface(ui))
-                    .inner_margin(20.0)
-                    .show(ui, |ui| {
-                        ui.set_min_width(400.0);
-                        ui.set_min_height(300.0);
-                        
-                        ui.vertical(|ui| {
-                            // Header
+    fn customer_modal_body(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
+        if let Some(customer) = &self.customer {
+            controls::icon_label(
+                ui,
+                svg::USER,
+                &format!("Current Customer: [{}] {}", customer.cust_code, customer.name),
+            );
+        }
+        if let Some(service_number) = &self.task.service_number {
+            controls::icon_label(ui, svg::RECEIPT, &format!("Order: {}", service_number));
+        }
+
+        ui.add_space(m.gap.y);
+
+        ui.horizontal(|ui| {
+            ui.label("Search by:");
+            let email = self.customer_search_type == CustomerSearchType::Email;
+            if controls::pill(ui, svg::ENVELOPE, "Email", email).clicked() {
+                self.customer_search_type = CustomerSearchType::Email;
+            }
+            let phone = self.customer_search_type == CustomerSearchType::Phone;
+            if controls::pill(ui, svg::PHONE, "Phone", phone).clicked() {
+                self.customer_search_type = CustomerSearchType::Phone;
+            }
+        });
+
+        ui.add_space(m.pad.y);
+
+        ui.horizontal(|ui| {
+            let (hint, icon) = match self.customer_search_type {
+                CustomerSearchType::Email => ("Enter email address...", svg::ENVELOPE),
+                CustomerSearchType::Phone => ("Enter phone number...", svg::PHONE),
+            };
+
+            let response = TextField::new(&mut self.customer_search_query)
+                .hint(hint)
+                .width(CUSTOMER_SEARCH_W)
+                .icon(icon)
+                .id_salt(("task_customer_search", self.task.id.key_string()))
+                .show(ui);
+
+            let can_search = !self.customer_search_query.is_empty() && !self.customer_searching;
+            let search = TextButton::new("Search")
+                .icon(svg::MAGNIFYING_GLASS)
+                .enabled(can_search)
+                .show(ui);
+            if search.clicked() ||
+               (response.lost_focus() && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter)) && can_search)
+            {
+                self.customer_searching = true;
+                let query = self.customer_search_query.clone();
+                let search_type = self.customer_search_type.clone();
+                let tx = self.customer_search_tx.clone();
+
+                PlatformSpawner::spawn(async move {
+                    let results = match search_type {
+                        CustomerSearchType::Email => Customer::find_customer_by_email(&query).await,
+                        CustomerSearchType::Phone => Customer::find_customer_by_phone(&query).await,
+                    };
+
+                    match results {
+                        Ok(customers) => { let _ = tx.try_send(customers); },
+                        Err(e) => log::error!("Customer search error: {:?}", e),
+                    }
+                });
+            }
+
+            if self.customer_searching {
+                controls::spinner(ui, SpinnerSize::Sm);
+            }
+        });
+
+        ui.add_space(m.gap.y);
+
+        if !self.customer_search_results.is_empty() {
+            controls::section_label(
+                ui,
+                &format!("Found {} customers", self.customer_search_results.len()),
+            );
+
+            ScrollArea::vertical()
+                .id_salt("task_customer_results")
+                .max_height(LIST_MAX_H)
+                .show(ui, |ui| {
+                    for (customer, address) in self.customer_search_results.iter() {
+                        let name = format!("{} {}", customer.firstname, customer.lastname);
+                        let addr_info = if !address.address1.is_empty() {
+                            format!("{}, {}", address.address1, address.city)
+                        } else {
+                            "No address".to_string()
+                        };
+
+                        glass_card::group(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.heading(RichText::new("Change Customer").color(Color32::WHITE));
+                                ui.vertical(|ui| {
+                                    let weak = theme::weak_text(ui);
+                                    ui.label(RichText::new(format!("[{}] {}", customer.id, name)).strong());
+                                    IconLabel::new(svg::ENVELOPE, &customer.email)
+                                        .small(true)
+                                        .tone(weak)
+                                        .show(ui);
+                                    IconLabel::new(svg::MAP_PIN, &addr_info)
+                                        .small(true)
+                                        .tone(weak)
+                                        .show(ui);
+                                });
+
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.button("✕").clicked() {
+                                    if controls::icon_text_button(ui, svg::CHECK, "Select").clicked() {
+                                        // Update order with new customer
+                                        if let Some(service_number) = self.task.service_number.clone() {
+                                            let order_id = service_number.clone();
+                                            let customer_id = customer.id.clone();
+                                            let address_id = address.id.clone();
+                                            let customer_name = name.clone();
+
+                                            log::info!("Updating order {} with customer {} ({}), address {}",
+                                                      order_id, customer_name, customer_id, address_id);
+
+                                            // Update local customer data
+                                            if let Some(cust) = self.customer.as_mut() {
+                                                cust.cust_code = customer_id.clone();
+                                                cust.name = customer_name.clone();
+                                                cust.email = customer.email.clone();
+                                                cust.phone_number = address.phone.clone();
+                                            }
+
+                                            // Async update to Prestashop
+                                            PlatformSpawner::spawn(async move {
+                                                Self::update_order_customer(&order_id, &customer_id, &address_id).await;
+                                            });
+                                        }
+
                                         self.customer_modal_open = false;
                                     }
                                 });
                             });
-                            
-                            ui.separator();
-                            
-                            // Show current customer info
-                            if let Some(customer) = &self.customer {
-                                ui.label(format!("Current Customer: [{}] {}", customer.cust_code, customer.name));
-                            }
-                            if let Some(service_number) = &self.task.service_number {
-                                ui.label(format!("Order: {}", service_number));
-                            }
-                            
-                            ui.add_space(10.0);
-                            
-                            // Search type selector
-                            ui.horizontal(|ui| {
-                                ui.label("Search by:");
-                                ui.selectable_value(&mut self.customer_search_type, CustomerSearchType::Email, "Email");
-                                ui.selectable_value(&mut self.customer_search_type, CustomerSearchType::Phone, "Phone");
-                            });
-                            
-                            ui.add_space(5.0);
-                            
-                            // Search input
-                            ui.horizontal(|ui| {
-                                let hint = match self.customer_search_type {
-                                    CustomerSearchType::Email => "Enter email address...",
-                                    CustomerSearchType::Phone => "Enter phone number...",
-                                };
-                                
-                                let response = TextEdit::singleline(&mut self.customer_search_query)
-                                    .hint_text(hint)
-                                    .desired_width(250.0)
-                                    .ui(ui);
-                                
-                                let can_search = !self.customer_search_query.is_empty() && !self.customer_searching;
-                                if ui.add_enabled(can_search, Button::new("Search")).clicked() || 
-                                   (response.lost_focus() && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter)) && can_search) 
-                                {
-                                    self.customer_searching = true;
-                                    let query = self.customer_search_query.clone();
-                                    let search_type = self.customer_search_type.clone();
-                                    let tx = self.customer_search_tx.clone();
-                                    
-                                    PlatformSpawner::spawn(async move {
-                                        let results = match search_type {
-                                            CustomerSearchType::Email => Customer::find_customer_by_email(&query).await,
-                                            CustomerSearchType::Phone => Customer::find_customer_by_phone(&query).await,
-                                        };
-                                        
-                                        match results {
-                                            Ok(customers) => { let _ = tx.try_send(customers); },
-                                            Err(e) => log::error!("Customer search error: {:?}", e),
-                                        }
-                                    });
-                                }
-                                
-                                if self.customer_searching {
-                                    Spinner::new().size(16.0).ui(ui);
-                                }
-                            });
-                            
-                            ui.add_space(10.0);
-                            
-                            // Search results
-                            if !self.customer_search_results.is_empty() {
-                                ui.label(RichText::new(format!("Found {} customers:", self.customer_search_results.len()))
-                                    .color(Color32::LIGHT_BLUE));
-                                
-                                ScrollArea::vertical()
-                                    .max_width(200.0)
-                                    .show(ui, |ui| {
-                                        for (customer, address) in self.customer_search_results.iter() {
-                                            let name = format!("{} {}", customer.firstname, customer.lastname);
-                                            let addr_info = if !address.address1.is_empty() {
-                                                format!("{}, {}", address.address1, address.city)
-                                            } else {
-                                                "No address".to_string()
-                                            };
-                                            
-                                            ui.group(|ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.vertical(|ui| {
-                                                        ui.label(RichText::new(format!("[{}] {}", customer.id, name)).strong());
-                                                        ui.label(RichText::new(&customer.email).small().color(Color32::GRAY));
-                                                        ui.label(RichText::new(&addr_info).small().color(Color32::GRAY));
-                                                    });
-                                                    
-                                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                                        if ui.button("Select").clicked() {
-                                                            // Update order with new customer
-                                                            if let Some(service_number) = self.task.service_number.clone() {
-                                                                let order_id = service_number.clone();
-                                                                let customer_id = customer.id.clone();
-                                                                let address_id = address.id.clone();
-                                                                let customer_name = name.clone();
-                                                                
-                                                                log::info!("Updating order {} with customer {} ({}), address {}", 
-                                                                          order_id, customer_name, customer_id, address_id);
-                                                                
-                                                                // Update local customer data
-                                                                if let Some(cust) = self.customer.as_mut() {
-                                                                    cust.cust_code = customer_id.clone();
-                                                                    cust.name = customer_name.clone();
-                                                                    cust.email = customer.email.clone();
-                                                                    cust.phone_number = address.phone.clone();
-                                                                }
-                                                                
-                                                                // Async update to Prestashop
-                                                                PlatformSpawner::spawn(async move {
-                                                                    Self::update_order_customer(&order_id, &customer_id, &address_id).await;
-                                                                });
-                                                            }
-                                                            
-                                                            self.customer_modal_open = false;
-                                                        }
-                                                    });
-                                                });
-                                            });
-                                        }
-                                    });
-                            } else if !self.customer_searching && !self.customer_search_query.is_empty() {
-                                ui.label(RichText::new("No customers found.").color(Color32::GRAY));
-                            }
-                            
-                            ui.add_space(10.0);
-                            
-                            // Cancel button
-                            ui.horizontal(|ui| {
-                                if ui.button("Cancel").clicked() {
-                                    self.customer_modal_open = false;
-                                }
-                            });
                         });
-                    });
-            });
+                    }
+                });
+        } else if !self.customer_searching && !self.customer_search_query.is_empty() {
+            controls::empty_state(ui, svg::USERS, "No customers found.", "", &[]);
+        }
     }
     
     /// Update order customer and address in Prestashop
@@ -1218,18 +1200,17 @@ impl DisplayModal for TaskModal {
         let max_space = Vec2::new(715.0, 700.0);
         ui.set_min_size(max_space);
         ui.set_max_size(max_space);
-        ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
 
-        eframe::egui::Panel::top(format!("Top panel header {}", self.task.id.key_string())).exact_size(28.).show(ui, |ui| {
-
-            ui.columns(3, |ui| {
-                ui[0].with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    let delete_btn = Button::new(
-                        RichText::new("Delete Task").color(Color32::LIGHT_RED),
-                    )
-                    .min_size([70., 22.0].into())
-                    .ui(ui)
-                    .on_hover_text("Double Click To Delete Task");
+        controls::bar(ui, BarKind::Tool, |ui| {
+            ui.columns(3, |cols| {
+                cols[0].with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let delete_btn = TextButton::new("Delete Task")
+                        .kind(ButtonKind::Danger)
+                        .icon(svg::TRASH)
+                        .show(ui)
+                        .on_hover_text("Double Click To Delete Task");
 
                     if delete_btn.double_clicked() {
                         let task_id = self.task.id.clone();
@@ -1241,26 +1222,31 @@ impl DisplayModal for TaskModal {
                         });
                         self.current_page_state = ModalAction::Close;
                     }
-                    
+
                     // Resync from Prestashop button
                     if self.task.service_number.as_ref().is_some_and(|s| !s.trim().is_empty()) {
                         let can_resync = !self.resyncing;
-                        if ui.add_enabled(can_resync, Button::new(RichText::new("🔄").heading()).min_size([22., 22.].into()))
-                            .on_hover_text("Resync Order from Prestashop")
-                            .clicked() 
-                        {
+                        let resync = IconButton::new(svg::ARROWS_CLOCKWISE, IconBox::Md)
+                            .tip("Resync Order from Prestashop")
+                            .enabled(can_resync)
+                            .show(ui);
+                        if resync.clicked() {
                             self.resync_from_prestashop();
                         }
                         if self.resyncing {
-                            Spinner::new().size(16.0).ui(ui);
+                            controls::spinner(ui, SpinnerSize::Sm);
                         }
-                        let label = if self.brief_requested { "Brief requested" } else { "AI brief" };
-                        let brief_btn = Button::new(format!("{} {label}", crate::ui_tools::icons::AI_BRIEF)).min_size([22., 22.].into());
-                        if ui
-                            .add_enabled(!self.brief_requested, brief_btn)
-                            .on_hover_text("Private staff brief: what's happening, what was found, what to tell the customer")
-                            .clicked()
-                        {
+                        let tip = if self.brief_requested {
+                            "Brief requested"
+                        } else {
+                            "AI brief — private staff brief: what's happening, what was found, what to tell the customer"
+                        };
+                        let brief = IconButton::new(svg::SPARKLE, IconBox::Md)
+                            .selected(self.brief_requested)
+                            .tip(tip)
+                            .enabled(!self.brief_requested)
+                            .show(ui);
+                        if brief.clicked() {
                             self.brief_requested = true;
                             if let Some(sn) = self.task.service_number.clone() {
                                 request_ticket_brief(&self.user, &sn, &self.task.task_name);
@@ -1269,80 +1255,40 @@ impl DisplayModal for TaskModal {
                     }
                 });
 
-                ui[1].vertical_centered(|ui| {
-                    ui.horizontal_top(|ui| {
-                        ui.add_space(55.);
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::TicketInfoPage,
-                            RichText::new("🖹").heading()
-                        ))
-                        .on_hover_text("Ticket Info")
-                        .clicked() {
-                            self.current_page_state = ModalAction::TicketInfoPage;
+                cols[1].with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let pages = [
+                        (ModalAction::TicketInfoPage, svg::TICKET, "Ticket Info"),
+                        (ModalAction::ComputerInfoPage, svg::DESKTOP_TOWER, "Computer Info"),
+                        (ModalAction::SoftwareInfoPage, svg::APP_WINDOW, "Software Info"),
+                        (ModalAction::TaskHistoryPage, svg::CLOCK_COUNTER_CLOCKWISE, "Task History"),
+                        (ModalAction::DiagnosticsPage, svg::MICROSCOPE, "Diagnostics"),
+                        (ModalAction::StressTestsPage, svg::MT_STRESS, "Stress Tests"),
+                        (ModalAction::TaskNotePage, svg::CHAT_TEXT, "Task Notes"),
+                    ];
+                    let side = IconBox::Md.side(&m);
+                    let gaps = (pages.len() - 1) as f32 * ui.spacing().item_spacing.x;
+                    let row_w = pages.len() as f32 * side + gaps;
+                    ui.add_space(((ui.available_width() - row_w) / 2.0).max(0.0));
+                    for (page, icon, tip) in pages {
+                        let selected = self.current_page_state == page;
+                        if controls::icon_button(ui, icon, IconBox::Md, selected, tip).clicked() {
+                            self.current_page_state = page;
                         }
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::ComputerInfoPage,
-                            RichText::new("🖥").heading()
-                        ))
-                        .on_hover_text("Computer Info")
-                        .clicked() {
-                            self.current_page_state = ModalAction::ComputerInfoPage;
-                        }
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::SoftwareInfoPage,
-                            RichText::new("💾").heading()
-                        ))
-                        .on_hover_text("Software Info")
-                        .clicked() {
-                            self.current_page_state = ModalAction::SoftwareInfoPage;
-                        }
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::TaskHistoryPage,
-                            RichText::new("📜").heading()
-                        ))
-                        .on_hover_text("Task History")
-                        .clicked() {
-                            self.current_page_state = ModalAction::TaskHistoryPage;
-                        }
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::DiagnosticsPage,
-                            RichText::new("🔬").heading()
-                        ))
-                        .on_hover_text("Diagnostics")
-                        .clicked() {
-                            self.current_page_state = ModalAction::DiagnosticsPage;
-                        }
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::StressTestsPage,
-                            crate::ui_tools::icons::icon(crate::ui_tools::icons::FLASK).heading()
-                        ))
-                        .on_hover_text("Stress Tests")
-                        .clicked() {
-                            self.current_page_state = ModalAction::StressTestsPage;
-                        }
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::TaskNotePage,
-                            RichText::new("💬").heading()
-                        ))
-                        .on_hover_text("Task Notes")
-                        .clicked() {
-                            self.current_page_state = ModalAction::TaskNotePage;
-                        }
-                    });
+                    }
                 });
 
-                ui[2].with_layout(Layout::right_to_left(Align::Center), |ui| {
+                cols[2].with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.push_id(
                         format!("Completed {}", self.task.completed),
                         |ui| self.task.interact_completed(ui),
                     );
-                    ui.add_space(6.0);
-                    ui.colored_label(Color32::LIGHT_RED, "Completed:");
+                    ui.add_space(m.gap.x);
+                    ui.colored_label(t.text_dim, "Completed:");
                 });
             });
         });
 
-        ui.add_space(10.);
+        ui.add_space(m.gap.y);
         ui.scope_builder(
         UiBuilder::new()
         .layout(Layout::from_main_dir_and_cross_align(Direction::LeftToRight, Align::Max)), 
@@ -1623,6 +1569,7 @@ impl SpecialPartOrder {
     }
 
     pub fn display_part_order_page(&mut self, ui: &mut Ui, avail_size: Vec2, location: Store) {
+        let m = Metrics::get(ui.ctx());
         StripBuilder::new(ui)
             .cell_layout(Layout::from_main_dir_and_cross_align(
                 Direction::TopDown,
@@ -1636,126 +1583,112 @@ impl SpecialPartOrder {
                 s.strip(|s| {
                     s.cell_layout(Layout::centered_and_justified(Direction::TopDown))
                         .size(Size::exact(avail_size.x / 3.2))
-                        .size(Size::exact(200.0))
+                        .size(Size::exact(SPO_FORM_W))
                         .horizontal(|mut s| {
                             s.empty();
                             s.cell(|ui| {
                                 ui.vertical_centered(|ui| {
                                     ui.horizontal(|ui| {
-                                        ComboBox::new("AwaitingQuoteCombo", "")
-                                            .selected_text(self.spo_status.as_str())
-                                            .width(50.0)
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(
-                                                    &mut self.spo_status,
-                                                    SpoStatus::OrderPendingDM,
-                                                    "Pending DM",
-                                                );
-                                                ui.selectable_value(
-                                                    &mut self.spo_status,
-                                                    SpoStatus::QuoteFullfilled,
-                                                    "Quote Fullfilled",
-                                                );
-                                                ui.selectable_value(
-                                                    &mut self.spo_status,
-                                                    SpoStatus::AwaitingQuote,
-                                                    "Awaiting Quote",
-                                                );
-                                            });
-                                        ComboBox::new("ManufacturerCombo", "")
-                                            .selected_text(self.part_manufacturer.as_str())
-                                            .width(50.0)
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(
-                                                    &mut self.part_manufacturer,
-                                                    Manufacturer::Pclaptops,
-                                                    "PC Laptops",
-                                                );
-                                                ui.selectable_value(
-                                                    &mut self.part_manufacturer,
-                                                    Manufacturer::Other,
-                                                    "Other",
-                                                );
-                                            });
+                                        controls::dropdown(
+                                            ui,
+                                            "AwaitingQuoteCombo",
+                                            &mut self.spo_status,
+                                            &[
+                                                (SpoStatus::OrderPendingDM, "Pending DM"),
+                                                (SpoStatus::QuoteFullfilled, "Quote Fullfilled"),
+                                                (SpoStatus::AwaitingQuote, "Awaiting Quote"),
+                                            ],
+                                            SPO_PICKER_W,
+                                        );
+                                        controls::dropdown(
+                                            ui,
+                                            "ManufacturerCombo",
+                                            &mut self.part_manufacturer,
+                                            &[
+                                                (Manufacturer::Pclaptops, "PC Laptops"),
+                                                (Manufacturer::Other, "Other"),
+                                            ],
+                                            SPO_PICKER_W,
+                                        );
                                     });
 
-                                    ui.add_space(15.0);
+                                    ui.add_space(2.0 * m.gap.y);
 
-                                    TextEdit::singleline(&mut self.manufacturer_model_number)
-                                        .hint_text("MFG Model #".to_string())
-                                        .margin(Margin::same(5))
-                                        .ui(ui);
+                                    TextField::new(&mut self.manufacturer_model_number)
+                                        .hint("MFG Model #")
+                                        .width(SPO_FORM_W)
+                                        .icon(svg::TAG)
+                                        .show(ui);
 
-                                    ui.add_space(15.0);
+                                    ui.add_space(2.0 * m.gap.y);
 
-                                    TextEdit::singleline(&mut self.manufacturer_part_number)
-                                        .hint_text("MFG P/N".to_string())
-                                        .margin(Margin::same(5))
-                                        .frame(Frame::NONE)
-                                        .ui(ui);
+                                    TextField::new(&mut self.manufacturer_part_number)
+                                        .hint("MFG P/N")
+                                        .width(SPO_FORM_W)
+                                        .icon(svg::BARCODE)
+                                        .show(ui);
 
-                                    ui.add_space(15.0);
+                                    ui.add_space(2.0 * m.gap.y);
 
-                                    TextEdit::singleline(&mut self.part_description)
-                                        .hint_text("Part Description".to_string())
-                                        .margin(Margin::same(5))
-                                        .ui(ui);
+                                    TextField::new(&mut self.part_description)
+                                        .hint("Part Description")
+                                        .width(SPO_FORM_W)
+                                        .icon(svg::PACKAGE)
+                                        .show(ui);
 
-                                    ui.add_space(15.0);
+                                    ui.add_space(2.0 * m.gap.y);
 
-                                    TextEdit::multiline(&mut self.application_comment)
-                                        .hint_text("Notes".to_string())
-                                        .margin(Margin::same(5))
-                                        .desired_rows(3)
-                                        .ui(ui);
+                                    TextArea::new(&mut self.application_comment)
+                                        .hint("Notes")
+                                        .rows(3)
+                                        .width(SPO_FORM_W)
+                                        .show(ui);
 
-                                    ui.add_space(15.0);
-
-                                    // let mut task: Option<AsyncFileDialog> = None;
+                                    ui.add_space(2.0 * m.gap.y);
 
                                     ui.horizontal(|ui| {
-                                        let toggle = ui.checkbox(&mut self.part_lcd_toggle, "LCD?");
-                                        ui.add_space(ui.available_width() / 2.0);
-                                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                                        let file_upload =
-                                            ui.selectable_label(false, "Upload Picture");
+                                        let toggle = controls::toggle(ui, &mut self.part_lcd_toggle, "LCD?");
 
                                         #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                                        if file_upload.clicked() {
-                                            let data_clone = Arc::clone(&self.files);
-                                            PlatformSpawner::spawn(async move {
-                                                #[cfg(not(target_arch="wasm32"))]
-                                                {
-                                                    let mut data = data_clone.lock().await;
-                                                    *data = AsyncFileDialog::new().pick_files().await;
-                                                }
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if controls::icon_text_button(ui, svg::CAMERA, "Upload Picture").clicked() {
+                                                let data_clone = Arc::clone(&self.files);
+                                                PlatformSpawner::spawn(async move {
+                                                    #[cfg(not(target_arch="wasm32"))]
+                                                    {
+                                                        let mut data = data_clone.lock().await;
+                                                        *data = AsyncFileDialog::new().pick_files().await;
+                                                    }
 
-                                                #[cfg(target_arch="wasm32")]
-                                                {
-                                                    let mut data = data_clone.lock().unwrap();
-                                                    *data = AsyncFileDialog::new().pick_files().await;
-                                                }
+                                                    #[cfg(target_arch="wasm32")]
+                                                    {
+                                                        let mut data = data_clone.lock().unwrap();
+                                                        *data = AsyncFileDialog::new().pick_files().await;
+                                                    }
 
-                                            });
-                                        };
+                                                });
+                                            }
+                                        });
                                         if toggle.clicked() {
                                             info!("self.part_lcd_toggle: {}", self.part_lcd_toggle);
                                         }
                                     });
 
-                                    ui.add_space(15.0);
+                                    ui.add_space(2.0 * m.gap.y);
 
                                     ui.horizontal_top(|ui| {
                                         let Some(id_location) = scaffold_location_id(location) else {
-                                            ui.label(format!(
+                                            let text = format!(
                                                 "Special part orders are not set up for {}",
                                                 location.as_str()
-                                            ));
+                                            );
+                                            controls::status_label(ui, svg::WARNING, &text, theme::warn(ui));
                                             return;
                                         };
-                                        if Button::new("Submit")
-                                            .min_size(Vec2::new(50.0, 20.0))
-                                            .ui(ui)
+                                        if TextButton::new("Submit")
+                                            .kind(ButtonKind::Primary)
+                                            .icon(svg::PAPER_PLANE_RIGHT)
+                                            .show(ui)
                                             .clicked()
                                         {
                                             let location = id_location.to_string();

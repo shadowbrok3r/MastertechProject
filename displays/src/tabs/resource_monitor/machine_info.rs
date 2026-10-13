@@ -3,7 +3,12 @@ use egui_extras::{Column, TableBuilder};
 use facet::Facet;
 
 use super::ABSENT;
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{
+    controls::{self, Icon},
+    icons::svg,
+    metrics::Metrics,
+    theme,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct MachineDriveRow {
@@ -35,16 +40,16 @@ impl MachineInfo {
     /// Host, CPU, RAM, GPU and volume count on one wrapped line.
     pub fn show_header_line(&self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
-            fact(ui, icons::DESKTOP, &self.hostname, "host");
-            fact(ui, icons::p::CPU, &self.cpu, "CPU");
-            fact(ui, icons::p::MEMORY, &self.ram_gb, "RAM");
-            fact(ui, icons::p::GRAPHICS_CARD, &self.gpu, "GPU");
+            fact(ui, svg::DESKTOP, &self.hostname, "host");
+            fact(ui, svg::CPU, &self.cpu, "CPU");
+            fact(ui, svg::MEMORY, &self.ram_gb, "RAM");
+            fact(ui, svg::GRAPHICS_CARD, &self.gpu, "GPU");
             let volumes = match self.drives.len() {
                 0 => String::new(),
                 1 => "1 volume".to_string(),
                 n => format!("{n} volumes"),
             };
-            fact(ui, icons::HARD_DRIVE, &volumes, "volumes");
+            fact(ui, svg::HARD_DRIVE, &volumes, "volumes");
         });
     }
 
@@ -57,7 +62,7 @@ impl MachineInfo {
             .column(Column::remainder())
             .header(20.0, |mut header| {
                 header.col(|ui| {
-                    ui.strong("Hardware");
+                    controls::icon_label(ui, svg::CIRCUITRY, "Hardware");
                 });
                 header.col(|ui| {
                     ui.strong("Info");
@@ -79,14 +84,17 @@ impl MachineInfo {
                 }
             });
 
-        ui.add_space(16.0);
+        ui.add_space(Metrics::get(ui.ctx()).gap.y * 2.0);
+        controls::subheading(ui, svg::HARD_DRIVES, "Volumes");
         self.show_volumes(ui);
     }
 
     /// Per-volume letter, filesystem and free/total space.
     pub fn show_volumes(&self, ui: &mut Ui) {
         if self.drives.is_empty() {
-            ui.colored_label(theme::weak_text(ui), "No volumes reported.");
+            controls::IconLabel::new(svg::HARD_DRIVE, "No volumes reported.")
+                .tone(theme::weak_text(ui))
+                .show(ui);
             return;
         }
 
@@ -134,9 +142,10 @@ impl MachineInfo {
 }
 
 /// Icon plus one machine fact; an empty or `?` value renders as the absent marker.
-fn fact(ui: &mut Ui, glyph: &str, value: &str, hover: &str) {
+fn fact(ui: &mut Ui, icon: Icon, value: &str, hover: &str) {
+    let m = Metrics::get(ui.ctx());
     let known = !value.trim().is_empty() && value.trim() != "?";
-    ui.label(icons::icon_colored(glyph, theme::accent(ui)).small())
+    ui.add(icon.image(m.icon_sm).tint(theme::primary(ui)))
         .on_hover_text(hover);
     let text = if known { value } else { ABSENT };
     let color = if known {
@@ -145,7 +154,7 @@ fn fact(ui: &mut Ui, glyph: &str, value: &str, hover: &str) {
         theme::weak_text(ui)
     };
     ui.label(RichText::new(text).small().color(color));
-    ui.add_space(8.0);
+    ui.add_space(m.gap.x);
 }
 
 #[cfg(test)]

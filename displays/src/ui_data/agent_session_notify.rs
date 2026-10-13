@@ -9,12 +9,15 @@ use database::live_data::{listen_data_filtered, Action};
 use database::schema::{
     approval_audience, AgentEvent, AgentThread, ApprovalAudience, ApprovalViewer, Datetime, RecordId, RecordIdExt, User,
 };
-use eframe::egui::{self, Align, Context, Frame, Layout, Margin, Response, RichText, Sense, Ui, Vec2};
+use eframe::egui::{self, Align, Context, Frame, Layout, Response, RichText, Sense, Ui, Vec2};
 use futures::future::AbortHandle;
 use web_time::Instant;
 
+use crate::ui_tools::controls::{self, ButtonKind, IconBox, Metrics, TextButton};
+use crate::ui_tools::fonts::RichTextExt;
+use crate::ui_tools::icons::svg::{self, Icon};
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
-use crate::ui_tools::{do_not_disturb, icons, theme};
+use crate::ui_tools::{do_not_disturb, theme};
 use crate::{PlatformSpawner, Spawner};
 
 /// `ToastKind::Custom` discriminant for agent-session toasts.
@@ -27,6 +30,8 @@ const STREAM_RETRY: Duration = Duration::from_secs(3);
 const IN_VIEW_FOR: Duration = Duration::from_millis(1500);
 const DETAIL_CHARS: usize = 160;
 const TOAST_WIDTH: f32 = 340.0;
+/// Opacity of a toast icon's duotone back layer.
+const TOAST_DUO_ALPHA: f32 = 0.3;
 
 /// What a change to one of their sessions means for the technician.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,11 +53,11 @@ impl Nudge {
         }
     }
 
-    fn mark(self, ui: &Ui) -> (&'static str, egui::Color32) {
+    fn mark(self, ui: &Ui) -> (Icon, egui::Color32) {
         match self {
-            Self::Replied => (icons::CHAT, theme::success(ui)),
-            Self::Failed => (icons::STATUS_ERR, theme::error(ui)),
-            Self::NeedsYou => (icons::LOCK, theme::warn(ui)),
+            Self::Replied => (svg::CHAT_CIRCLE_DOTS, theme::success(ui)),
+            Self::Failed => (svg::WARNING_OCTAGON, theme::error(ui)),
+            Self::NeedsYou => (svg::SEAL_QUESTION, theme::warn(ui)),
         }
     }
 }
@@ -488,28 +493,17 @@ pub fn toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         return ui.allocate_response(Vec2::ZERO, Sense::hover());
     };
 
-    let (glyph, color) = notice.nudge.mark(ui);
+    let (icon, color) = notice.nudge.mark(ui);
     let mut open = false;
-    let mut dismiss = false;
-    let response = Frame::window(ui.style())
-        .inner_margin(Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_width(TOAST_WIDTH);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{glyph} {}", notice.nudge.title())).strong().color(color));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    dismiss = ui.small_button(icons::CLOSE).on_hover_text("Dismiss").clicked();
-                });
-            });
-            ui.label(RichText::new(&notice.subject).small().color(theme::weak_text(ui)));
-            if let Some(detail) = &notice.detail {
-                ui.add_space(2.0);
-                ui.label(detail);
-            }
-            ui.add_space(4.0);
-            open = ui.button(format!("{} Open session", icons::ARROW_RIGHT)).clicked();
-        })
-        .response;
+    let (response, dismiss) = toast_card(ui, icon, color, notice.nudge.title(), |ui| {
+        ui.label(RichText::new(&notice.subject).small().color(theme::weak_text(ui)));
+        if let Some(detail) = &notice.detail {
+            ui.add_space(2.0);
+            ui.label(detail);
+        }
+        ui.add_space(4.0);
+        open = toast_action(ui, "Open session");
+    });
 
     if open {
         request_open(notice.thread.clone(), notice.is_open);
@@ -519,6 +513,42 @@ pub fn toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         toast.close();
     }
     response
+}
+
+/// Toast frame: tinted icon, title and dismiss button over `body`; returns the frame and the dismiss click.
+pub(super) fn toast_card(
+    ui: &mut Ui,
+    icon: Icon,
+    tone: egui::Color32,
+    title: &str,
+    body: impl FnOnce(&mut Ui),
+) -> (Response, bool) {
+    let mut dismiss = false;
+    let response = Frame::window(ui.style())
+        .show(ui, |ui| {
+            ui.set_width(TOAST_WIDTH);
+            ui.horizontal(|ui| {
+                let size = Metrics::get(ui.ctx()).icon_md;
+                let (slot, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+                icon.paint_duo(ui, slot, size, tone, tone.gamma_multiply(TOAST_DUO_ALPHA));
+                ui.label(RichText::new(title).semibold().color(tone));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    dismiss = controls::icon_button(ui, svg::X, IconBox::Sm, false, "Dismiss").clicked();
+                });
+            });
+            body(ui);
+        })
+        .response;
+    (response, dismiss)
+}
+
+/// The primary button that opens what a toast is about.
+pub(super) fn toast_action(ui: &mut Ui, label: &str) -> bool {
+    TextButton::new(label)
+        .icon(svg::ARROW_RIGHT)
+        .kind(ButtonKind::Primary)
+        .show(ui)
+        .clicked()
 }
 
 #[cfg(test)]

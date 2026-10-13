@@ -15,17 +15,23 @@ pub fn view_menu(
     mut anchor: Option<&mut dyn FnMut(TabId, Rect)>,
 ) {
     let is_root = crate::tabs::admin_console::current_user_is_root();
-    for tab in mode.visible_tabs(tab_ctx, is_root) {
-        let label = tab.title(tab_ctx);
-        let item = ui.selectable_label(session.is_open(tab), label);
-        if let Some(push) = anchor.as_deref_mut() {
-            push(tab, item.rect);
+    crate::ui_tools::controls::menu_body(ui, |ui| {
+        for tab in mode.visible_tabs(tab_ctx, is_root) {
+            let item = crate::ui_tools::controls::menu_check_item(
+                ui,
+                tab.icon(),
+                tab.title(tab_ctx),
+                session.is_open(tab),
+            );
+            if let Some(push) = anchor.as_deref_mut() {
+                push(tab, item.rect);
+            }
+            if item.clicked() {
+                session.toggle(tab);
+                ui.close_kind(UiKind::Menu);
+            }
         }
-        if item.clicked() {
-            session.toggle(tab);
-            ui.close_kind(UiKind::Menu);
-        }
-    }
+    });
 }
 
 impl crate::app_state::SharedContext {

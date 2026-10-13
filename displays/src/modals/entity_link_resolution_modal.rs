@@ -18,7 +18,20 @@ use database::schema::{
     ComputerData, CustomerData, RecordId, RecordIdExt, TicketData, COMPUTER_TABLE, CUSTOMER_TABLE,
 };
 use database::db;
-use eframe::egui::{Color32, Context, RichText, ScrollArea, TextEdit, Ui, Vec2, Window};
+use eframe::egui::{Align, Context, Grid, Layout, RichText, ScrollArea, Ui, Vec2};
+
+use crate::ui_tools::{
+    controls::{self, BarKind, ButtonKind, IconLabel, Metrics, Role, TextButton, TextField, Tokens},
+    icons::svg,
+    theme,
+};
+
+/// Width of the service-order field.
+const ORDER_FIELD_W: f32 = 200.0;
+/// Width of the customer form's label column.
+const FORM_LABEL_W: f32 = 110.0;
+/// Width of the customer form's fields.
+const FORM_FIELD_W: f32 = 360.0;
 
 use crate::plugins::entity_link_pending::{
     resolve_entity_link_request, EntityLinkOutcome, EntityLinkRequest,
@@ -512,7 +525,7 @@ impl EntityLinkResolutionModal {
             Some(cs) => format!("Link customer / computer records — {cs}"),
             None => "Link customer / computer records".to_string(),
         };
-        Window::new(title)
+        controls::icon_window(ctx, svg::LINK, &title)
             .collapsible(false)
             .resizable(true)
             .default_size([720.0, 640.0])
@@ -539,6 +552,7 @@ impl EntityLinkResolutionModal {
         self.poll_live_specs();
         self.poll_customer_fetch();
         self.poll_existing_customer_fetch();
+        let m = Metrics::get(ui.ctx());
 
         // Connected client this link request targets.
         let client_label = self
@@ -547,25 +561,21 @@ impl EntityLinkResolutionModal {
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or("(no connection_string on request)");
-        ui.label(
-            RichText::new(format!("{}  {}", crate::ui_tools::icons::DESKTOP, client_label))
-                .strong()
-                .size(16.0)
-                .color(Color32::LIGHT_BLUE),
-        );
-        if !self.customer.name.trim().is_empty() {
-            ui.label(RichText::new(self.customer.name.trim()).italics());
-        }
-        ui.separator();
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::icon_label(ui, svg::DESKTOP, client_label);
+            if !self.customer.name.trim().is_empty() {
+                ui.label(RichText::new(self.customer.name.trim()).italics());
+            }
+        });
 
-        ui.label(
-            RichText::new("Validation failed — link or create records before continuing.")
-                .strong(),
-        );
-        for issue in &self.request.issues {
-            ui.label(format!("• {issue:?}"));
-        }
-        ui.separator();
+        controls::callout(ui, theme::warn(ui), svg::WARNING, |ui| {
+            ui.label("Validation failed — link or create records before continuing.");
+            for issue in &self.request.issues {
+                ui.label(format!("• {issue:?}"));
+            }
+        });
+        controls::hairline(ui);
+        ui.add_space(m.pad.y);
 
         let needs_customer = self.needs_customer();
         let needs_computer = self.needs_computer();
@@ -574,9 +584,12 @@ impl EntityLinkResolutionModal {
             Step::Prompt => {
                 if needs_customer {
                     ui.label("Create or repair the customer record for this connected client?");
-                    if ui
-                        .button("Yes — look up customer from service order")
-                        .clicked()
+                    if controls::icon_text_button(
+                        ui,
+                        svg::MAGNIFYING_GLASS,
+                        "Yes — look up customer from service order",
+                    )
+                    .clicked()
                     {
                         self.step = Step::Lookup;
                     }
@@ -585,20 +598,28 @@ impl EntityLinkResolutionModal {
                     ui.label(
                         "Create or repair the computer record for this connected client?",
                     );
-                    if ui
-                        .button("Yes — look up service order and use client hardware")
-                        .clicked()
+                    if controls::icon_text_button(
+                        ui,
+                        svg::DESKTOP_TOWER,
+                        "Yes — look up service order and use client hardware",
+                    )
+                    .clicked()
                     {
                         self.step = Step::Lookup;
                     }
                 }
                 if !needs_customer && !needs_computer {
-                    ui.colored_label(
-                        Color32::LIGHT_YELLOW,
+                    controls::status_label(
+                        ui,
+                        svg::INFO,
                         "No actionable validation issues — close to dismiss.",
+                        theme::warn(ui),
                     );
                 }
-                if ui.button("Cancel").clicked() {
+                let cancel = controls::bar(ui, BarKind::Footer, |ui| {
+                    controls::dialog_buttons(ui, &[(Role::Cancel, "Cancel")])
+                });
+                if cancel.is_some() {
                     *close = true;
                     return Some(EntityLinkOutcome::Cancelled {
                         reason: "operator cancelled".into(),
@@ -606,46 +627,63 @@ impl EntityLinkResolutionModal {
                 }
             }
             Step::Lookup => {
-                ui.label("Service order #:");
-                ui.add(TextEdit::singleline(&mut self.service_number).desired_width(200.0));
+                TextField::new(&mut self.service_number)
+                    .hint("Service order #")
+                    .width(ORDER_FIELD_W)
+                    .icon(svg::TICKET)
+                    .id_salt(("entity_link_order", &self.request.request_id))
+                    .show(ui);
                 if let Some(serial) = self.serial_candidate.clone() {
-                    ui.label(
-                        RichText::new(format!(
-                            "This machine's serial maps to {}. Typing an order number \
-                             overrides it.",
-                            serial.describe()
-                        ))
-                        .small()
-                        .color(Color32::from_rgb(180, 180, 90)),
+                    let hint = format!(
+                        "This machine's serial maps to {}. Typing an order number overrides it.",
+                        serial.describe()
                     );
+                    IconLabel::new(svg::BARCODE, &hint)
+                        .small(true)
+                        .tone(theme::warn(ui))
+                        .wrap(true)
+                        .show(ui);
                 }
-                if ui.button("Look up order").clicked() && !self.service_number.is_empty() {
-                    let sn = self.service_number.trim().to_string();
-                    let (customer_tx, customer_rx) =
-                        unbounded::<Result<OrderCustomerLookup, String>>();
-                    self.customer_fetch_rx = Some(customer_rx);
-                    self.looked_up_order = Some(sn.clone());
-                    PlatformSpawner::spawn(async move {
-                        let _ = customer_tx.try_send(lookup_order_customer(&sn).await);
+                controls::bar(ui, BarKind::Footer, |ui| {
+                    if controls::icon_text_button(ui, svg::ARROW_LEFT, "Back").clicked() {
+                        self.step = Step::Prompt;
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let lookup = TextButton::new("Look up order")
+                            .kind(ButtonKind::Primary)
+                            .icon(svg::MAGNIFYING_GLASS);
+                        if lookup.show(ui).clicked() && !self.service_number.is_empty() {
+                            let sn = self.service_number.trim().to_string();
+                            let (customer_tx, customer_rx) =
+                                unbounded::<Result<OrderCustomerLookup, String>>();
+                            self.customer_fetch_rx = Some(customer_rx);
+                            self.looked_up_order = Some(sn.clone());
+                            PlatformSpawner::spawn(async move {
+                                let _ = customer_tx.try_send(lookup_order_customer(&sn).await);
+                            });
+                            self.status = "Order lookup started — review on the verify step.".into();
+                            self.step = Step::Verify;
+                        }
+                        if controls::icon_text_button(
+                            ui,
+                            svg::ARROW_RIGHT,
+                            "Skip lookup — use cached data only",
+                        )
+                        .clicked()
+                        {
+                            self.step = Step::Verify;
+                        }
                     });
-                    self.status = "Order lookup started — review on the verify step.".into();
-                    self.step = Step::Verify;
-                }
-                if ui.button("Skip lookup — use cached data only").clicked() {
-                    self.step = Step::Verify;
-                }
-                if ui.button("Back").clicked() {
-                    self.step = Step::Prompt;
-                }
+                });
             }
             Step::Verify => {
                 let mut cancelled = false;
-                ui.label(RichText::new("Verify this information looks correct").strong());
+                controls::icon_label(ui, svg::SEAL_CHECK, "Verify this information looks correct");
                 if !self.status.is_empty() {
-                    ui.label(RichText::new(&self.status).color(Color32::LIGHT_BLUE));
+                    controls::status_label(ui, svg::INFO, &self.status, theme::info(ui));
                 }
                 if !self.error.is_empty() {
-                    ui.label(RichText::new(&self.error).color(Color32::LIGHT_RED));
+                    controls::status_label(ui, svg::WARNING_CIRCLE, &self.error, theme::error(ui));
                 }
                 let mut pick_serial = self.prefer_serial;
                 let resolution = self.resolution();
@@ -665,28 +703,25 @@ impl EntityLinkResolutionModal {
                                     from_serial,
                                     &mut pick_serial,
                                 );
-                                ui.add_space(4.0);
+                                ui.add_space(m.pad.y);
                             }
                             if let Some(order) = &stale_typed_order {
-                                ui.colored_label(
-                                    Color32::LIGHT_RED,
-                                    format!(
-                                        "{} Order {order} was typed but never looked up — go Back \
-                                         and run the lookup, or the serial's customer is what gets \
-                                         written.",
-                                        crate::ui_tools::icons::STATUS_WARN
-                                    ),
+                                let text = format!(
+                                    "Order {order} was typed but never looked up — go Back \
+                                     and run the lookup, or the serial's customer is what gets \
+                                     written."
                                 );
-                                ui.add_space(4.0);
+                                controls::status_label(ui, svg::WARNING_CIRCLE, &text, theme::error(ui));
+                                ui.add_space(m.pad.y);
                             }
                             display_customer_compare(
                                 ui,
                                 self.existing_customer.as_ref(),
                                 self.existing_customer_fetch_error.as_deref(),
                             );
-                            ui.add_space(4.0);
+                            ui.add_space(m.pad.y);
                             display_customer_fields(ui, &mut self.customer);
-                            ui.separator();
+                            controls::hairline(ui);
                         }
                         if needs_computer {
                             display_computer_page(
@@ -703,20 +738,19 @@ impl EntityLinkResolutionModal {
                 }
                 if needs_customer {
                     if let Some(chosen) = self.chosen_candidate() {
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("Will link: {}", chosen.describe()))
-                                .strong()
-                                .color(Color32::LIGHT_GREEN),
-                        );
-                        ui.label(
-                            RichText::new(format!("friendly_name: {}", self.commit_friendly_name()))
-                                .small()
-                                .color(Color32::GRAY),
-                        );
+                        ui.add_space(m.pad.y);
+                        let will_link = format!("Will link: {}", chosen.describe());
+                        IconLabel::new(svg::LINK, &will_link)
+                            .tone(theme::success(ui))
+                            .show(ui);
+                        let friendly = format!("friendly_name: {}", self.commit_friendly_name());
+                        IconLabel::new(svg::TAG, &friendly)
+                            .small(true)
+                            .tone(theme::weak_text(ui))
+                            .show(ui);
                     }
                 }
-                ui.horizontal(|ui| {
+                controls::bar(ui, BarKind::Footer, |ui| {
                     if needs_customer {
                         // Two-button commit: "Link only" patches the
                         // connected_client FK without rewriting the
@@ -725,35 +759,52 @@ impl EntityLinkResolutionModal {
                         // applies the operator-edited fields with an
                         // UPDATE MERGE before linking.
                         let has_existing = self.existing_customer.is_some();
-                        let link_only_label = if has_existing {
-                            "Link existing customer (no changes)"
+                        let (link_only_icon, link_only_label) = if has_existing {
+                            (svg::LINK, "Link existing customer (no changes)")
                         } else {
-                            "Create customer + link"
+                            (svg::USER_PLUS, "Create customer + link")
                         };
-                        if ui.button(link_only_label).clicked() {
+                        let link_only = TextButton::new(link_only_label)
+                            .kind(ButtonKind::Primary)
+                            .icon(link_only_icon);
+                        if link_only.show(ui).clicked() {
                             self.spawn_commit(false);
                         }
                         if has_existing
-                            && ui
-                                .button("Update customer fields + link")
-                                .clicked()
+                            && controls::icon_text_button(
+                                ui,
+                                svg::PENCIL_SIMPLE,
+                                "Update customer fields + link",
+                            )
+                            .clicked()
                         {
                             self.spawn_commit(true);
                         }
                     } else if needs_computer {
-                        if ui.button("Confirm and save computer").clicked() {
+                        let save = TextButton::new("Confirm and save computer")
+                            .kind(ButtonKind::Primary)
+                            .icon(svg::FLOPPY_DISK);
+                        if save.show(ui).clicked() {
                             self.spawn_commit(false);
                         }
-                    } else if ui.button("Confirm").clicked() {
-                        self.spawn_commit(false);
+                    } else {
+                        let confirm = TextButton::new("Confirm")
+                            .kind(ButtonKind::Primary)
+                            .icon(svg::CHECK);
+                        if confirm.show(ui).clicked() {
+                            self.spawn_commit(false);
+                        }
                     }
-                    if ui.button("Back").clicked() {
-                        self.step = Step::Lookup;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancelled = true;
-                        *close = true;
-                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let cancel = TextButton::new("Cancel").kind(ButtonKind::Ghost).icon(svg::X);
+                        if cancel.show(ui).clicked() {
+                            cancelled = true;
+                            *close = true;
+                        }
+                        if controls::icon_text_button(ui, svg::ARROW_LEFT, "Back").clicked() {
+                            self.step = Step::Lookup;
+                        }
+                    });
                 });
                 if cancelled {
                     return Some(EntityLinkOutcome::Cancelled {
@@ -1037,13 +1088,12 @@ fn display_customer_conflict(
     from_serial: &CustomerCandidate,
     prefer_serial: &mut bool,
 ) {
-    ui.colored_label(
-        Color32::from_rgb(230, 180, 60),
-        format!(
-            "{} This machine's serial and the order you typed name different customers. \
-             Pick the right owner.",
-            crate::ui_tools::icons::STATUS_WARN
-        ),
+    controls::status_label(
+        ui,
+        svg::WARNING,
+        "This machine's serial and the order you typed name different customers. \
+         Pick the right owner.",
+        theme::warn(ui),
     );
     let order_label = format!(
         "From order {} ({}) — {}",
@@ -1056,20 +1106,21 @@ fn display_customer_conflict(
         from_serial.order_number,
         from_serial.describe()
     );
-    if ui.radio(!*prefer_serial, order_label).clicked() {
+    if controls::pill(ui, svg::RECEIPT, &order_label, !*prefer_serial).clicked() {
         *prefer_serial = false;
     }
-    if ui.radio(*prefer_serial, serial_label).clicked() {
+    if controls::pill(ui, svg::BARCODE, &serial_label, *prefer_serial).clicked() {
         *prefer_serial = true;
     }
-    ui.label(
-        RichText::new(
-            "A used machine that changed hands is normal — the serial keeps pointing at \
-             whoever first bought it.",
-        )
-        .small()
-        .color(Color32::GRAY),
-    );
+    IconLabel::new(
+        svg::INFO,
+        "A used machine that changed hands is normal — the serial keeps pointing at \
+         whoever first bought it.",
+    )
+    .small(true)
+    .tone(theme::weak_text(ui))
+    .wrap(true)
+    .show(ui);
 }
 
 /// Side-by-side panel that contrasts the existing `customer:<id>` row
@@ -1081,15 +1132,16 @@ fn display_customer_compare(
     existing: Option<&ExistingCustomer>,
     fetch_error: Option<&str>,
 ) {
-    ui.label(RichText::new("Compare").strong());
-    eframe::egui::Grid::new("entity_link_customer_compare")
+    let m = Metrics::get(ui.ctx());
+    controls::icon_label(ui, svg::ARROWS_LEFT_RIGHT, "Compare");
+    Grid::new("entity_link_customer_compare")
         .num_columns(3)
-        .spacing([12.0, 4.0])
+        .spacing([1.5 * m.gap.x, m.pad.y])
         .striped(true)
         .show(ui, |ui| {
             ui.label("");
-            ui.label(RichText::new("In SurrealDB").strong());
-            ui.label(RichText::new("From PrestaShop ticket").strong());
+            controls::subheading(ui, svg::DATABASE, "In SurrealDB");
+            controls::subheading(ui, svg::STOREFRONT, "From PrestaShop ticket");
             ui.end_row();
 
             for (label, db_val) in compare_rows(existing) {
@@ -1097,26 +1149,28 @@ fn display_customer_compare(
                 ui.label(db_val);
                 ui.label(
                     RichText::new("(see editable form below)")
-                        .color(Color32::from_rgb(120, 120, 140))
+                        .color(theme::faint_text(ui))
                         .small(),
                 );
                 ui.end_row();
             }
         });
     if let Some(err) = fetch_error {
-        ui.colored_label(
-            Color32::LIGHT_RED,
-            format!("Could not load existing customer row: {err}"),
-        );
-        ui.colored_label(
-            Color32::from_rgb(180, 180, 90),
+        let text = format!("Could not load existing customer row: {err}");
+        controls::status_label(ui, svg::WARNING_CIRCLE, &text, theme::error(ui));
+        controls::status_label(
+            ui,
+            svg::INFO,
             "Falling back to UPSERT MERGE — Confirm will write only the listed fields, \
              so other columns on the existing row are preserved.",
+            theme::warn(ui),
         );
     } else if existing.is_none() {
-        ui.colored_label(
-            Color32::from_rgb(180, 180, 90),
+        controls::status_label(
+            ui,
+            svg::INFO,
             "No existing customer row found in SurrealDB at this id — Confirm will create one.",
+            theme::warn(ui),
         );
     }
 }
@@ -1195,44 +1249,25 @@ async fn fetch_existing_customer_lenient(
 /// the relink_popup commits (name / phone / email / cust_code) so the
 /// operator has the same surface here without leaving the modal.
 fn display_customer_fields(ui: &mut Ui, customer: &mut CustomerData) {
-    ui.label(RichText::new("Customer").strong());
-    let label_w = 110.0;
-    let field_w = 360.0;
-    ui.horizontal(|ui| {
-        ui.add_sized([label_w, 20.0], eframe::egui::Label::new("Customer code"));
-        ui.add_sized(
-            [field_w, 20.0],
-            TextEdit::singleline(&mut customer.cust_code),
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.add_sized([label_w, 20.0], eframe::egui::Label::new("Name"));
-        ui.add_sized(
-            [field_w, 20.0],
-            TextEdit::singleline(&mut customer.name),
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.add_sized([label_w, 20.0], eframe::egui::Label::new("Email"));
-        ui.add_sized(
-            [field_w, 20.0],
-            TextEdit::singleline(&mut customer.email),
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.add_sized([label_w, 20.0], eframe::egui::Label::new("Phone"));
-        ui.add_sized(
-            [field_w, 20.0],
-            TextEdit::singleline(&mut customer.phone_number),
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.add_sized([label_w, 20.0], eframe::egui::Label::new("Phone (alt)"));
-        ui.add_sized(
-            [field_w, 20.0],
-            TextEdit::singleline(&mut customer.phone_number_2),
-        );
-    });
+    let t = Tokens::get(ui.ctx());
+    controls::icon_label(ui, svg::USER, "Customer");
+    let rows = [
+        ("Customer code", svg::IDENTIFICATION_CARD, &mut customer.cust_code),
+        ("Name", svg::USER, &mut customer.name),
+        ("Email", svg::ENVELOPE, &mut customer.email),
+        ("Phone", svg::PHONE, &mut customer.phone_number),
+        ("Phone (alt)", svg::PHONE, &mut customer.phone_number_2),
+    ];
+    Grid::new("entity_link_customer_fields")
+        .num_columns(2)
+        .min_col_width(FORM_LABEL_W)
+        .show(ui, |ui| {
+            for (label, icon, value) in rows {
+                ui.colored_label(t.text_dim, label);
+                TextField::new(value).width(FORM_FIELD_W).icon(icon).show(ui);
+                ui.end_row();
+            }
+        });
 }
 
 fn merge_specs_into_computer(computer: &mut ComputerData, suggestion: &OpenServiceSuggestion) {

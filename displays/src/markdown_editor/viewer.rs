@@ -1,6 +1,8 @@
 use super::parser as easy_mark;
 use eframe::egui::*;
 
+use crate::ui_tools::theme;
+
 /// Parse and display a VERY simple and small subset of Markdown.
 pub fn easy_mark(ui: &mut Ui, easy_mark: &str) {
     easy_mark_it(ui, easy_mark::Parser::new(easy_mark));
@@ -38,7 +40,7 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
         }
 
         easy_mark::Item::Text(style, text) => {
-            let label = rich_text_from_style(text, &style);
+            let label = rich_text_from_style(text, &style, theme::secondary(ui));
             if style.small && !style.raised {
                 ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui| {
                     ui.set_min_height(row_height);
@@ -49,7 +51,7 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
             }
         }
         easy_mark::Item::Hyperlink(style, text, url) => {
-            let label = rich_text_from_style(text, &style);
+            let label = rich_text_from_style(text, &style, theme::secondary(ui));
             if style.small && !style.raised {
                 ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui| {
                     ui.set_height(row_height);
@@ -60,7 +62,7 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
             }
         }
         easy_mark::Item::UserTag(style, text) => {
-            let label = rich_text_from_style(text, &style);
+            let label = rich_text_from_style(text, &style, theme::secondary(ui));
             if style.small && !style.raised {
                 ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui| {
                     ui.set_height(row_height);
@@ -111,7 +113,7 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
     };
 }
 
-fn rich_text_from_style(text: &str, style: &easy_mark::Style) -> RichText {
+fn rich_text_from_style(text: &str, style: &easy_mark::Style, tag: Color32) -> RichText {
     let easy_mark::Style {
         heading,
         quoted,
@@ -146,7 +148,7 @@ fn rich_text_from_style(text: &str, style: &easy_mark::Style) -> RichText {
         rich_text = rich_text.underline();
     }
     if usertag {
-        rich_text = rich_text.underline().color(Color32::from_rgb(191, 33, 101));
+        rich_text = rich_text.underline().color(tag);
     }
     if strikethrough {
         rich_text = rich_text.strikethrough();

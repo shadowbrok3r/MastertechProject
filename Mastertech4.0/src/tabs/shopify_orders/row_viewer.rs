@@ -1,4 +1,8 @@
 use crossbeam::channel::Sender;
+use displays::ui_tools::{
+    controls::{self, ButtonKind, TextButton, Tokens},
+    icons::svg,
+};
 use eframe::egui::RichText;
 use egui_data_table::{viewer::{RowCodec, TableColumnConfig}, RowViewer};
 
@@ -50,19 +54,21 @@ impl RowViewer<ShopifyOrderRow> for ShopifyOrderRowViewer {
         style.interaction.selectable_labels = false;
         match column {
             0 => {
-                if ui
-                    .button(RichText::new(&row.reference).monospace())
+                if TextButton::new(&row.reference)
+                    .icon(svg::RECEIPT)
+                    .kind(ButtonKind::Ghost)
+                    .show(ui)
                     .on_hover_text("Load this order")
                     .clicked()
                 {
                     let _ = self.load_tx.try_send(row.lookup.clone());
                 }
             }
-            1 => { ui.label(&row.status); }
+            1 => { controls::badge(ui, &row.status, Tokens::get(ui.ctx()).secondary); }
             2 => { ui.label(&row.customer); }
             3 => { ui.label(&row.build); }
-            4 => { ui.label(&row.serials); }
-            5 => { ui.label(&row.placed); }
+            4 => { controls::icon_label(ui, svg::BARCODE, &row.serials); }
+            5 => { controls::icon_label(ui, svg::CALENDAR_BLANK, &row.placed); }
             _ => {}
         }
     }

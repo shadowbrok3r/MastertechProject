@@ -18,7 +18,10 @@
 //! internal history buffer is updated in place from [`HwMonitor::update`],
 //! which the host should call once per frame with the latest snapshot.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui;
+use mtech_ui::controls::{self, BarKind, Icon, Metrics};
+use mtech_ui::icons::svg;
+use mtech_ui::theme;
 use stress_kit::telemetry::TelemetrySnapshot;
 
 mod tables;
@@ -46,26 +49,26 @@ impl HwMonitor {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let snap = &self.snapshot;
 
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Hardware monitor").strong().size(15.0));
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::heading(ui, svg::GAUGE, "Hardware monitor");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "captured @ {}",
-                        fmt_unix_ms(snap.captured_at_unix_ms)
-                    ))
-                    .small()
-                    .weak(),
-                );
+                let weak = theme::weak_text(ui);
+                controls::IconLabel::new(
+                    svg::CLOCK,
+                    &format!("captured @ {}", fmt_unix_ms(snap.captured_at_unix_ms)),
+                )
+                .tone(weak)
+                .small(true)
+                .selectable(true)
+                .show(ui);
             });
         });
-        ui.separator();
         // Drive a redraw so live data flows without user interaction.
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(500));
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            section(ui, "CPU cores", |ui| {
+            section(ui, svg::CPU, "CPU cores", |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("hw_all_cores")
                     .max_height(240.0)
@@ -74,22 +77,30 @@ impl HwMonitor {
             ui.columns(2, |cols| {
                 {
                     let ui = &mut cols[0];
-                    section(ui, "Memory", |ui| tables::show_memory(ui, &snap.memory));
-                    section(ui, "Disks", |ui| tables::show_disks(ui, &snap.disks, ""));
-                    section(ui, "GPUs", |ui| tables::show_gpus(ui, &snap.gpus));
+                    section(ui, svg::MEMORY, "Memory", |ui| {
+                        tables::show_memory(ui, &snap.memory)
+                    });
+                    section(ui, svg::HARD_DRIVES, "Disks", |ui| {
+                        tables::show_disks(ui, &snap.disks, "")
+                    });
+                    section(ui, svg::GRAPHICS_CARD, "GPUs", |ui| {
+                        tables::show_gpus(ui, &snap.gpus)
+                    });
                 }
                 {
                     let ui = &mut cols[1];
-                    section(ui, "Temperatures", |ui| {
+                    section(ui, svg::THERMOMETER, "Temperatures", |ui| {
                         tables::show_thermals(ui, &snap.thermals, "")
                     });
-                    section(ui, "Networks", |ui| {
+                    section(ui, svg::NETWORK, "Networks", |ui| {
                         tables::show_networks(ui, &snap.networks, "")
                     });
-                    section(ui, "WHEA", |ui| tables::show_whea(ui, &snap.whea));
+                    section(ui, svg::WARNING_OCTAGON, "WHEA", |ui| {
+                        tables::show_whea(ui, &snap.whea)
+                    });
                 }
             });
-            section(ui, "Processes", |ui| {
+            section(ui, svg::LIST_BULLETS, "Processes", |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("hw_all_procs")
                     .max_height(260.0)
@@ -99,37 +110,17 @@ impl HwMonitor {
     }
 }
 
-/// One titled section box for the all-in-one grid.
-fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.group(|ui| {
+/// One titled card for the all-in-one grid.
+fn section(ui: &mut egui::Ui, icon: Icon, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    let m = Metrics::get(ui.ctx());
+    controls::card(ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.label(RichText::new(title).strong());
-        ui.separator();
-        // Unique id namespace per section: every table/scroll area now renders
-        // in the same frame, so their auto-generated ids would otherwise clash.
+        controls::subheading(ui, icon, title);
+        controls::hairline(ui);
+        // Per-section id namespace for its tables and scroll areas.
         ui.push_id(title, |ui| add(ui));
     });
-    ui.add_space(6.0);
-}
-
-pub(crate) fn usage_color(pct: f32) -> Color32 {
-    if pct >= 90.0 {
-        Color32::from_rgb(220, 80, 60)
-    } else if pct >= 70.0 {
-        Color32::from_rgb(230, 180, 60)
-    } else {
-        Color32::from_rgb(100, 200, 100)
-    }
-}
-
-pub(crate) fn temp_color(temp: f32) -> Color32 {
-    if temp >= 90.0 {
-        Color32::from_rgb(220, 80, 60)
-    } else if temp >= 75.0 {
-        Color32::from_rgb(230, 180, 60)
-    } else {
-        Color32::from_rgb(100, 200, 100)
-    }
+    ui.add_space(m.gap.y);
 }
 
 fn fmt_unix_ms(ms: u64) -> String {

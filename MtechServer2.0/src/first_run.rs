@@ -5,13 +5,15 @@ use displays::{
         admin_console::client_interface::TransportKind,
     },
     ui_tools::{
+        controls::{self, Tokens},
         encode_theme,
-        theme_config::{apply_user_color_scheme, bootstrap_startup_theme},
+        icons::svg,
+        theme_config::{apply_user_color_scheme, bootstrap_startup_theme, install_style},
         toasts::{Toast, ToastKind, ToastOptions, ToastStyle},
         SavedTheme,
     },
 };
-use eframe::{egui::{Color32, Context, Margin, Stroke, Vec2, Window}, Frame};
+use eframe::{egui::{Context, Margin, Stroke, Vec2}, Frame};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
 use wasm_bindgen_futures::spawn_local;
 use egui_dock::DockState;
@@ -373,7 +375,7 @@ impl MtechServer {
         // currently this just sets the style of the app, but in the near
         // future i will be making this the setup to allow user customization
         // to the style of any part of the app
-        let theme_res = Window::new("Theme Configuration")
+        let theme_res = controls::icon_window(ctx, svg::PALETTE, "Theme Configuration")
         .open(&mut self.shared_ctx.modify_theme)
         .max_height(600.)
         .min_width(700.)
@@ -391,7 +393,7 @@ impl MtechServer {
                         user.set_color_scheme(
                             encode_theme(&SavedTheme::current(ctx)).unwrap_or_default(),
                         );
-                        ctx.set_global_style(r.1.clone());
+                        install_style(ctx, (*r.1).clone());
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
                         }
@@ -485,17 +487,14 @@ impl MtechServer {
                     })
                     .unwrap_or(false);
 
-                let color = if is_ws_connected {
-                    Color32::LIGHT_BLUE
-                } else {
-                    Color32::LIGHT_RED
-                };
+                let t = Tokens::get(ctx);
+                let color = if is_ws_connected { t.info } else { t.error };
 
                 let column_frame = eframe::egui::Frame::default()
-                    .fill(Color32::from_rgb(12, 12, 14))
+                    .fill(t.sunken)
                     .inner_margin(Margin::same(4))
-                    .outer_margin(Margin::symmetric(5, 3))
-                    .corner_radius(eframe::egui::CornerRadius::same(10))
+                    .outer_margin(Margin::same(4))
+                    .corner_radius(t.radius_lg)
                     .stroke(Stroke::new(1.0, color));
 
                 // Clone everything we need out of `layout` before entering the
@@ -536,7 +535,7 @@ impl MtechServer {
                     String,
                     Option<Vec<database::schema::LiveTaskPayload>>,
                 > = std::collections::HashMap::new();
-                Window::new(&client.connection_string)
+                controls::icon_window(ctx, svg::DESKTOP_TOWER, &client.connection_string)
                     .open(&mut is_open)
                     .frame(column_frame)
                     .title_frame(eframe::egui::Frame::window(&ctx.global_style()))

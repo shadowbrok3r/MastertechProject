@@ -6,10 +6,12 @@
 use std::collections::BTreeMap;
 
 use database::schema::{RecordId, RecordIdExt, RunResult};
-use eframe::egui::{ComboBox, RichText, Ui};
+use eframe::egui::{RichText, Ui};
 use egui_plot::{Bar, BarChart, Legend, Line, MarkerShape, PlotPoints, Points};
 
-use crate::ui_tools::{icons, plots as plot_tools, theme};
+use crate::ui_tools::controls::{self, SpinnerSize};
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::{plots as plot_tools, theme};
 use crate::{PlatformSpawner, Spawner};
 
 use super::data::{RunRecord, SeriesBucket};
@@ -137,15 +139,19 @@ pub fn ui(lab: &mut StressLab, ui: &mut Ui) {
     let (scope, series) = match lab.compare.axis {
         Axis::ByHardware => {
             let Some(tool) = lab.compare.tool.clone() else {
-                ui.label(RichText::new("No stress runs loaded yet.").weak());
+                controls::empty_state(ui, svg::MT_STRESS, "No stress runs loaded yet", "", &[]);
                 return;
             };
             (tool.clone(), build_series_by_hardware(lab, &tool))
         }
         Axis::ByStressor => {
             let Some(component) = lab.compare.component.clone() else {
-                ui.label(
-                    RichText::new("Pick a hardware part to compare its stressors.").weak(),
+                controls::empty_state(
+                    ui,
+                    svg::CPU,
+                    "Pick a hardware part to compare its stressors",
+                    "",
+                    &[],
                 );
                 return;
             };
@@ -157,7 +163,13 @@ pub fn ui(lab: &mut StressLab, ui: &mut Ui) {
     };
 
     if series.is_empty() {
-        ui.label(RichText::new(format!("No completed runs for {scope}.")).weak());
+        controls::empty_state(
+            ui,
+            svg::FLAG_CHECKERED,
+            &format!("No completed runs for {scope}"),
+            "",
+            &[],
+        );
         return;
     }
 
@@ -170,30 +182,31 @@ pub fn ui(lab: &mut StressLab, ui: &mut Ui) {
         .weak()
         .small(),
     );
-    ui.separator();
+    controls::hairline(ui);
 
     ensure_timeline(lab, &scope, &series);
     timeline_chart(lab, ui, &series);
-    ui.separator();
+    controls::hairline(ui);
     scatter_chart(lab, ui, &series);
-    ui.separator();
+    controls::hairline(ui);
     bar_chart(lab, ui, &series);
-    ui.separator();
+    controls::hairline(ui);
     result_mix_chart(ui, &series, lab.interactive_charts);
 }
 
 fn controls(lab: &mut StressLab, ui: &mut Ui) {
     let tools = lab.tools.clone();
     ui.horizontal_wrapped(|ui| {
+        controls::icon_label(ui, svg::ARROWS_LEFT_RIGHT, "Compare");
         let before_axis = lab.compare.axis;
-        ComboBox::from_id_salt("stress_lab_compare_axis")
-            .width(210.0)
-            .selected_text(lab.compare.axis.label())
-            .show_ui(ui, |ui| {
-                for axis in Axis::VALUES {
-                    ui.selectable_value(&mut lab.compare.axis, axis, axis.label());
-                }
-            });
+        let axes = Axis::VALUES.map(|axis| (axis, axis.label()));
+        controls::dropdown(
+            ui,
+            "stress_lab_compare_axis",
+            &mut lab.compare.axis,
+            &axes,
+            210.0,
+        );
         if lab.compare.axis != before_axis {
             lab.compare.unit = None;
             lab.compare.dirty = true;
@@ -207,39 +220,39 @@ fn controls(lab: &mut StressLab, ui: &mut Ui) {
 
         match lab.compare.axis {
             Axis::ByHardware => {
-                ui.label(format!("{} Stressor", icons::FLASK));
+                controls::icon_label(ui, svg::FLASK, "Stressor");
                 let before = lab.compare.tool.clone();
-                ComboBox::from_id_salt("stress_lab_compare_tool")
-                    .width(210.0)
-                    .selected_text(lab.compare.tool.clone().unwrap_or_else(|| "—".into()))
-                    .show_ui(ui, |ui| {
-                        for tool in tools {
-                            ui.selectable_value(&mut lab.compare.tool, Some(tool.clone()), tool);
-                        }
-                    });
+                let options: Vec<(Option<String>, &str)> = tools
+                    .iter()
+                    .map(|tool| (Some(tool.clone()), tool.as_str()))
+                    .collect();
+                controls::dropdown(
+                    ui,
+                    "stress_lab_compare_tool",
+                    &mut lab.compare.tool,
+                    &options,
+                    210.0,
+                );
                 if lab.compare.tool != before {
                     lab.compare.unit = None;
                     lab.compare.dirty = true;
                 }
             }
             Axis::ByStressor => {
-                ui.label(format!("{} Hardware", icons::p::CPU));
+                controls::icon_label(ui, svg::CPU, "Hardware");
                 let parts = lab.tested_components();
                 let before = lab.compare.component.clone();
-                let selected = lab
-                    .compare
-                    .component
-                    .as_ref()
-                    .map(|c| lab.component_name(c))
-                    .unwrap_or_else(|| "—".into());
-                ComboBox::from_id_salt("stress_lab_compare_component")
-                    .width(260.0)
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        for (id, name) in parts {
-                            ui.selectable_value(&mut lab.compare.component, Some(id), name);
-                        }
-                    });
+                let options: Vec<(Option<RecordId>, &str)> = parts
+                    .iter()
+                    .map(|(id, name)| (Some(id.clone()), name.as_str()))
+                    .collect();
+                controls::dropdown(
+                    ui,
+                    "stress_lab_compare_component",
+                    &mut lab.compare.component,
+                    &options,
+                    260.0,
+                );
                 if lab.compare.component != before {
                     lab.compare.unit = None;
                     lab.compare.dirty = true;
@@ -250,35 +263,29 @@ fn controls(lab: &mut StressLab, ui: &mut Ui) {
         let units = throughput_units(lab);
         if units.len() > 1 {
             let before = lab.compare.unit.clone();
-            ComboBox::from_id_salt("stress_lab_compare_unit")
-                .width(130.0)
-                .selected_text(
-                    lab.compare
-                        .unit
-                        .clone()
-                        .unwrap_or_else(|| "All units".into()),
-                )
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut lab.compare.unit, None, "All units");
-                    for unit in units.clone() {
-                        ui.selectable_value(&mut lab.compare.unit, Some(unit.clone()), unit);
-                    }
-                });
+            let options: Vec<(Option<String>, &str)> = std::iter::once((None, "All units"))
+                .chain(units.iter().map(|unit| (Some(unit.clone()), unit.as_str())))
+                .collect();
+            controls::dropdown(
+                ui,
+                "stress_lab_compare_unit",
+                &mut lab.compare.unit,
+                &options,
+                130.0,
+            );
             if lab.compare.unit != before {
                 lab.compare.dirty = true;
             }
         }
-
     });
 
     if throughput_units(lab).len() > 1 && lab.compare.unit.is_none() {
-        ui.label(
-            RichText::new(
-                "This stressor reports more than one throughput unit; pick one before reading \
-                 throughput across parts.",
-            )
-            .color(theme::warn(ui))
-            .small(),
+        controls::note(
+            ui,
+            svg::WARNING,
+            "This stressor reports more than one throughput unit; pick one before reading \
+             throughput across parts.",
+            theme::warn(ui),
         );
     }
 }
@@ -327,10 +334,11 @@ fn build_series_by_hardware(lab: &StressLab, tool: &str) -> Vec<Series> {
         let Some(component) = run.target_component.clone() else {
             continue;
         };
-        if lab
-            .kind_filter
-            .is_some_and(|kind| !lab.components.iter().any(|c| c.id == component && c.kind == kind))
-        {
+        if lab.kind_filter.is_some_and(|kind| {
+            !lab.components
+                .iter()
+                .any(|c| c.id == component && c.kind == kind)
+        }) {
             continue;
         }
         by_component
@@ -464,7 +472,10 @@ fn ensure_timeline(lab: &mut StressLab, tool: &str, series: &[Series]) {
         "{tool}|{}|{}|{}",
         lab.compare.unit.clone().unwrap_or_default(),
         lab.compare.run_pick.label(),
-        runs.iter().map(|r| r.key_string()).collect::<Vec<_>>().join(",")
+        runs.iter()
+            .map(|r| r.key_string())
+            .collect::<Vec<_>>()
+            .join(",")
     );
     if !lab.compare.dirty && lab.compare.loaded_key.as_deref() == Some(key.as_str()) {
         return;
@@ -503,42 +514,49 @@ fn ensure_timeline(lab: &mut StressLab, tool: &str, series: &[Series]) {
 
 fn timeline_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
     ui.horizontal_wrapped(|ui| {
-        ui.heading(format!("{} Over time", icons::p::CHART_LINE));
-        ComboBox::from_id_salt("stress_lab_compare_series_metric")
-            .width(170.0)
-            .selected_text(lab.compare.series_metric.label())
-            .show_ui(ui, |ui| {
-                for metric in SeriesMetric::VALUES {
-                    ui.selectable_value(&mut lab.compare.series_metric, metric, metric.label());
-                }
-            });
+        chart_heading(ui, svg::CHART_LINE, "Over time");
+        let metrics = SeriesMetric::VALUES.map(|metric| (metric, metric.label()));
+        controls::dropdown(
+            ui,
+            "stress_lab_compare_series_metric",
+            &mut lab.compare.series_metric,
+            &metrics,
+            170.0,
+        );
         let before = lab.compare.run_pick;
-        ComboBox::from_id_salt("stress_lab_compare_pick")
-            .width(170.0)
-            .selected_text(lab.compare.run_pick.label())
-            .show_ui(ui, |ui| {
-                for pick in RunPick::VALUES {
-                    ui.selectable_value(&mut lab.compare.run_pick, pick, pick.label());
-                }
-            });
+        let picks = RunPick::VALUES.map(|pick| (pick, pick.label()));
+        controls::dropdown(
+            ui,
+            "stress_lab_compare_pick",
+            &mut lab.compare.run_pick,
+            &picks,
+            170.0,
+        );
         if lab.compare.run_pick != before {
             lab.compare.dirty = true;
         }
         if lab.loading_compare {
-            ui.spinner();
+            controls::spinner(ui, SpinnerSize::Sm);
         }
     });
 
     let metric = lab.compare.series_metric;
     if lab.compare.buckets.is_empty() {
-        ui.label(
-            RichText::new(if lab.loading_compare {
-                "Loading telemetry…"
-            } else {
-                "No telemetry rows for the selected runs."
-            })
-            .weak(),
-        );
+        if lab.loading_compare {
+            controls::note(
+                ui,
+                svg::HOURGLASS,
+                "Loading telemetry…",
+                theme::weak_text(ui),
+            );
+        } else {
+            controls::note(
+                ui,
+                svg::CHART_LINE,
+                "No telemetry rows for the selected runs.",
+                theme::weak_text(ui),
+            );
+        }
         return;
     }
 
@@ -594,20 +612,24 @@ fn timeline_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
     }
 
     if lines.is_empty() {
-        ui.label(
-            RichText::new(format!("No part sampled {} on these runs.", metric.label())).weak(),
+        controls::note(
+            ui,
+            svg::CIRCLE_DASHED,
+            &format!("No part sampled {} on these runs.", metric.label()),
+            theme::weak_text(ui),
         );
         return;
     }
 
     if dropped > 0 {
-        ui.label(
-            RichText::new(format!(
+        controls::note(
+            ui,
+            svg::INFO,
+            &format!(
                 "{dropped} run(s) too short to chart at {}s buckets.",
                 lab.compare.bucket_secs
-            ))
-            .weak()
-            .small(),
+            ),
+            theme::weak_text(ui),
         );
     }
 
@@ -632,7 +654,7 @@ fn timeline_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
 
 fn scatter_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
     ui.horizontal_wrapped(|ui| {
-        ui.heading(format!("{} Any measure vs any measure", icons::p::CHART_SCATTER));
+        chart_heading(ui, svg::CHART_SCATTER, "Any measure vs any measure");
         ui.label("X");
         metric_combo(ui, "stress_lab_scatter_x", &mut lab.compare.scatter_x);
         ui.label("Y");
@@ -654,13 +676,11 @@ fn scatter_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
     }
 
     if sets.is_empty() {
-        ui.label(
-            RichText::new(format!(
-                "No run records both {} and {}.",
-                mx.label(),
-                my.label()
-            ))
-            .weak(),
+        controls::note(
+            ui,
+            svg::CIRCLE_DASHED,
+            &format!("No run records both {} and {}.", mx.label(), my.label()),
+            theme::weak_text(ui),
         );
         return;
     }
@@ -691,16 +711,16 @@ fn scatter_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
 
 fn bar_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
     ui.horizontal_wrapped(|ui| {
-        ui.heading(format!("{} By part", icons::CHART));
+        chart_heading(ui, svg::CHART_BAR_HORIZONTAL, "By part");
         metric_combo(ui, "stress_lab_bar_metric", &mut lab.compare.bar_metric);
-        ComboBox::from_id_salt("stress_lab_bar_agg")
-            .width(100.0)
-            .selected_text(lab.compare.bar_agg.label())
-            .show_ui(ui, |ui| {
-                for agg in [Agg::Max, Agg::Mean] {
-                    ui.selectable_value(&mut lab.compare.bar_agg, agg, agg.label());
-                }
-            });
+        let aggs = [Agg::Max, Agg::Mean].map(|agg| (agg, agg.label()));
+        controls::dropdown(
+            ui,
+            "stress_lab_bar_agg",
+            &mut lab.compare.bar_agg,
+            &aggs,
+            100.0,
+        );
     });
 
     let metric = lab.compare.bar_metric;
@@ -722,7 +742,12 @@ fn bar_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
     }
 
     if bars.is_empty() {
-        ui.label(RichText::new(format!("No part records {}.", metric.label())).weak());
+        controls::note(
+            ui,
+            svg::CIRCLE_DASHED,
+            &format!("No part records {}.", metric.label()),
+            theme::weak_text(ui),
+        );
         return;
     }
 
@@ -748,7 +773,7 @@ fn bar_chart(lab: &mut StressLab, ui: &mut Ui, series: &[Series]) {
 }
 
 fn result_mix_chart(ui: &mut Ui, series: &[Series], interactive: bool) {
-    ui.heading(format!("{} Result mix", icons::p::CHART_BAR));
+    ui.horizontal(|ui| chart_heading(ui, svg::CHART_BAR, "Result mix"));
 
     let buckets: [(&str, RunResult); 4] = [
         ("pass", RunResult::Pass),
@@ -784,7 +809,12 @@ fn result_mix_chart(ui: &mut Ui, series: &[Series], interactive: bool) {
     }
 
     if charts.is_empty() {
-        ui.label(RichText::new("No completed runs to summarise.").weak());
+        controls::note(
+            ui,
+            svg::CIRCLE_DASHED,
+            "No completed runs to summarise.",
+            theme::weak_text(ui),
+        );
         return;
     }
 
@@ -810,14 +840,13 @@ fn result_mix_chart(ui: &mut Ui, series: &[Series], interactive: bool) {
 }
 
 fn metric_combo(ui: &mut Ui, id: &str, current: &mut RunMetric) {
-    ComboBox::from_id_salt(id)
-        .width(180.0)
-        .selected_text(current.label())
-        .show_ui(ui, |ui| {
-            for metric in RunMetric::VALUES {
-                ui.selectable_value(current, metric, metric.label());
-            }
-        });
+    let metrics = RunMetric::VALUES.map(|metric| (metric, metric.label()));
+    controls::dropdown(ui, id, current, &metrics, 180.0);
+}
+
+/// Chart title: a duotone icon and the heading-size semibold title.
+fn chart_heading(ui: &mut Ui, icon: Icon, title: &str) {
+    controls::heading(ui, icon, title);
 }
 
 /// Axis label for `metric_label`, naming the throughput unit when the metric is

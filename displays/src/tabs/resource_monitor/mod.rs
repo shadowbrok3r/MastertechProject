@@ -1,7 +1,9 @@
-use eframe::egui::{
-    Align, Button, CentralPanel, ComboBox, FontId, Layout, RichText, ScrollArea, Ui, Vec2, Widget,
+use eframe::egui::{Align, CentralPanel, Layout, ScrollArea, Ui};
+use crate::ui_tools::{
+    controls::{self, BarKind, Segment},
+    icons::svg,
+    theme,
 };
-use crate::ui_tools::{icons, theme};
 use process_table::ProcessTableViewer;
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
@@ -238,82 +240,37 @@ impl ResourceMonitor {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
 
         eframe::egui::Panel::top("Resource Monitor Top Panel")
-            .exact_size(25.)
             .show(ui, |ui| {
-                eframe::egui::MenuBar::new().ui(ui, |ui| {
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        let button_stroke = ui.style().visuals.window_stroke;
-                        let button_size = Vec2::new(120.0, 15.0);
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    controls::heading(ui, svg::MT_HEALTH, "Resource monitor");
+                    crate::tabs::bar_rule(ui);
 
-                        let all_charts_selected = matches!(
-                            self.state,
-                            ResourceMonitorState::AllCharts | ResourceMonitorState::RequestingData
-                        );
+                    let all_charts_selected = matches!(
+                        self.state,
+                        ResourceMonitorState::AllCharts | ResourceMonitorState::RequestingData
+                    );
+                    if controls::pill(ui, svg::CHART_LINE, "Live telemetry", all_charts_selected)
+                        .clicked()
+                    {
+                        self.state = ResourceMonitorState::AllCharts;
+                    }
 
-                        if Button::new(format!("{} Live telemetry", icons::CHART))
-                            .min_size(button_size)
-                            .frame(true)
-                            .stroke(button_stroke)
-                            .fill(if all_charts_selected {
-                                ui.style().visuals.selection.bg_fill
-                            } else {
-                                eframe::egui::Color32::TRANSPARENT
-                            })
-                            .ui(ui)
-                            .clicked()
-                        {
-                            self.state = ResourceMonitorState::AllCharts;
-                        }
+                    let processes_selected = matches!(self.state, ResourceMonitorState::Processes);
+                    if controls::pill(ui, svg::LIST, "Processes", processes_selected).clicked() {
+                        self.state = ResourceMonitorState::Processes;
+                    }
 
-                        ui.add_space(10.);
-
-                        if Button::new(format!("{} Processes", icons::LIST))
-                            .min_size(button_size)
-                            .stroke(button_stroke)
-                            .fill(if matches!(self.state, ResourceMonitorState::Processes) {
-                                ui.style().visuals.selection.bg_fill
-                            } else {
-                                eframe::egui::Color32::TRANSPARENT
-                            })
-                            .ui(ui)
-                            .clicked()
-                        {
-                            self.state = ResourceMonitorState::Processes;
-                        }
-                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(2.);
-                        let button_stroke = ui.style().visuals.window_stroke;
-                        let button_size = Vec2::new(60.0, 15.0);
-                        if Button::new("Refresh")
-                            .min_size(button_size)
-                            .stroke(button_stroke)
-                            .ui(ui)
-                            .clicked()
+                        if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked()
                         {
                             self.state = ResourceMonitorState::RequestingData;
                         }
 
-                        ui.add_space(5.);
-                        if !matches!(self.state, ResourceMonitorState::Stop) {
-                            if Button::new("Stop")
-                                .min_size(button_size)
-                                .stroke(button_stroke)
-                                .ui(ui)
-                                .clicked()
-                            {
-                                self.state = ResourceMonitorState::Stop;
-                            }
+                        if !matches!(self.state, ResourceMonitorState::Stop)
+                            && controls::icon_text_button(ui, svg::STOP, "Stop").clicked()
+                        {
+                            self.state = ResourceMonitorState::Stop;
                         }
-
-                        ui.add_space(ui.available_width() / 1.5);
-
-                        ui.label(
-                            RichText::new("Resource monitor")
-                                .color(theme::accent(ui))
-                                .heading()
-                                .font(FontId::monospace(20.)),
-                        );
                     });
                 });
             });
@@ -322,13 +279,7 @@ impl ResourceMonitor {
             match self.state {
                 ResourceMonitorState::Stop => {}
                 ResourceMonitorState::RequestingData => {
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            RichText::new("Loading system data...")
-                                .color(ui.style().visuals.warn_fg_color)
-                                .heading(),
-                        );
-                    });
+                    controls::loading_state(ui, "Loading system data…");
                 }
                 ResourceMonitorState::Processes => {
                     self.process_table_viewer.show(ui);
@@ -356,7 +307,7 @@ impl ResourceMonitor {
             self.machine_line(ui);
             self.headline_panel(ui);
             let two_col = ui.available_width() >= TWO_COL_MIN_WIDTH;
-            hw_tables::panel(ui, icons::CHART, "Trends", |ui| {
+            hw_tables::panel(ui, svg::CHART_LINE, "Trends", |ui| {
                 if two_col {
                     self.chart_board.show_compact(ui);
                 } else {
@@ -368,10 +319,12 @@ impl ResourceMonitor {
 
         #[cfg(not(feature = "native-telemetry"))]
         {
-            ui.colored_label(
-                theme::weak_text(ui),
+            controls::IconLabel::new(
+                svg::PULSE,
                 "Live telemetry requires the native build with stress-kit.",
-            );
+            )
+            .tone(theme::weak_text(ui))
+            .show(ui);
         }
     }
 
@@ -379,13 +332,9 @@ impl ResourceMonitor {
     #[cfg(feature = "native-telemetry")]
     fn dashboard_header(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
+            controls::subheading(ui, svg::PULSE, "Live telemetry");
             ui.label(
-                RichText::new("Live telemetry")
-                    .color(theme::accent(ui))
-                    .strong(),
-            );
-            ui.label(
-                RichText::new(format!(
+                eframe::egui::RichText::new(format!(
                     "captured @ {}",
                     hw_tables::fmt_captured_at(self.telemetry.captured_at_unix_ms)
                 ))
@@ -394,18 +343,27 @@ impl ResourceMonitor {
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let (icon, hover) = if self.charts_paused {
-                    (icons::PLAY, "Resume live chart updates")
+                    (svg::PLAY, "Resume live chart updates")
                 } else {
                     (
-                        icons::PAUSE,
+                        svg::PAUSE,
                         "Pause live chart updates (latest_sysinfo + panels keep refreshing)",
                     )
                 };
-                if ui.small_button(icon).on_hover_text(hover).clicked() {
+                let toggle = controls::icon_button(
+                    ui,
+                    icon,
+                    controls::IconBox::Sm,
+                    self.charts_paused,
+                    hover,
+                );
+                if toggle.clicked() {
                     self.charts_paused = !self.charts_paused;
                 }
                 if self.charts_paused {
-                    ui.colored_label(theme::warn(ui), "charts paused");
+                    controls::IconLabel::new(svg::PAUSE, "charts paused")
+                        .tone(theme::warn(ui))
+                        .show(ui);
                 }
             });
         });
@@ -417,7 +375,9 @@ impl ResourceMonitor {
         match self.machine_info.as_ref() {
             Some(info) => info.show_header_line(ui),
             None => {
-                ui.colored_label(theme::weak_text(ui), "Machine info not available yet.");
+                controls::IconLabel::new(svg::DESKTOP, "Machine info not available yet.")
+                    .tone(theme::weak_text(ui))
+                    .show(ui);
             }
         }
     }
@@ -425,29 +385,30 @@ impl ResourceMonitor {
     /// KPI gauges, the CPU temperature and process tiles, and the WHEA pill.
     #[cfg(feature = "native-telemetry")]
     fn headline_panel(&self, ui: &mut Ui) {
-        hw_tables::panel(ui, icons::p::GAUGE, "Headline", |ui| {
+        hw_tables::panel(ui, svg::GAUGE, "Headline", |ui| {
+            let m = crate::ui_tools::metrics::Metrics::get(ui.ctx());
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.horizontal_wrapped(|ui| {
                         hw_tables::cpu_load_gauge(ui, &self.telemetry);
                         hw_tables::ram_gauge(ui, &self.telemetry.memory);
                         hw_tables::gpu_load_gauge(ui, &self.telemetry.gpus);
-                        ui.add_space(6.0);
+                        ui.add_space(m.gap.y);
                         hw_tables::cpu_temp_tile(ui, &self.telemetry);
-                        ui.add_space(6.0);
+                        ui.add_space(m.gap.y);
                         hw_tables::process_count_tile(ui, &self.telemetry);
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(m.gap.y);
                     hw_tables::show_whea_pill(ui, &self.telemetry);
                 });
 
-                ui.add_space(16.0);
+                ui.add_space(m.gap.x * 2.0);
 
                 // Identity and GPUs fill the width the gauge cluster leaves.
                 ui.vertical(|ui| {
                     if let Some(info) = self.machine_info.as_ref() {
                         info.show_header_line(ui);
-                        ui.add_space(6.0);
+                        ui.add_space(m.gap.y);
                     }
                     self.gpu_panel(ui);
                 });
@@ -484,7 +445,7 @@ impl ResourceMonitor {
 
     #[cfg(feature = "native-telemetry")]
     fn cores_panel(&self, ui: &mut Ui) {
-        hw_tables::panel(ui, icons::p::CPU, HwView::Cores.label(), |ui| {
+        hw_tables::panel(ui, svg::CPU, HwView::Cores.label(), |ui| {
             let columns = if ui.available_width() >= INNER_TWO_COL_MIN_WIDTH {
                 2
             } else {
@@ -496,7 +457,7 @@ impl ResourceMonitor {
 
     #[cfg(feature = "native-telemetry")]
     fn memory_panel(&self, ui: &mut Ui) {
-        hw_tables::panel(ui, icons::p::MEMORY, HwView::Memory.label(), |ui| {
+        hw_tables::panel(ui, svg::MEMORY, HwView::Memory.label(), |ui| {
             hw_tables::show_memory_panel(ui, &self.telemetry.memory, self.source);
         });
     }
@@ -504,81 +465,72 @@ impl ResourceMonitor {
     /// Per-volume capacity meters carrying filesystem and throughput inline.
     #[cfg(feature = "native-telemetry")]
     fn storage_panel(&self, ui: &mut Ui) {
-        hw_tables::panel(ui, icons::HARD_DRIVE, "Storage", |ui| {
+        hw_tables::panel(ui, svg::HARD_DRIVE, "Storage", |ui| {
             hw_tables::show_disk_meters(ui, &self.telemetry.disks, self.source);
         });
     }
 
     #[cfg(feature = "native-telemetry")]
     fn network_panel(&self, ui: &mut Ui) {
-        hw_tables::panel(ui, icons::p::WIFI_HIGH, HwView::Networks.label(), |ui| {
+        hw_tables::panel(ui, svg::WIFI_HIGH, HwView::Networks.label(), |ui| {
             hw_tables::show_network_meters(ui, &self.telemetry.networks, self.source);
         });
     }
 
     #[cfg(feature = "native-telemetry")]
     fn gpu_panel(&self, ui: &mut Ui) {
-        hw_tables::panel(ui, icons::p::GRAPHICS_CARD, HwView::Gpus.label(), |ui| {
+        hw_tables::panel(ui, svg::GRAPHICS_CARD, HwView::Gpus.label(), |ui| {
             hw_tables::show_gpu_panel(ui, &self.telemetry.gpus);
         });
     }
 
     #[cfg(feature = "native-telemetry")]
     fn rails_panel(&self, ui: &mut Ui) {
-        hw_tables::panel(ui, icons::p::LIGHTNING, HwView::Rails.label(), |ui| {
+        hw_tables::panel(ui, svg::LIGHTNING, HwView::Rails.label(), |ui| {
             hw_tables::show_rail_meters(ui, &self.telemetry, &self.rail_minimums);
         });
     }
 
     fn show_all_charts(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("resource_monitor_live_view")
-            .exact_size(34.0)
             .show(ui, |ui| {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ComboBox::from_id_salt("resource_monitor_live_view")
-                        .selected_text(self.live_view.label())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.live_view,
-                                LiveTelemetryView::Charts,
-                                "Charts",
-                            );
-                            ui.selectable_value(
-                                &mut self.live_view,
-                                LiveTelemetryView::Tables,
-                                "Tables",
-                            );
-                        });
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    let views = [
+                        Segment::new(LiveTelemetryView::Charts, LiveTelemetryView::Charts.label())
+                            .icon(svg::CHART_LINE),
+                        Segment::new(LiveTelemetryView::Tables, LiveTelemetryView::Tables.label())
+                            .icon(svg::TABLE),
+                    ];
+                    controls::segmented(ui, &mut self.live_view, &views);
 
                     if self.live_view == LiveTelemetryView::Tables {
-                        ui.add_space(8.0);
-                        ComboBox::from_id_salt("resource_monitor_hw_view")
-                            .selected_text(self.hw_view.label())
-                            .show_ui(ui, |ui| {
-                                for view in HwView::ALL {
-                                    ui.selectable_value(&mut self.hw_view, view, view.label());
-                                }
-                            });
-
-                        ui.add_space(8.0);
+                        let hw_views: Vec<(HwView, &str)> =
+                            HwView::ALL.iter().map(|v| (*v, v.label())).collect();
+                        controls::dropdown(
+                            ui,
+                            "resource_monitor_hw_view",
+                            &mut self.hw_view,
+                            &hw_views,
+                            130.0,
+                        );
 
                         if matches!(
                             self.hw_view,
                             HwView::Cores | HwView::Disks | HwView::Networks
                         ) {
-                            let _ = ui.add(
-                                eframe::egui::TextEdit::singleline(&mut self.filter)
-                                    .hint_text("Filter…")
-                                    .desired_width(200.0),
-                            );
+                            controls::TextField::new(&mut self.filter)
+                                .hint("Filter…")
+                                .icon(svg::FUNNEL_SIMPLE)
+                                .clear_button(true)
+                                .width(200.0)
+                                .show(ui);
                         }
                     }
 
                     #[cfg(feature = "native-telemetry")]
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
-                            RichText::new(format!(
+                            eframe::egui::RichText::new(format!(
                                 "captured @ {}",
                                 hw_tables::fmt_captured_at(self.telemetry.captured_at_unix_ms)
                             ))
@@ -600,7 +552,13 @@ impl ResourceMonitor {
                 if let Some(info) = self.machine_info.clone() {
                     info.show(ui);
                 } else {
-                    ui.colored_label(theme::weak_text(ui), "Machine info not available.");
+                    controls::empty_state(
+                        ui,
+                        svg::DESKTOP,
+                        "Machine info not available",
+                        "",
+                        &[],
+                    );
                 }
                 return;
             }
@@ -623,9 +581,12 @@ impl ResourceMonitor {
 
             #[cfg(not(feature = "native-telemetry"))]
             {
-                ui.colored_label(
-                    theme::weak_text(ui),
+                controls::empty_state(
+                    ui,
+                    svg::PULSE,
+                    "Live telemetry unavailable",
                     "Live telemetry requires the native build with stress-kit.",
+                    &[],
                 );
             }
         });

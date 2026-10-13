@@ -17,11 +17,17 @@
 
 use eframe::egui::{
     Align, AsIdSalt, Color32, CornerRadius, Frame, InnerResponse, Layout, Margin, RichText, Stroke,
-    Ui, Vec2,
+    Ui,
 };
 
 use super::glass_backdrop;
-use super::{icons, theme};
+use super::{
+    controls, icons,
+    icons::IconRef,
+    icons::svg::Icon,
+    theme,
+    tokens::{self, Tokens},
+};
 
 /// Band the theme's window margin is clamped into for card padding: below the floor content
 /// touches the outline, above the ceiling a card of key/value rows turns mostly into margin.
@@ -40,16 +46,6 @@ fn card_padding(ui: &Ui) -> i8 {
         .clamp(CARD_PAD_MIN, CARD_PAD_MAX)
 }
 
-/// Composites `over` onto `base` when it is translucent.
-fn composite(over: Color32, base: Color32) -> Color32 {
-    let inv = 1.0 - over.a() as f32 / 255.0;
-    Color32::from_rgb(
-        (over.r() as f32 + base.r() as f32 * inv).round() as u8,
-        (over.g() as f32 + base.g() as f32 * inv).round() as u8,
-        (over.b() as f32 + base.b() as f32 * inv).round() as u8,
-    )
-}
-
 /// The card surface tone for the active theme.
 ///
 /// A glass theme's `window_fill` is translucent, and that translucency is the point — it is the
@@ -61,9 +57,9 @@ pub fn card_fill(ui: &Ui) -> Color32 {
     if v.window_fill.a() < 255 {
         return v.window_fill;
     }
-    let lifted = composite(v.faint_bg_color, v.panel_fill);
+    let lifted = tokens::composite(v.faint_bg_color, v.panel_fill);
     if lifted == v.panel_fill {
-        composite(v.widgets.noninteractive.weak_bg_fill, v.panel_fill)
+        tokens::composite(v.widgets.noninteractive.weak_bg_fill, v.panel_fill)
     } else {
         lifted
     }
@@ -138,62 +134,86 @@ pub fn group<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> InnerRespon
 ///
 /// Salts itself from the `Ui`'s auto-id sequence rather than from `title`, so a loop that emits
 /// the same title twice still gives each card its own stored rect.
-pub fn titled_card<R>(
+pub fn titled_card<'a, R>(
     ui: &mut Ui,
-    glyph: &str,
+    icon: impl Into<IconRef<'a>>,
     title: &str,
     subtitle: Option<&str>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> R {
+    let icon = icon.into();
     let salt = ui.next_auto_id();
     ui.skip_ahead_auto_ids(1);
     card(ui, salt, |ui| {
         ui.set_min_width(ui.available_width());
-        card_header(ui, glyph, title, subtitle);
+        card_header(ui, icon, title, subtitle);
         contents(ui)
     })
     .inner
 }
 
-/// The glyph + title row a [`titled_card`] opens with, for call sites that build their own frame.
-pub fn card_header(ui: &mut Ui, glyph: &str, title: &str, subtitle: Option<&str>) {
-    let accent = theme::accent_secondary(ui);
-    ui.horizontal(|ui| {
-        if !glyph.is_empty() {
-            ui.label(icons::icon_colored(glyph, accent).small());
+/// A non-frosting [`group`] card that opens with an icon, a title and an optional subtitle.
+pub fn titled_group<R>(
+    ui: &mut Ui,
+    icon: Icon,
+    title: &str,
+    subtitle: Option<&str>,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    group(ui, |ui| {
+        ui.set_min_width(ui.available_width());
+        icon_header(ui, Some(icon), title, subtitle);
+        contents(ui)
+    })
+    .inner
+}
+
+/// The icon + title row a [`titled_card`] opens with, for call sites that build their own frame.
+pub fn card_header<'a>(
+    ui: &mut Ui,
+    icon: impl Into<IconRef<'a>>,
+    title: &str,
+    subtitle: Option<&str>,
+) {
+    let icon = icon.into();
+    match icon.icon() {
+        Some(icon) => icon_header(ui, Some(icon), title, subtitle),
+        None if icon.glyph().is_empty() => icon_header(ui, None, title, subtitle),
+        None => {
+            let glyph = icon.glyph();
+            header_row(ui, subtitle, |ui| {
+                let ink = Tokens::get(ui.ctx()).icon;
+                ui.label(icons::icon_colored(glyph, ink));
+                controls::subheading(ui, None, title);
+            });
         }
-        ui.label(
-            RichText::new(title)
-                .strong()
-                .small()
-                .color(theme::strong_text(ui)),
-        );
+    }
+}
+
+/// The SVG icon + title row a titled card opens with.
+pub fn icon_header(ui: &mut Ui, icon: Option<Icon>, title: &str, subtitle: Option<&str>) {
+    header_row(ui, subtitle, |ui| {
+        controls::subheading(ui, icon, title);
+    });
+}
+
+/// `lead` and the subtitle on one row, then a hairline.
+fn header_row(ui: &mut Ui, subtitle: Option<&str>, lead: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        lead(ui);
         if let Some(subtitle) = subtitle {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(RichText::new(subtitle).small().color(theme::weak_text(ui)));
             });
         }
     });
-    hairline(ui);
-}
-
-/// A one-pixel rule in the card outline color, dimmer than `ui.separator()`.
-pub fn hairline(ui: &mut Ui) {
-    let stroke = card_stroke(ui);
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 5.0), eframe::egui::Sense::hover());
-    let y = rect.center().y;
-    ui.painter().hline(
-        rect.left()..=rect.right(),
-        y,
-        Stroke::new(1.0, stroke.color.gamma_multiply(0.7)),
-    );
+    controls::hairline(ui);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui_tools::theme_config::{style_for_preset, PresetStyles};
+    use crate::ui_tools::theme_config::{PresetStyles, style_for_preset};
     use eframe::egui::Context;
 
     /// Runs `f` against a `Ui` carrying `preset`'s style.
@@ -219,6 +239,7 @@ mod tests {
     fn a_card_never_disappears_into_its_panel() {
         for preset in [
             PresetStyles::ShippedClassic,
+            PresetStyles::MtechStudio,
             PresetStyles::LegacyClassic,
             PresetStyles::DefaultEgui,
             PresetStyles::MtechNoir,

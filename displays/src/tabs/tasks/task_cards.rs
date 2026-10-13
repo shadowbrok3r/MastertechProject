@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CollapsingHeader, Color32, Frame, Margin, RichText, Shadow, TextFormat, TextStyle, Ui, Vec2, Widget, WidgetText, text::LayoutJob};
+use eframe::egui::{Color32, Frame, Id, Margin, Shadow, Ui};
 use database::schema::{LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
@@ -7,7 +7,13 @@ use log::info;
 use crate::tabs::tasks::pending;
 use crate::{Displayable, Interaction, TaskUiActions};
 use crate::modals::task_modal::ModalAction;
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{
+    controls::{self, IconBox, IconButton, Section},
+    icons::svg,
+    metrics::Metrics,
+    tokens::Tokens,
+    theme,
+};
 
 /// AI checklist activity for one task, as shown on its card.
 #[derive(Clone, Copy, Default)]
@@ -40,38 +46,17 @@ impl RecommendationSummary {
     }
 }
 
-/// Gap between the widgets on a card's assignee / priority / status row.
-const ROW_GAP: f32 = 8.0;
-
-/// AI-recommendation counterpart to the notes button: count, robot glyph and
-/// an unread dot that fires on steps added or reworded since the last open.
-fn recommendation_badge(ui: &mut Ui, style: &eframe::egui::Style, summary: RecommendationSummary) -> eframe::egui::Response {
+/// Robot icon button with the recommendation count; primary while a step is unseen.
+fn recommendation_badge(ui: &mut Ui, summary: RecommendationSummary) -> eframe::egui::Response {
+    let t = Tokens::get(ui.ctx());
     let unseen = summary.unseen > 0;
-    let font = style
-        .text_styles
-        .get(&TextStyle::Button)
-        .cloned()
-        .unwrap_or_default();
-    let text_color = if unseen {
-        Color32::from_rgb(250, 100, 80)
+    let tone = if unseen {
+        t.primary
     } else if summary.total == 0 {
-        style.visuals.weak_text_color()
+        t.text_faint
     } else {
-        style.visuals.warn_fg_color
+        t.warn
     };
-    let dot_color = if unseen { Color32::from_rgb(250, 100, 80) } else { Color32::TRANSPARENT };
-
-    let mut job = LayoutJob::default();
-    job.append(
-        &format!("{} {} ", summary.total, icons::ROBOT),
-        0.0,
-        TextFormat { font_id: font.clone(), color: text_color, ..Default::default() },
-    );
-    job.append(
-        icons::STATUS_DOT,
-        0.0,
-        TextFormat { font_id: font, color: dot_color, ..Default::default() },
-    );
 
     let hover = if unseen {
         format!(
@@ -84,19 +69,26 @@ fn recommendation_badge(ui: &mut Ui, style: &eframe::egui::Style, summary: Recom
         format!("{} recommendation(s)", summary.total)
     };
 
-    Button::new(WidgetText::from(job))
-        .min_size(Vec2::new(52.0, 20.0))
-        .ui(ui)
-        .on_hover_text(hover)
+    let response = IconButton::new(svg::ROBOT, IconBox::Md)
+        .tint(tone)
+        .tip(&hover)
+        .show(ui);
+    controls::count_badge(ui, response.rect, summary.total, tone);
+    response
+}
+
+/// Unread-note and description-edit highlight.
+fn unread_tone(ui: &Ui) -> Color32 {
+    theme::primary(ui)
 }
 
 impl Displayable for LiveTaskPayload {
     fn display_cards(
-        &mut self, 
-        ui: &mut Ui, 
-        user: &User, 
-        store_users: &Vec<User>, 
-        notes: Vec<TaskNotePayload>, 
+        &mut self,
+        ui: &mut Ui,
+        user: &User,
+        store_users: &Vec<User>,
+        notes: Vec<TaskNotePayload>,
         tx: Sender<TaskUiActions>,
         last_read: Option<chrono::DateTime<chrono::Utc>>,
         recommendations: RecommendationSummary,
@@ -107,12 +99,12 @@ impl Displayable for LiveTaskPayload {
         // Show staged edits while the write is held; column placement still
         // uses the unstaged value, so the card keeps its position.
         pending::apply_staged(self);
-        
+
         let mut frame = Frame::default()
-            .fill(style.visuals.extreme_bg_color) // (Color32::from_rgb(14, 14, 18))
+            .fill(style.visuals.extreme_bg_color)
             .inner_margin(Margin::same(8))
-            .outer_margin(Margin::same(5))
-            .corner_radius(eframe::egui::CornerRadius::same(15))
+            .outer_margin(Margin::same(4))
+            .corner_radius(Tokens::get(ui.ctx()).radius_lg)
             .shadow(Shadow::NONE)
             .begin(ui);
 
@@ -121,16 +113,13 @@ impl Displayable for LiveTaskPayload {
             let available = ui.available_width();
             const CARD_MARGIN: f32 = 8.0; // match the Frame::inner_margin you’re using
             ui.set_width(available - CARD_MARGIN * 2.0);
-            
-            
+
+
             // ui.set_max_height(300.);
             ui.set_min_height(67.0);
 
             ui.horizontal(|ui| {
                 let _ = self.interact_task_name(ui);
-
-                ui.style_mut().spacing.button_padding.x = 6.0;
-                ui.style_mut().spacing.button_padding.y = 4.0;
 
                 let mut count = 0;
                 if !notes.is_empty() {
@@ -151,46 +140,20 @@ impl Displayable for LiveTaskPayload {
                     })
                 };
 
-                // Always lay out the unread dot (transparent when read) so the button, and
-                // therefore the card, keeps a constant width regardless of unread state.
-                let txt: WidgetText = if count > 0 {
-                    let button_font = style
-                        .text_styles
-                        .get(&TextStyle::Button)
-                        .cloned()
-                        .unwrap_or_default();
-                    let text_color = if has_unread {
-                        Color32::from_rgb(250, 100, 80)
-                    } else {
-                        style.visuals.warn_fg_color
-                    };
-                    let dot_color = if has_unread {
-                        Color32::from_rgb(250, 100, 80)
-                    } else {
-                        Color32::TRANSPARENT
-                    };
-                    let mut job = LayoutJob::default();
-                    job.append(
-                        &format!("{count} 💬 "),
-                        0.0,
-                        TextFormat { font_id: button_font.clone(), color: text_color, ..Default::default() },
-                    );
-                    job.append(
-                        icons::STATUS_DOT,
-                        0.0,
-                        TextFormat { font_id: button_font, color: dot_color, ..Default::default() },
-                    );
-                    job.into()
+                let tone = if has_unread {
+                    unread_tone(ui)
+                } else if count > 0 {
+                    style.visuals.warn_fg_color
                 } else {
-                    RichText::new("  💬").color(Color32::WHITE).into()
+                    theme::text(ui)
                 };
-
-                if Button::new(txt)
-                    .min_size(Vec2::new(52.0, 20.0))
-                    .ui(ui)
-                    .on_hover_text(if has_unread { "Task notes — new since you last opened this task" } else { "Open Task Notes" })
-                    .clicked()
-                {
+                let tip = if has_unread { "Task notes — new since you last opened this task" } else { "Open Task Notes" };
+                let notes_button = IconButton::new(svg::CHAT_TEXT, IconBox::Md)
+                    .tint(tone)
+                    .tip(tip)
+                    .show(ui);
+                controls::count_badge(ui, notes_button.rect, count, tone);
+                if notes_button.clicked() {
                     let _ = tx.try_send(
                         TaskUiActions::OpenChatModal((
                             self.id.clone(),
@@ -200,11 +163,8 @@ impl Displayable for LiveTaskPayload {
                     );
                 }
 
-                let button = Button::new("⮫")
-                    .min_size(Vec2::new(25.0, 20.0))
-                    .ui(ui)
-                    .on_hover_text("Open Task Modal");
-                    
+                let button = controls::icon_button(ui, svg::ARROW_SQUARE_OUT, IconBox::Md, false, "Open Task Modal");
+
                 if button.clicked() {
                     let _ = tx.try_send(TaskUiActions::OpenTaskModal(self.to_owned()));
                 }
@@ -218,69 +178,70 @@ impl Displayable for LiveTaskPayload {
                 let _ = self.interact_completed(ui);
             });
 
-            ui.separator();
+            controls::hairline(ui);
 
             ui.horizontal(|ui: &mut Ui| {
+                let row_gap = Metrics::get(ui.ctx()).gap.x;
                 ui.push_id(format!("Assignee {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_assignee(ui, store_users, user);
                 });
 
-                ui.add_space(ROW_GAP);
+                ui.add_space(row_gap);
 
                 ui.push_id(format!("Priority {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_priority(ui);
                 });
 
-                ui.add_space(ROW_GAP);
+                ui.add_space(row_gap);
 
                 ui.push_id(format!("Status {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_status(user, ui);
                 });
 
-                ui.add_space(ROW_GAP);
+                ui.add_space(row_gap);
 
                 // Rendered at a fixed size even at zero, so a card with no
                 // recommendations is exactly as wide as one with them.
-                if recommendation_badge(ui, &style, recommendations).clicked() {
+                if recommendation_badge(ui, recommendations).clicked() {
                     let _ = tx.try_send(TaskUiActions::OpenTaskModalAtPage {
                         task: self.to_owned(),
                         page: ModalAction::DiagnosticsPage,
                     });
                 }
 
-                ui.add_space(ROW_GAP);
+                ui.add_space(row_gap);
 
                 let _ = self.interact_due_date(ui);
             });
 
-            ui.separator();
-
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}",self.id.clone()));
 
-                // Edited since the tech last opened the task: colour the header
-                // rather than add a widget, the row being tight already.
+                // Set while the description changed after the tech last opened the task.
                 let unseen_edit = description_edit
                     .as_ref()
                     .filter(|(edited_at, _)| last_read.map(|lr| *edited_at > lr).unwrap_or(true));
-                let heading = match unseen_edit {
-                    Some(_) => RichText::new("Task Description").color(Color32::from_rgb(250, 100, 80)).strong(),
-                    None => RichText::new("Task Description"),
-                };
-
-                let task_descrip_head = CollapsingHeader::new(heading).id_salt(task_descrip_header);
-                let header = task_descrip_head.show_unindented(ui, |ui| {
+                let mut section = Section::new("task_description", "Task Description")
+                    .id(ui.make_persistent_id(Id::new(task_descrip_header)))
+                    .icon(svg::NOTE_PENCIL)
+                    .default_open(false);
+                if unseen_edit.is_some() {
+                    let tone = unread_tone(ui);
+                    section = section.title_tone(tone).icon_tone(tone);
+                }
+                let (header, open) = section.header_response(ui);
+                if open {
                     let _ = self.interact_task_description(ui);
-                });
+                }
 
                 if let Some((edited_at, editor)) = unseen_edit {
-                    header.header_response.on_hover_text(format!(
+                    header.on_hover_text(format!(
                         "Description edited by {editor} on {} — the Task History tab shows what changed",
                         edited_at.format("%m/%d/%Y %H:%M")
                     ));
                 }
             });
-            
+
         }
 
 
@@ -300,7 +261,7 @@ pub fn date_colors(ui: &mut Ui, due_date: DateTime<Utc>, _complete: bool) -> Col
     let due_date_naive = due_date.date_naive();
     // 3 days in seconds
     let three_days_secs = 3 * 24 * 60 * 60;
-    
+
     let current_secs = current_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
     let due_secs = due_date_naive.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
 

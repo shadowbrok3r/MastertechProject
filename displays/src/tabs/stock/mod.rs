@@ -1,4 +1,4 @@
-use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Key, Link, Order, Panel, RichText, ScrollArea, Spinner, TextEdit, Ui, Widget, scroll_area};
+use eframe::egui::{Align, CentralPanel, Color32, Frame, Id, Key, Layout, Link, Panel, RichText, ScrollArea, Sense, Ui, Vec2, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{BinClick, ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::tabs::stock::everest_lookup::{EverestItemRow, EverestItemViewer, EverestLookupResult, EverestOrder, OdooSerialHistory, lookup_everest_order, fetch_serial_movement, order_to_rows, order_totals, EverestRow, EverestCustomerSearchResult, EverestCustomerOrdersResult, search_everest_customers, fetch_customer_orders, lookup_everest_order_by_docnum, row_str, row_customer_name, row_cust_code, row_doc_no};
 use crate::tabs::stock::inventory_audit::{
@@ -9,12 +9,16 @@ use crate::tabs::stock::inventory_audit::{
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use crate::{PlatformSpawner, Spawner, TaskUiActions, get_current_user_from_auth};
-use database::schema::{RecordId, Store, prestashop::{Customer, Address, OrderType, xml::{modify_xml, remove_xml_tag}}};
+use database::schema::{RecordId, Store, prestashop::{Customer, Address, OrderType}};
 use database::xidax_order_url;
 use egui_data_table::Renderer;
 use egui_extras::DatePickerButton;
 use chrono::{DateTime, Duration, Utc};
 use crate::ui_tools::selection_stats::{render_selection_stats, selection_stats};
+use crate::ui_tools::controls::{self, BarKind, ButtonKind, IconBox, MenuItem, Metrics, ModalWidth, Role, SpinnerSize, TextButton, TextField};
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::metrics::type_scale;
+use crate::ui_tools::{fonts, glass_card, theme};
 use std::collections::HashMap;
 
 pub mod everest_lookup;
@@ -193,8 +197,8 @@ pub struct StockTable {
     /// audit and flips its `found` flag.
     scan_mode_active: bool,
     scan_input: String,
-    /// Transient banner after a scan ("✓ MARKED" or "✗ NOT IN AUDIT").
-    scan_feedback: Option<(String, Color32)>,
+    /// Transient banner after a scan.
+    scan_feedback: Option<ScanFeedback>,
     /// Floating Odoo-history Windows. One per clicked serial.
     history_windows: Vec<HistoryWindow>,
     /// Raw Odoo timestamps the user has clicked in the right-side history
@@ -214,6 +218,25 @@ pub struct StockTable {
     pub history_result_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>),
     pub found_toggle_channel: (Sender<(RecordId, String, bool)>, Receiver<(RecordId, String, bool)>),
     csv_import_channel: (Sender<Vec<String>>, Receiver<Vec<String>>),
+}
+
+/// Result of the last audit scan, shown beside the scan input.
+#[derive(Clone, Debug)]
+enum ScanFeedback {
+    AlreadyMarked(String),
+    Marked(String),
+    NotInAudit(String),
+}
+
+impl ScanFeedback {
+    fn show(&self, ui: &mut Ui) {
+        let (icon, text, tone) = match self {
+            Self::AlreadyMarked(serial) => (svg::CHECKS, format!("{serial}: already marked"), theme::weak_text(ui)),
+            Self::Marked(serial) => (svg::CHECK_CIRCLE, format!("{serial}: marked"), theme::success(ui)),
+            Self::NotInAudit(serial) => (svg::X_CIRCLE, format!("{serial}: not in this audit"), theme::error(ui)),
+        };
+        controls::status_label(ui, icon, &text, tone);
+    }
 }
 
 /// `(product_id, bins)` from a live Odoo quant lookup.
@@ -274,7 +297,7 @@ enum EverestOrderIntent {
     AlreadyPushed,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Clone, Copy)]
 pub enum StockSelection {
     #[default]
     CompanyStock,
@@ -294,6 +317,17 @@ impl StockSelection {
             StockSelection::BulkCostBreakdown => "Bulk Cost Breakdown",
             StockSelection::SystemsInStore => "Systems In-Store",
             StockSelection::Everest => "Everest",
+        }
+    }
+
+    fn icon(&self) -> Icon {
+        match self {
+            StockSelection::CompanyStock => svg::WAREHOUSE,
+            StockSelection::StoreInventory => svg::STOREFRONT,
+            StockSelection::CostBreakdown => svg::RECEIPT,
+            StockSelection::BulkCostBreakdown => svg::CHART_BAR,
+            StockSelection::SystemsInStore => svg::DESKTOP_TOWER,
+            StockSelection::Everest => svg::ARCHIVE,
         }
     }
 }
@@ -491,652 +525,76 @@ impl Default for StockTable {
 
 impl StockTable {
     pub fn ui(&mut self, ui: &mut Ui) {
-        eframe::egui::Panel::top("StockTopPanel")
-            .exact_size(30.)
+        let m = Metrics::get(ui.ctx());
+        Panel::top("StockTopPanel")
+            .exact_size(m.bar_h)
+            .frame(Frame::NONE.fill(ui.visuals().panel_fill))
+            .show_separator_line(false)
             .show(ui, |ui| {
-                ui.horizontal_top(|ui| {
-                    ComboBox::new("Stock Selection", "")
-                    .selected_text(self.stock_selection.as_str())
-                    .show_ui(ui, |ui| {
-                        let selected = &mut self.stock_selection;
-                        ui.selectable_value(
-                            selected, 
-                            StockSelection::CompanyStock,
-                            StockSelection::CompanyStock.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            StockSelection::StoreInventory,
-                            StockSelection::StoreInventory.as_str()
-                        );
-                        // Only show Cost Breakdown option for admins
-                        if self.is_admin {
-                            ui.selectable_value(
-                                selected,
-                                StockSelection::CostBreakdown,
-                                StockSelection::CostBreakdown.as_str()
-                            );
-                            ui.selectable_value(
-                                selected,
-                                StockSelection::BulkCostBreakdown,
-                                StockSelection::BulkCostBreakdown.as_str()
-                            );
-                            ui.selectable_value(
-                                selected,
-                                StockSelection::SystemsInStore,
-                                StockSelection::SystemsInStore.as_str()
-                            );
-                        }
-                        ui.selectable_value(
-                            selected,
-                            StockSelection::Everest,
-                            StockSelection::Everest.as_str()
-                        );
-                    });
-
-                    ui.add_space(10.);
-
-                    match self.stock_selection {
-                        StockSelection::CompanyStock => {
-                            TextEdit::singleline(&mut self.stock_quantity_viewer.filter)
-                                .hint_text("Search for Item Code")
-                                .ui(ui);
-
-                            ui.add_space(10.);
-
-                            if Button::new("Refresh").ui(ui).clicked() {
-                                let stock_tx = self.extra_stock_channel.0.clone();
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = get_extra_stock_info(stock_tx.clone(), true).await {
-                                        log::error!("get_extra_stock_info failed: {e:?}");
-                                    }
-                                });
-                            }
-                            ui.add_space(10.);
-                            ui.separator();
-                            ui.add_space(10.);
-                            self.serial_history_scan_input(ui);
-                        },
-                        StockSelection::StoreInventory => {
-                            TextEdit::singleline(&mut self.inventory_serials_viewer.filter)
-                                .hint_text("Search for Item Code or S/N")
-                                .ui(ui);
-        
-                            ui.add_space(10.);
-        
-                            let selected = &mut self.store_selection;
-                            let current = selected.clone();
-                            let selected_text = Store::from_odoo_store_id(&selected.to_string()).as_str().to_string();
-        
-                            ComboBox::new("Store_Selection", "")
-                                .selected_text(selected_text)
-                                .show_ui(ui, |ui| {
-                                    for store in Store::RETAIL {
-                                        if let Some(id) = store.into_odoo_store_id() {
-                                            ui.selectable_value(selected, id as u64, store.as_str());
-                                        }
-                                    }
-                                });
-        
-                            if *selected != current {
-                                let stock_tx = self.stock_channel.0.clone();
-                                let store_selection = self.store_selection;
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = get_stock(stock_tx.clone(), store_selection, false).await {
-                                        log::error!("get_stock failed for store {store_selection}: {e:?}");
-                                    }
-                                });
-                                // Re-pull the audit list for the newly selected store.
-                                if let Some(store_id) = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id() {
-                                    let audit_tx = self.audit_list_channel.0.clone();
-                                    PlatformSpawner::spawn(async move {
-                                        if let Err(e) = list_audits(store_id, audit_tx).await {
-                                            log::error!("list_audits error: {e:?}");
-                                        }
-                                    });
-                                }
-                                self.inventory_view = InventoryView::Live;
-                                self.inventory_serials_viewer.audit_id = None;
-                                self.scan_mode_active = false;
-                            }
-                            ui.add_space(10.);
-
-                            // ---- Inventory Source combobox ----
-                            let current_label = match &self.inventory_view {
-                                InventoryView::Live => "Live Inventory".to_string(),
-                                InventoryView::Audit(id) => self
-                                    .audit_list
-                                    .iter()
-                                    .find(|m| m.id == *id)
-                                    .map(|m| m.label.clone())
-                                    .unwrap_or_else(|| "Audit".to_string()),
-                            };
-                            let mut pick: Option<Option<RecordId>> = None;
-                            ComboBox::new("Audit_Source", "")
-                                .selected_text(current_label)
-                                .show_ui(ui, |ui| {
-                                    if ui
-                                        .selectable_label(matches!(self.inventory_view, InventoryView::Live), "Live Inventory")
-                                        .clicked()
-                                    {
-                                        pick = Some(None);
-                                    }
-                                    if self.audit_list.is_empty() {
-                                        ui.label(RichText::new("(no saved audits)").color(Color32::GRAY));
-                                    } else {
-                                        for meta in self.audit_list.iter() {
-                                            let selected = matches!(&self.inventory_view, InventoryView::Audit(id) if id == &meta.id);
-                                            if ui.selectable_label(selected, &meta.label).clicked() {
-                                                pick = Some(Some(meta.id.clone()));
-                                            }
-                                        }
-                                    }
-                                });
-                            if let Some(choice) = pick {
-                                match choice {
-                                    None => {
-                                        // Switch back to Live: re-pull stock.
-                                        self.inventory_view = InventoryView::Live;
-                                        self.inventory_serials_viewer.audit_id = None;
-                                        self.scan_mode_active = false;
-                                        let stock_tx = self.stock_channel.0.clone();
-                                        let store_selection = self.store_selection;
-                                        PlatformSpawner::spawn(async move {
-                                            let _ = get_stock(stock_tx, store_selection, false).await;
-                                        });
-                                    }
-                                    Some(id) => {
-                                        let tx = self.audit_load_channel.0.clone();
-                                        let load_id = id.clone();
-                                        PlatformSpawner::spawn(async move {
-                                            if let Err(e) = load_audit(load_id, tx).await {
-                                                log::error!("load_audit error: {e:?}");
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-
-                            ui.add_space(10.);
-
-                            if Button::new("Refresh").ui(ui).clicked() {
-                                let stock_tx = self.stock_channel.0.clone();
-                                let store_selection = self.store_selection;
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = get_stock(stock_tx.clone(), store_selection, true).await {
-                                        log::error!("get_stock failed for store {store_selection}: {e:?}");
-                                    }
-                                });
-                            }
-                            ui.add_space(10.);
-
-                            if Button::new("Refresh S/N Info").ui(ui).clicked() {
-                                let tx = self.serial_channel.0.clone();
-                                let data_table = self.inventory_serials_table.iter();
-                                let sns = data_table.map(|r| r.4.clone()).collect::<Vec<String>>();
-                                let store_selection = self.store_selection;
-                                // Personal live check for the rows on screen; never writes the shared cache.
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = find_attached_serials(sns, store_selection, true, false, tx.clone()).await {
-                                        log::error!("S/N Info call error: {e:?}");
-                                    }
-                                });
-                            }
-                            ui.add_space(10.);
-
-                            // ---- Import Serials menu ----
-                            let mut start_import = None;
-                            eframe::egui::containers::menu::MenuButton::new("Import Serials").ui(ui, |ui| {
-                                if ui.button("From CSV…").clicked() {
-                                    start_import = Some(ImportKick::Csv);
-                                    ui.close();
-                                }
-                                if ui.button("Paste List").clicked() {
-                                    start_import = Some(ImportKick::Paste);
-                                    ui.close();
-                                }
-                            });
-                            if let Some(kind) = start_import {
-                                match kind {
-                                    ImportKick::Csv => {
-                                        #[cfg(not(target_arch = "wasm32"))]
-                                        #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                                        if let Some(serials) = pick_csv_serials() {
-                                            self.kick_off_import(serials);
-                                        }
-                                        #[cfg(target_arch = "wasm32")]
-                                        {
-                                            let tx = self.csv_import_channel.0.clone();
-                                            PlatformSpawner::spawn(async move {
-                                                if let Some(file) = rfd::AsyncFileDialog::new()
-                                                    .add_filter("CSV / Text", &["csv", "txt"])
-                                                    .set_title("Choose a list of serials to import")
-                                                    .pick_file()
-                                                    .await
-                                                {
-                                                    let contents = file.read().await;
-                                                    let text = String::from_utf8_lossy(&contents);
-                                                    let _ = tx.send(parse_serial_list(&text));
-                                                }
-                                            });
-                                        }
-                                    }
-                                    ImportKick::Paste => {
-                                        self.import_panel_open = true;
-                                    }
-                                }
-                            }
-
-                            ui.add_space(10.);
-
-                            // ---- Start / Done Scanning toggle ----
-                            let in_audit = matches!(self.inventory_view, InventoryView::Audit(_));
-                            if in_audit {
-                                let btn_label = if self.scan_mode_active { "Done" } else { "Start Scanning" };
-                                if Button::new(btn_label).ui(ui).clicked() {
-                                    self.scan_mode_active = !self.scan_mode_active;
-                                    self.scan_input.clear();
-                                    self.scan_feedback = None;
-                                }
-                            }
-                            if self.import_in_progress {
-                                Spinner::new().size(16.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                            }
-
-                            ui.add_space(10.);
-                            ui.separator();
-                            ui.add_space(10.);
-                            self.serial_history_scan_input(ui);
-
-                            // ---- Focus-locked scan input ----
-                            if self.scan_mode_active && in_audit {
-                                self.audit_scan_input(ui);
-                            }
-                            if let Some((msg, color)) = &self.scan_feedback {
-                                ui.colored_label(*color, msg);
-                            }
-                        },
-                        StockSelection::CostBreakdown => {
-                            TextEdit::singleline(&mut self.cost_order_id)
-                                .desired_width(200.)
-                                .hint_text("Enter Order ID")
-                                .ui(ui);
-
-                            ui.add_space(10.);
-
-                            let can_search = !self.cost_order_id.is_empty() && !self.cost_loading;
-                            if ui.add_enabled(can_search, Button::new("Search")).clicked() {
-                                let cost_tx = self.cost_channel.0.clone();
-                                let summary_tx = self.cost_summary_channel.0.clone();
-                                let order_id = self.cost_order_id.clone();
-                                self.cost_loading = true;
-                                self.cost_summary = None;
-                                self.cost_breakdown_viewer.clear_selection();
-                                PlatformSpawner::spawn(async move {
-                                    let _ = get_cost_breakdown(order_id, cost_tx, summary_tx).await;
-                                });
-                            }
-
-                            if self.cost_loading {
-                                ui.add_space(5.);
-                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                            }
-
-                            ui.add_space(10.);
-
-                            TextEdit::singleline(&mut self.cost_breakdown_viewer.filter)
-                                .desired_width(250.)
-                                .hint_text("Filter results")
-                                .ui(ui);
-                        },
-                        StockSelection::BulkCostBreakdown => {
-                            ui.label("From");
-                            let mut from_d = crate::to_jiff_date(&self.bulk_from);
-                            if DatePickerButton::new(&mut from_d)
-                                .id_salt("bulk_from")
-                                .format("%m/%d/%y")
-                                .show_icon(true)
-                                .ui(ui)
-                                .changed()
-                            {
-                                self.bulk_from = crate::apply_jiff_date(&self.bulk_from, &from_d);
-                            }
-
-                            ui.label("To");
-                            let mut to_d = crate::to_jiff_date(&self.bulk_to);
-                            if DatePickerButton::new(&mut to_d)
-                                .id_salt("bulk_to")
-                                .format("%m/%d/%y")
-                                .show_icon(true)
-                                .ui(ui)
-                                .changed()
-                            {
-                                self.bulk_to = crate::apply_jiff_date(&self.bulk_to, &to_d);
-                            }
-
-                            ui.add_space(8.);
-
-                            ComboBox::new("bulk_order_type", "")
-                                .selected_text(order_type_label(&self.bulk_order_type))
-                                .show_ui(ui, |ui| {
-                                    for t in [OrderType::SalesOrder, OrderType::ServiceOrder, OrderType::ReadyToRoll, OrderType::Bsd, OrderType::Rci] {
-                                        let label = order_type_label(&t);
-                                        ui.selectable_value(&mut self.bulk_order_type, t, label);
-                                    }
-                                });
-
-                            let store_text = match self.bulk_store {
-                                None => "All Stores".to_string(),
-                                Some(id) => Store::from_presta_store_id(&id.to_string()).as_str().to_string(),
-                            };
-                            ComboBox::new("bulk_store", "")
-                                .selected_text(store_text)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.bulk_store, None, "All Stores");
-                                    ui.selectable_value(&mut self.bulk_store, Some(Store::RIV.into_store_id() as u64), Store::RIV.as_str());
-                                    ui.selectable_value(&mut self.bulk_store, Some(Store::LTN.into_store_id() as u64), Store::LTN.as_str());
-                                    ui.selectable_value(&mut self.bulk_store, Some(Store::MUR.into_store_id() as u64), Store::MUR.as_str());
-                                    ui.selectable_value(&mut self.bulk_store, Some(Store::ORE.into_store_id() as u64), Store::ORE.as_str());
-                                    ui.selectable_value(&mut self.bulk_store, Some(Store::SAN.into_store_id() as u64), Store::SAN.as_str());
-                                });
-
-                            ComboBox::new("bulk_state", "")
-                                .selected_text(self.bulk_state_filter.as_str())
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.bulk_state_filter, BulkStateFilter::Completed, BulkStateFilter::Completed.as_str());
-                                    ui.selectable_value(&mut self.bulk_state_filter, BulkStateFilter::ExcludeReturned, BulkStateFilter::ExcludeReturned.as_str());
-                                    ui.selectable_value(&mut self.bulk_state_filter, BulkStateFilter::Any, BulkStateFilter::Any.as_str());
-                                });
-
-                            ui.add_space(8.);
-
-                            let can_run = !self.bulk_loading;
-                            if ui.add_enabled(can_run, Button::new("Run")).clicked() {
-                                let from = self.bulk_from.date_naive().format("%Y-%m-%d").to_string();
-                                let to = self.bulk_to.date_naive().format("%Y-%m-%d").to_string();
-                                let ot_id = self.bulk_order_type.to_id_str().to_string();
-                                let store = self.bulk_store;
-                                let states = bulk_included_state_ids(&self.bulk_order_type, self.bulk_state_filter);
-                                let o_tx = self.bulk_orders_channel.0.clone();
-                                let p_tx = self.bulk_products_channel.0.clone();
-                                let s_tx = self.bulk_summary_channel.0.clone();
-                                let pr_tx = self.bulk_progress_channel.0.clone();
-                                self.bulk_loading = true;
-                                self.bulk_summary = None;
-                                self.bulk_progress = (0, 0);
-                                self.bulk_orders_table.replace(Vec::new());
-                                self.bulk_products_table.replace(Vec::new());
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = get_bulk_cost_breakdown(from, to, ot_id, store, states, o_tx, p_tx, s_tx, pr_tx).await {
-                                        log::error!("bulk cost breakdown error: {e:?}");
-                                    }
-                                });
-                            }
-
-                            if self.bulk_loading {
-                                ui.add_space(5.);
-                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                                let (done, total) = self.bulk_progress;
-                                if total > 0 {
-                                    ui.label(format!("{done}/{total}"));
-                                } else {
-                                    ui.label("Collecting orders…");
-                                }
-                            }
-
-                            ui.add_space(10.);
-                            ui.separator();
-                            ui.add_space(10.);
-
-                            ui.selectable_value(&mut self.bulk_view_mode, BulkViewMode::Orders, "By Order");
-                            ui.selectable_value(&mut self.bulk_view_mode, BulkViewMode::Products, "By Product");
-
-                            ui.add_space(8.);
-
-                            let filter = match self.bulk_view_mode {
-                                BulkViewMode::Orders => &mut self.bulk_orders_viewer.filter,
-                                BulkViewMode::Products => &mut self.bulk_products_viewer.filter,
-                            };
-                            TextEdit::singleline(filter)
-                                .desired_width(180.)
-                                .hint_text("Filter results")
-                                .ui(ui);
-                        },
-                        StockSelection::SystemsInStore => {
-                            // Store selection for Systems In-Store
-                            let selected = &mut self.store_selection;
-                            let current = *selected;
-                            
-                            let selected_text = Store::from_presta_store_id(&selected.to_string());
-                            
-                            ComboBox::new("Systems_Store_Selection", "")
-                                .selected_text(selected_text.as_str())
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
-                                    ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
-                                    ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
-                                    ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
-                                    ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
-                                });
-                            
-                            // Reload cache + reconcile when store changes.
-                            if *selected != current {
-                                self.systems_needs_reconcile = true;
-                            }
-
-                            ui.add_space(10.);
-
-                            // Serviced in `receive`, which has storage access.
-                            if Button::new("Refresh").ui(ui).clicked() {
-                                self.systems_needs_reconcile = true;
-                            }
-                            
-                            ui.add_space(10.);
-                            ui.separator();
-                            ui.add_space(10.);
-                            
-                            // Manual order add
-                            TextEdit::singleline(&mut self.systems_order_id)
-                                .desired_width(120.)
-                                .hint_text("Add Order ID")
-                                .ui(ui);
-
-                            ui.add_space(5.);
-
-                            let can_add = !self.systems_order_id.is_empty() && !self.systems_loading;
-                            if ui.add_enabled(can_add, Button::new("Add")).clicked() {
-                                let systems_tx = self.systems_add_channel.0.clone();
-                                let order_id = self.systems_order_id.clone();
-                                self.systems_order_id.clear();
-                                PlatformSpawner::spawn(async move {
-                                    let _ = add_order_to_systems(order_id, systems_tx).await;
-                                });
-                            }
-
-                            if self.systems_loading || self.systems_streaming {
-                                ui.add_space(5.);
-                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                            }
-
-                            ui.add_space(10.);
-
-                            TextEdit::singleline(&mut self.systems_in_store_viewer.filter)
-                                .desired_width(200.)
-                                .hint_text("Filter systems")
-                                .ui(ui);
-                        },
-                        StockSelection::Everest => {
-                            let response = TextEdit::singleline(&mut self.everest_serial_input)
-                                .desired_width(220.)
-                                .hint_text("Scan / enter MFG serial")
-                                .ui(ui);
-
-                            ui.add_space(8.);
-
-                            let can_lookup = !self.everest_serial_input.trim().is_empty() && !self.everest_loading;
-                            let enter_submit = response.lost_focus()
-                                && ui.input(|i| i.key_pressed(Key::Enter))
-                                && can_lookup;
-                            if ui.add_enabled(can_lookup, Button::new("Lookup")).clicked() || enter_submit {
-                                let serial = self.everest_serial_input.trim().to_string();
-                                self.everest_loading = true;
-                                self.everest_error = None;
-                                self.everest_order = None;
-                                self.everest_selected_serial = None;
-                                self.everest_history = None;
-                                self.everest_items_table.replace(Vec::new());
-                                self.everest_view = EverestView::OrderDetail;
-                                self.everest_order_intent = EverestOrderIntent::Reset;
-                                self.everest_crumbs.clear();
-                                let tx = self.everest_order_channel.0.clone();
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = lookup_everest_order(serial, tx).await {
-                                        log::error!("Everest lookup error: {e:?}");
-                                    }
-                                });
-                            }
-
-                            if self.everest_loading {
-                                ui.add_space(6.);
-                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                            }
-
-                            ui.add_space(10.);
-                            ui.separator();
-                            ui.add_space(10.);
-
-                            // ---- Customer search (phone / email) ----
-                            ui.selectable_value(&mut self.everest_customer_search_type, CustomerSearchType::Phone, "Phone");
-                            ui.selectable_value(&mut self.everest_customer_search_type, CustomerSearchType::Email, "Email");
-
-                            let cust_resp = TextEdit::singleline(&mut self.everest_customer_query)
-                                .desired_width(200.)
-                                .hint_text(match self.everest_customer_search_type {
-                                    CustomerSearchType::Phone => "Customer phone",
-                                    CustomerSearchType::Email => "Customer email",
-                                })
-                                .ui(ui);
-
-                            let can_search = !self.everest_customer_query.trim().is_empty() && !self.everest_search_loading;
-                            let search_submit = cust_resp.lost_focus()
-                                && ui.input(|i| i.key_pressed(Key::Enter))
-                                && can_search;
-                            if ui.add_enabled(can_search, Button::new("Search")).clicked() || search_submit {
-                                let query = self.everest_customer_query.trim().to_string();
-                                let by_email = matches!(self.everest_customer_search_type, CustomerSearchType::Email);
-                                self.everest_search_loading = true;
-                                self.everest_error = None;
-                                self.everest_search_result = None;
-                                self.everest_view = EverestView::Results;
-                                let tx = self.everest_search_channel.0.clone();
-                                PlatformSpawner::spawn(async move {
-                                    if let Err(e) = search_everest_customers(query, by_email, tx).await {
-                                        log::error!("Everest customer search error: {e:?}");
-                                    }
-                                });
-                            }
-
-                            if self.everest_search_loading {
-                                Spinner::new().size(16.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                            }
-
-                            ui.add_space(10.);
-
-                            TextEdit::singleline(&mut self.everest_items_viewer.filter)
-                                .desired_width(200.)
-                                .hint_text("Filter rows")
-                                .ui(ui);
-
-                            if let Some(err) = &self.everest_error {
-                                ui.add_space(10.);
-                                ui.colored_label(ui.global_style().visuals.error_fg_color, err);
-                            }
-                        },
-                    }
-                });
+                controls::bar(ui, BarKind::Tool, |ui| self.toolbar(ui));
             });
 
         // Bottom panel for Cost Breakdown summary
-        if self.stock_selection == StockSelection::CostBreakdown {
-            if let Some(ref summary) = self.cost_summary {
-                eframe::egui::Panel::bottom("CostBreakdownBottom")
-                    .exact_size(30.)
-                    .show(ui, |ui| {
-                        ui.horizontal_centered(|ui| {
-                            ui.spacing_mut().item_spacing.x = 25.0;
-                            Hyperlink::from_label_and_url(
-                                RichText::new(self.cost_order_id.clone())
-                                    .underline()
-                                    .strong()
-                                    .color(ui.global_style().visuals.error_fg_color),
-                                xidax_order_url(&self.cost_order_id),
-                            )
-                            .open_in_new_tab(true)
-                            .ui(ui);
-
-                            ui.colored_label(Color32::LIGHT_BLUE, format!("Customer: {}", summary.customer_name));
-                            
-                            ui.label(format!("Order Total: ${:.2}", summary.order_total));
-                            
-                            ui.colored_label(
-                                Color32::from_rgb(200, 100, 100),
-                                format!("Cost: ${:.2}", summary.total_cost)
-                            );
-                            
-                            let profit_color = if summary.profit >= 0.0 {
-                                Color32::LIGHT_GREEN
-                            } else {
-                                ui.global_style().visuals.error_fg_color
-                            };
-                            ui.colored_label(
-                                profit_color,
-                                format!("Gross Profit: ${:.2}", summary.profit)
-                            );
+        if self.stock_selection == StockSelection::CostBreakdown
+            && let Some(summary) = &self.cost_summary
+        {
+            Panel::bottom("CostBreakdownBottom")
+                .exact_size(m.header_h)
+                .frame(Frame::NONE.fill(ui.visuals().panel_fill))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    controls::bar(ui, BarKind::Status, |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0 * m.gap.x;
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = m.gap.x / 2.0;
+                            let url = xidax_order_url(&self.cost_order_id);
+                            controls::IconLink::new(&self.cost_order_id)
+                                .icon(svg::RECEIPT)
+                                .tone(theme::primary(ui))
+                                .url(&url)
+                                .show(ui);
                         });
+
+                        controls::status_label(ui, svg::USER, &format!("Customer: {}", summary.customer_name), theme::tertiary(ui));
+                        controls::status_label(ui, svg::CURRENCY_DOLLAR, &format!("Order Total: ${:.2}", summary.order_total), theme::text(ui));
+                        controls::status_label(ui, svg::COINS, &format!("Cost: ${:.2}", summary.total_cost), theme::error(ui));
+                        let (trend, tone) = profit_tone(ui, summary.profit);
+                        controls::status_label(ui, trend, &format!("Gross Profit: ${:.2}", summary.profit), tone);
                     });
-            }
+                });
         }
 
         // Bottom panel for Bulk Cost Breakdown summary.
-        if self.stock_selection == StockSelection::BulkCostBreakdown {
-            if let Some(ref s) = self.bulk_summary {
-                eframe::egui::Panel::bottom("BulkCostBreakdownBottom")
-                    .exact_size(30.)
-                    .show(ui, |ui| {
-                        ui.horizontal_centered(|ui| {
-                            ui.spacing_mut().item_spacing.x = 22.0;
-                            ui.colored_label(Color32::LIGHT_BLUE, format!("Orders: {}", s.order_count));
-                            ui.label(format!("Items: {:.0}", s.item_count));
-                            ui.label(format!("Revenue: ${:.2}", s.total_revenue));
-                            ui.colored_label(Color32::from_rgb(200, 100, 100), format!("Cost: ${:.2}", s.total_cost));
-                            let profit_color = if s.total_profit >= 0.0 {
-                                Color32::LIGHT_GREEN
-                            } else {
-                                ui.global_style().visuals.error_fg_color
-                            };
-                            ui.colored_label(profit_color, format!("Profit: ${:.2} ({:.1}%)", s.total_profit, s.margin_pct));
+        if self.stock_selection == StockSelection::BulkCostBreakdown
+            && let Some(s) = &self.bulk_summary
+        {
+            Panel::bottom("BulkCostBreakdownBottom")
+                .exact_size(m.header_h)
+                .frame(Frame::NONE.fill(ui.visuals().panel_fill))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    controls::bar(ui, BarKind::Status, |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0 * m.gap.x;
+                        controls::status_label(ui, svg::RECEIPT, &format!("Orders: {}", s.order_count), theme::tertiary(ui));
+                        controls::status_label(ui, svg::PACKAGE, &format!("Items: {:.0}", s.item_count), theme::text(ui));
+                        controls::status_label(ui, svg::CURRENCY_DOLLAR, &format!("Revenue: ${:.2}", s.total_revenue), theme::text(ui));
+                        controls::status_label(ui, svg::COINS, &format!("Cost: ${:.2}", s.total_cost), theme::error(ui));
+                        let (trend, tone) = profit_tone(ui, s.total_profit);
+                        controls::status_label(ui, trend, &format!("Profit: ${:.2} ({:.1}%)", s.total_profit, s.margin_pct), tone);
 
-                            ui.separator();
-                            ui.colored_label(Color32::GOLD, "Avg / Order:");
-                            ui.label(format!("Rev ${:.2}", s.avg_revenue));
-                            ui.colored_label(Color32::from_rgb(200, 100, 100), format!("Cost ${:.2}", s.avg_cost));
-                            let avg_profit_color = if s.avg_profit >= 0.0 {
-                                Color32::LIGHT_GREEN
-                            } else {
-                                ui.global_style().visuals.error_fg_color
-                            };
-                            ui.colored_label(avg_profit_color, format!("Profit ${:.2}", s.avg_profit));
+                        controls::vline(ui, m.icon_md);
+                        controls::status_label(ui, svg::CALCULATOR, "Avg / Order:", theme::warn(ui));
+                        ui.label(format!("Rev ${:.2}", s.avg_revenue));
+                        ui.colored_label(theme::error(ui), format!("Cost ${:.2}", s.avg_cost));
+                        let (_, avg_tone) = profit_tone(ui, s.avg_profit);
+                        ui.colored_label(avg_tone, format!("Profit ${:.2}", s.avg_profit));
 
-                            if s.truncated {
-                                ui.separator();
-                                ui.colored_label(
-                                    Color32::from_rgb(255, 180, 80),
-                                    format!("Capped at {} orders (range has more)", s.order_count),
-                                );
-                            }
-                        });
+                        if s.truncated {
+                            controls::vline(ui, m.icon_md);
+                            controls::status_label(ui, svg::WARNING, &format!("Capped at {} orders (range has more)", s.order_count), theme::warn(ui));
+                        }
                     });
-            }
+                });
         }
 
         // Excel-style selection stats strip (Cost Breakdown / Bulk tables).
@@ -1187,12 +645,9 @@ impl StockTable {
 
             match self.stock_selection {
                 StockSelection::CompanyStock => {
-                    if self.stock_quantity_table.len() < 1 {
-                        ui.vertical_centered(|ui| {
-                            ui.label("Pulling Company Stock Information..");
-                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                        });
-                    } else {   
+                    if self.stock_quantity_table.is_empty() {
+                        controls::loading_state(ui, "Pulling Company Stock Information..");
+                    } else {
                         Renderer::new(
                             &mut self.stock_quantity_table,
                             &mut self.stock_quantity_viewer,
@@ -1206,14 +661,11 @@ impl StockTable {
                     }
                 },
                 StockSelection::StoreInventory => {
-                    if self.inventory_serials_table.len() < 1 {
-                        ui.vertical_centered(|ui| {
-                            ui.label("Pulling Store Stock Information..");
-                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                        });
+                    if self.inventory_serials_table.is_empty() {
+                        controls::loading_state(ui, "Pulling Store Stock Information..");
                     } else {
                         Renderer::new(
-                            &mut self.inventory_serials_table, 
+                            &mut self.inventory_serials_table,
                             &mut self.inventory_serials_viewer
                         ).with_style_modify(|s| {
                             s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
@@ -1225,19 +677,18 @@ impl StockTable {
                 },
                 StockSelection::CostBreakdown => {
                     if self.cost_loading {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.);
-                            ui.label("Fetching order cost breakdown...");
-                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                        });
-                    } else if self.cost_breakdown_table.len() < 1 {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.);
-                            ui.label("Enter an Order ID above and click Search to view cost breakdown.");
-                        });
+                        controls::loading_state(ui, "Fetching order cost breakdown...");
+                    } else if self.cost_breakdown_table.is_empty() {
+                        controls::empty_state(
+                            ui,
+                            svg::RECEIPT,
+                            "No cost breakdown yet",
+                            "Enter an Order ID above and click Search to view cost breakdown.",
+                            &[],
+                        );
                     } else {
                         Renderer::new(
-                            &mut self.cost_breakdown_table, 
+                            &mut self.cost_breakdown_table,
                             &mut self.cost_breakdown_viewer
                         ).with_style_modify(|s| {
                             s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
@@ -1249,26 +700,25 @@ impl StockTable {
                 },
                 StockSelection::BulkCostBreakdown => {
                     if self.bulk_loading {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.);
-                            let (done, total) = self.bulk_progress;
-                            if total > 0 {
-                                ui.label(format!("Processing orders… {done}/{total}"));
-                            } else {
-                                ui.label("Collecting orders in range…");
-                            }
-                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                        });
+                        let (done, total) = self.bulk_progress;
+                        if total > 0 {
+                            controls::loading_state(ui, &format!("Processing orders… {done}/{total}"));
+                        } else {
+                            controls::loading_state(ui, "Collecting orders in range…");
+                        }
                     } else {
                         let empty = match self.bulk_view_mode {
-                            BulkViewMode::Orders => self.bulk_orders_table.len() < 1,
-                            BulkViewMode::Products => self.bulk_products_table.len() < 1,
+                            BulkViewMode::Orders => self.bulk_orders_table.is_empty(),
+                            BulkViewMode::Products => self.bulk_products_table.is_empty(),
                         };
                         if empty {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(50.);
-                                ui.label("Choose a date range, order type, and store, then click Run.");
-                            });
+                            controls::empty_state(
+                                ui,
+                                svg::CHART_BAR,
+                                "No bulk breakdown yet",
+                                "Choose a date range, order type, and store, then click Run.",
+                                &[],
+                            );
                         } else {
                             match self.bulk_view_mode {
                                 BulkViewMode::Orders => {
@@ -1295,7 +745,7 @@ impl StockTable {
                 },
                 StockSelection::SystemsInStore => {
                     // Render whatever rows have landed, even mid-stream.
-                    if self.systems_in_store_table.len() >= 1 {
+                    if !self.systems_in_store_table.is_empty() {
                         Renderer::new(
                             &mut self.systems_in_store_table,
                             &mut self.systems_in_store_viewer
@@ -1306,16 +756,18 @@ impl StockTable {
                         })
                         .ui(ui);
                     } else if self.systems_loading || self.systems_streaming {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.);
-                            ui.label("Fetching systems in-store...");
-                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                        });
+                        controls::loading_state(ui, "Fetching systems in-store...");
                     } else {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(50.);
-                            ui.label("No systems found. Select a store and click Refresh to load systems.");
-                        });
+                        let refresh = controls::empty_state(
+                            ui,
+                            svg::DESKTOP_TOWER,
+                            "No systems found",
+                            "Select a store and click Refresh to load systems.",
+                            &[(Role::Primary, "Refresh")],
+                        );
+                        if refresh.is_some() {
+                            self.systems_needs_reconcile = true;
+                        }
                     }
 
                     // Show customer change modal if open
@@ -1324,6 +776,496 @@ impl StockTable {
                 StockSelection::Everest => self.show_everest(ui),
             }
         });
+    }
+
+    /// View picker followed by the active view's controls.
+    fn toolbar(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
+        self.view_picker(ui);
+        controls::vline(ui, m.control_h);
+
+        match self.stock_selection {
+            StockSelection::CompanyStock => {
+                controls::search_field(ui, &mut self.stock_quantity_viewer.filter, "Search for Item Code", 200.);
+
+                if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
+                    let stock_tx = self.extra_stock_channel.0.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = get_extra_stock_info(stock_tx.clone(), true).await {
+                            log::error!("get_extra_stock_info failed: {e:?}");
+                        }
+                    });
+                }
+                controls::vline(ui, m.control_h);
+                self.serial_history_scan_input(ui);
+            },
+            StockSelection::StoreInventory => {
+                controls::search_field(ui, &mut self.inventory_serials_viewer.filter, "Search for Item Code or S/N", 200.);
+
+                let current = self.store_selection;
+                let stores = Store::RETAIL;
+                let store_options: Vec<(u64, &str)> = stores
+                    .iter()
+                    .filter_map(|store| store.into_odoo_store_id().map(|id| (id as u64, store.as_str())))
+                    .collect();
+                controls::menu_picker(ui, svg::STOREFRONT, "Store", &mut self.store_selection, &store_options).changed();
+
+                if self.store_selection != current {
+                    let stock_tx = self.stock_channel.0.clone();
+                    let store_selection = self.store_selection;
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = get_stock(stock_tx.clone(), store_selection, false).await {
+                            log::error!("get_stock failed for store {store_selection}: {e:?}");
+                        }
+                    });
+                    // Re-pull the audit list for the newly selected store.
+                    if let Some(store_id) = Store::from_odoo_store_id(&store_selection.to_string()).into_odoo_store_id() {
+                        let audit_tx = self.audit_list_channel.0.clone();
+                        PlatformSpawner::spawn(async move {
+                            if let Err(e) = list_audits(store_id, audit_tx).await {
+                                log::error!("list_audits error: {e:?}");
+                            }
+                        });
+                    }
+                    self.inventory_view = InventoryView::Live;
+                    self.inventory_serials_viewer.audit_id = None;
+                    self.scan_mode_active = false;
+                }
+
+                // ---- Inventory Source menu ----
+                let current_label = match &self.inventory_view {
+                    InventoryView::Live => "Live Inventory".to_string(),
+                    InventoryView::Audit(id) => self
+                        .audit_list
+                        .iter()
+                        .find(|m| m.id == *id)
+                        .map(|m| m.label.clone())
+                        .unwrap_or_else(|| "Audit".to_string()),
+                };
+                let live = matches!(self.inventory_view, InventoryView::Live);
+                let source_icon = if live { svg::PULSE } else { svg::LIST_CHECKS };
+                let mut pick: Option<Option<RecordId>> = None;
+                controls::MenuButton::new(&current_label)
+                    .icon(source_icon)
+                    .tip("Inventory source")
+                    .show(ui, |ui| {
+                        if controls::menu_check_item(ui, svg::PULSE, "Live Inventory", live).clicked() {
+                            pick = Some(None);
+                        }
+                        if self.audit_list.is_empty() {
+                            let _ = MenuItem::new("No saved audits").icon(svg::TRAY).enabled(false).show(ui);
+                        } else {
+                            for meta in self.audit_list.iter() {
+                                let selected = matches!(&self.inventory_view, InventoryView::Audit(id) if id == &meta.id);
+                                if controls::menu_check_item(ui, svg::LIST_CHECKS, &meta.label, selected).clicked() {
+                                    pick = Some(Some(meta.id.clone()));
+                                }
+                            }
+                        }
+                    });
+                if let Some(choice) = pick {
+                    match choice {
+                        None => {
+                            // Switch back to Live: re-pull stock.
+                            self.inventory_view = InventoryView::Live;
+                            self.inventory_serials_viewer.audit_id = None;
+                            self.scan_mode_active = false;
+                            let stock_tx = self.stock_channel.0.clone();
+                            let store_selection = self.store_selection;
+                            PlatformSpawner::spawn(async move {
+                                let _ = get_stock(stock_tx, store_selection, false).await;
+                            });
+                        }
+                        Some(id) => {
+                            let tx = self.audit_load_channel.0.clone();
+                            let load_id = id.clone();
+                            PlatformSpawner::spawn(async move {
+                                if let Err(e) = load_audit(load_id, tx).await {
+                                    log::error!("load_audit error: {e:?}");
+                                }
+                            });
+                        }
+                    }
+                }
+
+                if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
+                    let stock_tx = self.stock_channel.0.clone();
+                    let store_selection = self.store_selection;
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = get_stock(stock_tx.clone(), store_selection, true).await {
+                            log::error!("get_stock failed for store {store_selection}: {e:?}");
+                        }
+                    });
+                }
+
+                if controls::icon_text_button(ui, svg::BARCODE, "Refresh S/N Info").clicked() {
+                    let tx = self.serial_channel.0.clone();
+                    let data_table = self.inventory_serials_table.iter();
+                    let sns = data_table.map(|r| r.4.clone()).collect::<Vec<String>>();
+                    let store_selection = self.store_selection;
+                    // Personal live check for the rows on screen; never writes the shared cache.
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = find_attached_serials(sns, store_selection, true, false, tx.clone()).await {
+                            log::error!("S/N Info call error: {e:?}");
+                        }
+                    });
+                }
+
+                // ---- Import Serials menu ----
+                let mut start_import = None;
+                controls::MenuButton::new("Import Serials")
+                    .icon(svg::TRAY_ARROW_DOWN)
+                    .show(ui, |ui| {
+                        if controls::menu_item(ui, svg::FILE_CSV, "From CSV…").clicked() {
+                            start_import = Some(ImportKick::Csv);
+                        }
+                        if controls::menu_item(ui, svg::CLIPBOARD_TEXT, "Paste List").clicked() {
+                            start_import = Some(ImportKick::Paste);
+                        }
+                    });
+                if let Some(kind) = start_import {
+                    match kind {
+                        ImportKick::Csv => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+                            if let Some(serials) = pick_csv_serials() {
+                                self.kick_off_import(serials);
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let tx = self.csv_import_channel.0.clone();
+                                PlatformSpawner::spawn(async move {
+                                    if let Some(file) = rfd::AsyncFileDialog::new()
+                                        .add_filter("CSV / Text", &["csv", "txt"])
+                                        .set_title("Choose a list of serials to import")
+                                        .pick_file()
+                                        .await
+                                    {
+                                        let contents = file.read().await;
+                                        let text = String::from_utf8_lossy(&contents);
+                                        let _ = tx.send(parse_serial_list(&text));
+                                    }
+                                });
+                            }
+                        }
+                        ImportKick::Paste => {
+                            self.import_panel_open = true;
+                        }
+                    }
+                }
+
+                // ---- Start / Done Scanning toggle ----
+                let in_audit = matches!(self.inventory_view, InventoryView::Audit(_));
+                if in_audit {
+                    let scan_button = if self.scan_mode_active {
+                        TextButton::new("Done").icon(svg::CHECK).kind(ButtonKind::Primary)
+                    } else {
+                        TextButton::new("Start Scanning").icon(svg::SCAN)
+                    };
+                    if scan_button.show(ui).clicked() {
+                        self.scan_mode_active = !self.scan_mode_active;
+                        self.scan_input.clear();
+                        self.scan_feedback = None;
+                    }
+                }
+                if self.import_in_progress {
+                    controls::spinner(ui, SpinnerSize::Sm);
+                }
+
+                controls::vline(ui, m.control_h);
+                self.serial_history_scan_input(ui);
+
+                // ---- Focus-locked scan input ----
+                if self.scan_mode_active && in_audit {
+                    self.audit_scan_input(ui);
+                }
+                if let Some(feedback) = &self.scan_feedback {
+                    feedback.show(ui);
+                }
+            },
+            StockSelection::CostBreakdown => {
+                TextField::new(&mut self.cost_order_id)
+                    .hint("Enter Order ID")
+                    .icon(svg::HASH)
+                    .width(200.)
+                    .show(ui);
+
+                let can_search = !self.cost_order_id.is_empty() && !self.cost_loading;
+                let search = TextButton::new("Search").icon(svg::MAGNIFYING_GLASS).enabled(can_search).show(ui);
+                if search.clicked() {
+                    let cost_tx = self.cost_channel.0.clone();
+                    let summary_tx = self.cost_summary_channel.0.clone();
+                    let order_id = self.cost_order_id.clone();
+                    self.cost_loading = true;
+                    self.cost_summary = None;
+                    self.cost_breakdown_viewer.clear_selection();
+                    PlatformSpawner::spawn(async move {
+                        let _ = get_cost_breakdown(order_id, cost_tx, summary_tx).await;
+                    });
+                }
+
+                if self.cost_loading {
+                    controls::spinner(ui, SpinnerSize::Md);
+                }
+
+                controls::search_field(ui, &mut self.cost_breakdown_viewer.filter, "Filter results", 250.);
+            },
+            StockSelection::BulkCostBreakdown => {
+                controls::status_label(ui, svg::CALENDAR_BLANK, "From", theme::weak_text(ui));
+                let mut from_d = crate::to_jiff_date(&self.bulk_from);
+                if DatePickerButton::new(&mut from_d)
+                    .id_salt("bulk_from")
+                    .format("%m/%d/%y")
+                    .show_icon(true)
+                    .ui(ui)
+                    .changed()
+                {
+                    self.bulk_from = crate::apply_jiff_date(&self.bulk_from, &from_d);
+                }
+
+                ui.label(RichText::new("To").color(theme::weak_text(ui)));
+                let mut to_d = crate::to_jiff_date(&self.bulk_to);
+                if DatePickerButton::new(&mut to_d)
+                    .id_salt("bulk_to")
+                    .format("%m/%d/%y")
+                    .show_icon(true)
+                    .ui(ui)
+                    .changed()
+                {
+                    self.bulk_to = crate::apply_jiff_date(&self.bulk_to, &to_d);
+                }
+
+                let order_types = [OrderType::SalesOrder, OrderType::ServiceOrder, OrderType::ReadyToRoll, OrderType::Bsd, OrderType::Rci];
+                let type_options: Vec<(OrderType, &str)> = order_types
+                    .iter()
+                    .map(|t| (t.clone(), order_type_label(t)))
+                    .collect();
+                controls::menu_picker(ui, svg::RECEIPT, "Order type", &mut self.bulk_order_type, &type_options).changed();
+
+                let stores = [Store::RIV, Store::LTN, Store::MUR, Store::ORE, Store::SAN];
+                let mut store_options: Vec<(Option<u64>, &str)> = vec![(None, "All Stores")];
+                store_options.extend(stores.iter().map(|store| (Some(store.into_store_id() as u64), store.as_str())));
+                controls::menu_picker(ui, svg::STOREFRONT, "Store", &mut self.bulk_store, &store_options).changed();
+
+                let filters = [BulkStateFilter::Completed, BulkStateFilter::ExcludeReturned, BulkStateFilter::Any];
+                let filter_options: Vec<(BulkStateFilter, &str)> = filters
+                    .iter()
+                    .map(|filter| (*filter, filter.as_str()))
+                    .collect();
+                controls::menu_picker(ui, svg::FUNNEL_SIMPLE, "Order states", &mut self.bulk_state_filter, &filter_options).changed();
+
+                let can_run = !self.bulk_loading;
+                let run = TextButton::new("Run")
+                        .icon(svg::PLAY)
+                        .kind(ButtonKind::Primary)
+                        .enabled(can_run)
+                        .show(ui);
+                if run.clicked() {
+                    let from = self.bulk_from.date_naive().format("%Y-%m-%d").to_string();
+                    let to = self.bulk_to.date_naive().format("%Y-%m-%d").to_string();
+                    let ot_id = self.bulk_order_type.to_id_str().to_string();
+                    let store = self.bulk_store;
+                    let states = bulk_included_state_ids(&self.bulk_order_type, self.bulk_state_filter);
+                    let o_tx = self.bulk_orders_channel.0.clone();
+                    let p_tx = self.bulk_products_channel.0.clone();
+                    let s_tx = self.bulk_summary_channel.0.clone();
+                    let pr_tx = self.bulk_progress_channel.0.clone();
+                    self.bulk_loading = true;
+                    self.bulk_summary = None;
+                    self.bulk_progress = (0, 0);
+                    self.bulk_orders_table.replace(Vec::new());
+                    self.bulk_products_table.replace(Vec::new());
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = get_bulk_cost_breakdown(from, to, ot_id, store, states, o_tx, p_tx, s_tx, pr_tx).await {
+                            log::error!("bulk cost breakdown error: {e:?}");
+                        }
+                    });
+                }
+
+                if self.bulk_loading {
+                    controls::spinner(ui, SpinnerSize::Md);
+                    let (done, total) = self.bulk_progress;
+                    let progress = if total > 0 {
+                        format!("{done}/{total}")
+                    } else {
+                        "Collecting orders…".to_string()
+                    };
+                    ui.label(RichText::new(progress).color(theme::weak_text(ui)));
+                }
+
+                controls::vline(ui, m.control_h);
+
+                let by_order = self.bulk_view_mode == BulkViewMode::Orders;
+                if controls::pill(ui, svg::RECEIPT, "By Order", by_order).clicked() {
+                    self.bulk_view_mode = BulkViewMode::Orders;
+                }
+                if controls::pill(ui, svg::PACKAGE, "By Product", !by_order).clicked() {
+                    self.bulk_view_mode = BulkViewMode::Products;
+                }
+
+                let filter = match self.bulk_view_mode {
+                    BulkViewMode::Orders => &mut self.bulk_orders_viewer.filter,
+                    BulkViewMode::Products => &mut self.bulk_products_viewer.filter,
+                };
+                controls::search_field(ui, filter, "Filter results", 180.);
+            },
+            StockSelection::SystemsInStore => {
+                let current = self.store_selection;
+                let stores = [Store::RIV, Store::LTN, Store::MUR, Store::ORE, Store::SAN];
+                let store_options: Vec<(u64, &str)> = stores
+                    .iter()
+                    .map(|store| (store.into_store_id() as u64, store.as_str()))
+                    .collect();
+                controls::menu_picker(ui, svg::STOREFRONT, "Store", &mut self.store_selection, &store_options).changed();
+
+                // Reload cache + reconcile when store changes.
+                if self.store_selection != current {
+                    self.systems_needs_reconcile = true;
+                }
+
+                // Serviced in `receive`, which has storage access.
+                if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
+                    self.systems_needs_reconcile = true;
+                }
+
+                controls::vline(ui, m.control_h);
+
+                // Manual order add
+                TextField::new(&mut self.systems_order_id)
+                    .hint("Add Order ID")
+                    .icon(svg::HASH)
+                    .width(140.)
+                    .show(ui);
+
+                let can_add = !self.systems_order_id.is_empty() && !self.systems_loading;
+                let add = TextButton::new("Add").icon(svg::PLUS).enabled(can_add).show(ui);
+                if add.clicked() {
+                    let systems_tx = self.systems_add_channel.0.clone();
+                    let order_id = self.systems_order_id.clone();
+                    self.systems_order_id.clear();
+                    PlatformSpawner::spawn(async move {
+                        let _ = add_order_to_systems(order_id, systems_tx).await;
+                    });
+                }
+
+                if self.systems_loading || self.systems_streaming {
+                    controls::spinner(ui, SpinnerSize::Md);
+                }
+
+                controls::search_field(ui, &mut self.systems_in_store_viewer.filter, "Filter systems", 200.);
+            },
+            StockSelection::Everest => {
+                let response = TextField::new(&mut self.everest_serial_input)
+                    .hint("Scan / enter MFG serial")
+                    .icon(svg::BARCODE)
+                    .width(220.)
+                    .show(ui);
+
+                let can_lookup = !self.everest_serial_input.trim().is_empty() && !self.everest_loading;
+                let enter_submit = response.lost_focus()
+                    && ui.input(|i| i.key_pressed(Key::Enter))
+                    && can_lookup;
+                let lookup = TextButton::new("Lookup").icon(svg::MAGNIFYING_GLASS).enabled(can_lookup).show(ui);
+                if lookup.clicked() || enter_submit {
+                    let serial = self.everest_serial_input.trim().to_string();
+                    self.everest_loading = true;
+                    self.everest_error = None;
+                    self.everest_order = None;
+                    self.everest_selected_serial = None;
+                    self.everest_history = None;
+                    self.everest_items_table.replace(Vec::new());
+                    self.everest_view = EverestView::OrderDetail;
+                    self.everest_order_intent = EverestOrderIntent::Reset;
+                    self.everest_crumbs.clear();
+                    let tx = self.everest_order_channel.0.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = lookup_everest_order(serial, tx).await {
+                            log::error!("Everest lookup error: {e:?}");
+                        }
+                    });
+                }
+
+                if self.everest_loading {
+                    controls::spinner(ui, SpinnerSize::Md);
+                }
+
+                controls::vline(ui, m.control_h);
+
+                // ---- Customer search (phone / email) ----
+                let by_phone = self.everest_customer_search_type == CustomerSearchType::Phone;
+                if controls::pill(ui, svg::PHONE, "Phone", by_phone).clicked() {
+                    self.everest_customer_search_type = CustomerSearchType::Phone;
+                }
+                if controls::pill(ui, svg::ENVELOPE_SIMPLE, "Email", !by_phone).clicked() {
+                    self.everest_customer_search_type = CustomerSearchType::Email;
+                }
+
+                let (hint, icon) = match self.everest_customer_search_type {
+                    CustomerSearchType::Phone => ("Customer phone", svg::PHONE),
+                    CustomerSearchType::Email => ("Customer email", svg::ENVELOPE_SIMPLE),
+                };
+                let cust_resp = TextField::new(&mut self.everest_customer_query)
+                    .hint(hint)
+                    .icon(icon)
+                    .width(200.)
+                    .show(ui);
+
+                let can_search = !self.everest_customer_query.trim().is_empty() && !self.everest_search_loading;
+                let search_submit = cust_resp.lost_focus()
+                    && ui.input(|i| i.key_pressed(Key::Enter))
+                    && can_search;
+                let search = TextButton::new("Search").icon(svg::MAGNIFYING_GLASS).enabled(can_search).show(ui);
+                if search.clicked() || search_submit {
+                    let query = self.everest_customer_query.trim().to_string();
+                    let by_email = matches!(self.everest_customer_search_type, CustomerSearchType::Email);
+                    self.everest_search_loading = true;
+                    self.everest_error = None;
+                    self.everest_search_result = None;
+                    self.everest_view = EverestView::Results;
+                    let tx = self.everest_search_channel.0.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = search_everest_customers(query, by_email, tx).await {
+                            log::error!("Everest customer search error: {e:?}");
+                        }
+                    });
+                }
+
+                if self.everest_search_loading {
+                    controls::spinner(ui, SpinnerSize::Sm);
+                }
+
+                controls::search_field(ui, &mut self.everest_items_viewer.filter, "Filter rows", 200.);
+
+                if let Some(err) = &self.everest_error {
+                    controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
+                }
+            },
+        }
+    }
+
+    /// Menu of stock views; the cost and systems views are admin-only.
+    fn view_picker(&mut self, ui: &mut Ui) {
+        let mut views = vec![StockSelection::CompanyStock, StockSelection::StoreInventory];
+        if self.is_admin {
+            views.extend([
+                StockSelection::CostBreakdown,
+                StockSelection::BulkCostBreakdown,
+                StockSelection::SystemsInStore,
+            ]);
+        }
+        views.push(StockSelection::Everest);
+
+        let current = self.stock_selection;
+        controls::MenuButton::new(current.as_str())
+            .icon(current.icon())
+            .tip("Stock view")
+            .show(ui, |ui| {
+                for view in views {
+                    if controls::menu_check_item(ui, view.icon(), view.as_str(), view == current).clicked() {
+                        self.stock_selection = view;
+                    }
+                }
+            });
     }
 
     /// Excel-style selection stats strip for tables that track row
@@ -1460,11 +1402,12 @@ impl StockTable {
     /// submit branch never fired.
     fn audit_scan_input(&mut self, ui: &mut Ui) {
         let id = Id::new("inventory_scan_input");
-        let response = TextEdit::singleline(&mut self.scan_input)
-            .id(id)
-            .desired_width(220.)
-            .hint_text("Scan serial → Enter")
-            .ui(ui);
+        let response = TextField::new(&mut self.scan_input)
+            .id_salt("inventory_scan_input")
+            .hint("Scan serial → Enter")
+            .icon(svg::SCAN)
+            .width(220.)
+            .show(ui);
 
         let submitted = response.lost_focus()
             && ui.input(|i| i.key_pressed(Key::Enter));
@@ -1508,17 +1451,14 @@ impl StockTable {
         self.inventory_serials_table.replace(data);
         if found_match {
             if already_found {
-                self.scan_feedback = Some((format!("• {serial}: already marked"), Color32::GRAY));
+                self.scan_feedback = Some(ScanFeedback::AlreadyMarked(serial.to_string()));
             } else {
-                self.scan_feedback = Some((format!("✓ {serial}: marked"), Color32::LIGHT_GREEN));
+                self.scan_feedback = Some(ScanFeedback::Marked(serial.to_string()));
                 let tx = self.found_toggle_channel.0.clone();
                 let _ = tx.try_send((audit_id, serial.to_string(), true));
             }
         } else {
-            self.scan_feedback = Some((
-                format!("✗ {serial}: not in this audit"),
-                Color32::from_rgb(220, 120, 120),
-            ));
+            self.scan_feedback = Some(ScanFeedback::NotInAudit(serial.to_string()));
         }
     }
 
@@ -1526,16 +1466,19 @@ impl StockTable {
     /// headers. Submitting fires the same Odoo lookup as the Everest tab and opens
     /// the right-side history panel.
     fn serial_history_scan_input(&mut self, ui: &mut Ui) {
-        let response = TextEdit::singleline(&mut self.serial_history_input)
-            .desired_width(180.)
-            .hint_text("S/N -> Odoo history")
-            .ui(ui);
+        let response = TextField::new(&mut self.serial_history_input)
+            .hint("S/N -> Odoo history")
+            .icon(svg::BARCODE)
+            .width(180.)
+            .show(ui);
 
         let can_lookup = !self.serial_history_input.trim().is_empty() && !self.everest_history_loading;
         let enter_submit = response.lost_focus()
             && ui.input(|i| i.key_pressed(Key::Enter))
             && can_lookup;
-        if ui.add_enabled(can_lookup, Button::new("Lookup")).clicked() || enter_submit {
+        let clicked = TextButton::new("Lookup").icon(svg::MAGNIFYING_GLASS).enabled(can_lookup).show(ui)
+            .clicked();
+        if clicked || enter_submit {
             let serial = self.serial_history_input.trim().to_string();
             self.everest_selected_serial = Some(serial.clone());
             self.everest_history = None;
@@ -1549,12 +1492,13 @@ impl StockTable {
         }
 
         if self.everest_history_loading {
-            Spinner::new().size(16.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+            controls::spinner(ui, SpinnerSize::Sm);
         }
     }
 
     fn show_everest(&mut self, ui: &mut Ui) {
         let in_detail = self.everest_view == EverestView::OrderDetail;
+        let m = Metrics::get(ui.ctx());
 
         // Bottom: order totals summary (only on the order-detail view).
         if let Some(order) = self.everest_order.as_ref().filter(|_| in_detail) {
@@ -1573,42 +1517,23 @@ impl StockTable {
                 uniq
             };
 
-            Panel::bottom("EverestBottom").show(ui, |ui| {
-                ui.add_space(4.);
-                ui.columns(5, |cols| {
-                    cols[0].label(format!("Items: {}", order.items.len()));
-
-                    cols[1].colored_label(
-                        Color32::from_rgb(200, 100, 100),
-                        format!("Cost: $ {:.2}", totals.cost),
-                    );
-
-                    cols[2].colored_label(
-                        cols[2].style().visuals.warn_fg_color,
-                        format!("Revenue: $ {:.2}", totals.revenue),
-                    );
-
-                    let profit_color = if totals.profit >= 0.0 {
-                        Color32::LIGHT_GREEN
-                    } else {
-                        cols[3].style().visuals.error_fg_color
-                    };
-                    cols[3].colored_label(
-                        profit_color,
-                        format!("Profit: $ {:.2} ({:.1}%)", totals.profit, totals.margin_pct()),
-                    );
-
-                    if kit_summary.is_empty() {
-                        cols[4].label("");
-                    } else {
-                        cols[4].colored_label(
-                            Color32::from_rgb(255, 180, 80),
-                            format!("Kit: {}", kit_summary.join(", ")),
-                        );
-                    }
+            Panel::bottom("EverestBottom")
+                .exact_size(m.header_h)
+                .frame(Frame::NONE.fill(ui.visuals().panel_fill))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    controls::bar(ui, BarKind::Status, |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0 * m.gap.x;
+                        controls::status_label(ui, svg::PACKAGE, &format!("Items: {}", order.items.len()), theme::text(ui));
+                        controls::status_label(ui, svg::COINS, &format!("Cost: $ {:.2}", totals.cost), theme::error(ui));
+                        controls::status_label(ui, svg::CURRENCY_DOLLAR, &format!("Revenue: $ {:.2}", totals.revenue), theme::warn(ui));
+                        let (trend, tone) = profit_tone(ui, totals.profit);
+                        controls::status_label(ui, trend, &format!("Profit: $ {:.2} ({:.1}%)", totals.profit, totals.margin_pct()), tone);
+                        if !kit_summary.is_empty() {
+                            controls::status_label(ui, svg::STACK, &format!("Kit: {}", kit_summary.join(", ")), theme::secondary(ui));
+                        }
+                    });
                 });
-                ui.add_space(4.);
-            });
         }
 
         // Right: serial-history side panel, only when populated (detail only).
@@ -1641,67 +1566,74 @@ impl StockTable {
                 EverestView::Results => { self.render_everest_results(ui); return; }
                 EverestView::CustomerOrders => { self.render_everest_orders(ui); return; }
                 EverestView::Empty => {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(50.);
-                        ui.label("Scan a serial number, or search for a customer by phone / email.");
-                    });
+                    controls::empty_state(
+                        ui,
+                        svg::BARCODE,
+                        "Everest lookup",
+                        "Scan a serial number, or search for a customer by phone / email.",
+                        &[],
+                    );
                     return;
                 }
                 EverestView::OrderDetail => {}
             }
 
             if self.everest_loading && self.everest_order.is_none() {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(50.);
-                    ui.label("Looking up Everest order...");
-                    Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                });
-            } else if self.everest_items_table.len() < 1 {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(50.);
-                    ui.label("Scan a serial number to look up the matching Everest order.");
-                });
+                controls::loading_state(ui, "Looking up Everest order...");
+            } else if self.everest_items_table.is_empty() {
+                controls::empty_state(
+                    ui,
+                    svg::RECEIPT,
+                    "No order loaded",
+                    "Scan a serial number to look up the matching Everest order.",
+                    &[],
+                );
             } else {
                 if let Some(order) = &self.everest_order {
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 18.0;
+                        ui.spacing_mut().item_spacing.x = 2.0 * m.gap.x;
 
                         // Invoice number — the headline value, no "DOC #" prefix.
-                        ui.label(
-                            RichText::new(&order.header.doc_no)
-                                .strong()
-                                .size(18.0)
-                                .color(Color32::from_rgb(255, 200, 80)),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = m.gap.x / 2.0;
+                            let accent = theme::primary(ui);
+                            let (slot, _) = ui.allocate_exact_size(Vec2::splat(m.icon_lg), Sense::hover());
+                            svg::RECEIPT.paint(ui, slot, m.icon_lg, accent);
+                            ui.label(
+                                RichText::new(&order.header.doc_no)
+                                    .font(fonts::semibold(18.0))
+                                    .color(accent),
+                            );
+                        });
 
                         if !order.header.doc_alias.is_empty() {
-                            ui.separator();
-                            ui.colored_label(Color32::LIGHT_BLUE, &order.header.doc_alias);
+                            controls::vline(ui, m.icon_md);
+                            controls::status_label(ui, svg::TAG, &order.header.doc_alias, theme::tertiary(ui));
                         }
 
                         if let Some(date) = order.header.order_date.as_ref() {
                             let trimmed = date.split_whitespace().next().unwrap_or(date);
-                            ui.separator();
-                            ui.label(RichText::new(trimmed).color(Color32::LIGHT_GRAY));
+                            controls::vline(ui, m.icon_md);
+                            controls::status_label(ui, svg::CALENDAR_BLANK, trimmed, theme::weak_text(ui));
                         }
 
                         if !order.header.dep.is_empty() {
-                            ui.separator();
-                            ui.colored_label(Color32::LIGHT_GREEN, &order.header.dep);
+                            controls::vline(ui, m.icon_md);
+                            controls::status_label(ui, svg::BUILDINGS, &order.header.dep, theme::secondary(ui));
                         }
 
                         if !order.header.sales_rep.is_empty() {
-                            ui.separator();
-                            ui.label(format!("Rep  {}", order.header.sales_rep));
+                            controls::vline(ui, m.icon_md);
+                            controls::status_label(ui, svg::USER, &format!("Rep  {}", order.header.sales_rep), theme::text(ui));
                         }
 
                         if !order.header.terms.is_empty() {
-                            ui.separator();
-                            ui.label(RichText::new(&order.header.terms).color(Color32::LIGHT_GRAY));
+                            controls::vline(ui, m.icon_md);
+                            controls::status_label(ui, svg::HANDSHAKE, &order.header.terms, theme::weak_text(ui));
                         }
                     });
-                    ui.add_space(4.0);
-                    ui.separator();
+                    ui.add_space(m.gap.y);
+                    controls::hairline(ui);
                 }
                 Renderer::new(&mut self.everest_items_table, &mut self.everest_items_viewer)
                     .with_style_modify(|s| {
@@ -1728,59 +1660,55 @@ impl StockTable {
         }
         let crumbs = self.everest_crumbs.clone();
         let last = crumbs.len().saturating_sub(1);
-        ui.horizontal(|ui| {
+        controls::bar(ui, BarKind::Header, |ui| {
+            let m = Metrics::get(ui.ctx());
             for (i, crumb) in crumbs.iter().enumerate() {
                 if i > 0 {
-                    ui.label(RichText::new("›").color(Color32::GRAY));
+                    let (slot, _) = ui.allocate_exact_size(Vec2::splat(m.icon_sm), Sense::hover());
+                    svg::CARET_RIGHT.paint(ui, slot, m.icon_sm, theme::faint_text(ui));
                 }
-                let label = match crumb {
-                    EverestCrumb::Results => "Search Results".to_string(),
-                    EverestCrumb::Customer { label, .. } => label.clone(),
-                    EverestCrumb::Order { label, .. } => format!("Order {label}"),
+                let (icon, label) = match crumb {
+                    EverestCrumb::Results => (svg::USERS, "Search Results".to_string()),
+                    EverestCrumb::Customer { label, .. } => (svg::USER, label.clone()),
+                    EverestCrumb::Order { label, .. } => (svg::RECEIPT, format!("Order {label}")),
                 };
                 if i == last {
-                    ui.label(RichText::new(label).strong().color(Color32::from_rgb(255, 200, 80)));
-                } else if ui.link(RichText::new(label).color(Color32::LIGHT_BLUE)).clicked() {
+                    controls::status_label(ui, icon, &label, theme::strong_text(ui));
+                } else if controls::IconLink::new(&label).icon(icon).tone(theme::info(ui)).show(ui).clicked() {
                     self.everest_nav = Some(EverestNav::Crumb(i));
                 }
             }
         });
-        ui.separator();
     }
 
     /// Customer search-results table (paged 20 at a time).
     fn render_everest_results(&mut self, ui: &mut Ui) {
         if self.everest_search_loading {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.);
-                ui.label("Searching Everest customers...");
-                Spinner::new().size(40.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-            });
+            controls::loading_state(ui, "Searching Everest customers...");
             return;
         }
         let Some(res) = self.everest_search_result.as_ref() else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.);
-                ui.label("No search run yet.");
-            });
+            controls::empty_state(
+                ui,
+                svg::MAGNIFYING_GLASS,
+                "No search run yet",
+                "Search for a customer by phone or email.",
+                &[],
+            );
             return;
         };
         let total = res.customers.len();
         if total == 0 {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.);
-                ui.label(RichText::new("No customers found.").color(Color32::GRAY));
-            });
+            controls::empty_state(ui, svg::USERS, "No customers found", "", &[]);
             return;
         }
         let shown = self.everest_results_shown.min(total);
         let rows: Vec<EverestRow> = res.customers[..shown].to_vec();
+        let m = Metrics::get(ui.ctx());
+        let link = theme::info(ui);
 
-        ui.label(
-            RichText::new(format!("Showing {shown} of {total} customers"))
-                .color(Color32::LIGHT_BLUE),
-        );
-        ui.add_space(4.);
+        controls::status_label(ui, svg::USERS, &format!("Showing {shown} of {total} customers"), theme::tertiary(ui));
+        ui.add_space(m.gap.y);
 
         ScrollArea::vertical().show(ui, |ui| {
             use egui_extras::{Column as TblCol, TableBuilder};
@@ -1792,7 +1720,7 @@ impl StockTable {
                 .column(TblCol::auto().at_least(120.))
                 .column(TblCol::remainder().at_least(160.))
                 .column(TblCol::auto().at_least(70.))
-                .header(20., |mut h| {
+                .header(m.row_h, |mut h| {
                     h.col(|ui| { ui.strong("Name"); });
                     h.col(|ui| { ui.strong("Cust Code"); });
                     h.col(|ui| { ui.strong("Phone"); });
@@ -1806,9 +1734,9 @@ impl StockTable {
                         let phone = row_str(row, &["TEL1", "TEL2", "MOBILE_PHONE", "PHONE"]);
                         let email = row_str(row, &["EMAIL"]);
                         let invoices = row_str(row, &["total_documents", "NUM_INV"]);
-                        body.row(22., |mut r| {
+                        body.row(m.row_h, |mut r| {
                             r.col(|ui| {
-                                if Link::new(RichText::new(&name).color(Color32::LIGHT_BLUE)).ui(ui).clicked() {
+                                if Link::new(RichText::new(&name).color(link)).ui(ui).clicked() {
                                     self.everest_nav = Some(EverestNav::OpenCustomer {
                                         cust_code: code.clone(),
                                         label: name.clone(),
@@ -1825,8 +1753,9 @@ impl StockTable {
         });
 
         if shown < total {
-            ui.add_space(6.);
-            if Button::new(format!("Load +20  ({} remaining)", total - shown)).ui(ui).clicked() {
+            ui.add_space(m.gap.y);
+            let label = format!("Load +20  ({} remaining)", total - shown);
+            if controls::icon_text_button(ui, svg::LIST_PLUS, &label).clicked() {
                 self.everest_nav = Some(EverestNav::LoadMore);
             }
         }
@@ -1835,25 +1764,25 @@ impl StockTable {
     /// All orders on the selected customer's account.
     fn render_everest_orders(&mut self, ui: &mut Ui) {
         if self.everest_orders_loading {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.);
-                ui.label("Loading customer orders...");
-                Spinner::new().size(40.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-            });
+            controls::loading_state(ui, "Loading customer orders...");
             return;
         }
         let cust = self.everest_current_cust.clone();
         let orders = self.everest_orders_by_cust.get(&cust).cloned().unwrap_or_default();
         if orders.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.);
-                ui.label(RichText::new("No orders found for this customer.").color(Color32::GRAY));
-            });
+            controls::empty_state(ui, svg::RECEIPT, "No orders found for this customer", "", &[]);
             return;
         }
+        let m = Metrics::get(ui.ctx());
+        let (link, faint, dim, amount_tone) = (
+            theme::info(ui),
+            theme::faint_text(ui),
+            theme::weak_text(ui),
+            theme::success(ui),
+        );
 
-        ui.label(RichText::new(format!("{} orders", orders.len())).color(Color32::LIGHT_BLUE));
-        ui.add_space(4.);
+        controls::status_label(ui, svg::RECEIPT, &format!("{} orders", orders.len()), theme::tertiary(ui));
+        ui.add_space(m.gap.y);
 
         ScrollArea::vertical().show(ui, |ui| {
             use egui_extras::{Column as TblCol, TableBuilder};
@@ -1866,7 +1795,7 @@ impl StockTable {
                 .column(TblCol::auto().at_least(70.))
                 .column(TblCol::auto().at_least(90.))
                 .column(TblCol::auto().at_least(100.))
-                .header(20., |mut h| {
+                .header(m.row_h, |mut h| {
                     h.col(|ui| { ui.strong("Order #"); });
                     h.col(|ui| { ui.strong("Type"); });
                     h.col(|ui| { ui.strong("Date"); });
@@ -1883,18 +1812,18 @@ impl StockTable {
                         let dep = row_str(row, &["DEP", "DEP_CODE", "DEPARTMENT"]);
                         let rep = row_str(row, &["SALES_REP", "REP"]);
                         let amount = row_str(row, &["INV_AMOUNT", "AMOUNT", "TOTAL"]);
-                        body.row(22., |mut r| {
+                        body.row(m.row_h, |mut r| {
                             r.col(|ui| {
                                 if doc.is_empty() {
-                                    ui.label(RichText::new("—").color(Color32::GRAY));
-                                } else if Link::new(RichText::new(&doc).color(Color32::from_rgb(42, 195, 222))).ui(ui).clicked() {
+                                    ui.label(RichText::new("—").color(faint));
+                                } else if Link::new(RichText::new(&doc).color(link)).ui(ui).clicked() {
                                     self.everest_nav = Some(EverestNav::OpenOrder {
                                         doc_no: doc.clone(),
                                         label: doc.clone(),
                                     });
                                 }
                             });
-                            r.col(|ui| { ui.label(RichText::new(&alias).color(Color32::LIGHT_GRAY)); });
+                            r.col(|ui| { ui.label(RichText::new(&alias).color(dim)); });
                             r.col(|ui| { ui.label(&date); });
                             r.col(|ui| { ui.label(&dep); });
                             r.col(|ui| { ui.label(&rep); });
@@ -1902,7 +1831,7 @@ impl StockTable {
                                 if amount.is_empty() {
                                     ui.label("");
                                 } else {
-                                    ui.label(RichText::new(format!("$ {amount}")).color(Color32::LIGHT_GREEN));
+                                    ui.label(RichText::new(format!("$ {amount}")).color(amount_tone));
                                 }
                             });
                         });
@@ -1999,62 +1928,61 @@ impl StockTable {
     /// Import button kicks off the same Odoo lookup → save_audit flow
     /// the CSV path uses.
     fn render_import_panel(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("Import Serials");
-            ui.with_layout(
-                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-                |ui| {
-                    if ui.small_button("✕").on_hover_text("Close").clicked() {
-                        self.import_panel_open = false;
-                    }
-                },
-            );
+        let m = Metrics::get(ui.ctx());
+        controls::panel_header(ui, svg::TRAY_ARROW_DOWN, "Import Serials", |ui| {
+            if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Close").clicked() {
+                self.import_panel_open = false;
+            }
         });
+        ui.add_space(m.gap.y);
         ui.label(
             RichText::new(
                 "Paste one serial per line. Looks each one up in Odoo and saves a new audit for the selected store.",
             )
-            .color(Color32::GRAY),
+            .color(theme::weak_text(ui)),
         );
-        ui.add_space(6.);
+        ui.add_space(m.gap.y);
         ScrollArea::vertical()
             .max_height(ui.available_height() - 90.)
             .show(ui, |ui| {
-                TextEdit::multiline(&mut self.import_textarea)
-                    .desired_rows(20)
-                    .desired_width(f32::INFINITY)
-                    .font(eframe::egui::TextStyle::Monospace)
-                    .ui(ui);
+                controls::TextArea::new(&mut self.import_textarea)
+                    .rows(20)
+                    .mono(true)
+                    .show(ui);
             });
-        ui.add_space(8.);
+        ui.add_space(m.gap.y);
 
         let parsed = parse_serial_list(&self.import_textarea);
         let count = parsed.len();
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("{count} serials parsed"))
-                    .color(if count == 0 { Color32::GRAY } else { Color32::LIGHT_GREEN }),
-            );
-            ui.with_layout(
-                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-                |ui| {
-                    let enabled = count > 0 && !self.import_in_progress;
-                    if ui.add_enabled(enabled, Button::new("Import")).clicked() {
-                        self.kick_off_import(parsed);
-                    }
-                    if ui.button("Clear").clicked() {
-                        self.import_textarea.clear();
-                    }
-                },
-            );
+        controls::bar(ui, BarKind::Footer, |ui| {
+            if count == 0 {
+                controls::status_label(ui, svg::LIST_NUMBERS, "0 serials parsed", theme::weak_text(ui));
+            } else {
+                controls::status_label(ui, svg::CHECK_CIRCLE, &format!("{count} serials parsed"), theme::success(ui));
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let enabled = count > 0 && !self.import_in_progress;
+                let import = TextButton::new("Import")
+                        .icon(svg::TRAY_ARROW_DOWN)
+                        .kind(ButtonKind::Primary)
+                        .enabled(enabled)
+                        .show(ui);
+                if import.clicked() {
+                    self.kick_off_import(parsed);
+                }
+                if controls::icon_text_button(ui, svg::ERASER, "Clear").clicked() {
+                    self.import_textarea.clear();
+                }
+            });
         });
     }
 
     fn render_customer_panel(&mut self, ui: &mut Ui) {
         let Some(order) = &self.everest_order else { return; };
+        let m = Metrics::get(ui.ctx());
         ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("Customer");
-            ui.separator();
+            controls::panel_header(ui, svg::USER, "Customer", |_| {});
+            ui.add_space(m.gap.y);
 
             let display_name = {
                 let h = &order.header;
@@ -2064,56 +1992,49 @@ impl StockTable {
                 else if !h.acct_name.is_empty() { h.acct_name.clone() }
                 else { "Unknown".to_string() }
             };
-            ui.label(RichText::new(&display_name).strong().color(Color32::LIGHT_BLUE));
+            ui.label(RichText::new(&display_name).font(fonts::semibold(type_scale::HEADING)).color(theme::strong_text(ui)));
             if !order.header.cust_code.is_empty() {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Code").color(Color32::GRAY));
+                    controls::status_label(ui, svg::IDENTIFICATION_CARD, "Code", theme::weak_text(ui));
                     ui.label(
                         RichText::new(&order.header.cust_code)
                             .strong()
-                            .color(Color32::from_rgb(255, 200, 80)),
+                            .color(theme::primary(ui)),
                     );
                 });
             }
             if !order.header.email.is_empty() {
-                ui.label(format!("✉ {}", order.header.email));
+                controls::status_label(ui, svg::ENVELOPE_SIMPLE, &order.header.email, theme::text(ui));
             }
             if !order.header.tel1.is_empty() {
-                ui.label(format!("📞 {}", order.header.tel1));
+                controls::status_label(ui, svg::PHONE, &order.header.tel1, theme::text(ui));
             }
             if !order.header.tel2.is_empty() && order.header.tel2 != order.header.tel1 {
-                ui.label(format!("📞 {}", order.header.tel2));
+                controls::status_label(ui, svg::PHONE, &order.header.tel2, theme::text(ui));
             }
 
-            ui.add_space(8.);
+            ui.add_space(m.gap.y);
             if !order.customer.num_inv.is_empty() {
-                ui.label(
-                    RichText::new(format!("Invoices: {}", order.customer.num_inv))
-                        .color(Color32::GRAY),
-                );
+                controls::status_label(ui, svg::RECEIPT, &format!("Invoices: {}", order.customer.num_inv), theme::weak_text(ui));
             }
             if !order.customer.inv_life.is_empty() {
-                ui.label(
-                    RichText::new(format!("Lifetime: $ {}", order.customer.inv_life))
-                        .color(Color32::GRAY),
-                );
+                controls::status_label(ui, svg::CURRENCY_DOLLAR, &format!("Lifetime: $ {}", order.customer.inv_life), theme::weak_text(ui));
             }
 
-            ui.add_space(12.);
-            ui.heading("Addresses");
-            ui.separator();
+            ui.add_space(2.0 * m.gap.y);
+            controls::panel_header(ui, svg::MAP_PIN, "Addresses", |_| {});
             if order.addresses.is_empty() {
-                ui.label(RichText::new("No addresses on file.").color(Color32::GRAY));
+                controls::empty_state(ui, svg::MAP_PIN, "No addresses on file", "", &[]);
             } else {
                 for (idx, addr) in order.addresses.iter().enumerate() {
-                    ui.group(|ui| {
+                    glass_card::group(ui, |ui| {
                         if !addr.name.is_empty() {
-                            ui.label(RichText::new(&addr.name).strong());
+                            controls::status_label(ui, svg::HOUSE, &addr.name, theme::strong_text(ui));
                         } else {
-                            ui.label(RichText::new(format!("Address {}", idx + 1)).strong());
+                            controls::status_label(ui, svg::HOUSE, &format!("Address {}", idx + 1), theme::strong_text(ui));
                         }
                         if !addr.full_address.is_empty() {
-                            ui.label(RichText::new(&addr.full_address).color(Color32::LIGHT_GRAY));
+                            ui.label(RichText::new(&addr.full_address).color(theme::weak_text(ui)));
                         } else {
                             if !addr.street_address.is_empty() { ui.label(&addr.street_address); }
                             let line2 = [&addr.city, &addr.state, &addr.zip]
@@ -2121,53 +2042,56 @@ impl StockTable {
                             if !line2.is_empty() { ui.label(line2); }
                             if !addr.country.is_empty() { ui.label(&addr.country); }
                         }
-                        if !addr.tel1.is_empty() { ui.label(format!("📞 {}", addr.tel1)); }
-                        if !addr.mobile_phone.is_empty() { ui.label(format!("📱 {}", addr.mobile_phone)); }
-                        if !addr.email.is_empty() { ui.label(format!("✉ {}", addr.email)); }
+                        if !addr.tel1.is_empty() { controls::status_label(ui, svg::PHONE, &addr.tel1, theme::text(ui)); }
+                        if !addr.mobile_phone.is_empty() { controls::status_label(ui, svg::DEVICE_MOBILE, &addr.mobile_phone, theme::text(ui)); }
+                        if !addr.email.is_empty() { controls::status_label(ui, svg::ENVELOPE_SIMPLE, &addr.email, theme::text(ui)); }
                     });
-                    ui.add_space(4.);
                 }
             }
         });
     }
 
     fn render_serial_history_panel(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("Serial History");
-            if ui.small_button(crate::ui_tools::icons::CLOSE).on_hover_text("Close").clicked() {
+        let m = Metrics::get(ui.ctx());
+        controls::panel_header(ui, svg::CLOCK_COUNTER_CLOCKWISE, "Serial History", |ui| {
+            if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Close").clicked() {
                 self.everest_history = None;
                 self.everest_selected_serial = None;
             }
         });
         if let Some(serial) = &self.everest_selected_serial {
-            ui.label(RichText::new(serial).color(Color32::from_rgb(42, 195, 222)));
+            controls::status_label(ui, svg::BARCODE, serial, theme::info(ui));
         }
         if self.everest_history_loading {
-            ui.add_space(10.);
-            ui.horizontal(|ui| {
-                Spinner::new().size(16.).ui(ui);
-                ui.label("Fetching Odoo movements...");
-            });
+            ui.add_space(m.gap.y);
+            controls::loading_row(ui, "Fetching Odoo movements...");
             return;
         }
 
         let Some(history) = &self.everest_history else { return; };
 
-        if let Some(p) = &history.product_name {
-            if !p.is_empty() {
-                ui.label(RichText::new(p).color(Color32::GRAY));
-            }
+        if let Some(p) = &history.product_name
+            && !p.is_empty()
+        {
+            controls::status_label(ui, svg::PACKAGE, p, theme::weak_text(ui));
         }
         if let Some(err) = &history.error {
-            ui.colored_label(ui.global_style().visuals.error_fg_color, err);
+            controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
             return;
         }
-        ui.separator();
+        controls::hairline(ui);
         if history.moves.is_empty() {
-            ui.label(RichText::new("No movements found.").color(Color32::GRAY));
+            controls::empty_state(ui, svg::CLOCK_COUNTER_CLOCKWISE, "No movements found", "", &[]);
             return;
         }
 
+        let row_h = m.row_h;
+        let (done, cancel, draft, other) = (
+            theme::success(ui),
+            theme::error(ui),
+            theme::faint_text(ui),
+            theme::weak_text(ui),
+        );
         ScrollArea::vertical().show(ui, |ui| {
             use egui_extras::{TableBuilder, Column as TblCol};
             TableBuilder::new(ui)
@@ -2179,7 +2103,7 @@ impl StockTable {
                 .column(TblCol::auto().at_least(110.))
                 .column(TblCol::remainder().at_least(120.))
                 .column(TblCol::auto().at_least(40.))
-                .header(20., |mut h| {
+                .header(row_h, |mut h| {
                     h.col(|ui| { ui.strong("Date"); });
                     h.col(|ui| { ui.strong("State"); });
                     h.col(|ui| { ui.strong("From"); });
@@ -2196,7 +2120,7 @@ impl StockTable {
                             let s = m.date.clone().unwrap_or_default();
                             s.split('.').next().unwrap_or(&s).to_string()
                         };
-                        body.row(20., |mut row| {
+                        body.row(row_h, |mut row| {
                             row.col(|ui| {
                                 let expanded = self.expanded_history_dates.contains(&raw_date);
                                 let display = if expanded {
@@ -2218,10 +2142,10 @@ impl StockTable {
                             row.col(|ui| {
                                 let state = m.state.clone().unwrap_or_default();
                                 let color = match state.as_str() {
-                                    "done" => Color32::LIGHT_GREEN,
-                                    "cancel" => Color32::from_rgb(200, 100, 100),
-                                    "draft" => Color32::GRAY,
-                                    _ => Color32::LIGHT_GRAY,
+                                    "done" => done,
+                                    "cancel" => cancel,
+                                    "draft" => draft,
+                                    _ => other,
                                 };
                                 ui.label(RichText::new(state).color(color));
                             });
@@ -2260,12 +2184,12 @@ impl StockTable {
     fn render_bin_breakdown_panel(&mut self, ui: &mut Ui) {
         let Some(breakdown) = &self.bin_breakdown else { return };
         let (product_id, name) = (breakdown.product_id, breakdown.name.clone());
+        let m = Metrics::get(ui.ctx());
         let mut close = false;
         let mut refresh = false;
-        ui.horizontal(|ui| {
-            ui.heading("Bin Breakdown");
-            close = ui.small_button(crate::ui_tools::icons::CLOSE).on_hover_text("Close").clicked();
-            refresh = ui.small_button(crate::ui_tools::icons::REFRESH).on_hover_text("Refresh").clicked();
+        controls::panel_header(ui, svg::WAREHOUSE, "Bin Breakdown", |ui| {
+            close = controls::icon_button(ui, svg::X, IconBox::Sm, false, "Close").clicked();
+            refresh = controls::icon_button(ui, svg::ARROW_CLOCKWISE, IconBox::Sm, false, "Refresh").clicked();
         });
         if close {
             self.bin_breakdown = None;
@@ -2275,27 +2199,24 @@ impl StockTable {
             self.request_bin_breakdown(product_id, name, ui.ctx());
             return;
         }
-        ui.label(RichText::new(&name).color(Color32::GRAY));
+        controls::status_label(ui, svg::PACKAGE, &name, theme::weak_text(ui));
 
         let Some(breakdown) = &self.bin_breakdown else { return };
         let bins = match &breakdown.bins {
             None => {
-                ui.add_space(10.);
-                ui.horizontal(|ui| {
-                    Spinner::new().size(16.).ui(ui);
-                    ui.label("Fetching Odoo stock...");
-                });
+                ui.add_space(m.gap.y);
+                controls::loading_row(ui, "Fetching Odoo stock...");
                 return;
             }
             Some(Err(e)) => {
-                ui.colored_label(ui.global_style().visuals.error_fg_color, e);
+                controls::status_label(ui, svg::WARNING_CIRCLE, e, theme::error(ui));
                 return;
             }
             Some(Ok(bins)) => bins,
         };
-        ui.separator();
+        controls::hairline(ui);
         if bins.is_empty() {
-            ui.label(RichText::new("No stock in any location.").color(Color32::GRAY));
+            controls::empty_state(ui, svg::WAREHOUSE, "No stock in any location", "", &[]);
             return;
         }
 
@@ -2303,6 +2224,7 @@ impl StockTable {
         let total = |bins: &[BinQuantity]| {
             (bins.iter().map(|b| b.on_hand).sum::<f64>(), bins.iter().map(|b| b.reserved).sum::<f64>())
         };
+        let warehouse = Some(theme::success(ui));
         ScrollArea::vertical().show(ui, |ui| {
             use egui_extras::{TableBuilder, Column as TblCol};
             TableBuilder::new(ui)
@@ -2311,20 +2233,20 @@ impl StockTable {
                 .column(TblCol::remainder().at_least(150.))
                 .column(TblCol::auto().at_least(60.))
                 .column(TblCol::auto().at_least(60.))
-                .header(20., |mut h| {
+                .header(m.row_h, |mut h| {
                     h.col(|ui| { ui.strong("Location"); });
                     h.col(|ui| { ui.strong("On Hand"); });
                     h.col(|ui| { ui.strong("Reserved"); });
                 })
                 .body(|mut body| {
                     for bin in warehouse_bins {
-                        bin_row(&mut body, bin, Some(Color32::LIGHT_GREEN));
+                        bin_row(&mut body, m.row_h, bin, warehouse);
                     }
-                    total_row(&mut body, "Warehouse total", total(warehouse_bins), Some(Color32::LIGHT_GREEN));
+                    total_row(&mut body, m.row_h, "Warehouse total", total(warehouse_bins), warehouse);
                     for bin in other_bins {
-                        bin_row(&mut body, bin, None);
+                        bin_row(&mut body, m.row_h, bin, None);
                     }
-                    total_row(&mut body, "Company total", total(bins), None);
+                    total_row(&mut body, m.row_h, "Company total", total(bins), None);
                 });
         });
     }
@@ -2838,169 +2760,165 @@ impl StockTable {
         if !self.customer_modal_open {
             return;
         }
-
-        // Dim background
-        let screen_rect = ui.ctx().content_rect();
-        ui.painter().rect_filled(
-            screen_rect,
-            0.0,
-            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        let outcome = controls::modal(
+            ui.ctx(),
+            Id::new("customer_change_modal"),
+            svg::USER_SWITCH,
+            "Change Customer",
+            ModalWidth::Regular,
+            &[(Role::Cancel, "Cancel")],
+            |ui| self.customer_modal_body(ui),
         );
+        if outcome.should_close {
+            self.customer_modal_open = false;
+        }
+    }
 
-        Area::new(Id::new("customer_change_modal"))
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .order(Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                Frame::popup(ui.style())
-                    .fill(Color32::from_rgb(30, 30, 35))
-                    .inner_margin(20.0)
-                    .show(ui, |ui| {
-                        ui.set_min_width(400.0);
-                        ui.set_min_height(300.0);
-                        
-                        ui.vertical(|ui| {
-                            // Header
+    fn customer_modal_body(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
+        controls::status_label(ui, svg::RECEIPT, &format!("Order: {}", self.customer_modal_order_id), theme::text(ui));
+        controls::status_label(ui, svg::USER, &format!("Current Customer: {}", self.customer_modal_current_name), theme::text(ui));
+
+        ui.add_space(m.gap.y);
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Search by").color(theme::weak_text(ui)));
+            let email = self.customer_search_type == CustomerSearchType::Email;
+            if controls::pill(ui, svg::ENVELOPE_SIMPLE, "Email", email).clicked() {
+                self.customer_search_type = CustomerSearchType::Email;
+            }
+            if controls::pill(ui, svg::PHONE, "Phone", !email).clicked() {
+                self.customer_search_type = CustomerSearchType::Phone;
+            }
+        });
+
+        ui.add_space(m.gap.y);
+
+        ui.horizontal(|ui| {
+            let (hint, icon) = match self.customer_search_type {
+                CustomerSearchType::Email => ("Enter email address...", svg::ENVELOPE_SIMPLE),
+                CustomerSearchType::Phone => ("Enter phone number...", svg::PHONE),
+            };
+            let response = TextField::new(&mut self.customer_search_query)
+                .hint(hint)
+                .icon(icon)
+                .width(250.)
+                .show(ui);
+
+            let can_search = !self.customer_search_query.is_empty() && !self.customer_searching;
+            let clicked = TextButton::new("Search").icon(svg::MAGNIFYING_GLASS).enabled(can_search).show(ui)
+                .clicked();
+            if clicked || (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && can_search) {
+                self.customer_searching = true;
+                let query = self.customer_search_query.clone();
+                let search_type = self.customer_search_type.clone();
+                let tx = self.customer_search_results_channel.0.clone();
+
+                PlatformSpawner::spawn(async move {
+                    let results = match search_type {
+                        CustomerSearchType::Email => Customer::find_customer_by_email(&query).await,
+                        CustomerSearchType::Phone => Customer::find_customer_by_phone(&query).await,
+                    };
+
+                    match results {
+                        Ok(customers) => { let _ = tx.try_send(customers); },
+                        Err(e) => log::error!("Customer search error: {:?}", e),
+                    }
+                });
+            }
+
+            if self.customer_searching {
+                controls::spinner(ui, SpinnerSize::Sm);
+            }
+        });
+
+        ui.add_space(m.gap.y);
+
+        if !self.customer_search_results.is_empty() {
+            controls::status_label(ui, svg::USERS, &format!("Found {} customers", self.customer_search_results.len()), theme::tertiary(ui));
+
+            ScrollArea::vertical()
+                .id_salt("customer_change_results")
+                .max_height(320.)
+                .show(ui, |ui| {
+                    for (customer, address) in self.customer_search_results.iter() {
+                        let name = format!("{} {}", customer.firstname, customer.lastname);
+                        let addr_info = if !address.address1.is_empty() {
+                            format!("{}, {}", address.address1, address.city)
+                        } else {
+                            "No address".to_string()
+                        };
+
+                        glass_card::group(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.heading(RichText::new("Change Customer").color(Color32::WHITE));
-                                ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                    if ui.button("✕").clicked() {
+                                ui.vertical(|ui| {
+                                    controls::status_label(ui, svg::USER, &format!("[{}] {}", customer.id, name), theme::strong_text(ui));
+                                    controls::status_label(ui, svg::ENVELOPE_SIMPLE, &customer.email, theme::weak_text(ui));
+                                    controls::status_label(ui, svg::MAP_PIN, &addr_info, theme::weak_text(ui));
+                                });
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if controls::icon_text_button(ui, svg::USER_CHECK, "Select").clicked() {
+                                        // Update the order with new customer
+                                        let order_id = self.customer_modal_order_id.clone();
+                                        let customer_id = customer.id.clone();
+                                        let address_id = address.id.clone();
+                                        let customer_name = name.clone();
+
+                                        log::info!("Updating order {} with customer {} ({}), address {}",
+                                                  order_id, customer_name, customer_id, address_id);
+
+                                        // Update the table immediately
+                                        let mut data = self.systems_in_store_table.take();
+                                        for system in data.iter_mut() {
+                                            if system.order_id == order_id {
+                                                system.customer_id = customer_id.clone();
+                                                system.customer_name = customer_name.clone();
+                                            }
+                                        }
+                                        self.systems_in_store_table.replace(data);
+                                        self.systems_dirty = true;
+
+                                        // Async update to Prestashop
+                                        PlatformSpawner::spawn(async move {
+                                            update_order_customer(&order_id, &customer_id, &address_id).await;
+                                        });
+
                                         self.customer_modal_open = false;
                                     }
                                 });
                             });
-                            
-                            ui.separator();
-                            
-                            ui.label(format!("Order: {}", self.customer_modal_order_id));
-                            ui.label(format!("Current Customer: {}", self.customer_modal_current_name));
-                            
-                            ui.add_space(10.0);
-                            
-                            // Search type selector
-                            ui.horizontal(|ui| {
-                                ui.label("Search by:");
-                                ui.selectable_value(&mut self.customer_search_type, CustomerSearchType::Email, "Email");
-                                ui.selectable_value(&mut self.customer_search_type, CustomerSearchType::Phone, "Phone");
-                            });
-                            
-                            ui.add_space(5.0);
-                            
-                            // Search input
-                            ui.horizontal(|ui| {
-                                let hint = match self.customer_search_type {
-                                    CustomerSearchType::Email => "Enter email address...",
-                                    CustomerSearchType::Phone => "Enter phone number...",
-                                };
-                                
-                                let response = TextEdit::singleline(&mut self.customer_search_query)
-                                    .hint_text(hint)
-                                    .desired_width(250.0)
-                                    .ui(ui);
-                                
-                                let can_search = !self.customer_search_query.is_empty() && !self.customer_searching;
-                                if ui.add_enabled(can_search, Button::new("Search")).clicked() || 
-                                   (response.lost_focus() && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter)) && can_search) 
-                                {
-                                    self.customer_searching = true;
-                                    let query = self.customer_search_query.clone();
-                                    let search_type = self.customer_search_type.clone();
-                                    let tx = self.customer_search_results_channel.0.clone();
-                                    
-                                    PlatformSpawner::spawn(async move {
-                                        let results = match search_type {
-                                            CustomerSearchType::Email => Customer::find_customer_by_email(&query).await,
-                                            CustomerSearchType::Phone => Customer::find_customer_by_phone(&query).await,
-                                        };
-                                        
-                                        match results {
-                                            Ok(customers) => { let _ = tx.try_send(customers); },
-                                            Err(e) => log::error!("Customer search error: {:?}", e),
-                                        }
-                                    });
-                                }
-                                
-                                if self.customer_searching {
-                                    Spinner::new().size(16.0).ui(ui);
-                                }
-                            });
-                            
-                            ui.add_space(10.0);
-                            
-                            // Search results
-                            if !self.customer_search_results.is_empty() {
-                                ui.label(RichText::new(format!("Found {} customers:", self.customer_search_results.len()))
-                                    .color(Color32::LIGHT_BLUE));
-                                
-                                eframe::egui::ScrollArea::vertical()
-                                    .max_width(200.0)
-                                    .show(ui, |ui| {
-                                        for (customer, address) in self.customer_search_results.iter() {
-                                            let name = format!("{} {}", customer.firstname, customer.lastname);
-                                            let addr_info = if !address.address1.is_empty() {
-                                                format!("{}, {}", address.address1, address.city)
-                                            } else {
-                                                "No address".to_string()
-                                            };
-                                            
-                                            ui.group(|ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.vertical(|ui| {
-                                                        // Show customer ID and name
-                                                        ui.label(RichText::new(format!("[{}] {}", customer.id, name)).strong());
-                                                        ui.label(RichText::new(&customer.email).small().color(Color32::GRAY));
-                                                        ui.label(RichText::new(&addr_info).small().color(Color32::GRAY));
-                                                    });
-                                                    
-                                                    ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                                        if ui.button("Select").clicked() {
-                                                            // Update the order with new customer
-                                                            let order_id = self.customer_modal_order_id.clone();
-                                                            let customer_id = customer.id.clone();
-                                                            let address_id = address.id.clone();
-                                                            let customer_name = name.clone();
-                                                            
-                                                            log::info!("Updating order {} with customer {} ({}), address {}", 
-                                                                      order_id, customer_name, customer_id, address_id);
-                                                            
-                                                            // Update the table immediately
-                                                            let mut data = self.systems_in_store_table.take();
-                                                            for system in data.iter_mut() {
-                                                                if system.order_id == order_id {
-                                                                    system.customer_id = customer_id.clone();
-                                                                    system.customer_name = customer_name.clone();
-                                                                }
-                                                            }
-                                                            self.systems_in_store_table.replace(data);
-                                                            self.systems_dirty = true;
-
-                                                            // Async update to Prestashop
-                                                            PlatformSpawner::spawn(async move {
-                                                                update_order_customer(&order_id, &customer_id, &address_id).await;
-                                                            });
-                                                            
-                                                            self.customer_modal_open = false;
-                                                        }
-                                                    });
-                                                });
-                                            });
-                                        }
-                                    });
-                            } else if !self.customer_searching && !self.customer_search_query.is_empty() {
-                                ui.label(RichText::new("No customers found.").color(Color32::GRAY));
-                            }
-                            
-                            ui.add_space(10.0);
-                            
-                            // Cancel button
-                            ui.horizontal(|ui| {
-                                if ui.button("Cancel").clicked() {
-                                    self.customer_modal_open = false;
-                                }
-                            });
                         });
-                    });
-            });
+                    }
+                });
+        } else if !self.customer_searching && !self.customer_search_query.is_empty() {
+            controls::empty_state(ui, svg::USERS, "No customers found", "", &[]);
+        }
     }
+}
+
+/// Trend icon and tone for a signed amount.
+fn profit_tone(ui: &Ui, amount: f64) -> (Icon, Color32) {
+    if amount >= 0.0 {
+        (svg::TREND_UP, theme::success(ui))
+    } else {
+        (svg::TREND_DOWN, theme::error(ui))
+    }
+}
+
+/// Paints a 2- or 3-part item-code prefix (`[A/B]`, `[A/B/C]`) in role colours; `false` for other counts.
+fn code_parts(ui: &mut Ui, parts: &[&str]) -> bool {
+    let tones = match parts.len() {
+        2 => vec![theme::success(ui), theme::info(ui)],
+        3 => vec![theme::success(ui), theme::secondary(ui), theme::info(ui)],
+        _ => return false,
+    };
+    let last = parts.len() - 1;
+    for (i, (part, tone)) in parts.iter().zip(tones).enumerate() {
+        let end = if i == last { "]" } else { "/" };
+        ui.colored_label(tone, format!("{part}{end}"));
+    }
+    true
 }
 
 fn tinted(text: impl Into<String>, color: Option<Color32>) -> RichText {
@@ -3012,8 +2930,8 @@ fn tinted(text: impl Into<String>, color: Option<Color32>) -> RichText {
 }
 
 /// Bin Breakdown row for one location.
-fn bin_row(body: &mut egui_extras::TableBody<'_>, bin: &BinQuantity, color: Option<Color32>) {
-    body.row(20., |mut row| {
+fn bin_row(body: &mut egui_extras::TableBody<'_>, height: f32, bin: &BinQuantity, color: Option<Color32>) {
+    body.row(height, |mut row| {
         row.col(|ui| { ui.label(tinted(bin.location.as_str(), color)); });
         row.col(|ui| { ui.label(tinted(format!("{}", bin.on_hand), color)); });
         row.col(|ui| { ui.label(tinted(format!("{}", bin.reserved), color)); });
@@ -3021,8 +2939,8 @@ fn bin_row(body: &mut egui_extras::TableBody<'_>, bin: &BinQuantity, color: Opti
 }
 
 /// Bold Bin Breakdown row for an `(on_hand, reserved)` total.
-fn total_row(body: &mut egui_extras::TableBody<'_>, label: &str, (on_hand, reserved): (f64, f64), color: Option<Color32>) {
-    body.row(20., |mut row| {
+fn total_row(body: &mut egui_extras::TableBody<'_>, height: f32, label: &str, (on_hand, reserved): (f64, f64), color: Option<Color32>) {
+    body.row(height, |mut row| {
         row.col(|ui| { ui.label(tinted(label, color).strong()); });
         row.col(|ui| { ui.label(tinted(format!("{on_hand}"), color).strong()); });
         row.col(|ui| { ui.label(tinted(format!("{reserved}"), color).strong()); });

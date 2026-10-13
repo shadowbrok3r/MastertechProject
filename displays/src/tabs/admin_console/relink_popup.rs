@@ -21,6 +21,7 @@
 //! shows a results list and the admin picks the right one before the
 //! Apply step runs the prestashop payload fetch + DB commit.
 
+use crate::ui_tools::controls::IconLabel;
 use crate::{PlatformSpawner, Spawner};
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::{
@@ -32,11 +33,11 @@ use database::{
     },
     db,
 };
-use eframe::egui::{
-    self, Align, Button, Layout, RichText, ScrollArea, TextEdit, Ui, Window,
-};
-use crate::ui_tools::framed_controls::FramedSelectable;
-use crate::ui_tools::theme;
+use eframe::egui::{self, ScrollArea, Ui};
+use crate::ui_tools::controls::{self, BarKind, Role, SpinnerSize, TextButton, TextField};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::list_row::{Lead, ListRow};
+use crate::ui_tools::{glass_card, theme};
 
 /// Which lookup the admin is performing. Only one input is active at a
 /// time so we don't have to disambiguate when multiple are filled.
@@ -66,6 +67,13 @@ impl RelinkSearchKind {
             Self::Phone => "e.g. 555-123-4567",
             Self::Email => "customer@example.com",
             Self::OrderNumber => "e.g. 41234",
+        }
+    }
+    fn icon(self) -> svg::Icon {
+        match self {
+            Self::Phone => svg::PHONE,
+            Self::Email => svg::ENVELOPE_SIMPLE,
+            Self::OrderNumber => svg::RECEIPT,
         }
     }
 }
@@ -236,7 +244,7 @@ impl RelinkClientPopup {
                 .unwrap_or_else(|| self.client.connection_string.clone())
         );
 
-        Window::new(title)
+        controls::icon_window(ctx, svg::LINK, &title)
             .open(&mut open)
             .resizable(true)
             .default_width(520.0)
@@ -248,15 +256,9 @@ impl RelinkClientPopup {
     }
 
     fn draw_body(&mut self, ui: &mut Ui) {
-        ui.label(
-            RichText::new(
-                "Search by phone, email, or order # to re-link this client \
+        IconLabel::new(svg::INFO, "Search by phone, email, or order # to re-link this client \
                  to the right customer. The 'customer_locked' flag will be \
-                 set so the OA-key auto-detection no longer overwrites it.",
-            )
-            .small()
-            .color(theme::weak_text(ui)),
-        );
+                 set so the OA-key auto-detection no longer overwrites it.").tone(theme::weak_text(ui)).small(true).wrap(true).show(ui);
         ui.add_space(6.);
 
         ui.horizontal(|ui| {
@@ -265,10 +267,7 @@ impl RelinkClientPopup {
                 RelinkSearchKind::Email,
                 RelinkSearchKind::OrderNumber,
             ] {
-                if ui
-                    .framed_selectable_label(self.kind == kind, kind.label())
-                    .clicked()
-                {
+                if controls::pill(ui, kind.icon(), kind.label(), self.kind == kind).clicked() {
                     self.kind = kind;
                     self.results.clear();
                     self.selected = None;
@@ -279,15 +278,17 @@ impl RelinkClientPopup {
 
         ui.add_space(4.);
         ui.horizontal(|ui| {
-            let response = ui.add(
-                TextEdit::singleline(&mut self.query_input)
-                    .hint_text(self.kind.hint())
-                    .desired_width(300.),
-            );
+            let response = TextField::new(&mut self.query_input)
+                .hint(self.kind.hint())
+                .icon(self.kind.icon())
+                .width(300.)
+                .show(ui);
             let enter = response.lost_focus()
                 && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let look_up = ui
-                .add_enabled(!self.busy && !self.query_input.trim().is_empty(), Button::new("Look Up"))
+            let look_up = TextButton::new("Look Up")
+                .icon(svg::MAGNIFYING_GLASS)
+                .enabled(!self.busy && !self.query_input.trim().is_empty())
+                .show(ui)
                 .clicked();
             if look_up || enter {
                 self.kick_off_search();
@@ -297,7 +298,7 @@ impl RelinkClientPopup {
         if self.busy {
             ui.add_space(4.);
             ui.horizontal(|ui| {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
                 ui.label(if self.results.is_empty() {
                     "Searching…"
                 } else {
@@ -307,22 +308,20 @@ impl RelinkClientPopup {
         }
         if !self.status.is_empty() {
             ui.add_space(4.);
-            ui.colored_label(
+            let (icon, tone) =
                 if self.status.contains("failed") || self.status.contains("Could not") {
-                    theme::error(ui)
+                    (svg::WARNING_CIRCLE, theme::error(ui))
                 } else if self.done {
-                    theme::success(ui)
+                    (svg::CHECK_CIRCLE, theme::success(ui))
                 } else {
-                    theme::warn(ui)
-                },
-                &self.status,
-            );
+                    (svg::INFO, theme::warn(ui))
+                };
+            controls::note(ui, icon, &self.status.as_str(), tone);
         }
 
         if !self.results.is_empty() {
             ui.add_space(8.);
-            ui.separator();
-            ui.label(RichText::new("Matches").strong());
+            glass_card::card_header(ui, svg::USERS, "Matches", None);
             ScrollArea::vertical().max_height(180.).show(ui, |ui| {
                 for (i, r) in self.results.iter().enumerate() {
                     let selected = self.selected == Some(i);
@@ -331,30 +330,29 @@ impl RelinkClientPopup {
                     } else {
                         r.display_label.clone()
                     };
-                    if ui.selectable_label(selected, label).clicked() {
+                    let row = ListRow::new(&label)
+                        .lead(Lead::Icon(svg::USER_CIRCLE, None))
+                        .selected(selected)
+                        .show(ui);
+                    if row.clicked() {
                         self.selected = Some(i);
                     }
                 }
             });
         }
 
-        ui.add_space(10.);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.add_space(8.);
+        controls::bar(ui, BarKind::Footer, |ui| {
             let can_apply = !self.busy
                 && self.selected.is_some()
                 && self.results.get(self.selected.unwrap_or(usize::MAX)).is_some();
-            if ui
-                .add_enabled(
-                    can_apply,
-                    Button::new(RichText::new("Apply").color(theme::success(ui))),
-                )
-                .clicked()
+            let clicked =
+                controls::dialog_buttons_enabled(ui, &[(Role::Primary, "Apply")], &[can_apply]);
+            if clicked.is_some()
+                && let Some(idx) = self.selected
+                && let Some(cand) = self.results.get(idx).cloned()
             {
-                if let Some(idx) = self.selected {
-                    if let Some(cand) = self.results.get(idx).cloned() {
-                        self.kick_off_apply(cand);
-                    }
-                }
+                self.kick_off_apply(cand);
             }
         });
     }

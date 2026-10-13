@@ -1,7 +1,7 @@
 use database::schema::{
     ConnectedClient, FilterLiveTasks, LiveTaskPayload, RecordIdExt, Status, Store,
 };
-use eframe::egui::{Color32, Spinner, Ui, Widget};
+use eframe::egui::Ui;
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::{should_show_connected_client_in_summaries, ClientCardData};
 use crate::tabs::tasks::task_layout::CONNECTED_CLIENTS_KEY;
@@ -94,13 +94,7 @@ impl SharedContext {
     pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
         ui.ctx().request_repaint();
         if self.store_users.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.label("Loading...");
-                Spinner::new()
-                    .size(50.0)
-                    .color(Color32::from_rgb(150, 10, 150))
-                    .ui(ui);
-            });
+            crate::ui_tools::controls::loading_state(ui, "Loading tasks…");
             return;
         }
         // Initialize layout_configs

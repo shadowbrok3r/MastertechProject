@@ -2,6 +2,11 @@
 use core::f32;
 use eframe::egui::{text::CCursorRange, *};
 use std::collections::BTreeSet;
+
+use crate::ui_tools::{
+    controls::{self, BarKind, ButtonKind, TextButton},
+    icons::svg,
+};
 pub mod chat_markdown;
 pub mod highlighter;
 pub mod parser;
@@ -78,18 +83,25 @@ impl EasyMarkEditor {
                 .id_salt("source")
                 .show(ui, |ui| self.editor_ui(ui));
         }
-        ui.separator();
-
-        ui.columns(5, |columns| {
-            let _res = columns[0].add(Button::new("Hotkeys").min_size(Vec2::new(60.0, 10.0))).on_hover_ui(nested_hotkeys_ui);
-            columns[1].checkbox(&mut self.show_rendered, "Show rendered");
+        controls::bar(ui, BarKind::Footer, |ui| {
+            let _ = TextButton::new("Hotkeys")
+                .icon(svg::KEYBOARD)
+                .kind(ButtonKind::Ghost)
+                .show(ui)
+                .on_hover_ui(nested_hotkeys_ui);
+            controls::toggle(ui, &mut self.show_rendered, "Show rendered");
             if self.allow_private {
-                columns[3].checkbox(&mut self.private_note, "Private Note");
+                controls::toggle(ui, &mut self.private_note, "Private note");
             } else {
                 self.private_note = false;
             }
-            let res = columns[4].add(Button::new("Submit").min_size(Vec2::new(60.0, 10.0)));
-            response = Some(res);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let res = TextButton::new("Submit")
+                    .icon(svg::PAPER_PLANE_RIGHT)
+                    .kind(ButtonKind::Primary)
+                    .show(ui);
+                response = Some(res);
+            });
         });
 
         response
@@ -112,7 +124,7 @@ impl EasyMarkEditor {
             };
 
             TextEdit::multiline(message)
-                .margin(Margin::symmetric(6, 3))
+                .margin(Margin::symmetric(6, 4))
                 .desired_rows(5)
                 .desired_width(f32::INFINITY)
                 .layouter(&mut layouter)
@@ -134,7 +146,7 @@ impl EasyMarkEditor {
             //     .ui(ui)
         } else {
             TextEdit::multiline(message)
-                .margin(Margin::symmetric(6, 3))
+                .margin(Margin::symmetric(6, 4))
                 .desired_rows(5)
                 .desired_width(f32::INFINITY)
                 .ui(ui)

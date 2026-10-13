@@ -1,9 +1,14 @@
-use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Shadow, Spinner, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Align, Frame, Layout, Margin, NumExt, ScrollArea, Shadow, Ui};
 use database::{self, db, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::client_cards::ClientCardData};
 use crate::tabs::tasks::ai_task_cards::{AiCardRole, AiTaskCardView};
 use crate::tabs::tasks::task_cards::RecommendationSummary;
-use crate::ui_tools::icons;
+use crate::ui_tools::{
+    controls::{self, Icon, MenuButton},
+    icons::svg,
+    metrics::Metrics,
+    theme,
+};
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::BTreeSet;
@@ -25,7 +30,7 @@ pub struct TaskLayout{
     pub action: TaskUiActions,
     pub task: Option<String>,
     pub sort_by: HashMap<String, SortOptions>,
-    pub last_sort_field: Option<SortField>,    
+    pub last_sort_field: Option<SortField>,
     pub loading: bool,
     new_status: String,
     user: User,
@@ -102,7 +107,7 @@ pub enum SortField {
     Completed,
 }
 
-impl TaskLayout { 
+impl TaskLayout {
     /// Starting sort for a board's columns. Completed Tasks opens on most
     /// recently finished; the active boards stay on priority order.
     pub fn default_sort_for(page: &str) -> SortOptions {
@@ -118,7 +123,7 @@ impl TaskLayout {
     const SPACER_W: f32 = 6.0;
 
     pub fn new(
-        task_map: BTreeMap<String, Vec<LiveTaskPayload>>, 
+        task_map: BTreeMap<String, Vec<LiveTaskPayload>>,
         column_order: Vec<String>,
         assignees: Vec<User>,
         search_results: Option<Vec<LiveTaskPayload>>,
@@ -127,7 +132,7 @@ impl TaskLayout {
     ) -> Self {
         // log::debug!("Initializing new task layout");
         let (notes_tx, notes_rx) = crossbeam::channel::unbounded();
-        
+
         let tx = notes_tx.clone();
         let map = task_map.clone();
         if !map.is_empty() {
@@ -146,12 +151,12 @@ impl TaskLayout {
             notes: vec![],
             notes_tx,
             notes_rx,
-            task_map, 
+            task_map,
             column_order,
             page,
-            assignees, 
-            search_inputs: HashMap::new(), 
-            open_menu: false, 
+            assignees,
+            search_inputs: HashMap::new(),
+            open_menu: false,
             action: TaskUiActions::None,
             task: None,
             sort_by: HashMap::new(),
@@ -225,7 +230,7 @@ impl TaskLayout {
                 })
             );
         }
-        
+
         // Only refetch/stream notes after this page has rendered at least once
         if !self.has_run {
             self.has_run = true;
@@ -322,8 +327,8 @@ impl TaskLayout {
     }
 
     pub fn layout_cols(&mut self, ui: &mut Ui, ui_actions_tx: Sender<TaskUiActions>) {
-        ui.style_mut().visuals.window_corner_radius = ui.style().visuals.window_corner_radius;
         let style = ui.style().clone();
+        let m = Metrics::get(ui.ctx());
 
         // Idempotent per-frame pin: AI Tasks sits immediately left of the
         // connected-clients column regardless of any saved/stale order.
@@ -351,16 +356,16 @@ impl TaskLayout {
         let viewport_h = ui.available_height();
 
         let column_frame = Frame::default()
-            .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
+            .fill(style.visuals.window_fill)
             .inner_margin(Margin::same(6))
             .corner_radius(style.visuals.menu_corner_radius)
             .shadow(Shadow::NONE)
             .stroke(style.visuals.window_stroke);
 
         let header_frame = Frame::default()
-            .fill(style.visuals.window_fill) // (Color32::from_rgb(13, 13, 15))
+            .fill(style.visuals.window_fill)
             .inner_margin(Margin::same(2))
-            .outer_margin(Margin::symmetric(8, 3))
+            .outer_margin(Margin::symmetric(8, 4))
             .corner_radius(style.visuals.window_corner_radius)
             .stroke(style.visuals.window_stroke);
 
@@ -397,20 +402,11 @@ impl TaskLayout {
                                 hui.set_min_width(content_w);
                                 hui.set_max_width(content_w);
                                 let label_text = if review.is_empty() {
-                                    format!("{} AI Tasks ({})", icons::ROBOT, mine.len())
+                                    format!("AI Tasks ({})", mine.len())
                                 } else {
-                                    format!(
-                                        "{} AI Tasks ({} · {} review)",
-                                        icons::ROBOT,
-                                        mine.len(),
-                                        review.len()
-                                    )
+                                    format!("AI Tasks ({} · {} review)", mine.len(), review.len())
                                 };
-                                hui.label(
-                                    RichText::new(label_text)
-                                        .color(style.visuals.warn_fg_color)
-                                        .strong(),
-                                );
+                                column_title(hui, svg::ROBOT, &label_text);
                             });
                             column_frame.show(col_ui, |fui| {
                                 fui.set_min_width(content_w);
@@ -441,15 +437,13 @@ impl TaskLayout {
                                         }
                                         if !review.is_empty() {
                                             if !mine.is_empty() {
-                                                sui.add_space(4.0);
-                                                sui.separator();
+                                                sui.add_space(m.gap.y);
+                                                controls::hairline(sui);
                                             }
-                                            sui.label(
-                                                RichText::new("Awaiting your review")
-                                                    .weak()
-                                                    .small()
-                                                    .strong(),
-                                            );
+                                            controls::IconLabel::new(svg::EYE, "Awaiting your review")
+                                                .tone(theme::weak_text(sui))
+                                                .small(true)
+                                                .show(sui);
                                             for card in &review {
                                                 let notes =
                                                     self.get_notes(&card.ai_task.task_ref);
@@ -504,38 +498,24 @@ impl TaskLayout {
                                 hui.set_min_width(content_w);
                                 hui.set_max_width(content_w);
                                 hui.vertical(|hui| {
-                                    hui.horizontal(|hui| {
-                                        let label_text = if filter_query.is_empty() {
-                                            format!("{} Connected Clients ({total})", icons::MONITOR)
-                                        } else {
-                                            format!("{} Connected Clients ({shown}/{total})", icons::MONITOR)
-                                        };
-                                        hui.label(
-                                            RichText::new(label_text)
-                                                .color(style.visuals.warn_fg_color)
-                                                .strong(),
-                                        );
-                                    });
+                                    let label_text = if filter_query.is_empty() {
+                                        format!("Connected Clients ({total})")
+                                    } else {
+                                        format!("Connected Clients ({shown}/{total})")
+                                    };
+                                    column_title(hui, svg::MONITOR, &label_text);
                                     // Filter input: matches against
                                     // connection_string / friendly_name
                                     // / assigned tech. Width is locked
                                     // to the header content so it lines
                                     // up with the cards below.
-                                    hui.horizontal(|hui| {
-                                        let resp = hui.add(
-                                            eframe::egui::TextEdit::singleline(&mut self.client_filter)
-                                                .desired_width(content_w - 36.0)
-                                                .hint_text("Filter by name, connection, tech…"),
-                                        );
-                                        if !self.client_filter.is_empty()
-                                            && hui.small_button("✖")
-                                                .on_hover_text("Clear filter")
-                                                .clicked()
-                                        {
-                                            self.client_filter.clear();
-                                            resp.surrender_focus();
-                                        }
-                                    });
+                                    controls::TextField::new(&mut self.client_filter)
+                                        .hint("Filter by name, connection, tech…")
+                                        .icon(svg::FUNNEL_SIMPLE)
+                                        .clear_button(true)
+                                        .id_salt("connected_clients_filter")
+                                        .width(content_w)
+                                        .show(hui);
                                 });
                             });
                             column_frame.show(col_ui, |fui| {
@@ -550,17 +530,18 @@ impl TaskLayout {
                                     .auto_shrink([false; 2])
                                     .show(fui, |sui| {
                                         if visible_cards.is_empty() {
-                                            sui.add_space(8.0);
-                                            sui.label(
-                                                RichText::new("No clients match your filter.")
-                                                    .italics()
-                                                    .weak(),
+                                            controls::empty_state(
+                                                sui,
+                                                svg::FUNNEL_SIMPLE,
+                                                "No clients match your filter",
+                                                "",
+                                                &[],
                                             );
                                             return;
                                         }
                                         for card in &visible_cards {
                                             card.display_client_card(sui, &ui_actions_tx);
-                                            sui.add_space(6.0);
+                                            sui.add_space(m.gap.y);
                                         }
                                     });
                             });
@@ -572,7 +553,7 @@ impl TaskLayout {
                         if tasks.is_empty() {
                             continue;
                         }
-                        
+
                         ui.vertical(|col_ui| {
                             let default_sort = Self::default_sort_for(&self.page);
                             let sort_by = self
@@ -586,7 +567,7 @@ impl TaskLayout {
                                 SortField::Name => tasks.sort_by_name(direction.clone()),
                                 SortField::Completed => tasks.sort_by_completed(direction.clone()),
                             };
-                            
+
                             for task in tasks.iter(){
                                 inputs.insert(task.task_name.clone());
                                 inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
@@ -599,92 +580,74 @@ impl TaskLayout {
                                 let content_w = Self::COL_W - 2.0 * 2.0; // inner margin*2
                                 ui.set_min_width(content_w);
                                 ui.set_max_width(content_w);
+                                let gap = Metrics::get(ui.ctx()).gap.x;
 
-                                ui.horizontal(|ui| 
+                                ui.push_id(("task_column_header", name.as_str()), |ui| ui.horizontal(|ui|
                                 {
-                                    ui.with_layout(Layout::left_to_right(Align::Max), |ui| 
+                                    ui.with_layout(Layout::left_to_right(Align::Center), |ui|
                                     {
                                         // Disable per-column search if global search is active
                                         let search_input = if self.search_results.is_some() {
                                             &mut String::new()
                                         } else {
-                                            &mut self.search_inputs.entry(name.clone()).or_insert_with(String::new).clone()
+                                            &mut self.search_inputs.entry(name.clone()).or_default().clone()
                                         };
 
-                                        let mut margin = Margin::default();
-                                        margin.top = 6;
-                                        
-                                        TextEdit::singleline(search_input).hint_text(" Search").desired_width(100.0).margin(margin).ui(ui);
+                                        controls::TextField::new(search_input)
+                                            .hint("Search")
+                                            .icon(svg::MAGNIFYING_GLASS)
+                                            .width(120.0)
+                                            .show(ui);
 
                                         // Update search_inputs only if global search is inactive
                                         if self.search_results.is_none() {
                                             self.search_inputs.insert(name.clone(), search_input.to_string());
                                         }
 
-                                        ui.add_space(15.);
-                                        
+                                        ui.add_space(gap);
+
                                         let mut count = 0;
                                         let current_date = Utc::now().date_naive();
                                         let ids = tasks.iter().map(|t| t.id.clone()).collect::<Vec<RecordId>>();
-                                        
+
                                         for task in &mut *tasks {
                                             if task.due_date.date_naive() < current_date && !task.completed { count += 1; }
                                         }
 
                                         if count > 0 {
-                                            ui.colored_label(Color32::DARK_RED, RichText::new(format!("{count}")).small());
+                                            controls::badge(ui, &count.to_string(), theme::error(ui))
+                                                .on_hover_text("Overdue");
                                         }
 
-                                        ui.add_space(25.);
-                                        let response = Button::new(RichText::new(name.to_owned())
-                                                .color(style.visuals.warn_fg_color)
-                                                .size(13.0).monospace()
-                                            )
-                                            .fill(style.visuals.noninteractive().bg_fill)
-                                            .corner_radius(eframe::egui::CornerRadius::same(2))
-                                            .min_size(Vec2::new(60.0, 15.0))
-                                            .ui(ui);
+                                        ui.add_space(gap);
+                                        let (_, res) = MenuButton::new(name)
+                                            .icon(svg::KANBAN)
+                                            .tint(style.visuals.warn_fg_color)
+                                            .tip("Column actions")
+                                            .keep_open(true)
+                                            .show(ui, |ui| {
+                                                let mut action = TaskActions::None;
+                                                if controls::menu_item(ui, svg::CHECK_SQUARE, "Mark all Complete").clicked() {
+                                                    action = TaskActions::MarkComplete;
+                                                }
+                                                if controls::menu_item(ui, svg::SQUARE, "Mark all Incomplete").clicked() {
+                                                    action = TaskActions::MarkIncomplete;
+                                                }
+                                                if controls::menu_item(ui, svg::CALENDAR_CHECK, "Mark all Due Today").clicked() {
+                                                    action = TaskActions::MarkDueToday;
+                                                }
+                                                controls::hairline(ui);
+                                                if controls::menu_item(ui, svg::ARROW_LEFT, "Move column left").clicked() {
+                                                    action = TaskActions::MoveLeft;
+                                                }
+                                                if controls::menu_item(ui, svg::ARROW_RIGHT, "Move column right").clicked() {
+                                                    action = TaskActions::MoveRight;
+                                                }
+                                                action
+                                            });
 
-                                        let btn_id = format!("sub_menu-{:?}",name).into();
-                                        
-                                        let res = Popup::menu(&response)
-                                        .id(btn_id)
-                                        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                                        .align(RectAlign::BOTTOM)
-                                        .show(|ui| 
-                                        {
-                                            let action = &mut TaskActions::None;
-                                            ui.vertical_centered_justified(|ui| {
-                                                ui.set_width(200.0);
-                                                if ui.button("Mark all Complete").clicked(){
-                                                    *action = TaskActions::MarkComplete;
-                                                }
-                                                ui.add_space(5.0);
-                                                if ui.button("Mark all Incomplete").clicked(){
-                                                    *action = TaskActions::MarkIncomplete;
-                                                }
-                                                ui.add_space(5.0);
-                                                if ui.button("Mark all Due Today").clicked(){
-                                                    *action = TaskActions::MarkDueToday;
-                                                }
-                                                ui.add_space(5.0);
-                                                
-                                                ui.horizontal(|ui| {
-                                                    if ui.button("◀").clicked(){
-                                                        *action = TaskActions::MoveLeft;
-                                                    }
-                                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                                        if ui.button("▶").clicked() {
-                                                            *action = TaskActions::MoveRight;
-                                                        }
-                                                    })
-                                                });
-                                                action.clone()
-                                            }).inner
-                                        });
-                                        
                                         if let Some(response) = res {
-                                            match response.inner {
+                                            match response {
                                                 TaskActions::MoveLeft => {
                                                     requested_move = Some((name.clone(), -1));
                                                 }
@@ -715,101 +678,54 @@ impl TaskLayout {
                                             }
                                         }
                                     });
-                                    
-                                    ui.with_layout(Layout::right_to_left(Align::Max), |ui|
+
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui|
                                     {
                                         let selected = self
                                             .sort_by
                                             .entry(name.clone())
                                             .or_insert_with(|| Self::default_sort_for(&self.page));
-                                        let txt = match selected.direction {
-                                            SortDirection::Asc => ("↗", ui.style().visuals.warn_fg_color),
-                                            SortDirection::Desc => ("↘", ui.style().visuals.error_fg_color),
+                                        let (icon, tint) = match selected.direction {
+                                            SortDirection::Asc => (svg::SORT_ASCENDING, ui.style().visuals.warn_fg_color),
+                                            SortDirection::Desc => (svg::SORT_DESCENDING, ui.style().visuals.error_fg_color),
                                         };
-                                        let selected_text = match selected.field {
-                                            SortField::Default => RichText::new(format!("Priority {}", txt.0)).color(txt.1).small(),
-                                            SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
-                                            SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
-                                            SortField::Completed => RichText::new(format!("Completed {}", txt.0)).color(txt.1).small(),
-                                        };
-                                        
-                                        ComboBox::new(format!("SortBy for {name:?}-{i}"), "")
-                                            .selected_text(selected_text)
-                                            .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                                            .width(70.)
-                                            .show_ui(ui, |ui| {
-                                                if ui.selectable_value(
-                                                    &mut selected.field, 
-                                                    SortField::Default, 
-                                                    RichText::new(format!("Priority {}", txt.0)).color(txt.1).small())
-                                                .clicked() {
-                                                    if let Some(last_field) = self.last_sort_field.clone() {
-                                                        if last_field == SortField::Default {
-                                                            // Toggle the direction if the same field is clicked again
+                                        let fields = [
+                                            (SortField::Default, "Priority"),
+                                            (SortField::Name, "Name"),
+                                            (SortField::Date, "Date"),
+                                            (SortField::Completed, "Completed"),
+                                        ];
+                                        let label = fields
+                                            .iter()
+                                            .find(|(field, _)| *field == selected.field)
+                                            .map_or("Priority", |(_, label)| *label);
+
+                                        let _ = MenuButton::new(label)
+                                            .icon(icon)
+                                            .tint(tint)
+                                            .tip("Sort this column")
+                                            .keep_open(true)
+                                            .show(ui, |ui| {
+                                                for (field, label) in fields {
+                                                    let on = selected.field == field;
+                                                    if controls::menu_check_item(ui, None, label, on).clicked() {
+                                                        selected.field = field.clone();
+                                                        // Toggle the direction if the same field is clicked again
+                                                        if self.last_sort_field.as_ref() == Some(&field) {
                                                             selected.direction = match selected.direction {
                                                                 SortDirection::Asc => SortDirection::Desc,
                                                                 SortDirection::Desc => SortDirection::Asc,
                                                             };
                                                         }
+                                                        self.last_sort_field = Some(field);
                                                     }
-                                                    // Update the last selected field
-                                                    self.last_sort_field = Some(SortField::Default);
                                                 }
-                                                if ui.selectable_value(
-                                                    &mut selected.field, 
-                                                    SortField::Name, 
-                                                    RichText::new(format!("Name {}", txt.0)).color(txt.1).small())
-                                                .clicked() {
-                                                    if let Some(last_field) = self.last_sort_field.clone() {
-                                                        if last_field == SortField::Name {
-                                                            // Toggle the direction if the same field is clicked again
-                                                            selected.direction = match selected.direction {
-                                                                SortDirection::Asc => SortDirection::Desc,
-                                                                SortDirection::Desc => SortDirection::Asc,
-                                                            };
-                                                        }
-                                                    }
-                                                    // Update the last selected field
-                                                    self.last_sort_field = Some(SortField::Name);
-                                                }
-                                                if ui.selectable_value(
-                                                    &mut selected.field, 
-                                                    SortField::Date, 
-                                                    RichText::new(format!("Date {}", txt.0)).color(txt.1).small())
-                                                .clicked() {
-                                                    if let Some(last_field) = self.last_sort_field.clone() {
-                                                        if last_field == SortField::Date {
-                                                            // Toggle the direction if the same field is clicked again
-                                                            selected.direction = match selected.direction {
-                                                                SortDirection::Asc => SortDirection::Desc,
-                                                                SortDirection::Desc => SortDirection::Asc,
-                                                            };
-                                                        }
-                                                    }
-                                                    // Update the last selected field
-                                                    self.last_sort_field = Some(SortField::Date);
-                                                }
-                                                if ui.selectable_value(
-                                                    &mut selected.field,
-                                                    SortField::Completed,
-                                                    RichText::new(format!("Completed {}", txt.0)).color(txt.1).small())
-                                                .clicked() {
-                                                    if let Some(last_field) = self.last_sort_field.clone() {
-                                                        if last_field == SortField::Completed {
-                                                            selected.direction = match selected.direction {
-                                                                SortDirection::Asc => SortDirection::Desc,
-                                                                SortDirection::Desc => SortDirection::Asc,
-                                                            };
-                                                        }
-                                                    }
-                                                    self.last_sort_field = Some(SortField::Completed);
-                                                }
-                                        });
+                                            });
                                     });
-                                });
+                                }));
                             });
 
-                            
+
                             column_frame.show(col_ui, |ui| {
                                 // Compensate for 6‑px *inner* margin so the turquoise
                                 // stroke remains inside COL_W.
@@ -822,15 +738,15 @@ impl TaskLayout {
                                 ui.set_max_height(column_h);
 
                                 let row_height = 110.;
-                                let total_rows = tasks.len(); 
+                                let total_rows = tasks.len();
                                 ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 80.0);
-                                
+
                                 ScrollArea::vertical()
                                     .max_width(Self::COL_W - 20.0)
                                     // .max_height(viewport_h)
                                     .auto_shrink(false)
                                     .id_salt(format!("{}-{i}-scroll", name))
-                                    .show_rows(ui, row_height, total_rows, |ui, row_range| 
+                                    .show_rows(ui, row_height, total_rows, |ui, row_range|
                                 {
                                     // ui.scroll_with_delta(Vec2::new(0.0, 300.));
                                     // Retrieve search input for the current context, or default to an empty string.
@@ -864,7 +780,7 @@ impl TaskLayout {
                                             if let Some(task) = tasks.get_mut(task_index) {
                                                 let notes = self.notes
                                                     .iter()
-                                                    .filter(|n| 
+                                                    .filter(|n|
                                                         if let Some(id) = &n.task_id {
                                                            *id == task.id
                                                         } else {
@@ -887,9 +803,9 @@ impl TaskLayout {
                                                     .cloned();
 
                                                 task.display_cards(
-                                                    ui, 
-                                                    &self.user, 
-                                                    &self.assignees, 
+                                                    ui,
+                                                    &self.user,
+                                                    &self.assignees,
                                                     notes,
                                                     ui_actions_tx.clone(),
                                                     last_read,
@@ -900,11 +816,8 @@ impl TaskLayout {
                                         }
                                     }
                                     if self.loading {
-                                        ui.vertical_centered(|ui| {
-                                            ui.label("Loading..");
-                                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
-                                        });
-                                    }                   
+                                        controls::loading_state(ui, "Loading…");
+                                    }
                                 });
                             });
                         });
@@ -926,6 +839,13 @@ impl TaskLayout {
             self.has_run = true;
         }
     }
+}
+
+/// A column title: icon and label in the warn colour.
+fn column_title(ui: &mut Ui, icon: Icon, text: &str) {
+    controls::IconLabel::new(icon, text)
+        .tone(theme::warn(ui))
+        .show(ui);
 }
 
 #[derive(Clone)]

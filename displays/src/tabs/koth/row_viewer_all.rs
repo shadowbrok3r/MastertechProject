@@ -1,5 +1,8 @@
 use egui_data_table::{viewer::TableColumnConfig, RowViewer};
 use crate::tabs::koth::data::AllEmployeesTableData;
+use crate::ui_tools::controls::Metrics;
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use eframe::egui::Layout;
 
 #[derive(Default, serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -38,20 +41,26 @@ impl RowViewer<AllEmployeesTableData> for AllEmployeesRowViewer {
         style.interaction.multi_widget_text_select = false;
         style.interaction.selectable_labels = false;
         match column {
-            0 => { ui.label(&row.employee_name); }
+            0 => {
+                let size = Metrics::get(ui.ctx()).icon_sm;
+                ui.horizontal(|ui| {
+                    ui.add(svg::USER_CIRCLE.image(size).tint(theme::faint_text(ui)));
+                    ui.label(&row.employee_name);
+                });
+            }
             1 => { ui.vertical_centered(|ui| ui.label(format!("{} / {}", row.total_sales, row.total_orders))); }
             2 => { ui.vertical_centered(|ui| ui.label(format!("{} / {}", row.laptops, row.desktops))); }
-            3 => { ui.colored_label(ui.style().visuals.error_fg_color, format!("{:.2}%", row.finance_ratio)); }
+            3 => { ui.colored_label(theme::error(ui), format!("{:.2}%", row.finance_ratio)); }
             4 => {
                 let ratio = if row.total_sales > 0 { (row.warranties as f64 / row.total_sales as f64) * 100.0 } else { 0.0 };
                 ui.horizontal_top(|ui| {
-                    ui.colored_label(ui.style().visuals.error_fg_color, format!(" {} / {}", row.warranties, row.total_sales));
+                    ui.colored_label(theme::error(ui), format!(" {} / {}", row.warranties, row.total_sales));
                     ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.label(format!("({ratio:.2}%)"))
                     });
                 });
             }
-            5 => { ui.colored_label(ui.style().visuals.warn_fg_color, format!("$ {:.2}", row.revenue)); }
+            5 => { ui.colored_label(theme::warn(ui), format!("$ {:.2}", row.revenue)); }
             6 => { ui.label(format!("$ {:.2}", row.spiffs)); }
             _ => {}
         }

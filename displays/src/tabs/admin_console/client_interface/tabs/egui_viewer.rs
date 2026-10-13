@@ -5,9 +5,10 @@ use crate::plugins::remote::{
 };
 use crate::remote_viewer::input_focus::RemoteViewFocus;
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{self, Color32, Event, RichText, Stroke, Ui};
+use eframe::egui::{self, Color32, Event, Stroke, Ui};
 use std::collections::HashMap;
-use crate::ui_tools::theme;
+use crate::ui_tools::controls::{self, SpinnerSize};
+use crate::ui_tools::{icons::svg, theme};
 
 /// `RUST_LOG=egui_remote=debug` for pointer-move spam; `=error` for milestones only.
 const EGUI_REMOTE_LOG: &str = "egui_remote";
@@ -130,22 +131,18 @@ impl InlineEguiViewer {
         let got_new_frame = self.poll_frames();
 
         let Some(frame) = &self.latest_frame else {
+            ui.add_space(24.0);
+            controls::empty_state(
+                ui,
+                svg::APP_WINDOW,
+                "Waiting for egui frames...",
+                "Enable Egui Frame Capture on the machine being viewed; keep Remote Viewer off \
+                 there.",
+                &[],
+            );
             ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
-                ui.label(
-                    RichText::new("Waiting for egui frames...")
-                        .color(theme::weak_text(ui))
-                        .size(14.0),
-                );
                 ui.add_space(8.0);
-                ui.label(
-                    RichText::new(
-                        "Enable Egui Frame Capture on the machine being viewed; keep Remote Viewer off there.",
-                    )
-                    .color(theme::faint_text(ui))
-                    .small(),
-                );
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Md);
             });
             return;
         };
@@ -161,22 +158,6 @@ impl InlineEguiViewer {
         let inp = ui.ctx().input(|i| i.clone());
         self.remote_diag_tick = self.remote_diag_tick.wrapping_add(1);
 
-        // let frame_count = frame.frame_count;
-
-        // let ppp = frame.pixels_per_point;
-        // let mesh_count = self.cached_meshes.len();
-        // ui.horizontal(|ui| {
-        //     ui.label(
-        //         RichText::new(format!(
-        //             "Frame #{frame_count} | {}x{} @{ppp:.1}x | {mesh_count} meshes",
-        //             width as u32,
-        //             height as u32,
-        //         ))
-        //         .color(Color32::from_rgb(140, 180, 140))
-        //         .small(),
-        //     );
-        // });
-        // ui.separator();
 
         let max_w = ui.available_width();
         let max_h = ui.available_height().max(120.0);

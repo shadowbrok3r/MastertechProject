@@ -1,10 +1,16 @@
 //! Bug report tab: submit a GitHub issue from within qc-app. Resolves the
 //! submitter against the Shopify staff roster so the issue names who to ask.
 
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::orders::{QcBackend, TechIdentity};
 use eframe::egui;
+use mtech_ui::controls::{self, ButtonKind, Metrics, TextButton, TextField};
 use mtech_ui::github::{build_github_issue_body, create_new_issue};
+use mtech_ui::icons::svg;
+use mtech_ui::theme;
+
+/// Width of the employee lookup field.
+const EMPLOYEE_W: f32 = 220.0;
 
 enum BugReportEvent {
     Resolved(TechIdentity),
@@ -67,81 +73,85 @@ impl BugReportPanel {
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.poll();
+        let m = Metrics::get(ui.ctx());
 
-        ui.heading("Bug report");
+        controls::heading(ui, svg::BUG, "Bug report");
         ui.label(
-            egui::RichText::new("Files a GitHub issue. Recent app logs are attached automatically.")
-                .small()
-                .weak(),
+            egui::RichText::new(
+                "Files a GitHub issue. Recent app logs are attached automatically.",
+            )
+            .small()
+            .weak(),
         );
-        ui.add_space(8.0);
+        ui.add_space(m.gap.x);
 
         ui.horizontal(|ui| {
             ui.label("Employee name or ID");
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut self.employee_input)
-                    .hint_text("e.g. Kellie Boisse or 12345")
-                    .desired_width(220.0),
-            );
+            let resp = TextField::new(&mut self.employee_input)
+                .hint("e.g. Kellie Boisse or 12345")
+                .icon(svg::USER)
+                .width(EMPLOYEE_W)
+                .show(ui);
             let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let clicked = ui
-                .add_enabled(
-                    !self.busy && !self.employee_input.trim().is_empty(),
-                    egui::Button::new("Look up"),
-                )
+            let can_look_up = !self.busy && !self.employee_input.trim().is_empty();
+            let clicked = TextButton::new("Look up")
+                .icon(svg::MAGNIFYING_GLASS)
+                .enabled(can_look_up)
+                .show(ui)
                 .clicked();
             if clicked || (enter && !self.employee_input.trim().is_empty()) {
                 self.kick_off_lookup();
             }
         });
         if let Some(id) = &self.resolved {
-            ui.colored_label(
-                egui::Color32::from_rgb(50, 160, 90),
-                format!("{} — employee #{}", id.name, id.id_employee),
+            let ok = theme::success(ui);
+            controls::status_label(
+                ui,
+                svg::USER_CHECK,
+                &format!("{} — employee #{}", id.name, id.id_employee),
+                ok,
             );
         }
 
-        ui.add_space(8.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.title)
-                .hint_text("Issue title")
-                .desired_width(f32::INFINITY),
-        );
-        ui.add_space(4.0);
-        ui.add(
-            egui::TextEdit::multiline(&mut self.description)
-                .hint_text("Describe the bug…")
-                .desired_rows(8)
-                .desired_width(f32::INFINITY),
-        );
+        ui.add_space(m.gap.x);
+        TextField::new(&mut self.title)
+            .hint("Issue title")
+            .icon(svg::NOTE_PENCIL)
+            .width(ui.available_width())
+            .show(ui);
+        ui.add_space(m.pad.y);
+        controls::TextArea::new(&mut self.description)
+            .hint("Describe the bug…")
+            .rows(8)
+            .show(ui);
 
-        ui.add_space(8.0);
+        ui.add_space(m.gap.x);
         let can_submit =
             !self.busy && !self.title.trim().is_empty() && !self.description.trim().is_empty();
-        if ui
-            .add_enabled(can_submit, egui::Button::new("Submit bug report"))
-            .clicked()
-        {
+        let submit = TextButton::new("Submit bug report")
+            .icon(svg::PAPER_PLANE_TILT)
+            .kind(ButtonKind::Primary)
+            .prominent(true)
+            .enabled(can_submit)
+            .show(ui);
+        if submit.clicked() {
             self.kick_off_submit();
         }
 
         if self.busy {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Working…");
-            });
+            ui.add_space(m.pad.y);
+            controls::loading_row(ui, "Working…");
         }
         if !self.status.is_empty() {
-            ui.add_space(4.0);
-            let color = if self.status.contains("failed") {
-                egui::Color32::LIGHT_RED
+            ui.add_space(m.pad.y);
+            let (icon, tone) = if self.status.contains("failed") {
+                (svg::X_CIRCLE, theme::error(ui))
             } else if self.status.contains("submitted") {
-                egui::Color32::LIGHT_GREEN
+                (svg::CHECK_CIRCLE, theme::success(ui))
             } else {
-                egui::Color32::LIGHT_BLUE
+                (svg::INFO, theme::info(ui))
             };
-            ui.colored_label(color, &self.status);
+            controls::status_label(ui, icon, self.status.as_str(), tone);
         }
     }
 
@@ -183,7 +193,11 @@ impl BugReportPanel {
                 (id.name, contact)
             }
             None => {
-                let name = if typed.is_empty() { "unknown".to_string() } else { typed };
+                let name = if typed.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    typed
+                };
                 (name, "employee not resolved".to_string())
             }
         };

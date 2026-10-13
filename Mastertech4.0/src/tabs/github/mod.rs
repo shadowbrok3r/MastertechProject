@@ -1,11 +1,18 @@
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
-use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
+use displays::{
+    ToastMessage, get_toast_sender,
+    ui_tools::{
+        controls::{self, ButtonKind, Metrics, TextArea, TextButton, TextField},
+        glass_card,
+        icons::svg,
+    },
+};
+use eframe::egui::{Align, Layout, Ui};
 use log::{debug, error};
 use reqwest::Client;
 use self_updater::GithubRelease;
 use tokio::spawn;
-use displays::{get_toast_sender, ToastMessage};
 
 use crate::app_state::MastertechContext;
 
@@ -17,85 +24,90 @@ pub mod self_updater;
 /// Cloudflare Worker in front of GitHub API / asset redirects — CORS-safe for WASM.
 const GIT_MASTER_TECH_REPO_BASE: &str =
     "https://git.master-tech.app/repos/shadowbrok3r/MastertechProject";
-
+/// Widest the bug-report form grows.
+const FORM_W: f32 = 640.0;
+/// Rows the description box shows.
+const DESCRIPTION_ROWS: usize = 8;
 impl MastertechContext {
     pub fn github(&mut self, ui: &mut Ui) {
-        ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
-        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-        ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30, 30, 30);
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
-        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+        let m = Metrics::get(ui.ctx());
+        ui.vertical(|ui| {
+            ui.set_max_width(FORM_W.min(ui.available_width()));
+            glass_card::titled_group(ui, svg::BUG, "Mastertech bug report", None, |ui| {
+                controls::section_label(ui, "Title");
+                TextField::new(&mut self.github_issue_title)
+                    .hint("Issue Title")
+                    .icon(svg::TAG_SIMPLE)
+                    .width(ui.available_width())
+                    .id_salt("github.issue_title")
+                    .show(ui);
 
-        ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            // vertical_centered(|ui| {
+                ui.add_space(m.gap.y * 2.0);
 
-            ui.heading("Mastertech bug report");
-            TextEdit::singleline(&mut self.github_issue_title)
-                .hint_text("Issue Title")
-                .show(ui);
+                controls::section_label(ui, "Description");
+                TextArea::new(&mut self.github_issue_descript)
+                    .hint("Explain your issue")
+                    .rows(DESCRIPTION_ROWS)
+                    .show(ui);
 
-            ui.add_space(12.0);
+                ui.add_space(m.gap.y);
+                let ready =
+                    !self.github_issue_descript.is_empty() && !self.github_issue_title.is_empty();
+                let submit = ui
+                    .with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let submit = TextButton::new("Submit")
+                            .icon(svg::PAPER_PLANE_RIGHT)
+                            .kind(ButtonKind::Primary)
+                            .prominent(true)
+                            .enabled(ready)
+                            .show(ui);
+                        controls::icon_label(ui, svg::PAPERCLIP, "Recent logs are attached");
+                        submit
+                    })
+                    .inner;
 
-            ui.heading("Description");
-            TextEdit::multiline(&mut self.github_issue_descript)
-                .hint_text("Explain your issue")
-                .show(ui);
+                if submit.clicked() {
+                    let github_issue_title = self.github_issue_title.clone();
+                    let current_user = self.shared_ctx.current_user.clone().unwrap_or_default();
 
-            let submit = ui.add_enabled(
-                !self.github_issue_descript.is_empty() && !self.github_issue_title.is_empty(),
-                Button::new("Submit"),
-            );
+                    // Get logs before clearing the form
+                    let logs = displays::ui_tools::egui_logger::get_logs_for_issue();
 
-            if submit.clicked() {
-                let github_issue_title = self.github_issue_title.clone();
-                let current_user = self.shared_ctx.current_user.clone().unwrap_or_default();
-                
-                // Get logs before clearing the form
-                let logs = displays::ui_tools::egui_logger::get_logs_for_issue();
-                
-                let github_issue_descript = displays::tabs::github::build_github_issue_body(
-                    &self.github_issue_descript,
-                    &current_user.get_name(),
-                    &current_user.get_email(),
-                    &logs,
-                );
-                let client = self.client.clone();
+                    let github_issue_descript = displays::tabs::github::build_github_issue_body(
+                        &self.github_issue_descript,
+                        current_user.get_name(),
+                        current_user.get_email(),
+                        &logs,
+                    );
+                    let client = self.client.clone();
 
-                // Clear the form fields immediately
-                self.github_issue_title.clear();
-                self.github_issue_descript.clear();
+                    // Clear the form fields immediately
+                    self.github_issue_title.clear();
+                    self.github_issue_descript.clear();
 
-                spawn(async move {
-                    let create_issue = create_new_issue(
-                        github_issue_title,
-                        github_issue_descript,
-                        client,
-                    )
-                    .await;
+                    spawn(async move {
+                        let create_issue =
+                            create_new_issue(github_issue_title, github_issue_descript, client)
+                                .await;
 
-                    let toast_tx = get_toast_sender();
-                    match create_issue {
-                        Ok(val) => {
-                            debug!("Issue created: {val:?}");
-                            let _ = toast_tx.try_send(ToastMessage::Success(
-                                "GitHub issue submitted successfully".to_string(),
-                            ));
+                        let toast_tx = get_toast_sender();
+                        match create_issue {
+                            Ok(val) => {
+                                debug!("Issue created: {val:?}");
+                                let _ = toast_tx.try_send(ToastMessage::Success(
+                                    "GitHub issue submitted successfully".to_string(),
+                                ));
+                            }
+                            Err(e) => {
+                                error!("Error creating issue: {e:?}");
+                                let _ = toast_tx.try_send(ToastMessage::Error(format!(
+                                    "Failed to submit issue: {e:?}"
+                                )));
+                            }
                         }
-                        Err(e) => {
-                            error!("Error creating issue: {e:?}");
-                            let _ = toast_tx.try_send(ToastMessage::Error(format!(
-                                "Failed to submit issue: {e:?}"
-                            )));
-                        }
-                    }
-                });
-            }
+                    });
+                }
+            });
         });
     }
 

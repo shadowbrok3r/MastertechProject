@@ -7,12 +7,15 @@ pub use composer::{Composer, ComposerAction};
 
 use database::schema::agent_thread::compact_tokens;
 use database::schema::{AgentActivity, AgentThread, QueuedTurn, RecordId, RecordIdExt};
-use eframe::egui::{
-    self, Align, Color32, Id, Key, Layout, ProgressBar, Rect, RichText, Spinner, TextEdit, Ui, vec2,
-};
+use eframe::egui::{self, Align, Color32, Id, Key, Layout, Rect, RichText, Ui, Vec2, vec2};
 
 use crate::ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle};
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{
+    self, ButtonKind, IconBox, IconButton, IconLabel, Metrics, SpinnerSize, TextButton, TextField,
+    Tokens,
+};
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::{fonts, icons, theme};
 
 /// Share of the context window above which Compact is emphasised.
 pub const COMPACT_EMPHASIS: f32 = 0.7;
@@ -22,6 +25,13 @@ const QUEUED_PREVIEW_CHARS: usize = 120;
 const SENT_THUMB: f32 = 96.0;
 /// Width of an enlarged thumbnail in a hover tooltip.
 const PREVIEW_WIDTH: f32 = 320.0;
+/// Width of the context bar.
+const CONTEXT_BAR_W: f32 = 96.0;
+/// Opacity of the panel colour behind the drop hint.
+const DROP_SCRIM: f32 = 0.6;
+/// Size of the drop hint's icon and text.
+const DROP_ICON: f32 = 32.0;
+const DROP_TEXT_PT: f32 = 16.0;
 
 /// Icon, colour and word for a thread status.
 pub fn status_chip(ui: &Ui, status: &str) -> (&'static str, Color32, &'static str) {
@@ -35,6 +45,25 @@ pub fn status_chip(ui: &Ui, status: &str) -> (&'static str, Color32, &'static st
         "failed" => (icons::STATUS_ERR, theme::error(ui), "Failed"),
         _ => (icons::STATUS_DOT, theme::weak_text(ui), "Unknown"),
     }
+}
+
+/// The SVG icon for a thread status, matching [`status_chip`].
+pub fn status_icon(status: &str) -> Icon {
+    match status {
+        "queued" => svg::QUEUE,
+        "starting" => svg::HOURGLASS,
+        "idle" => svg::CHECK_CIRCLE,
+        "running" => svg::PLAY,
+        "waiting_approval" => svg::LOCK,
+        "closed" => svg::MINUS_CIRCLE,
+        "failed" => svg::X_CIRCLE,
+        _ => svg::DOT,
+    }
+}
+
+/// An icon then small text, both in `color`.
+fn icon_text(ui: &mut Ui, icon: Icon, text: &str, color: Color32) -> egui::Response {
+    IconLabel::new(icon, text).tone(color).small(true).show(ui)
 }
 
 /// True while the thread's agent is starting or working a turn.
@@ -63,14 +92,19 @@ fn status_word(status: &str) -> &'static str {
 
 /// A thread's status as a spinner or icon followed by its words.
 pub fn status_badge(ui: &mut Ui, thread: &AgentThread) {
-    let (icon, color, _) = status_chip(ui, &thread.status);
+    let (_, color, _) = status_chip(ui, &thread.status);
+    if !is_active(thread) {
+        icon_text(
+            ui,
+            status_icon(&thread.status),
+            &status_words(thread),
+            color,
+        );
+        return;
+    }
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if is_active(thread) {
-            ui.add(Spinner::new().size(12.0).color(color));
-        } else {
-            ui.label(RichText::new(icon).color(color).small());
-        }
+        ui.spacing_mut().item_spacing.x = Metrics::get(ui.ctx()).gap.x / 2.0;
+        controls::spinner(ui, SpinnerSize::Sm);
         ui.label(RichText::new(status_words(thread)).color(color).small());
     });
 }
@@ -101,17 +135,12 @@ fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
 pub fn context_bar(ui: &mut Ui, thread: &AgentThread, compactable: bool) -> bool {
     let mut compact = false;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.spacing_mut().item_spacing.x = Metrics::get(ui.ctx()).gap.x * 0.75;
         let fraction = thread.context_fraction();
         if let (Some(f), Some((used, window))) = (fraction, thread.context_tokens()) {
             let color = context_color(ui, f);
-            ui.add(
-                ProgressBar::new(f.clamp(0.0, 1.0))
-                    .desired_width(96.0)
-                    .desired_height(8.0)
-                    .fill(color),
-            )
-            .on_hover_text(format!("{used} of {window} tokens in the context window"));
+            controls::meter(ui, f, CONTEXT_BAR_W, color)
+                .on_hover_text(format!("{used} of {window} tokens in the context window"));
             ui.label(
                 RichText::new(format!(
                     "{:.0}% \u{00b7} {}/{}",
@@ -126,7 +155,7 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread, compactable: bool) -> bool
             ui.label(RichText::new("context \u{2014}").small().weak());
         }
         if thread.activity() == AgentActivity::Compacting {
-            ui.add(Spinner::new().size(12.0));
+            controls::spinner(ui, SpinnerSize::Sm);
             ui.label(RichText::new("Compacting\u{2026}").small().weak());
             return;
         }
@@ -134,25 +163,21 @@ pub fn context_bar(ui: &mut Ui, thread: &AgentThread, compactable: bool) -> bool
             return;
         }
         let emphasised = fraction.is_some_and(|f| f >= COMPACT_EMPHASIS);
-        let label = format!("{} Compact", icons::COMPACT);
-        let button = if emphasised {
-            egui::Button::new(
-                RichText::new(label)
-                    .small()
-                    .strong()
-                    .color(theme::strong_text(ui)),
-            )
-            .fill(context_color(ui, fraction.unwrap_or(1.0)).gamma_multiply(0.45))
+        let kind = if emphasised {
+            ButtonKind::Primary
         } else {
-            egui::Button::new(RichText::new(label).small())
+            ButtonKind::Neutral
         };
         let tip = if thread.is_busy() {
             "Summarise the conversation to free context once this turn ends"
         } else {
             "Summarise the conversation to free context"
         };
-        compact = ui
-            .add_enabled(thread.is_open(), button)
+        compact = TextButton::new("Compact")
+            .icon(svg::ARROWS_IN_LINE_VERTICAL)
+            .kind(kind)
+            .enabled(thread.is_open())
+            .show(ui)
             .on_hover_text(tip)
             .clicked();
     });
@@ -166,16 +191,15 @@ pub fn approve_all_chip(ui: &mut Ui, thread: &AgentThread, steerable: bool) -> b
     }
     let mut ask_again = false;
     ui.horizontal_wrapped(|ui| {
-        ui.label(
-            RichText::new(format!("{} Approving all tool calls", icons::UNLOCKED))
-                .small()
-                .strong()
-                .color(theme::warn(ui)),
+        icon_text(
+            ui,
+            svg::LOCK_OPEN,
+            "Approving all tool calls",
+            theme::warn(ui),
         )
         .on_hover_text("Every tool call the agent makes on this machine runs without asking");
         ask_again = steerable
-            && ui
-                .small_button(format!("{} Ask again", icons::LOCK))
+            && controls::icon_text_button(ui, svg::LOCK, "Ask again")
                 .on_hover_text("Ask the technician before each gated tool call again")
                 .clicked();
     });
@@ -198,39 +222,31 @@ pub fn queue_strip(ui: &mut Ui, waiting: &[QueuedTurn]) -> Option<QueueAction> {
     }
     let mut action = None;
     let held = waiting.iter().any(QueuedTurn::is_held);
+    let m = Metrics::get(ui.ctx());
     ui.horizontal_wrapped(|ui| {
         if held {
-            ui.label(
-                RichText::new(format!(
-                    "{} Queue held after a stop or a failed turn",
-                    icons::PAUSE
-                ))
-                .small()
-                .color(theme::warn(ui)),
+            icon_text(
+                ui,
+                svg::PAUSE,
+                "Queue held after a stop or a failed turn",
+                theme::warn(ui),
             );
-            if ui
-                .small_button(format!("{} Resume", icons::PLAY))
+            if controls::icon_text_button(ui, svg::PLAY, "Resume")
                 .on_hover_text("Send the queued messages, one per turn")
                 .clicked()
             {
                 action = Some(QueueAction::Resume);
             }
         } else {
-            ui.label(
-                RichText::new(format!(
-                    "{} {} queued \u{00b7} sent when the turn ends",
-                    icons::QUEUE,
-                    waiting.len()
-                ))
-                .small()
-                .color(theme::info(ui)),
-            );
+            let text = format!("{} queued \u{00b7} sent when the turn ends", waiting.len());
+            icon_text(ui, svg::QUEUE, &text, theme::info(ui));
         }
     });
+    let side = IconBox::Sm.side(&m);
     for turn in waiting {
         ui.push_id(turn.id.key_string(), |ui| {
             ui.horizontal(|ui| {
-                let buttons = 3.0 * (24.0 + ui.spacing().item_spacing.x);
+                let buttons = 3.0 * (side + ui.spacing().item_spacing.x);
                 let first = turn
                     .text
                     .lines()
@@ -242,7 +258,7 @@ pub fn queue_strip(ui: &mut Ui, waiting: &[QueuedTurn]) -> Option<QueueAction> {
                     shown = format!("{} {} {shown}", icons::IMAGE, turn.image_names.len());
                 }
                 ui.allocate_ui_with_layout(
-                    vec2((ui.available_width() - buttons).max(40.0), 20.0),
+                    vec2((ui.available_width() - buttons).max(40.0), side),
                     Layout::left_to_right(Align::Center),
                     |ui| {
                         ui.add(egui::Label::new(RichText::new(shown).small()).truncate())
@@ -250,25 +266,23 @@ pub fn queue_strip(ui: &mut Ui, waiting: &[QueuedTurn]) -> Option<QueueAction> {
                     },
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui
-                        .small_button(icons::CLOSE)
-                        .on_hover_text("Remove from the queue")
-                        .clicked()
-                    {
+                    let tool = |ui: &mut Ui, icon: Icon, tip: &str| {
+                        IconButton::new(icon, IconBox::Sm)
+                            .tip(tip)
+                            .show(ui)
+                            .clicked()
+                    };
+                    if tool(ui, svg::X, "Remove from the queue") {
                         action = Some(QueueAction::Remove(turn.id.clone()));
                     }
-                    if ui
-                        .small_button(icons::UNDO)
-                        .on_hover_text("Back to the composer")
-                        .clicked()
-                    {
+                    if tool(ui, svg::ARROW_U_UP_LEFT, "Back to the composer") {
                         action = Some(QueueAction::Edit(turn.id.clone()));
                     }
-                    if ui
-                        .small_button(icons::SEND_NOW)
-                        .on_hover_text("Send now: the agent reads it after its current step")
-                        .clicked()
-                    {
+                    if tool(
+                        ui,
+                        svg::LIGHTNING,
+                        "Send now: the agent reads it after its current step",
+                    ) {
                         action = Some(QueueAction::SendNow(turn.id.clone()));
                     }
                 });
@@ -305,13 +319,12 @@ impl Rename {
 
     /// Draws the field; Enter saves, Escape or clicking away cancels.
     pub fn show(&mut self, ui: &mut Ui, width: f32) -> RenameOutcome {
-        let id = Id::new(("agent_chat_rename", &self.key));
-        let response = ui.add(
-            TextEdit::singleline(&mut self.text)
-                .id(id)
-                .desired_width(width)
-                .hint_text("New title"),
-        );
+        let response = TextField::new(&mut self.text)
+            .id_salt(("agent_chat_rename", &self.key))
+            .hint("New title")
+            .icon(svg::PENCIL_SIMPLE)
+            .width(width)
+            .show(ui);
         if !self.focused {
             response.request_focus();
             self.focused = true;
@@ -356,24 +369,21 @@ pub fn user_body(ui: &mut Ui, style: &ChatStyle, text: &str, images: &[String], 
 
 /// Thumbnails of the pictures a sent message carried, or their names where this app kept no thumbnail.
 pub fn sent_images(ui: &mut Ui, names: &[String]) {
+    let t = Tokens::get(ui.ctx());
     ui.horizontal_wrapped(|ui| {
         for name in names {
             match attach::sent_thumb(name) {
                 Some(tex) => {
                     let image = egui::Image::from_texture(&tex)
                         .max_size(vec2(SENT_THUMB, SENT_THUMB))
-                        .corner_radius(4.0);
+                        .corner_radius(t.radius_sm);
                     ui.add(image).on_hover_ui(|ui| {
                         ui.add(egui::Image::from_texture(&tex).max_width(PREVIEW_WIDTH));
                         ui.label(RichText::new(name).small().weak());
                     });
                 }
                 None => {
-                    ui.label(
-                        RichText::new(format!("{} {name}", icons::IMAGE))
-                            .small()
-                            .weak(),
-                    );
+                    icon_text(ui, svg::IMAGE, name, t.text_dim);
                 }
             }
         }
@@ -385,17 +395,27 @@ pub fn drop_hint(ui: &Ui, rect: Rect) {
     if ui.ctx().input(|i| i.raw.hovered_files.is_empty()) {
         return;
     }
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        Id::new(("agent_chat_drop", rect.min.x as i32, rect.min.y as i32)),
-    ));
-    painter.rect_filled(rect, 6.0, Color32::from_black_alpha(150));
+    let id = Id::new(("agent_chat_drop", rect.min.x as i32, rect.min.y as i32));
+    let layer = egui::LayerId::new(egui::Order::Foreground, id);
+    let over = Ui::new(
+        ui.ctx().clone(),
+        id,
+        egui::UiBuilder::new().layer_id(layer).max_rect(rect),
+    );
+    let t = Tokens::get(ui.ctx());
+    let painter = over.painter();
+    painter.rect_filled(rect, t.radius_md, t.base.gamma_multiply(DROP_SCRIM));
+    let icon_rect = Rect::from_center_size(
+        rect.center() - vec2(0.0, DROP_ICON / 2.0),
+        Vec2::splat(DROP_ICON),
+    );
+    svg::PAPERCLIP.paint(&over, icon_rect, DROP_ICON, t.primary);
     painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        format!("{} Drop to attach", icons::PAPERCLIP),
-        egui::FontId::proportional(18.0),
-        theme::strong_text(ui),
+        rect.center() + vec2(0.0, DROP_ICON / 4.0),
+        egui::Align2::CENTER_TOP,
+        "Drop to attach",
+        fonts::semibold(DROP_TEXT_PT),
+        t.text,
     );
 }
 

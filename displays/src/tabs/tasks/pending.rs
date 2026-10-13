@@ -8,10 +8,13 @@
 //! `Interaction`/`Displayable` impls on `LiveTaskPayload`, which have no handle
 //! to the context — the same reason [`crate::get_database_users`] exists.
 
+use crate::ui_tools::controls::{self, Metrics};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle};
 use database::schema::{LiveTaskPayload, RecordIdExt, TaskField};
 use eframe::egui::{
-    Frame, Margin, ProgressBar, Response, RichText, Sense, Ui, Vec2,
+    Frame, Margin, Response, RichText, Sense, Ui, Vec2,
 };
 use once_cell::sync::Lazy;
 use std::collections::{BTreeSet, HashMap};
@@ -248,31 +251,32 @@ pub fn undo_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
     // The toast has an infinite TTL, so nothing else drives the countdown.
     ui.ctx().request_repaint();
 
+    let m = Metrics::get(ui.ctx());
     Frame::window(ui.style())
-        .inner_margin(Margin::same(10))
+        .inner_margin(Margin::same(m.window_margin))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                ui.label(
-                    RichText::new(format!("Changed {} · {task_name}", edit.summary()))
-                        .strong(),
-                );
                 ui.horizontal(|ui| {
+                    ui.add(svg::NOTE_PENCIL.image(m.icon_md).tint(theme::primary(ui)));
+                    ui.label(
+                        RichText::new(format!("Changed {} · {task_name}", edit.summary()))
+                            .strong(),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.add(svg::CLOCK_COUNTDOWN.image(m.icon_sm).tint(theme::faint_text(ui)));
                     ui.label(
                         RichText::new(format!("applying in {secs}s"))
                             .small()
                             .weak(),
                     );
-                    ui.add_space(6.0);
-                    if ui
-                        .button(format!("{} Undo", crate::ui_tools::icons::UNDO))
-                        .clicked()
-                    {
+                    if controls::icon_text_button(ui, svg::ARROW_COUNTER_CLOCKWISE, "Undo").clicked() {
                         cancel(&task_id);
                         toast.close();
                     }
                 });
                 // The countdown has to keep ticking on screen.
-                ui.add(ProgressBar::new(1.0 - edit.progress()).desired_height(2.0));
+                controls::ProgressBar::new(1.0 - edit.progress()).thin(true).show(ui);
             });
         })
         .response

@@ -1,480 +1,559 @@
 #![allow(deprecated)]
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, PlatformSpawner, Spawner, TaskUiActions};
-use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Notification, Store}, db};
-use eframe::egui::{containers::menu::MenuConfig, *};
+//! The web console's top bar: brand, menus, task search, notifications, account and store.
+
+use crate::{
+    PlatformSpawner, Spawner, TaskUiActions,
+    app_state::{AppState, MainPages, SharedContext, default_tree, default_tree_wasm},
+    pages::view_menu,
+    tabs::{TabContext, WorkMode},
+    ui_tools::{
+        controls::{
+            self, BarKind, ButtonKind, IconBox, IconButton, MenuButton, Metrics, TextButton, Tokens,
+        },
+        icons::{
+            self,
+            svg::{self, Icon},
+        },
+    },
+};
+use database::{
+    db,
+    schema::{
+        Notification, Store,
+        utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store},
+    },
+};
+use eframe::egui::{Align, Frame, Layout, Margin, Ui, UiKind};
+
+/// Brand button label.
+const TITLE: &str = concat!("MasterTech Server ", database::version_with_build!());
+/// Width of the store dropdown.
+const STORE_W: f32 = 96.0;
+/// Width of the account menu.
+const ACCOUNT_W: f32 = 270.0;
+/// Width of the admin notification field.
+const ADMIN_NOTE_W: f32 = 196.0;
+/// Width of the notifications popup.
+const NOTIFICATIONS_W: f32 = 380.0;
+/// Tallest the notifications popup grows.
+const NOTIFICATIONS_MAX_H: f32 = 560.0;
+
+/// What a Layout menu row asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LayoutAction {
+    Save,
+    Organize,
+    Reset,
+    ResetMemory,
+}
+
+/// What an account menu row asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AccountAction {
+    Preferences,
+    Downloads,
+    Theme,
+    Refresh,
+    Logout,
+}
+
+/// Writes the signed-in user to the session cookie.
+#[cfg(target_arch = "wasm32")]
+fn store_user_cookie(user: &database::schema::User) {
+    use base64::{Engine as _, engine::general_purpose};
+    use brotli::CompressorReader;
+
+    fn compress_string(input: &str) -> Vec<u8> {
+        let mut compressed = Vec::new();
+        {
+            let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
+            std::io::copy(&mut compressor, &mut compressed).unwrap();
+        }
+        compressed
+    }
+
+    let user_string = serde_json::to_string(user).unwrap();
+    let compressed: Vec<u8> = compress_string(&user_string);
+    let encoded: String = general_purpose::STANDARD.encode(&compressed);
+    log::info!(
+        "Compressed data: {}\nEncoded: {}\nOriginal: {}",
+        compressed.len(),
+        encoded.len(),
+        user_string.len()
+    );
+    wasm_cookies::delete("user");
+    let duration = web_time::Duration::from_secs(172800);
+    let cookie_opts = wasm_cookies::CookieOptions::default()
+        .with_same_site(wasm_cookies::SameSite::Strict)
+        .secure()
+        .expires_after(duration);
+    wasm_cookies::set("user", &encoded, &cookie_opts);
+}
 
 impl SharedContext {
-    pub fn menu_bar(&mut self, ui: &mut eframe::egui::Ui) {
-        eframe::egui::Panel::top("egui_dock::MenuBar").show(ui, |ui| {
-            MenuBar::new()
-            .config(
-                MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
-            )
-            .ui(ui, |ui| {
-                if let Some(user) = self.current_user.as_mut() {
-                    let tab_ctx = TabContext::for_user(user.is_warehouse());
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        ui.add_space(1.0);
-                        ui.menu_button(RichText::new("View").color(ui.global_style().visuals.error_fg_color).heading().underline(), |ui| {
-                            view_menu(ui, &mut self.dock, tab_ctx, WorkMode::Full, None);
+    pub fn menu_bar(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
+        let frame = Frame::side_top_panel(&ui.global_style()).inner_margin(Margin::ZERO);
+        eframe::egui::Panel::top("egui_dock::MenuBar")
+            .frame(frame)
+            .exact_size(m.bar_h)
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    if self.current_user.is_some() {
+                        self.bar_left(ui);
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            self.bar_right(ui)
                         });
+                    } else {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            self.signed_out(ui)
+                        });
+                    }
+                });
+            });
+    }
 
-                        ui.add_space(10.0);
+    fn bar_left(&mut self, ui: &mut Ui) {
+        let Some(user) = self.current_user.as_ref() else {
+            return;
+        };
+        let tab_ctx = TabContext::for_user(user.is_warehouse());
+        if TextButton::new(TITLE)
+            .icon(svg::MT_LOGO)
+            .kind(ButtonKind::Ghost)
+            .show(ui)
+            .on_hover_text("Back to the workspace")
+            .clicked()
+        {
+            self.state = AppState::Authenticated(MainPages::Tasks);
+            match self
+                .app_state_tx
+                .try_send(AppState::Authenticated(MainPages::Tasks))
+            {
+                Ok(_) => log::info!("AppState::Authenticated(MainPages::Tasks)"),
+                Err(e) => log::error!("Error: {e:?}"),
+            }
+        }
+        let dock = &mut self.dock;
+        let _ = MenuButton::new("View")
+            .icon(svg::TABS)
+            .tip("Open or close tabs")
+            .show(ui, |ui| view_menu(ui, dock, tab_ctx, WorkMode::Full, None));
+        self.layout_menu(ui);
 
-                        let create_task = Button::new(
-                            RichText::new(format!("Create Task {}", crate::ui_tools::icons::PLUS))
-                                .color(ui.global_style().visuals.warn_fg_color)
-                                .strong(),
-                        )
-                        .corner_radius(ui.global_style().visuals.menu_corner_radius)
-                        .ui(ui)
-                        .on_hover_text("Create a new task");
-                        if create_task.clicked() {
-                            let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal(None));
-                        }
+        let m = Metrics::get(ui.ctx());
+        controls::vline(ui, m.control_h - 8.0);
+        if TextButton::new("New task")
+            .icon(icons::CREATE_TASK)
+            .kind(ButtonKind::Primary)
+            .show(ui)
+            .on_hover_text("Create a new task")
+            .clicked()
+        {
+            let _ = self
+                .ui_actions_tx
+                .try_send(TaskUiActions::CreateTaskModal(None));
+        }
 
-                        ui.add_space(20.0);
+        crate::ui_data::task_search::search_bar(
+            ui,
+            crate::ui_data::task_search::TaskSearchCtx {
+                state: &mut self.task_search,
+                input: &mut self.search_input,
+                results: &mut self.search_results,
+                index: &mut self.task_index,
+                tasks: &mut self.tasks,
+                store_users: &self.store_users,
+                store_selection: self.store_selection,
+                actions: &self.ui_actions_tx,
+            },
+        );
+    }
 
-                        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_additive_luminance(60));
-                        ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
+    fn layout_menu(&mut self, ui: &mut Ui) {
+        let mut picked = None;
+        let _ = MenuButton::new("Layout")
+            .icon(svg::LAYOUT)
+            .tip("UI layout")
+            .show(ui, |ui| {
+                let mut row = |ui: &mut Ui, icon: Icon, text: &str, action: LayoutAction| {
+                    if controls::menu_item(ui, icon, text).clicked() {
+                        picked = Some(action);
+                    }
+                };
+                row(ui, svg::FLOPPY_DISK, "Save layout", LayoutAction::Save);
+                row(
+                    ui,
+                    svg::FRAME_CORNERS,
+                    "Organize windows",
+                    LayoutAction::Organize,
+                );
+                controls::menu_separator(ui);
+                row(
+                    ui,
+                    svg::ARROW_COUNTER_CLOCKWISE,
+                    "Reset layout",
+                    LayoutAction::Reset,
+                );
+                row(ui, svg::BROOM, "Reset memory", LayoutAction::ResetMemory);
+            });
+        if let Some(action) = picked {
+            self.apply_layout_action(ui, action);
+        }
+    }
 
-                        crate::ui_data::task_search::search_bar(
-                            ui,
-                            crate::ui_data::task_search::TaskSearchCtx {
-                                state: &mut self.task_search,
-                                input: &mut self.search_input,
-                                results: &mut self.search_results,
-                                index: &mut self.task_index,
-                                tasks: &mut self.tasks,
-                                store_users: &self.store_users,
-                                store_selection: self.store_selection,
-                                actions: &self.ui_actions_tx,
-                            },
-                        );
-                    });
+    fn apply_layout_action(&mut self, ui: &Ui, action: LayoutAction) {
+        match action {
+            LayoutAction::Save | LayoutAction::Reset => {
+                let Some(user) = self.current_user.as_mut() else {
+                    return;
+                };
+                if action == LayoutAction::Reset {
+                    self.dock = if cfg!(target_arch = "wasm32") {
+                        default_tree_wasm()
+                    } else {
+                        default_tree()
+                    };
+                }
+                let layout = self.dock.layout_value();
+                self.user_settings.set_ui_layout_mtechserver(layout.clone());
+                user.set_ui_layout_mtechserver(layout.clone());
+                log::debug!("user_settings: {:#?}", user.get_user_settings());
+                #[cfg(target_arch = "wasm32")]
+                store_user_cookie(user);
+                let mut user = user.clone();
+                PlatformSpawner::spawn(async move {
+                    match user.save_mtechserver_ui_layout(layout).await {
+                        Ok(_) => log::info!("Updated User Settings"),
+                        Err(e) => log::error!("Error updating User Settings: {e:?}"),
+                    }
+                });
+                self.update_settings = true;
+            }
+            LayoutAction::Organize => {
+                ui.ctx().memory_mut(|mem| mem.reset_areas());
+                ui.ctx().memory_mut(|mem| {
+                    for layer in mem.areas_mut().visible_layer_ids().iter() {
+                        log::info!("Visible layers: {layer:?}");
+                    }
+                });
+            }
+            LayoutAction::ResetMemory => crate::ui_tools::theme_config::reset_memory(ui.ctx()),
+        }
+    }
 
-                    ui.add_space(ui.available_width() / 3.);
-                    let txt = RichText::new(format!(
-                        "Mastertech Server {}",
-                        database::version_with_build!()
-                    )).heading().color(Color32::WHITE);
+    fn bar_right(&mut self, ui: &mut Ui) {
+        crate::ui_tools::do_not_disturb::toggle_button(ui);
+        if crate::ui_tools::command_bar::open_button(ui) {
+            self.command_bar.request_open();
+        }
+        self.notifications_button(ui);
+        let m = Metrics::get(ui.ctx());
+        controls::vline(ui, m.control_h - 8.0);
+        self.account_menu(ui);
+        self.store_picker(ui);
+    }
 
-                    if ui.add(Button::new(txt)).clicked()
-                    {
-                        self.state = AppState::Authenticated(MainPages::Tasks);
-                        match self.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks))
-                        {
-                            Ok(_) => log::info!("AppState::Authenticated(MainPages::Tasks)"),
-                            Err(e) => log::error!("Error: {e:?}"),
+    fn notifications_button(&mut self, ui: &mut Ui) {
+        let t = Tokens::get(ui.ctx());
+        let (unread, alerts) = (
+            self.notification_center.unread_count(),
+            self.notification_center.alert_count(),
+        );
+        let tip: std::borrow::Cow<str> = match (alerts, unread) {
+            (0, 0) => "Notifications".into(),
+            (0, n) => format!("{n} unread notifications").into(),
+            (a, n) => format!("{a} unread alerts, {n} unread notifications").into(),
+        };
+        let icon = if alerts > 0 {
+            svg::BELL_RINGING
+        } else {
+            svg::BELL
+        };
+        let mut button = IconButton::new(icon, IconBox::Md).tip(&tip);
+        if alerts > 0 {
+            button = button.tint(t.error);
+        }
+        let response = button.show(ui);
+        let (count, tone) = if alerts > 0 {
+            (alerts, t.error)
+        } else {
+            (unread, t.primary)
+        };
+        controls::count_badge(ui, response.rect, count, tone);
+        if response.clicked() {
+            let category = (alerts > 0).then(|| "ALERT".to_string());
+            self.notification_center.open_unread(category);
+        }
+        controls::popup_menu(&response, true, |ui| {
+            ui.reset_style();
+            ui.set_width(NOTIFICATIONS_W);
+            ui.set_max_height(NOTIFICATIONS_MAX_H);
+            let task_names: std::collections::BTreeSet<String> = self
+                .task_index
+                .values()
+                .map(|t| t.task_name.clone())
+                .collect();
+            self.notification_center
+                .ui(ui, &task_names, self.ui_actions_tx.clone(), &self.tasks);
+        });
+    }
+
+    fn account_menu(&mut self, ui: &mut Ui) {
+        let Some(user) = self.current_user.as_ref() else {
+            return;
+        };
+        let name = user.get_name().to_owned();
+        let is_admin = user.is_admin();
+        let mut picked = None;
+        let note = &mut self.admin_notification_text;
+        let _ = MenuButton::new(&name)
+            .icon(svg::USER_CIRCLE)
+            .tip("Account")
+            .keep_open(true)
+            .show(ui, |ui| {
+                ui.set_width(ACCOUNT_W);
+                controls::menu_inset_row(ui, |ui| {
+                    controls::icon_label(ui, svg::IDENTIFICATION_BADGE, &name)
+                });
+                controls::menu_separator(ui);
+                let mut item = |ui: &mut Ui, icon: Icon, text: &str, action: AccountAction| {
+                    if controls::menu_item(ui, icon, text).clicked() {
+                        picked = Some(action);
+                        ui.close_kind(UiKind::Menu);
+                    }
+                };
+                item(ui, svg::GEAR, "Preferences", AccountAction::Preferences);
+                item(
+                    ui,
+                    svg::DOWNLOAD_SIMPLE,
+                    "Downloads",
+                    AccountAction::Downloads,
+                );
+                item(ui, svg::PALETTE, "Theme", AccountAction::Theme);
+                item(
+                    ui,
+                    svg::ARROW_CLOCKWISE,
+                    "Refresh data",
+                    AccountAction::Refresh,
+                );
+                if is_admin {
+                    controls::menu_separator(ui);
+                    controls::menu_inset_row(ui, |ui| admin_notification(ui, note));
+                }
+                controls::menu_separator(ui);
+                item(ui, svg::SIGN_OUT, "Log out", AccountAction::Logout);
+            });
+        if let Some(action) = picked {
+            self.apply_account_action(ui, action);
+        }
+    }
+
+    fn apply_account_action(&mut self, ui: &Ui, action: AccountAction) {
+        match action {
+            AccountAction::Preferences => {
+                self.state = AppState::Authenticated(MainPages::UserPreferences);
+                match self
+                    .app_state_tx
+                    .try_send(AppState::Authenticated(MainPages::UserPreferences))
+                {
+                    Ok(_) => {
+                        if let Some(user) = self.current_user.clone() {
+                            self.account_mod.set_user(user);
                         }
                     }
-
-                    ui.add_space(ui.available_width()/7.0);
-
-                    let selected = &mut self.store_selection;
-                    let current = selected.clone();
-                    let _user_store = user.get_store();
-                    let selected_text = Store::from_presta_store_id(&selected.to_string());
-
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(8.0);
-
-                        crate::ui_tools::do_not_disturb::toggle_button(ui);
-                        ui.add_space(4.0);
-                        if crate::ui_tools::command_bar::open_button(ui) {
-                            self.command_bar.request_open();
-                        }
-                        ui.add_space(4.0);
-
-                        // Notification count badges
-                        let unread_count = self.notification_center.unread_count();
-                        let alert_count = self.notification_center.alert_count();
-                        
-                        // Alert badge (red, shown first/rightmost)
-                        if alert_count > 0 {
-                            let alert_badge = RichText::new(format!(
-                                "{} {}",
-                                crate::ui_tools::icons::STATUS_WARN,
-                                alert_count
-                            ))
-                                .color(Color32::WHITE)
-                                .small()
-                                .strong();
-                            if ui.add(
-                                Button::new(alert_badge)
-                                    .fill(theme::error(ui))
-                                    .corner_radius(10.0)
-                                    .min_size(vec2(28.0, 18.0))
-                            ).on_hover_text(format!("{} unread alerts — click to open", alert_count)).clicked() {
-                                self.notification_center.open_unread(Some("ALERT".to_string()));
-                            }
-                            ui.add_space(4.0);
-                        }
-                        
-                        // General unread badge (teal)
-                        if unread_count > 0 {
-                            let badge_text = if unread_count > 99 {
-                                "99+".to_string()
-                            } else {
-                                unread_count.to_string()
-                            };
-                            let unread_badge = RichText::new(format!(
-                                "{} {}",
-                                crate::ui_tools::icons::BELL,
-                                badge_text
-                            ))
-                                .color(Color32::WHITE)
-                                .small()
-                                .strong();
-                            if ui.add(
-                                Button::new(unread_badge)
-                                    .fill(theme::success(ui))
-                                    .corner_radius(10.0)
-                                    .min_size(vec2(28.0, 18.0))
-                            ).on_hover_text(format!("{} unread notifications — click to open", unread_count)).clicked() {
-                                self.notification_center.open_unread(None);
-                            }
-                            ui.add_space(4.0);
-                        }
-                        
-                        let txt = RichText::new(format!(" {} ", user.get_name())).color(ui.global_style().visuals.error_fg_color).strong().underline();
-                        ui.menu_button(txt, |ui| {
-                            ui.set_width(300.0);
-                            ui.set_height(800.);
-
-                            ui.vertical_centered_justified(|ui| {
-                                // Visible frame at rest + brighter hover fill for the account-menu buttons.
-                                let accent = ui.global_style().visuals.error_fg_color;
-                                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_gray(30);
-                                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_gray(72));
-                                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::from_gray(52);
-                                ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, accent);
-                                ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_gray(64);
-
-                                if ui.add(Button::new("Preferences")).clicked() {
-                                    self.state = AppState::Authenticated(MainPages::UserPreferences);
-                                    match self.app_state_tx.try_send(
-                                        AppState::Authenticated(MainPages::UserPreferences),
-                                    ) {
-                                        Ok(_) => self.account_mod.set_user(user.clone()),
-                                        Err(e) => log::error!("Error: {e:?}"),
-                                    }
-                                }
-                                ui.separator();
-
-                                if ui.add(Button::new("Downloads")).clicked() {
-                                    self.state = AppState::Authenticated(MainPages::Downloads);
-                                    self.release_browser.refresh(ui.ctx());
-
-                                    match self.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads))
-                                    {
-                                        Ok(_) => log::info!("Switching to Downloads Page"),
-                                        Err(e) => log::error!("Error: {e:?}"),
-                                    }
-                                }
-                                
-                                ui.separator();
-
-                                if ui.add(Button::new("Modify Theme")).clicked() {
-                                    self.modify_theme = true;
-                                    ui.close_kind(UiKind::Menu)
-                                }
-                                
-                                ui.separator();
-
-                                if ui.add(Button::new("Refresh Data")).clicked() {
-                                    self.first_run = true;
-                                }
-
-                                ui.separator();
-
-                                if user.is_admin() {
-                                    ui.add_space(10.);
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(40.);
-                                        TextEdit::singleline(&mut self.admin_notification_text)
-                                            .background_color(ui.global_style().visuals.code_bg_color)
-                                            .vertical_align(Align::Center)
-                                            .hint_text("Admin Notification")
-                                            .desired_rows(2)
-                                            .desired_width(200.)
-                                            .ui(ui);
-
-                                        ui.add_space(10.);
-                                        if Button::new("⬈").min_size(vec2(30., 30.)).stroke(Stroke::new(0.5_f32, ui.global_style().visuals.error_fg_color)).ui(ui).clicked() {
-                                            let txt = self.admin_notification_text.clone();
-                                            PlatformSpawner::spawn(async move {
-                                                let res = Notification::default()
-                                                    .set_description(txt)
-                                                    .set_type("Admin")
-                                                    .create()
-                                                    .await;
-                                                log::info!("Notification Response: {:?}", res);
-                                            });
-                                        }
-                                    });
-                                }
-
-                                ui.add_space(10.0);
-                                Separator::default().shrink(20.0).ui(ui);
-
-                                if ui.add(Button::new(RichText::new("Logout").color(ui.global_style().visuals.error_fg_color))).clicked() {
-                                    #[cfg(target_arch = "wasm32")]
-                                    {
-                                        wasm_cookies::delete("user");
-                                        wasm_cookies::delete("jwt");
-                                    }
-                                    PlatformSpawner::spawn(async move {
-                                        let invalidation = db().invalidate().await;
-                                        log::info!("invalidated connection: {:?}", invalidation);
-                                    });
-
-                                    #[cfg(target_arch = "wasm32")]
-                                    if let Some(window) = web_sys::window() {
-                                        // Clear localStorage and sessionStorage immediately
-                                        if let Ok(storage) = window.local_storage() {
-                                            if let Some(storage) = storage {
-                                                let clear = storage.clear();
-                                                log::info!("Clearing localStorage: {clear:?}");
-                                            }
-                                        }
-                                        if let Ok(storage) = window.session_storage() {
-                                            if let Some(storage) = storage {
-                                                let clear = storage.clear();
-                                                log::info!("Clearing sessionStorage: {clear:?}");
-                                            }
-                                        }
-
-                                        // Perform async cleanup for CacheStorage and Service Workers, then reload
-                                        
-                                        PlatformSpawner::spawn(async move {
-                                            use wasm_bindgen_futures::JsFuture;
-                                            use js_sys::wasm_bindgen::JsCast;
-
-                                            let win = web_sys::window().expect("window");
-
-                                            // Clear CacheStorage
-                                            if let Ok(caches) = win.caches() {
-                                                if let Ok(keys_js) = JsFuture::from(caches.keys()).await {
-                                                let keys = js_sys::Array::from(&keys_js);
-                                                for key in keys.iter() {
-                                                    if let Some(k) = key.as_string() {
-                                                        let _ = JsFuture::from(caches.delete(&k)).await;
-                                                    }
-                                                }
-                                                }
-                                            }
-
-                                            // Unregister all Service Workers
-                                            let swc = win.navigator().service_worker();
-                                            if let Ok(regs_js) = JsFuture::from(swc.get_registrations()).await {
-                                                let regs = js_sys::Array::from(&regs_js);
-                                                for reg_val in regs.iter() {
-                                                    if let Ok(reg) = reg_val.dyn_into::<web_sys::ServiceWorkerRegistration>() {
-                                                        if let Ok(promise) = reg.unregister() {
-                                                            let _ = JsFuture::from(promise).await;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            
-
-                                            // Finally, force reload to ensure fresh assets
-                                            let reload = win.location().reload();
-                                            log::info!("Reloading window: {reload:?}");
-                                        });
-                                    } else {
-                                        log::info!("No window");
-                                    }
-                                    
-                                    let logout_msg = "Logged out".to_string();
-                                    self.state = AppState::NoAuth(logout_msg.clone());
-                                    match self.app_state_tx.try_send(AppState::NoAuth(logout_msg))
-                                    {
-                                        Ok(_) => log::info!("Logged out"),
-                                        Err(e) => log::error!("Error: {e:?}"),
-                                    }
-                                }
-                            });
-
-                            Separator::default().shrink(20.0).ui(ui);
-
-                            // show_notification links a notification's text to a task by name.
-                            let task_names: std::collections::BTreeSet<String> =
-                                self.task_index.values().map(|t| t.task_name.clone()).collect();
-                            self.notification_center.ui(ui, &task_names, self.ui_actions_tx.clone(), &self.tasks);
-                        });
-
-                        ui.add_space(2.0);
-                        ui.label("Welcome, ");
-                        ui.add_space(20.);
-
-                        ui.menu_button(RichText::new("Ui Layout").color(ui.global_style().visuals.error_fg_color).strong().underline(), |ui| {
-                            ui.vertical_centered_justified(|ui| {
-                                ui.set_width(200.0);    
-                                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_additive_luminance(60));
-                                ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                                let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
-                                ui.add_space(5.0);
-                                let organize = Button::new(RichText::new(" Organize Windows ").monospace()).ui(ui);
-                                ui.add_space(10.0);
-                                ui.separator();
-                                ui.add_space(10.0);
-                                let reset_ui = Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()).ui(ui);
-                                ui.add_space(5.0);
-                                let reset_mem = Button::new(RichText::new(" Reset Memory ").monospace()).ui(ui);
-                                let new_tree = if cfg!(target_arch="wasm32") {
-                                    default_tree_wasm()
-                                } else {
-                                    default_tree()
-                                };
-
-                                if reset_ui.clicked() {
-                                    let default_layout = new_tree.layout_value();
-                                    self.user_settings.set_ui_layout_mtechserver(default_layout.clone());
-                                    user.set_ui_layout_mtechserver(default_layout.clone());
-                                    #[cfg(target_arch = "wasm32")]
-                                    {
-                                        use brotli::CompressorReader;
-                                        use base64::{engine::general_purpose, Engine as _};
-                
-                                        fn compress_string(input: &str) -> Vec<u8> {
-                                            let mut compressed = Vec::new();
-                                            {
-                                                let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
-                                                std::io::copy(&mut compressor, &mut compressed).unwrap();
-                                            }
-                                            compressed
-                                        }
-                
-                                        let user_string = serde_json::to_string(&user.clone()).unwrap();
-                                        let compressed: Vec<u8> = compress_string(&user_string);
-                                        let encoded: String = general_purpose::STANDARD.encode(&compressed);
-                                        log::info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), user_string.len());
-                                        wasm_cookies::delete("user");
-                                        let duration = web_time::Duration::from_secs(172800);
-                                        let cookie_opts = wasm_cookies::CookieOptions::default()
-                                            .with_same_site(wasm_cookies::SameSite::Strict)
-                                            .secure()
-                                            .expires_after(duration);
-                                        wasm_cookies::set("user", &encoded, &cookie_opts);
-                                    }
-                                    
-                                    self.dock = new_tree;
-                                    let mut user = user.clone();
-                                    PlatformSpawner::spawn(async move {
-                                        match user.save_mtechserver_ui_layout(default_layout.clone()).await {
-                                            Ok(_) => log::info!("Updated User Settings"),
-                                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                                        }
-                                    });
-                                    self.update_settings = true;
-                                }
-                                
-                                if submit.clicked() {
-                                    let val = self.dock.layout_value();
-                                    self.user_settings.set_ui_layout_mtechserver(val.clone());
-                                    user.set_ui_layout_mtechserver(val.clone());
-                                    log::debug!("user_settings: {:#?}", user.get_user_settings());
-                                    #[cfg(target_arch = "wasm32")]
-                                    {
-                                        use brotli::CompressorReader;
-                                        use base64::{engine::general_purpose, Engine as _};
-                
-                                        fn compress_string(input: &str) -> Vec<u8> {
-                                            let mut compressed = Vec::new();
-                                            {
-                                                let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
-                                                std::io::copy(&mut compressor, &mut compressed).unwrap();
-                                            }
-                                            compressed
-                                        }
-                                        let user_string = serde_json::to_string(&user.clone()).unwrap();
-                                        let compressed: Vec<u8> = compress_string(&user_string);
-                                        let encoded: String = general_purpose::STANDARD.encode(&compressed);
-
-                                        wasm_cookies::delete("user");
-                                        let duration = web_time::Duration::from_secs(172800);
-                                        let cookie_opts = wasm_cookies::CookieOptions::default()
-                                            .with_same_site(wasm_cookies::SameSite::Strict)
-                                            .secure()
-                                            .expires_after(duration);
-                                        wasm_cookies::set("user", &encoded, &cookie_opts);
-                                    }
-                                    let mut user = user.clone();
-                                    PlatformSpawner::spawn(async move {
-                                        match user.save_mtechserver_ui_layout(val.clone()).await {
-                                            Ok(_) => log::info!("Updated User Settings"),
-                                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                                        }
-                                    });
-                                    self.update_settings = true;
-                                }
-                                if organize.clicked() {
-                                    ui.ctx().memory_mut(|mem| mem.reset_areas());
-                                    ui.ctx().memory_mut(|mem| {
-                                        for layer in mem.areas_mut().visible_layer_ids().iter() {
-                                            log::info!("Visible layers: {layer:?}");
-                                        }
-                                    })
-                                }
-                                if reset_mem.clicked() {
-                                    ui.ctx().memory_mut(|mem| *mem = Default::default());
-                                }
-                            });
-                        });
-
-                        ui.add_space(20.);
-
-                        Frame::default().stroke(ui.global_style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
-                            ComboBox::new("Store_Selection", "")                    
-                            .width(60.)
-                            .selected_text(selected_text.as_str())
-                            .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                            .show_ui(ui, |ui| presta_store_options(ui, selected, &Store::VALUES));
-                        });
-
-                        if *selected != current {
-                            let tasks_tx = self.initial_tasks_tx.clone();
-                            let store_users_tx = self.store_users_tx.clone();
-                            let store_selection = Store::from_presta_store_id(&selected.to_string());
-                            self.store_users.clear();
-                            self.tasks.clear();
-                            self.layout_configs = None; // Force reinitialization
-                            log::info!("Switching to store: {:?}", store_selection.as_str());
-                            log::info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
-                            PlatformSpawner::spawn(async move {
-                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                let tasks = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                let get_store_users = get_store_users(store_users_tx, store_selection).await;
-                                log::info!("get_completed_tasks_for_store: {tasks:?}");
-                                log::info!("get_tasks_for_store: {store_tasks:?}");
-                                log::info!("get_store_users: {get_store_users:?}");
-                            });
-                        }
-                                    
-                    });
-                } else {
-                    ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                        if Button::new("Login").ui(ui).clicked() {
-                            self.state = AppState::NoAuth("Needs Login".to_string());
-                            match self.app_state_tx.try_send(AppState::NoAuth("clicked login button".to_string()))
-                            {
-                                Ok(_) => log::info!("Switching to Login Page"),
-                                Err(e) => log::error!("Error: {e:?}"),
-                            }
-                        }
-                        if ui.add(Button::new("Downloads")).clicked() {
-                            self.state = AppState::Authenticated(MainPages::Downloads);
-                            match self.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads))
-                            {
-                                Ok(_) => log::info!("Switching to Downloads Page"),
-                                Err(e) => log::error!("Error: {e:?}"),
-                            }
-                        }
-                    });
+                    Err(e) => log::error!("Error: {e:?}"),
                 }
+            }
+            AccountAction::Downloads => {
+                self.state = AppState::Authenticated(MainPages::Downloads);
+                self.release_browser.refresh(ui.ctx());
+                match self
+                    .app_state_tx
+                    .try_send(AppState::Authenticated(MainPages::Downloads))
+                {
+                    Ok(_) => log::info!("Switching to Downloads Page"),
+                    Err(e) => log::error!("Error: {e:?}"),
+                }
+            }
+            AccountAction::Theme => self.modify_theme = true,
+            AccountAction::Refresh => self.first_run = true,
+            AccountAction::Logout => self.logout(),
+        }
+    }
+
+    fn logout(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_cookies::delete("user");
+            wasm_cookies::delete("jwt");
+        }
+        PlatformSpawner::spawn(async move {
+            let invalidation = db().invalidate().await;
+            log::info!("invalidated connection: {:?}", invalidation);
+        });
+
+        #[cfg(target_arch = "wasm32")]
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(storage)) = window.local_storage() {
+                let clear = storage.clear();
+                log::info!("Clearing localStorage: {clear:?}");
+            }
+            if let Ok(Some(storage)) = window.session_storage() {
+                let clear = storage.clear();
+                log::info!("Clearing sessionStorage: {clear:?}");
+            }
+
+            PlatformSpawner::spawn(async move {
+                use js_sys::wasm_bindgen::JsCast;
+                use wasm_bindgen_futures::JsFuture;
+
+                let win = web_sys::window().expect("window");
+
+                if let Ok(caches) = win.caches() {
+                    if let Ok(keys_js) = JsFuture::from(caches.keys()).await {
+                        let keys = js_sys::Array::from(&keys_js);
+                        for key in keys.iter() {
+                            if let Some(k) = key.as_string() {
+                                let _ = JsFuture::from(caches.delete(&k)).await;
+                            }
+                        }
+                    }
+                }
+
+                let swc = win.navigator().service_worker();
+                if let Ok(regs_js) = JsFuture::from(swc.get_registrations()).await {
+                    let regs = js_sys::Array::from(&regs_js);
+                    for reg_val in regs.iter() {
+                        if let Ok(reg) = reg_val.dyn_into::<web_sys::ServiceWorkerRegistration>() {
+                            if let Ok(promise) = reg.unregister() {
+                                let _ = JsFuture::from(promise).await;
+                            }
+                        }
+                    }
+                }
+
+                let reload = win.location().reload();
+                log::info!("Reloading window: {reload:?}");
             });
+        } else {
+            log::info!("No window");
+        }
+
+        let logout_msg = "Logged out".to_string();
+        self.state = AppState::NoAuth(logout_msg.clone());
+        match self.app_state_tx.try_send(AppState::NoAuth(logout_msg)) {
+            Ok(_) => log::info!("Logged out"),
+            Err(e) => log::error!("Error: {e:?}"),
+        }
+    }
+
+    fn store_picker(&mut self, ui: &mut Ui) {
+        let current = self.store_selection;
+        let options: Vec<(u64, &str)> = Store::VALUES
+            .iter()
+            .map(|s| (s.into_store_id() as u64, s.as_str()))
+            .collect();
+        controls::dropdown(
+            ui,
+            "Store_Selection",
+            &mut self.store_selection,
+            &options,
+            STORE_W,
+        )
+        .on_hover_text("Store");
+        let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+        svg::STOREFRONT.show_tinted(ui, m.icon_md, t.icon);
+        if self.store_selection == current {
+            return;
+        }
+        let tasks_tx = self.initial_tasks_tx.clone();
+        let store_users_tx = self.store_users_tx.clone();
+        let store_selection = Store::from_presta_store_id(&self.store_selection.to_string());
+        self.store_users.clear();
+        self.tasks.clear();
+        self.layout_configs = None;
+        log::info!("Switching to store: {:?}", store_selection.as_str());
+        log::info!(
+            "Store: {store_selection:?}//{:?}",
+            store_selection.clone().as_str().to_string()
+        );
+        PlatformSpawner::spawn(async move {
+            let store_tasks = get_tasks_for_store(
+                tasks_tx.clone(),
+                store_selection.clone().as_str().to_string(),
+            )
+            .await;
+            let tasks = get_completed_tasks_for_store(
+                tasks_tx.clone(),
+                store_selection.clone().as_str().to_string(),
+            )
+            .await;
+            let get_store_users = get_store_users(store_users_tx, store_selection).await;
+            log::info!("get_completed_tasks_for_store: {tasks:?}");
+            log::info!("get_tasks_for_store: {store_tasks:?}");
+            log::info!("get_store_users: {get_store_users:?}");
+        });
+    }
+
+    fn signed_out(&mut self, ui: &mut Ui) {
+        if TextButton::new("Log in")
+            .icon(svg::SIGN_IN)
+            .show(ui)
+            .clicked()
+        {
+            self.state = AppState::NoAuth("Needs Login".to_string());
+            match self
+                .app_state_tx
+                .try_send(AppState::NoAuth("clicked login button".to_string()))
+            {
+                Ok(_) => log::info!("Switching to Login Page"),
+                Err(e) => log::error!("Error: {e:?}"),
+            }
+        }
+        if TextButton::new("Downloads")
+            .icon(svg::DOWNLOAD_SIMPLE)
+            .kind(ButtonKind::Ghost)
+            .show(ui)
+            .clicked()
+        {
+            self.state = AppState::Authenticated(MainPages::Downloads);
+            match self
+                .app_state_tx
+                .try_send(AppState::Authenticated(MainPages::Downloads))
+            {
+                Ok(_) => log::info!("Switching to Downloads Page"),
+                Err(e) => log::error!("Error: {e:?}"),
+            }
+        }
+    }
+}
+
+/// The admin broadcast field and its send button.
+fn admin_notification(ui: &mut Ui, text: &mut String) {
+    controls::TextField::new(text)
+        .hint("Admin notification")
+        .icon(svg::MEGAPHONE)
+        .width(ADMIN_NOTE_W)
+        .show(ui);
+    if controls::icon_button(
+        ui,
+        svg::PAPER_PLANE_TILT,
+        IconBox::Md,
+        false,
+        "Send to everyone",
+    )
+    .clicked()
+    {
+        let txt = text.clone();
+        PlatformSpawner::spawn(async move {
+            let res = Notification::default()
+                .set_description(txt)
+                .set_type("Admin")
+                .create()
+                .await;
+            log::info!("Notification Response: {:?}", res);
         });
     }
 }

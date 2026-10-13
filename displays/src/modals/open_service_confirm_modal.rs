@@ -17,12 +17,21 @@
 //!      to read.
 
 use crate::open_service_suggestions::OpenServiceSuggestion;
-use crate::ui_tools::theme;
+use crate::ui_tools::{
+    controls::{self, BarKind, ButtonKind, IconLabel, Metrics, TextButton, TextField, Tokens},
+    icons::svg,
+    theme,
+};
 use database::schema::service_match::{OpenServiceCandidate, PrestaSpecsSnapshot};
 use eframe::egui::{
-    Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText,
-    ScrollArea, Shadow, TextEdit, Ui, Vec2, Widget, Window,
+    Align, Align2, Color32, Context, Frame, Grid, Key, Layout, Margin, RichText, ScrollArea,
+    Stroke, Ui, Vec2,
 };
+
+/// Inner margin of the bind window.
+const WINDOW_MARGIN: i8 = 16;
+/// Width the badge and label columns of the spec grid take.
+const SPEC_LEAD_W: f32 = 180.0;
 
 /// Tag for which side a given field's value came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,26 +255,11 @@ impl OpenServiceConfirmModal {
             return Some(OpenServiceConfirmOutcome::Reject);
         }
 
-        let style = &ctx.global_style().visuals;
-        let mut shadow = Shadow::default();
-        shadow.blur = 2;
-        shadow.spread = 4;
-        shadow.color = style.window_stroke.color;
-        let title_text = RichText::new(&self.title)
-            .heading()
-            .color(style.warn_fg_color);
-
+        let title = self.title.clone();
         let mut open = true;
-        Window::new(title_text)
-            .title_frame(Frame::window(&ctx.global_style()))
-            .frame(
-                Frame::default()
-                    .inner_margin(Margin::symmetric(16, 16))
-                    .stroke(style.window_stroke)
-                    .fill(style.window_fill)
-                    .corner_radius(style.menu_corner_radius)
-                    .shadow(shadow),
-            )
+        let warn = ctx.global_style().visuals.warn_fg_color;
+        controls::icon_window_tone(ctx, svg::LINK, &title, warn)
+            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::same(WINDOW_MARGIN)))
             .pivot(Align2::CENTER_CENTER)
             .fixed_size([960.0, 720.0])
             .collapsible(false)
@@ -296,6 +290,7 @@ impl OpenServiceConfirmModal {
     fn body(&mut self, ui: &mut Ui) {
         // Two columns: left = candidate metadata + checkin notes;
         // right = merged spec preview with per-field source badges.
+        let m = Metrics::get(ui.ctx());
         let available_height = ui.available_height() - 60.0;
         ui.horizontal(|ui| {
             ui.allocate_ui_with_layout(
@@ -305,7 +300,7 @@ impl OpenServiceConfirmModal {
                     self.left_panel(ui);
                 },
             );
-            ui.separator();
+            controls::vline(ui, available_height);
             ui.allocate_ui_with_layout(
                 Vec2::new(ui.available_width(), available_height),
                 Layout::top_down(Align::Min),
@@ -315,52 +310,60 @@ impl OpenServiceConfirmModal {
             );
         });
 
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(8.0);
+        ui.add_space(m.gap.y);
         self.action_buttons(ui);
     }
 
     fn left_panel(&mut self, ui: &mut Ui) {
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
         let c = match self.suggestion.candidates.get(self.candidate_index) {
             Some(c) => c,
             None => {
-                ui.colored_label(
-                    theme::error(ui),
+                controls::status_label(
+                    ui,
+                    svg::WARNING_CIRCLE,
                     "Candidate index out of range — close and try again.",
+                    theme::error(ui),
                 );
                 return;
             }
         };
-        ui.label(RichText::new("Service Order").heading().strong());
-        ui.add_space(4.0);
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::icon_label(ui, svg::TICKET, "Service Order");
+        });
+        ui.add_space(m.pad.y);
         kv_row(ui, "Service #", &c.service_number);
         kv_row(ui, "Doc Alias", &c.doc_alias);
         kv_row(ui, "State", &format!("{} ({})", c.state_name, c.state_id));
         kv_row(ui, "Created", &c.date_add);
         kv_row(ui, "Updated", &c.date_upd);
 
-        if let Some(m) = self.suggestion.match_.as_ref() {
-            ui.add_space(10.0);
-            ui.label(RichText::new("Customer").heading().strong());
-            ui.add_space(4.0);
+        if let Some(found) = self.suggestion.match_.as_ref() {
+            ui.add_space(m.gap.y);
+            controls::bar(ui, BarKind::Header, |ui| {
+                controls::icon_label(ui, svg::USER, "Customer");
+            });
+            ui.add_space(m.pad.y);
             kv_row(
                 ui,
                 "Name",
-                &format!("{} {}", m.first_name, m.last_name),
+                &format!("{} {}", found.first_name, found.last_name),
             );
-            kv_row(ui, "PrestaShop ID", &m.id_customer);
-            kv_row(ui, "Original Order", &m.id_order);
+            kv_row(ui, "PrestaShop ID", &found.id_customer);
+            kv_row(ui, "Original Order", &found.id_order);
         }
 
-        ui.add_space(10.0);
-        ui.label(RichText::new("Check-in Notes").heading().strong());
-        ui.add_space(4.0);
-        Frame::default()
-            .fill(theme::bg_extreme(ui))
-            .stroke(ui.style().visuals.window_stroke)
-            .corner_radius(eframe::egui::CornerRadius::same(4))
-            .inner_margin(Margin::same(8))
+        ui.add_space(m.gap.y);
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::icon_label(ui, svg::NOTE, "Check-in Notes");
+        });
+        ui.add_space(m.pad.y);
+        Frame::new()
+            .fill(t.sunken)
+            .stroke(Stroke::new(1.0, t.separator))
+            .corner_radius(t.radius_sm)
+            .inner_margin(Margin::same(m.gap.x as i8))
             .show(ui, |ui| {
                 ScrollArea::vertical()
                     .max_height(220.0)
@@ -377,97 +380,92 @@ impl OpenServiceConfirmModal {
     }
 
     fn right_panel(&mut self, ui: &mut Ui) {
-        ui.label(RichText::new("Computer record (merged)").heading().strong());
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new(
-                "Live values from the running Mastertech win when non-empty; \
-                 PrestaShop order fills gaps.  Edit any field inline to override.",
-            )
-            .small()
-            .weak(),
-        );
-        ui.add_space(8.0);
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::icon_label(ui, svg::DESKTOP_TOWER, "Computer record (merged)");
+        });
+        ui.add_space(m.pad.y / 2.0);
+        IconLabel::new(
+            svg::INFO,
+            "Live values from the running Mastertech win when non-empty; \
+             PrestaShop order fills gaps.  Edit any field inline to override.",
+        )
+        .small(true)
+        .tone(theme::weak_text(ui))
+        .wrap(true)
+        .show(ui);
+        ui.add_space(m.gap.y);
 
-        let total = self.fields.len();
+        let field_w = (ui.available_width() - SPEC_LEAD_W).max(SPEC_LEAD_W);
         ScrollArea::vertical()
             .max_height(ui.available_height() - 40.0)
             .id_salt("spec-preview")
             .show(ui, |ui| {
-                for idx in 0..total {
-                    let f = &mut self.fields[idx];
-                    ui.horizontal(|ui| {
-                        // Badge — fixed width-ish so labels align.
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(70.0, 22.0),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                let badge = RichText::new(f.source.badge_label())
-                                    .color(f.source.badge_color(ui))
-                                    .strong()
-                                    .small();
-                                ui.label(badge);
-                            },
-                        );
-                        ui.label(RichText::new(format!("{}:", f.label)).strong());
-                        let prev = f.value.clone();
-                        let resp = TextEdit::singleline(&mut f.value)
-                            .desired_width(ui.available_width() - 12.0)
-                            .show(ui);
-                        if resp.response.changed() && f.value != prev {
-                            f.source = SpecSource::Manual;
+                Grid::new("spec-preview-grid")
+                    .num_columns(3)
+                    .spacing([m.gap.x, m.pad.y])
+                    .show(ui, |ui| {
+                        for f in self.fields.iter_mut() {
+                            let tone = f.source.badge_color(ui);
+                            controls::badge(ui, f.source.badge_label(), tone);
+                            ui.label(RichText::new(format!("{}:", f.label)).strong());
+                            let prev = f.value.clone();
+                            let resp = TextField::new(&mut f.value).width(field_w).show(ui);
+                            if resp.changed() && f.value != prev {
+                                f.source = SpecSource::Manual;
+                            }
+                            ui.end_row();
+                            if f.live.is_empty() && f.presta.is_empty() {
+                                continue;
+                            }
+                            // Live and PrestaShop values for comparison.
+                            ui.label("");
+                            ui.label("");
+                            ui.horizontal(|ui| {
+                                let weak = theme::weak_text(ui);
+                                if !f.live.is_empty() {
+                                    let live = format!("live: {}", trim_display(&f.live, 80));
+                                    IconLabel::new(svg::PULSE, &live).small(true).tone(weak).show(ui);
+                                }
+                                if !f.presta.is_empty() {
+                                    let presta = format!("presta: {}", trim_display(&f.presta, 80));
+                                    IconLabel::new(svg::STOREFRONT, &presta)
+                                        .small(true)
+                                        .tone(weak)
+                                        .show(ui);
+                                }
+                            });
+                            ui.end_row();
                         }
                     });
-                    ui.horizontal(|ui| {
-                        // Sub-line showing the alternative the operator
-                        // *didn't* pick, so the override decision is
-                        // never blind.
-                        if !f.live.is_empty() {
-                            ui.label(
-                                RichText::new(format!("  live: {}", trim_display(&f.live, 80)))
-                                    .small()
-                                    .weak(),
-                            );
-                        }
-                        if !f.presta.is_empty() {
-                            ui.label(
-                                RichText::new(format!("  presta: {}", trim_display(&f.presta, 80)))
-                                    .small()
-                                    .weak(),
-                            );
-                        }
-                    });
-                    ui.add_space(2.0);
-                }
             });
     }
 
     fn action_buttons(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
+        controls::bar(ui, BarKind::Footer, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if Button::new(
-                    RichText::new("Confirm & bind")
-                        .color(theme::success(ui))
-                        .strong(),
-                )
-                .ui(ui)
-                .on_hover_text(
-                    "Persist: customer link + customer_locked=true, computer row with \
-                     the resolved specs above, and service_order with this computer's id.",
-                )
-                .clicked()
+                let confirm = TextButton::new("Confirm & bind")
+                    .kind(ButtonKind::Primary)
+                    .prominent(true)
+                    .icon(svg::LINK);
+                if confirm
+                    .show(ui)
+                    .on_hover_text(
+                        "Persist: customer link + customer_locked=true, computer row with \
+                         the resolved specs above, and service_order with this computer's id.",
+                    )
+                    .clicked()
                 {
                     self.confirmed = true;
                 }
-                ui.add_space(6.0);
-                if Button::new(
-                    RichText::new("Reject")
-                        .color(theme::error(ui))
-                        .strong(),
-                )
-                .ui(ui)
-                .on_hover_text("Close without writing anything.")
-                .clicked()
+                let reject = TextButton::new("Reject")
+                    .kind(ButtonKind::Danger)
+                    .prominent(true)
+                    .icon(svg::X_CIRCLE);
+                if reject
+                    .show(ui)
+                    .on_hover_text("Close without writing anything.")
+                    .clicked()
                 {
                     self.rejected = true;
                 }
@@ -518,8 +516,9 @@ impl OpenServiceConfirmModal {
 }
 
 fn kv_row(ui: &mut Ui, key: &str, value: &str) {
+    let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{key}:")).strong().small());
+        ui.label(RichText::new(format!("{key}:")).small().color(t.text_dim));
         ui.label(RichText::new(value).small());
     });
 }

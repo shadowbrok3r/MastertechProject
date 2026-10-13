@@ -1,0 +1,13 @@
+Icon assets
+
+regular/*.svg (except mt-*.svg) and duo/*.svg (except mt-*.svg) are derived
+from Phosphor Icons, @phosphor-icons/core 2.1.1, MIT License, Copyright (c)
+2023 Phosphor Icons. See LICENSE in this directory.
+https://github.com/phosphor-icons/core
+
+Modifications: fill="currentColor" is replaced with #ffffff so the icons can be
+tinted at paint time. duo/<name>.svg holds only the opacity="0.2" back layer of
+duotone/<name>-duotone.svg, with the opacity attribute removed.
+
+regular/mt-*.svg and duo/mt-*.svg are original MasterTech glyphs drawn on the
+same 256 grid and stroke weight.

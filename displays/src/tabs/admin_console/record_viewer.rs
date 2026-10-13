@@ -2,9 +2,10 @@
 //! client links to. Opened by clicking either value in a client row's details
 //! grid; each record gets its own window, fetched once on open.
 
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{self, IconLabel};
+use crate::ui_tools::{glass_card, icons::svg, theme};
 use crate::{PlatformSpawner, Spawner};
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::{
     db,
     schema::{ComputerData, CustomerData, RecordId, RecordIdExt},
@@ -25,10 +26,10 @@ impl RecordKind {
         }
     }
 
-    fn icon(self) -> &'static str {
+    fn icon(self) -> svg::Icon {
         match self {
-            Self::Customer => icons::RELINK,
-            Self::Computer => icons::DESKTOP,
+            Self::Customer => svg::USER,
+            Self::Computer => svg::DESKTOP_TOWER,
         }
     }
 }
@@ -58,7 +59,11 @@ pub struct RecordViewer {
 impl Default for RecordViewer {
     fn default() -> Self {
         let (tx, rx) = unbounded();
-        Self { windows: Vec::new(), tx, rx }
+        Self {
+            windows: Vec::new(),
+            tx,
+            rx,
+        }
     }
 }
 
@@ -126,28 +131,22 @@ impl RecordViewer {
         for window in self.windows.iter_mut() {
             let key = window.id.key_string().to_string();
             let mut open = window.open;
-            egui::Window::new(format!(
-                "{}  {} — {key}",
-                window.kind.icon(),
-                window.kind.label()
-            ))
-            .id(egui::Id::new(("admin_record_viewer", key.as_str())))
-            .default_size([460., 520.])
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ScrollArea::vertical().show(ui, |ui| match (&window.payload, &window.error) {
-                    (Some(payload), _) => render_payload(ui, payload),
-                    (None, Some(e)) => {
-                        ui.label(RichText::new(e).color(theme::error(ui)));
-                    }
-                    (None, None) => {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(RichText::new("Loading…").weak());
-                        });
-                    }
+            let title = format!("{} — {key}", window.kind.label());
+            controls::icon_window(ctx, window.kind.icon(), &title)
+                .id(egui::Id::new(("admin_record_viewer", key.as_str())))
+                .default_size([460., 520.])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ScrollArea::vertical().show(ui, |ui| match (&window.payload, &window.error) {
+                        (Some(payload), _) => render_payload(ui, payload),
+                        (None, Some(e)) => {
+                            controls::note(ui, svg::WARNING_CIRCLE, &e, theme::error(ui));
+                        }
+                        (None, None) => {
+                            controls::loading_state(ui, "Loading…");
+                        }
+                    });
                 });
-            });
             window.open = open;
         }
         self.windows.retain(|w| w.open);
@@ -164,7 +163,7 @@ fn render_payload(ui: &mut Ui, payload: &RecordPayload) {
 fn render_customer(ui: &mut Ui, c: &CustomerData) {
     Grid::new("record_viewer_customer")
         .num_columns(2)
-        .spacing([10., 3.])
+        .spacing([8., 4.])
         .show(ui, |ui| {
             field(ui, "ID", &c.id.key_string());
             field(ui, "Name", &c.name);
@@ -187,29 +186,30 @@ fn render_customer(ui: &mut Ui, c: &CustomerData) {
 
     if let Some(links) = c.part_order_links.as_ref().filter(|l| !l.is_empty()) {
         ui.add_space(6.);
-        ui.label(RichText::new("Part orders").strong());
+        glass_card::card_header(ui, svg::PACKAGE, "Part orders", None);
         for link in links {
-            ui.label(RichText::new(link).small());
+            IconLabel::new(svg::LINK, link).small(true).show(ui);
         }
     }
 }
 
 fn render_computer(ui: &mut Ui, c: &ComputerData) {
     if database::schema::entity_link::is_placeholder_computer(c) {
-        ui.label(
-            RichText::new(
-                "Placeholder record — built from an order, not from client hardware. \
+        IconLabel::new(
+            svg::WARNING,
+            "Placeholder record — built from an order, not from client hardware. \
                  No specs were ever gathered.",
-            )
-            .small()
-            .color(theme::warn(ui)),
-        );
+        )
+        .tone(theme::warn(ui))
+        .small(true)
+        .wrap(true)
+        .show(ui);
         ui.add_space(4.);
     }
 
     Grid::new("record_viewer_computer")
         .num_columns(2)
-        .spacing([10., 3.])
+        .spacing([8., 4.])
         .show(ui, |ui| {
             field(ui, "ID", &c.id.key_string());
             field(
@@ -242,13 +242,15 @@ fn render_computer(ui: &mut Ui, c: &ComputerData) {
 
     if !c.drives.is_empty() {
         ui.add_space(6.);
-        ui.label(RichText::new("Drives").strong());
+        glass_card::card_header(ui, svg::HARD_DRIVES, "Drives", None);
         Grid::new("record_viewer_drives")
             .num_columns(3)
-            .spacing([10., 3.])
+            .spacing([8., 4.])
             .show(ui, |ui| {
                 for drive in &c.drives {
-                    ui.label(RichText::new(&drive.drive_letter).small());
+                    IconLabel::new(svg::HARD_DRIVE, &drive.drive_letter)
+                        .small(true)
+                        .show(ui);
                     ui.label(RichText::new(&drive.drive_type).small());
                     ui.label(
                         RichText::new(format!("{} / {} Gb", drive.space_left, drive.total_size))
@@ -261,16 +263,22 @@ fn render_computer(ui: &mut Ui, c: &ComputerData) {
 
     if !c.current_antivirus.is_empty() {
         ui.add_space(6.);
-        ui.label(RichText::new("Security products").strong());
+        glass_card::card_header(ui, svg::SHIELD_CHECK, "Security products", None);
         for product in &c.current_antivirus {
-            ui.label(RichText::new(&product.name).small());
+            IconLabel::new(svg::SHIELD, &product.name)
+                .small(true)
+                .show(ui);
         }
     }
 }
 
 fn field(ui: &mut Ui, key: &str, value: &str) {
     ui.label(RichText::new(key).small().color(theme::weak_text(ui)));
-    let shown = if value.trim().is_empty() { "—" } else { value };
+    let shown = if value.trim().is_empty() {
+        "—"
+    } else {
+        value
+    };
     ui.add(egui::Label::new(RichText::new(shown).small()).wrap());
     ui.end_row();
 }

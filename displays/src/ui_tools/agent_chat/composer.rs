@@ -4,13 +4,14 @@ use base64::Engine;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{AgentTurn, TurnImage};
 use eframe::egui::{
-    self, Align, Button, Id, Key, KeyboardShortcut, Layout, Modifiers, Rect, RichText, ScrollArea,
-    Spinner, TextEdit, Ui, vec2,
+    self, Align, Id, Key, KeyboardShortcut, Layout, Modifiers, Rect, Response, RichText,
+    ScrollArea, TextEdit, Ui, vec2,
 };
 
 use super::attach::{self, AttachEvent, Attachment, Body};
 use crate::ToastMessage;
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{self, IconBox, IconButton, Metrics, SpinnerSize, Tokens};
+use crate::ui_tools::icons::svg::{self, Icon};
 
 /// What the composer asked for this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,8 +33,30 @@ const ACTIVE_KEY: &str = "agent_chat_active_composer";
 const TEXT_PASTE_GRACE: f64 = 1.0;
 /// Side of a composer thumbnail.
 const THUMB: f32 = 56.0;
-/// Width of each button column beside the text box.
-const SIDE_BUTTON_W: f32 = 30.0;
+/// Width of an enlarged thumbnail in a hover tooltip.
+const PREVIEW_WIDTH: f32 = 320.0;
+/// Size of each button beside the text box.
+const SIDE_BUTTON: IconBox = IconBox::Lg;
+
+/// Side of the buttons beside the text box at the current density.
+fn side_button_w(ui: &Ui) -> f32 {
+    SIDE_BUTTON.side(&Metrics::get(ui.ctx()))
+}
+
+/// A side-column icon button; `tint` colours the icon at rest.
+fn side_button(
+    ui: &mut Ui,
+    icon: Icon,
+    tint: Option<egui::Color32>,
+    enabled: bool,
+    tip: &str,
+) -> Response {
+    let mut button = IconButton::new(icon, SIDE_BUTTON).tip(tip).enabled(enabled);
+    if let Some(tint) = tint {
+        button = button.tint(tint);
+    }
+    button.show(ui)
+}
 
 /// Attachments waiting to go out with the next message, and the reads still under way.
 pub struct Composer {
@@ -119,9 +142,7 @@ impl Composer {
             } else {
                 "Message the agent (Shift+Enter for a new line; paste or drop pictures and files)"
             };
-            let button_h = (ui.text_style_height(&egui::TextStyle::Button)
-                + 2.0 * ui.spacing().button_padding.y)
-                .max(ui.spacing().interact_size.y);
+            let button_h = side_button_w(ui);
             let column_h = 2.0 * button_h + ui.spacing().item_spacing.y;
             let max_text_height = max_text_height.max(column_h);
             // Vertical text padding that makes two rows as tall as two stacked buttons.
@@ -132,8 +153,8 @@ impl Composer {
             ui.horizontal_top(|ui| {
                 let gap = ui.spacing().item_spacing.x;
                 let columns = if busy { 2.0 } else { 1.0 };
-                let text_w =
-                    (ui.available_width() - columns * (SIDE_BUTTON_W + gap)).max(SIDE_BUTTON_W);
+                let side = side_button_w(ui);
+                let text_w = (ui.available_width() - columns * (side + gap)).max(side);
                 let edit = ui.allocate_ui_with_layout(
                     vec2(text_w, max_text_height),
                     Layout::top_down_justified(Align::Min),
@@ -258,26 +279,32 @@ impl Composer {
     ) -> Option<ComposerAction> {
         let mut action = None;
         let ready = self.reading == 0 && !(text.trim().is_empty() && self.attachments.is_empty());
+        let t = Tokens::get(ui.ctx());
+        let side = side_button_w(ui);
         let gap = ui.spacing().item_spacing.y;
-        let half = vec2(SIDE_BUTTON_W, ((height - gap) / 2.0).max(0.0));
+        let filler = (height - 2.0 * side - gap).max(0.0);
         if busy {
             ui.vertical(|ui| {
-                if ui
-                    .add_enabled(ready, Button::new(icons::SEND_NOW).min_size(half))
-                    .on_hover_text("Send now: the agent reads it after its current step (Enter)")
-                    .clicked()
+                if side_button(
+                    ui,
+                    svg::LIGHTNING,
+                    Some(t.primary),
+                    ready,
+                    "Send now: the agent reads it after its current step (Enter)",
+                )
+                .clicked()
                 {
                     action = self.submit(text, "steer");
                 }
-                if ui
-                    .add(
-                        Button::new(RichText::new(icons::STOP).color(theme::warn(ui)))
-                            .min_size(half),
-                    )
-                    .on_hover_text(
-                        "Stop the running turn; queued messages wait until you resume them",
-                    )
-                    .clicked()
+                ui.add_space(filler);
+                if side_button(
+                    ui,
+                    svg::STOP,
+                    Some(t.warn),
+                    true,
+                    "Stop the running turn; queued messages wait until you resume them",
+                )
+                .clicked()
                 {
                     action = Some(ComposerAction::Stop);
                 }
@@ -285,30 +312,28 @@ impl Composer {
         }
         ui.vertical(|ui| {
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
-            let send_size = {
-                if ui
-                    .add(Button::new(icons::PAPERCLIP).min_size(half))
-                    .on_hover_text(
-                        "Attach pictures or text files; you can also paste a screenshot or drop files here",
-                    )
-                    .clicked()
+            {
+                if side_button(
+                    ui,
+                    svg::PAPERCLIP,
+                    None,
+                    true,
+                    "Attach pictures or text files; you can also paste a screenshot or drop files here",
+                )
+                .clicked()
                 {
                     attach::pick_files(ui.ctx(), &self.tx);
                 }
-                half
-            };
+                ui.add_space(filler);
+            }
             #[cfg(any(target_os = "ios", target_os = "android"))]
-            let send_size = vec2(SIDE_BUTTON_W, height);
+            ui.add_space((height - side).max(0.0));
             let (icon, hover, kind) = if busy {
-                (icons::QUEUE, "Queue: send when the agent finishes this turn", "queue")
+                (svg::QUEUE, "Queue: send when the agent finishes this turn", "queue")
             } else {
-                (icons::SEND, "Send (Enter)", "start")
+                (svg::PAPER_PLANE_RIGHT, "Send (Enter)", "start")
             };
-            if ui
-                .add_enabled(ready, Button::new(icon).min_size(send_size))
-                .on_hover_text(hover)
-                .clicked()
-            {
+            if side_button(ui, icon, Some(t.primary), ready, hover).clicked() {
                 action = self.submit(text, kind);
             }
         });
@@ -349,7 +374,7 @@ impl Composer {
                 });
             }
             if self.reading > 0 {
-                ui.add(Spinner::new().size(12.0));
+                controls::spinner(ui, SpinnerSize::Sm);
                 ui.label(RichText::new("Reading\u{2026}").small().weak());
             }
         });
@@ -374,9 +399,13 @@ fn mark_active(ui: &Ui, id: Id) {
 
 /// One attachment as a thumbnail or a file chip with a remove button; true when removed.
 fn attachment_chip(ui: &mut Ui, a: &Attachment) -> bool {
+    let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
     let mut removed = false;
-    egui::Frame::group(ui.style())
-        .inner_margin(2.0)
+    egui::Frame::new()
+        .fill(t.raised)
+        .stroke(egui::Stroke::new(1.0, t.card_border))
+        .corner_radius(t.radius_sm)
+        .inner_margin(m.gap.x as i8 / 4)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 match (&a.body, &a.thumb) {
@@ -397,32 +426,23 @@ fn attachment_chip(ui: &mut Ui, a: &Attachment) -> bool {
                         ui.add(
                             egui::Image::from_texture(tex)
                                 .max_size(vec2(THUMB, THUMB))
-                                .corner_radius(4.0),
+                                .corner_radius(t.radius_sm),
                         )
                         .on_hover_ui(|ui| {
-                            ui.add(egui::Image::from_texture(tex).max_width(320.0));
+                            ui.add(egui::Image::from_texture(tex).max_width(PREVIEW_WIDTH));
                             ui.label(RichText::new(details).small().weak());
                         });
                     }
                     (Body::Image { .. }, None) => {
-                        ui.label(RichText::new(format!("{} {}", icons::IMAGE, a.name)).small());
+                        controls::icon_label(ui, svg::IMAGE, &a.name);
                     }
                     (Body::Text(content), _) => {
-                        ui.label(
-                            RichText::new(format!(
-                                "{} {} \u{00b7} {} KB",
-                                icons::FILE_TEXT,
-                                a.name,
-                                content.len().div_ceil(1024)
-                            ))
-                            .small(),
-                        );
+                        let label =
+                            format!("{} \u{00b7} {} KB", a.name, content.len().div_ceil(1024));
+                        controls::icon_label(ui, svg::FILE_TEXT, &label);
                     }
                 }
-                removed = ui
-                    .small_button(icons::CLOSE)
-                    .on_hover_text("Remove")
-                    .clicked();
+                removed = controls::icon_button(ui, svg::X, IconBox::Sm, false, "Remove").clicked();
             });
         });
     removed
@@ -596,8 +616,9 @@ mod tests {
             .expect("the text box was drawn")
             .rect;
         let gap = ctx.global_style().spacing.item_spacing.x;
-        let first = rect.right() + gap + SIDE_BUTTON_W / 2.0;
-        (rect, [first, first + gap + SIDE_BUTTON_W])
+        let side = SIDE_BUTTON.side(&Metrics::get(ctx));
+        let first = rect.right() + gap + side / 2.0;
+        (rect, [first, first + gap + side])
     }
 
     #[test]
@@ -606,8 +627,9 @@ mod tests {
         let mut composer = Composer::default();
         let mut text = "check the disks".to_string();
         let (rect, [column, _]) = columns(&ctx, &mut composer, &mut text, false);
+        let side = SIDE_BUTTON.side(&Metrics::get(&ctx));
         assert!(
-            column + SIDE_BUTTON_W / 2.0 <= 420.5,
+            column + side / 2.0 <= 420.5,
             "the column fits the viewport: {rect:?}"
         );
         let sent = click(

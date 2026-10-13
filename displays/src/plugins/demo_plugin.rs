@@ -4,6 +4,7 @@
 //! `call_plugin_tool` with `plugin_id` = [`HelloMastertechPlugin::ID`]).
 
 use super::{MastertechPlugin, PluginHost, PluginToolDescriptor};
+use crate::ui_tools::{controls, icons::svg};
 use eframe::egui;
 
 /// Stable id for MCP `call_plugin_tool` and enable/disable.
@@ -74,19 +75,24 @@ impl MastertechPlugin for HelloMastertechPlugin {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, host: &PluginHost) {
-        egui::Window::new("Hello Mastertech Plugin")
+        controls::icon_window(ui.ctx(), svg::MT_PLUGIN, "Hello Mastertech Plugin")
             .open(&mut self.window_open)
             .default_width(320.0)
             .show(ui.ctx(), |ui| {
-                ui.label(egui::RichText::new("Demo plugin is running.").strong());
+                controls::icon_label(ui, svg::PLAY, "Demo plugin is running.");
                 ui.add_space(8.0);
-                ui.label(format!("Logic tick counter: {}", self.tick));
-                ui.separator();
-                if ui.button("Request repaint").clicked() {
+                controls::icon_label(
+                    ui,
+                    svg::PULSE,
+                    &format!("Logic tick counter: {}", self.tick),
+                );
+                controls::hairline(ui);
+                if controls::icon_text_button(ui, svg::ARROWS_CLOCKWISE, "Request repaint")
+                    .clicked()
+                {
                     host.request_repaint();
                 }
-                if ui
-                    .button("Toast via PluginHost (demo)")
+                if controls::icon_text_button(ui, svg::NOTIFICATION, "Toast via PluginHost (demo)")
                     .on_hover_text("Uses the global toast channel")
                     .clicked()
                 {

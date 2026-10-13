@@ -1,5 +1,5 @@
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Slider, Stroke, Style, Ui, Vec2, Visuals, Widget};
-use crate::{ui_tools::{encode_theme, glass_backdrop::{self, GlassParams}, rerun_mtech::{RerunMtech, RerunMtechOled}, theme_chrome::{default_egui_chrome, legacy_classic_chrome, mtech_noir_chrome, mtech_noir_glass_chrome, mtech_noir_glass_params, shipped_chrome}, tokyo_dark::{TokyoNight, TokyoNightStorm}, SavedTheme}, PlatformSpawner, Spawner};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Color32, Context, CursorIcon, Frame, Layout, Margin, ScrollArea, Shadow, Stroke, Style, Ui, Visuals};
+use crate::{ui_tools::{encode_theme, fonts::{self, TextScale}, glass_backdrop::{self, GlassParams}, metrics::{self, apply_metrics, type_scale, Density, Metrics}, rerun_mtech::{RerunMtech, RerunMtechOled}, theme_chrome::{default_egui_chrome, legacy_classic_chrome, mtech_noir_chrome, mtech_noir_glass_chrome, mtech_noir_glass_params, shipped_chrome}, tokyo_dark::{TokyoNight, TokyoNightStorm}, SavedTheme}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use database::schema::User;
@@ -7,14 +7,107 @@ use std::sync::Arc;
 
 use super::carl_dark::{paint_aesthetix_colors, Aesthetix, CarlDark};
 use super::galactic_glass;
-use super::mtech_glass::{glass_params_for_style, glassify, MtechGlass};
+use super::mtech_glass::{glass_params_for_style, glass_style, glassify, legacy_glass_style, MtechGlass};
+use super::mtech_studio;
 use super::neon_glass::{self, NeonPalette};
 use super::soft_glass::{self, SoftPalette};
+use super::tokens::Tokens;
+use super::{controls, icons};
+use super::controls::{BarKind, ButtonKind, MenuButton, TextButton, ValueField};
 use super::decode_theme;
 
-/// Applies shipped [`crate::STYLE`] before login or when no saved scheme exists.
+/// Width of the blur radius and corner fields.
+const BLUR_FIELD_W: f32 = 72.0;
+/// Width of the presence slider track.
+const PRESENCE_W: f32 = 120.0;
+
+/// Preset picker groups, each under an optional title.
+const PRESET_GROUPS: [(&str, &[PresetStyles]); 6] = [
+    ("", &[
+        PresetStyles::ShippedClassic,
+        PresetStyles::MtechStudio,
+        PresetStyles::LegacyClassic,
+        PresetStyles::DefaultEgui,
+        PresetStyles::MtechNoir,
+        PresetStyles::MtechNoirGlass,
+    ]),
+    ("Neon glass · AMOLED", &[
+        PresetStyles::NebulaGlass,
+        PresetStyles::AuroraGlass,
+        PresetStyles::SupernovaGlass,
+        PresetStyles::EventHorizonGlass,
+        PresetStyles::GalacticGlass,
+    ]),
+    ("Soft glass · low chroma", &[
+        PresetStyles::ObsidianGlass,
+        PresetStyles::VelvetGlass,
+        PresetStyles::TwilightGlass,
+        PresetStyles::QuartzGlass,
+    ]),
+    ("Colors only · legacy widgets", &[
+        PresetStyles::CarlDarkColors,
+        PresetStyles::TokyoNightStormColors,
+        PresetStyles::TokyoNightColors,
+        PresetStyles::RerunMtechColors,
+        PresetStyles::RerunMtechOledColors,
+        PresetStyles::MtechGlassColors,
+    ]),
+    ("Colors + widget chrome", &[
+        PresetStyles::CarlDarkFull,
+        PresetStyles::TokyoNightStormFull,
+        PresetStyles::TokyoNightFull,
+        PresetStyles::RerunMtechFull,
+        PresetStyles::RerunMtechOledFull,
+        PresetStyles::MtechGlassFull,
+    ]),
+    ("", &[PresetStyles::Custom]),
+];
+
+/// Applies the shipped preset at the default density and text size.
 pub fn bootstrap_startup_theme(ctx: &Context) {
+    metrics::set_density(ctx, Density::default());
+    set_text_scale(ctx, TextScale::default());
     apply_preset(ctx, PresetStyles::ShippedClassic);
+}
+
+/// Installs `style` under the current density's metrics overlay and publishes its tokens.
+pub fn install_style(ctx: &Context, style: Style) {
+    metrics::install_overlaid_style(ctx, style);
+    if let Some(tokens) = exact_tokens(&ctx.global_style()) {
+        Tokens::publish(ctx, tokens);
+    }
+}
+
+/// Hand-tuned tokens of a preset, for presets that define them.
+fn preset_tokens(preset: PresetStyles) -> Option<Tokens> {
+    match preset {
+        PresetStyles::MtechStudio => Some(mtech_studio::TOKENS),
+        _ => None,
+    }
+}
+
+/// The hand-tuned tokens of the preset `style` matches, if it defines any.
+fn exact_tokens(style: &Style) -> Option<Tokens> {
+    let style = normalized(style);
+    MATCHABLE_PRESETS
+        .into_iter()
+        .filter_map(|p| preset_tokens(p).map(|t| (p, t)))
+        .find(|(p, _)| styles_visually_equal(&style_for_preset(*p), &style))
+        .map(|(_, t)| t)
+}
+
+/// Switches the density and re-installs the current style under it.
+pub fn set_density(ctx: &Context, density: Density) {
+    if metrics::density(ctx) == density {
+        return;
+    }
+    metrics::set_density(ctx, density);
+    install_style(ctx, (*ctx.global_style()).clone());
+}
+
+/// Switches the UI text size, rebuilding the font atlas when it changes.
+pub fn set_text_scale(ctx: &Context, scale: TextScale) {
+    fonts::set_text_scale(ctx, scale, crate::app_state::font_definitions_scaled);
 }
 
 /// Applies a user-saved theme, falling back to shipped when missing or blank.
@@ -40,17 +133,36 @@ pub fn apply_user_color_scheme(ctx: &Context, bytes: &[u8]) {
 /// material. Unrecognized styles (glassified / uploaded) fall back to the Custom semantics, which
 /// match the app-wide defaults, rather than ShippedClassic's teal/blue.
 pub fn apply_saved_theme(ctx: &Context, theme: SavedTheme) {
-    let preset = preset_matching_style(&theme.style).unwrap_or(PresetStyles::Custom);
-    ctx.set_global_style(Arc::new(theme.style));
+    let style = normalized(&theme.style);
+    let (preset, style, glass) = match (exact_preset(&style), legacy_preset(&style)) {
+        (Some(preset), _) => (preset, theme.style, theme.glass),
+        // A legacy-alias match installs the preset's current style.
+        (None, Some(preset)) => (
+            preset,
+            style_for_preset(preset),
+            theme.glass.filter(|g| *g != GlassParams::OFF),
+        ),
+        (None, None) => (PresetStyles::Custom, theme.style, theme.glass),
+    };
+    metrics::set_density(ctx, theme.density);
     apply_preset_semantics(ctx, preset);
+    install_style(ctx, style);
+    set_text_scale(ctx, theme.text_scale);
     // A record that carries its own material wins; one written before glass existed (or an imported
     // bare egui Style) falls back to whatever its preset asks for.
-    if let Some(glass) = theme.glass {
+    if let Some(glass) = glass {
         glass_backdrop::set_params(ctx, glass);
     }
 }
 
-/// The parts of a preset that have no `egui::Style` slot: semantic colors and the glass material.
+/// Clears egui memory, then re-installs the current theme, density and text size into it.
+pub fn reset_memory(ctx: &Context) {
+    let saved = SavedTheme::current(ctx);
+    ctx.memory_mut(|mem| *mem = Default::default());
+    apply_saved_theme(ctx, saved);
+}
+
+/// Stores a preset's semantic colors, read by [`install_style`], and its glass material.
 fn apply_preset_semantics(ctx: &Context, preset: PresetStyles) {
     let (success, accent2) = semantic_colors_for_preset(preset);
     crate::ui_tools::theme::set_success_color(ctx, success);
@@ -72,46 +184,69 @@ fn styles_visually_equal(a: &Style, b: &Style) -> bool {
     a == *b
 }
 
-/// Recovers the preset a saved style was built from, so its semantic colors survive restart.
-fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
-    const PRESETS: [PresetStyles; 26] = [
-        PresetStyles::ShippedClassic,
-        PresetStyles::LegacyClassic,
-        PresetStyles::DefaultEgui,
-        PresetStyles::MtechNoir,
-        PresetStyles::MtechNoirGlass,
-        PresetStyles::NebulaGlass,
-        PresetStyles::AuroraGlass,
-        PresetStyles::SupernovaGlass,
-        PresetStyles::EventHorizonGlass,
-        PresetStyles::GalacticGlass,
-        PresetStyles::ObsidianGlass,
-        PresetStyles::VelvetGlass,
-        PresetStyles::TwilightGlass,
-        PresetStyles::QuartzGlass,
-        PresetStyles::CarlDarkColors,
-        PresetStyles::CarlDarkFull,
-        PresetStyles::TokyoNightStormColors,
-        PresetStyles::TokyoNightStormFull,
-        PresetStyles::TokyoNightColors,
-        PresetStyles::TokyoNightFull,
-        PresetStyles::RerunMtechColors,
-        PresetStyles::RerunMtechFull,
-        PresetStyles::RerunMtechOledColors,
-        PresetStyles::RerunMtechOledFull,
-        PresetStyles::MtechGlassColors,
-        PresetStyles::MtechGlassFull,
-    ];
-    PRESETS.into_iter().find(|p| styles_visually_equal(&style_for_preset(*p), style))
+/// `style` under the Regular metrics overlay, the form presets are compared in.
+fn normalized(style: &Style) -> Style {
+    let mut style = style.clone();
+    apply_metrics(&mut style, &Metrics::for_density(Density::Regular));
+    style
 }
 
+/// Recovers the preset a saved style was built from, so its semantic colors survive restart.
+fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
+    let style = normalized(style);
+    exact_preset(&style).or_else(|| legacy_preset(&style))
+}
+
+/// The preset a normalized style equals.
+fn exact_preset(normal: &Style) -> Option<PresetStyles> {
+    MATCHABLE_PRESETS
+        .into_iter()
+        .find(|p| styles_visually_equal(&style_for_preset(*p), normal))
+}
+
+/// The preset a normalized style was saved as before that preset's colours changed.
+fn legacy_preset(normal: &Style) -> Option<PresetStyles> {
+    styles_visually_equal(&normalized(&legacy_glass_style()), normal)
+        .then_some(PresetStyles::MtechGlassFull)
+}
+
+/// Every preset a saved style can be recognised as.
+pub(crate) const MATCHABLE_PRESETS: [PresetStyles; 27] = [
+    PresetStyles::ShippedClassic,
+    PresetStyles::MtechStudio,
+    PresetStyles::LegacyClassic,
+    PresetStyles::DefaultEgui,
+    PresetStyles::MtechNoir,
+    PresetStyles::MtechNoirGlass,
+    PresetStyles::NebulaGlass,
+    PresetStyles::AuroraGlass,
+    PresetStyles::SupernovaGlass,
+    PresetStyles::EventHorizonGlass,
+    PresetStyles::GalacticGlass,
+    PresetStyles::ObsidianGlass,
+    PresetStyles::VelvetGlass,
+    PresetStyles::TwilightGlass,
+    PresetStyles::QuartzGlass,
+    PresetStyles::CarlDarkColors,
+    PresetStyles::CarlDarkFull,
+    PresetStyles::TokyoNightStormColors,
+    PresetStyles::TokyoNightStormFull,
+    PresetStyles::TokyoNightColors,
+    PresetStyles::TokyoNightFull,
+    PresetStyles::RerunMtechColors,
+    PresetStyles::RerunMtechFull,
+    PresetStyles::RerunMtechOledColors,
+    PresetStyles::RerunMtechOledFull,
+    PresetStyles::MtechGlassColors,
+    PresetStyles::MtechGlassFull,
+];
+
 fn is_blank_default_style(style: &Style) -> bool {
-    if styles_visually_equal(style, &Style::default()) {
-        return true;
-    }
-    let mut dark_default = Style::default();
-    dark_default.visuals = Visuals::dark();
-    styles_visually_equal(style, &dark_default)
+    let style = normalized(style);
+    let dark_default = Style { visuals: Visuals::dark(), ..Style::default() };
+    [Style::default(), dark_default]
+        .iter()
+        .any(|blank| styles_visually_equal(&style, &normalized(blank)))
 }
 
 #[derive(Serialize, Clone, Deserialize, Debug, PartialEq)]
@@ -176,8 +311,6 @@ pub struct ThemeConfig {
     pub window_stroke_color: Color32,
     /// Uniform rounding for visuals
     pub rounding: eframe::egui::CornerRadius,
-    pub font: FontFamily,
-    pub font_size: f32,
     #[serde(skip)]
     pub preset_style: PresetStyles
 }
@@ -215,8 +348,6 @@ impl Default for ThemeConfig {
             link_color: Color32::from_rgb(155, 104, 227),
             window_stroke_color: Color32::from_rgb(42, 195, 222),
             rounding: eframe::egui::CornerRadius::same(4),
-            font: FontFamily::Proportional,
-            font_size: 14.0,
             preset_style: PresetStyles::ShippedClassic,
         }
     }
@@ -237,9 +368,18 @@ pub fn apply_default_theme(ctx: &Context) {
     apply_shipped_style(ctx);
 }
 
+/// A preset's style under the Regular metrics overlay.
 pub fn style_for_preset(preset: PresetStyles) -> Style {
+    let mut style = preset_chrome(preset);
+    apply_metrics(&mut style, &Metrics::for_density(Density::Regular));
+    style
+}
+
+/// A preset's style as its theme defines it, before the metrics overlay.
+fn preset_chrome(preset: PresetStyles) -> Style {
     match preset {
         PresetStyles::ShippedClassic => shipped_chrome(),
+        PresetStyles::MtechStudio => mtech_studio::studio_style(),
         PresetStyles::LegacyClassic => legacy_classic_chrome(),
         PresetStyles::DefaultEgui => default_egui_chrome(),
         PresetStyles::MtechNoir => mtech_noir_chrome(),
@@ -281,6 +421,7 @@ pub fn semantic_colors_for_preset(preset: PresetStyles) -> (Color32, Color32) {
             Color32::from_rgb(42, 172, 170),
             Color32::from_rgb(56, 114, 238),
         ),
+        PresetStyles::MtechStudio => mtech_studio::studio_semantic_colors(),
         // Emerald reads against the OLED base; the orchid is the palette's own selection tint.
         PresetStyles::MtechNoir | PresetStyles::MtechNoirGlass => (
             Color32::from_rgb(90, 220, 160),
@@ -354,7 +495,9 @@ fn soft_palette_for_preset(preset: PresetStyles) -> &'static SoftPalette {
 /// return [`GlassParams::OFF`], so switching away from a glass theme turns real frosting off.
 pub fn glass_params_for_preset(preset: PresetStyles) -> GlassParams {
     match preset {
+        PresetStyles::MtechStudio => mtech_studio::studio_glass_params(),
         PresetStyles::MtechNoirGlass => mtech_noir_glass_params(),
+        PresetStyles::MtechGlassFull => glass_params_for_style(&glass_style()),
         PresetStyles::NebulaGlass
         | PresetStyles::AuroraGlass
         | PresetStyles::SupernovaGlass
@@ -373,8 +516,8 @@ pub fn glass_params_for_preset(preset: PresetStyles) -> GlassParams {
 }
 
 pub fn apply_preset(ctx: &Context, preset: PresetStyles) {
-    ctx.set_global_style(Arc::new(style_for_preset(preset)));
     apply_preset_semantics(ctx, preset);
+    install_style(ctx, style_for_preset(preset));
 }
 
 fn sync_config_from_style(config: &mut ThemeConfig, style: &Style) {
@@ -412,326 +555,312 @@ impl ThemeConfig {
     /// Live controls for the theme's backdrop-blur material. Writes straight to the context, so
     /// every frosted surface picks the change up on the next frame.
     fn backdrop_blur_row(&mut self, ui: &mut Ui, ctx: &Context) {
-        ui.horizontal(|ui| {
-            let available = glass_backdrop::is_available();
-            let mut params = glass_backdrop::params(ctx);
-            let before = params;
+        let available = glass_backdrop::is_available();
+        let mut params = glass_backdrop::params(ctx);
+        let before = params;
 
-            ui.add_enabled_ui(available, |ui| {
-                ui.checkbox(&mut params.enabled, "Backdrop blur")
-                    .on_hover_text(
-                        "Blur what is behind glass surfaces on the GPU. The tint is the film \
-                         painted over the blur; its alpha mixes film against blurred backdrop. \
-                         Click Save to store these dials on your account — they follow you to \
-                         any machine you sign in on.",
-                    );
-            });
+        ui.add_enabled_ui(available, |ui| {
+            controls::toggle(ui, &mut params.enabled, "Backdrop blur").on_hover_text(
+                "Blur what is behind glass surfaces on the GPU. The tint is the film \
+                 painted over the blur; its alpha mixes film against blurred backdrop. \
+                 Click Save to store these dials on your account — they follow you to \
+                 any machine you sign in on.",
+            );
+        });
 
-            if !available {
-                ui.colored_label(self.warn_color, "GPU blur unavailable on this host")
-                    .on_hover_text(
-                        "The grab-pass backend did not come up — the app is not on the glow \
-                         renderer, or the GL context is below OpenGL 3.3 / GLES 3.0. Glass \
-                         surfaces fall back to flat tinted panes.",
-                    );
-                return;
-            }
-
-            ui.add_enabled_ui(params.enabled, |ui| {
-                ui.add_space(6.);
-                ui.add(
-                    DragValue::new(&mut params.blur_radius)
-                        .speed(0.5)
-                        .range(0.0..=64.0)
-                        .prefix("radius "),
+        if !available {
+            let warn = Tokens::get(ctx).warn;
+            controls::status_label(ui, icons::svg::WARNING, "GPU blur unavailable on this host", warn)
+                .on_hover_text(
+                    "The grab-pass backend did not come up — the app is not on the glow \
+                     renderer, or the GL context is below OpenGL 3.3 / GLES 3.0. Glass \
+                     surfaces fall back to flat tinted panes.",
                 );
-                ui.add_space(6.);
-                ui.label("Tint");
-                ui.color_edit_button_srgba(&mut params.tint);
-                ui.add_space(6.);
-                ui.add(
-                    DragValue::new(&mut params.corner_radius)
-                        .speed(0.2)
-                        .range(0.0..=32.0)
-                        .prefix("corners "),
-                );
-                ui.add_space(6.);
-                ui.add(
-                    Slider::new(&mut params.presence, 0.0..=1.0)
-                        .text("presence")
-                        .fixed_decimals(2),
-                );
-            });
+            return;
+        }
 
-            if params != before {
-                glass_backdrop::set_params(ctx, params);
-            }
+        ui.add_enabled_ui(params.enabled, |ui| {
+            controls::vline(ui, ui.available_height() - 8.0);
+            ui.label("Radius");
+            ValueField::new(&mut params.blur_radius, 0.0..=64.0)
+                .suffix("px")
+                .speed(0.5)
+                .width(BLUR_FIELD_W)
+                .show(ui);
+            ui.label("Tint");
+            ui.color_edit_button_srgba(&mut params.tint);
+            ui.label("Corners");
+            ValueField::new(&mut params.corner_radius, 0.0..=32.0)
+                .suffix("px")
+                .speed(0.2)
+                .width(BLUR_FIELD_W)
+                .show(ui);
+            ui.label("Presence");
+            controls::Slider::new(&mut params.presence, 0.0..=1.0)
+                .width(PRESENCE_W)
+                .step(0.01)
+                .value("")
+                .show(ui);
+        });
+
+        if params != before {
+            glass_backdrop::set_params(ctx, params);
+        }
+    }
+
+    /// Density and text size pickers, the only geometry an operator controls.
+    fn layout_row(&mut self, ui: &mut Ui, ctx: &Context) {
+        controls::bar(ui, controls::BarKind::Header, |ui| {
+            let mut density = metrics::density(ctx);
+            let densities = Density::ALL.map(|d| (d, d.label()));
+            controls::icon_label(ui, icons::svg::ROWS, "Density");
+            controls::dropdown(ui, "theme_density", &mut density, &densities, 130.0)
+                .on_hover_text("Control height, padding and spacing. Click Save to keep.");
+            set_density(ctx, density);
+
+            controls::vline(ui, ui.available_height() - 8.0);
+
+            let mut scale = fonts::text_scale(ctx);
+            let scales = TextScale::ALL.map(|s| (s, s.label()));
+            controls::icon_label(ui, icons::svg::TEXT_AA, "Text size");
+            controls::dropdown(ui, "theme_text_scale", &mut scale, &scales, 150.0)
+                .on_hover_text("Scales text without changing control geometry. Click Save to keep.");
+            set_text_scale(ctx, scale);
         });
     }
 
-    pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<SavedTheme>) -> (bool, Arc<Style>) {
-        let mut ret = (false, ctx.global_style());
-        // Three button rows; size from the active style so tall presets don't clip the last one.
-        let panel_h = {
-            let style = ctx.global_style();
-            let sp = &style.spacing;
-            let row_h = sp.interact_size.y.max(25.0) + 2.0 * sp.button_padding.y;
-            3.0 * row_h + 2.0 * sp.item_spacing.y + 8.0
+    /// Colour editor over the live visuals; an edit the overlay undoes leaves the preset as is.
+    fn colors_ui(&mut self, ui: &mut Ui, ctx: &Context) {
+        controls::subheading(ui, icons::svg::PALETTE, "Colors");
+        let mut style = (*ctx.global_style()).clone();
+        let before = style.visuals.clone();
+        style.visuals.ui(ui);
+        if style.visuals == before {
+            return;
+        }
+        install_style(ctx, style);
+        let installed = ctx.global_style();
+        if installed.visuals != before {
+            sync_config_from_style(self, &installed);
+            self.preset_style = PresetStyles::Custom;
+        }
+    }
+
+    /// The preset picker; applies the pick unless it is Custom.
+    fn preset_menu(&mut self, ui: &mut Ui, ctx: &Context) {
+        let current = self.preset_style;
+        let mut picked = None;
+        let _ = MenuButton::new(current.as_str())
+            .icon(icons::svg::SWATCHES)
+            .tip("Style preset")
+            .show(ui, |ui| {
+                for (i, (title, presets)) in PRESET_GROUPS.iter().enumerate() {
+                    if i > 0 {
+                        controls::menu_separator(ui);
+                    }
+                    if !title.is_empty() {
+                        controls::menu_inset_row(ui, |ui| controls::section_label(ui, title));
+                    }
+                    for &preset in presets.iter() {
+                        if controls::menu_check_item(ui, None, preset.as_str(), preset == current).clicked() {
+                            picked = Some(preset);
+                        }
+                    }
+                }
+            });
+        let Some(chosen) = picked.filter(|p| *p != current) else {
+            return;
         };
-        eframe::egui::Panel::top("Theme Menu top bar")
-        .exact_size(panel_h)
-        .show(ui, |ui| {
-            ui.horizontal(|ui|{
-                let reset = Button::new("Reset to Default")
-                    .min_size(Vec2::new(70., 25.))
-                    .stroke(Stroke::new(1.0_f32, self.warn_color))
-                    .ui(ui)
-                    .on_hover_text("Preview the shipped default theme. Nothing is saved until you click Save.");
+        self.preset_style = chosen;
+        if chosen == PresetStyles::Custom {
+            return;
+        }
+        let style = style_for_preset(chosen);
+        sync_config_from_style(self, &style);
+        apply_preset_semantics(ctx, chosen);
+        install_style(ctx, style);
+    }
 
-                // Preview only: the account's saved scheme stays untouched until Save.
-                if reset.clicked() {
-                    apply_preset(ctx, PresetStyles::ShippedClassic);
-                    sync_config_from_style(self, &style_for_preset(PresetStyles::ShippedClassic));
-                    self.preset_style = PresetStyles::ShippedClassic;
-                }
+    /// Reset, the preset picker, and the save, export and import buttons.
+    fn preset_row(&mut self, ui: &mut Ui, ctx: &Context, tx: &Sender<SavedTheme>) -> bool {
+        let reset = TextButton::new("Reset to Default")
+            .icon(icons::svg::ARROW_COUNTER_CLOCKWISE)
+            .kind(ButtonKind::Ghost)
+            .show(ui)
+            .on_hover_text("Preview the shipped default theme. Nothing is saved until you click Save.");
+        if reset.clicked() {
+            apply_preset(ctx, PresetStyles::ShippedClassic);
+            sync_config_from_style(self, &style_for_preset(PresetStyles::ShippedClassic));
+            self.preset_style = PresetStyles::ShippedClassic;
+        }
+        self.preset_menu(ui, ctx);
 
-                ui.add_space(10.);
-
-                let current = self.preset_style;
-
-                ComboBox::new("Style Preset", "")
-                .selected_text(self.preset_style.as_str())
-                .width(280.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::ShippedClassic, "Shipped Classic");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::LegacyClassic, "Legacy Classic");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::DefaultEgui, "Default Egui");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::MtechNoir, "MTech Noir");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::MtechNoirGlass, "MTech Noir · Glass");
-                    ui.separator();
-                    ui.label("Neon glass · AMOLED");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::NebulaGlass, neon_glass::NEBULA.name);
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::AuroraGlass, neon_glass::AURORA.name);
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::SupernovaGlass, neon_glass::SUPERNOVA.name);
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::EventHorizonGlass, neon_glass::EVENT_HORIZON.name);
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::GalacticGlass, galactic_glass::NAME);
-                    ui.separator();
-                    ui.label("Soft glass · low chroma");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::ObsidianGlass, soft_glass::OBSIDIAN.name);
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::VelvetGlass, soft_glass::VELVET.name);
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::TwilightGlass, soft_glass::TWILIGHT.name);
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::QuartzGlass, soft_glass::QUARTZ.name);
-                    ui.separator();
-                    ui.label("Colors only · legacy widgets");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::CarlDarkColors, "Carl Dark · Colors");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightStormColors, "TokyoNight Storm · Colors");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightColors, "TokyoNight · Colors");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechColors, "Rerun MTech · Colors");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechOledColors, "Rerun MTech OLED · Colors");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::MtechGlassColors, "MTech Glass · Colors");
-                    ui.separator();
-                    ui.label("Colors + widget chrome");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::CarlDarkFull, "Carl Dark · Full");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightStormFull, "TokyoNight Storm · Full");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightFull, "TokyoNight · Full");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechFull, "Rerun MTech · Full");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechOledFull, "Rerun MTech OLED · Full");
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::MtechGlassFull, "MTech Glass · Full");
-                    ui.separator();
-                    ui.selectable_value(&mut self.preset_style, PresetStyles::Custom, "Custom");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let save = TextButton::new("Save")
+                .icon(icons::svg::FLOPPY_DISK)
+                .kind(ButtonKind::Primary)
+                .show(ui)
+                .on_hover_text("Store this theme on your account.");
+            let saved_now = save.clicked();
+            if saved_now {
+                let saved = SavedTheme::current(ctx);
+                PlatformSpawner::spawn(async move {
+                    match User::update_color_scheme(encode_theme(&saved).unwrap_or_default().into()).await {
+                        Ok(_) => log::info!("Updated Color Settings"),
+                        Err(e) => log::error!("Error updating color settings: {e:?}"),
+                    }
                 });
+            }
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            Self::file_buttons(ui, ctx, tx);
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            let _ = tx;
+            saved_now
+        })
+        .inner
+    }
 
-
-                if self.preset_style != current {
-                    if self.preset_style == PresetStyles::Custom {
-                        return;
-                    }
-                    let chosen = self.preset_style;
-                    let style = style_for_preset(chosen);
-                    sync_config_from_style(self, &style);
-                    let s = Arc::new(style);
-                    ctx.set_global_style(s.clone());
-                    apply_preset_semantics(ctx, chosen);
+    /// Export to and import from a JSON file.
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    fn file_buttons(ui: &mut Ui, ctx: &Context, tx: &Sender<SavedTheme>) {
+        let save_local = TextButton::new("Save to file")
+            .icon(icons::svg::DOWNLOAD_SIMPLE)
+            .show(ui)
+            .on_hover_text("Export this theme as JSON.");
+        if save_local.clicked() {
+            let saved = SavedTheme::current(ctx);
+            PlatformSpawner::spawn(async move {
+                let Ok(json_data) = super::theme_to_json(&saved) else {
+                    log::error!("Error serializing settings to json");
+                    return;
+                };
+                if let Some(file) = rfd::AsyncFileDialog::new()
+                    .set_file_name("mastertech_color_scheme.json")
+                    .save_file()
+                    .await
+                    && let Err(err) = file.write(&json_data).await
+                {
+                    log::error!("Failed to save file: {:?}", err);
                 }
+            });
+        }
 
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let save = Button::new("Save")
-                        .min_size(Vec2::new(70., 25.))
-                        .stroke(Stroke::new(1.0_f32, self.warn_color))
-                        .ui(ui);
-                    
-                    if save.clicked() {
-                        // Persist whatever is currently applied (a preset OR an uploaded scheme),
-                        // not a preset rebuild — else an uploaded theme gets overwritten. The glass
-                        // material rides along, so a tuned blur follows the account to any machine.
-                        let color_settings = ctx.global_style();
-                        let saved = SavedTheme::current(ctx);
-                        PlatformSpawner::spawn(async move {
-                            match User::update_color_scheme(
-                                encode_theme(&saved).unwrap_or_default().into()
-                            ).await {
-                                Ok(_) => log::info!("Updated Color Settings"),
-                                Err(e) => log::error!("Error updating color settings: {e:?}"),
-                            }
-                        });
-                        ret = (true, color_settings);
+        let upload = TextButton::new("Upload settings")
+            .icon(icons::svg::UPLOAD_SIMPLE)
+            .show(ui)
+            .on_hover_text("Import a theme JSON and save it to your account.");
+        if upload.clicked() {
+            let tx = tx.clone();
+            PlatformSpawner::spawn(async move {
+                let Some(file) = rfd::AsyncFileDialog::new()
+                    .add_filter("Json", &["json"])
+                    .set_file_name("mastertech_color_scheme.json")
+                    .pick_file()
+                    .await
+                else {
+                    return;
+                };
+                // Accepts an exported scheme or a bare egui Style file without glass material.
+                match super::theme_from_json(&file.read().await) {
+                    Ok(theme) => {
+                        match User::update_color_scheme(encode_theme(&theme).unwrap_or_default().into()).await {
+                            Ok(_) => log::info!("Imported color scheme saved"),
+                            Err(e) => log::error!("Error saving imported scheme: {e:?}"),
+                        }
+                        let _ = tx.try_send(theme);
                     }
+                    Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
+                }
+            });
+        }
+    }
 
-                    ui.add_space(5.);
+    /// Glassify and restore-from-account.
+    fn restore_row(&mut self, ui: &mut Ui, ctx: &Context, tx: &Sender<SavedTheme>) {
+        let glassify_btn = TextButton::new("Glassify current theme")
+            .icon(icons::svg::SPARKLE)
+            .show(ui)
+            .on_hover_text(
+                "Re-style the applied theme as tinted glass using its own colors: \
+                 translucent widget fills with outlines a step brighter than each fill. \
+                 Backgrounds, rounding, and fonts stay as they are. Click Save to keep.",
+            );
+        if glassify_btn.clicked() {
+            let glassified = glassify(&ctx.global_style());
+            sync_config_from_style(self, &glassified);
+            self.preset_style = PresetStyles::Custom;
+            glass_backdrop::set_params(ctx, glass_params_for_style(&glassified));
+            install_style(ctx, glassified);
+        }
 
-                    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                    {
-                        let save_local = Button::new("Save to file")
-                            .min_size(Vec2::new(70., 25.))
-                            .stroke(Stroke::new(1.0_f32, self.warn_color))
-                            .ui(ui);
-
-                        if save_local.clicked() {
-                            let saved = SavedTheme::current(ctx);
-
-                            PlatformSpawner::spawn(async move {
-                                // Serialize the struct into JSON
-                                if let Ok(json_data) = super::theme_to_json(&saved) {
-                                    // Show the save file dialog
-                                    if let Some(file) = rfd::AsyncFileDialog::new()
-                                        .set_file_name("mastertech_color_scheme.json") // Default file name
-                                        .save_file()
-                                        .await
-                                    {
-                                        // Write the JSON data to the selected file
-                                        if let Err(err) = file.write(&json_data).await {
-                                            log::error!("Failed to save file: {:?}", err);
-                                        }
+        let restore = TextButton::new("Restore saved theme")
+            .icon(icons::svg::CLOCK_COUNTER_CLOCKWISE)
+            .show(ui)
+            .on_hover_text("Re-apply the color scheme saved to your account.");
+        if restore.clicked() {
+            let tx = tx.clone();
+            PlatformSpawner::spawn(async move {
+                match User::get_current_user_from_auth().await {
+                    Ok(Some(user)) => {
+                        let bytes = user.get_color_scheme();
+                        if bytes.is_empty() {
+                            log::warn!("No color scheme saved on this account");
+                            let _ = crate::get_toast_sender()
+                                .try_send(crate::ToastMessage::Warning("No saved theme on this account".into()));
+                            return;
+                        }
+                        match decode_theme(&bytes) {
+                            Ok(theme) => {
+                                // Match the login guard: a legacy egui-default record restores the shipped theme.
+                                let theme = if is_blank_default_style(&theme.style) {
+                                    SavedTheme {
+                                        style: style_for_preset(PresetStyles::ShippedClassic),
+                                        glass: Some(glass_params_for_preset(PresetStyles::ShippedClassic)),
+                                        ..theme
                                     }
                                 } else {
-                                    log::error!("Error serializing settings to json");
-                                }
-                            });
-                        }
-
-                        ui.add_space(5.);
-
-                        let upload = Button::new("Upload settings")
-                            .min_size(Vec2::new(70., 25.))
-                            .stroke(Stroke::new(1.0_f32, self.warn_color))
-                            .ui(ui);
-
-                        if upload.clicked() {
-                            let tx = tx.clone();
-                            PlatformSpawner::spawn(async move {
-                                // Show the save file dialog
-                                if let Some(file) = rfd::AsyncFileDialog::new()
-                                    .add_filter("Json", &["json"])
-                                    .set_file_name("mastertech_color_scheme.json") // Default file name
-                                    .pick_file()
-                                    .await
-                                {
-                                    // Accepts a scheme exported by this app and a bare egui Style
-                                    // file; the latter arrives with no glass material.
-                                    match super::theme_from_json(&file.read().await) {
-                                        Ok(theme) => {
-                                            // Persist (JSON) so it replaces any legacy record and
-                                            // survives restart, then apply it for this session.
-                                            match User::update_color_scheme(
-                                                encode_theme(&theme).unwrap_or_default().into()
-                                            ).await {
-                                                Ok(_) => log::info!("Imported color scheme saved"),
-                                                Err(e) => log::error!("Error saving imported scheme: {e:?}"),
-                                            }
-                                            let _ = tx.try_send(theme);
-                                        }
-                                        Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
-                                    }
-                                }
-
-                            });
-                        }
-                    }
-                    #[cfg(any(target_os = "ios", target_os = "android"))]
-                    let _ = &tx;
-
-                });
-            });
-
-            ui.horizontal(|ui| {
-                let glassify_btn = Button::new("Glassify current theme")
-                    .min_size(Vec2::new(70., 25.))
-                    .stroke(Stroke::new(1.0_f32, self.link_color))
-                    .ui(ui)
-                    .on_hover_text(
-                        "Re-style the applied theme as tinted glass using its own colors: \
-                         translucent widget fills with outlines a step brighter than each fill. \
-                         Backgrounds, rounding, and fonts stay as they are. Click Save to keep.",
-                    );
-
-                if glassify_btn.clicked() {
-                    let glassified = glassify(&ctx.global_style());
-                    sync_config_from_style(self, &glassified);
-                    self.preset_style = PresetStyles::Custom;
-                    // Tinted glass now has a real backdrop to sit on where the GPU path came up.
-                    glass_backdrop::set_params(ctx, glass_params_for_style(&glassified));
-                    ctx.set_global_style(Arc::new(glassified));
-                }
-
-                ui.add_space(10.);
-
-                let restore = Button::new("Restore saved theme")
-                    .min_size(Vec2::new(70., 25.))
-                    .stroke(Stroke::new(1.0_f32, self.link_color))
-                    .ui(ui)
-                    .on_hover_text("Re-apply the color scheme saved to your account.");
-
-                if restore.clicked() {
-                    let tx = tx.clone();
-                    PlatformSpawner::spawn(async move {
-                        match User::get_current_user_from_auth().await {
-                            Ok(Some(user)) => {
-                                let bytes = user.get_color_scheme();
-                                if bytes.is_empty() {
-                                    log::warn!("No color scheme saved on this account");
-                                    let _ = crate::get_toast_sender()
-                                        .try_send(crate::ToastMessage::Warning("No saved theme on this account".into()));
-                                    return;
-                                }
-                                match decode_theme(&bytes) {
-                                    Ok(theme) => {
-                                        // Match the login guard: a legacy egui-default record restores the shipped theme.
-                                        let theme = if is_blank_default_style(&theme.style) {
-                                            SavedTheme {
-                                                style: style_for_preset(PresetStyles::ShippedClassic),
-                                                glass: Some(glass_params_for_preset(PresetStyles::ShippedClassic)),
-                                            }
-                                        } else {
-                                            theme
-                                        };
-                                        let _ = tx.try_send(theme);
-                                    }
-                                    Err(e) => {
-                                        log::error!("Saved color scheme decode failed: {e:?}");
-                                        let _ = crate::get_toast_sender()
-                                            .try_send(crate::ToastMessage::Error("Saved theme could not be read".into()));
-                                    }
-                                }
-                            }
-                            Ok(None) => {
-                                log::warn!("Not signed in; cannot restore saved theme");
-                                let _ = crate::get_toast_sender()
-                                    .try_send(crate::ToastMessage::Warning("Sign in to restore your saved theme".into()));
+                                    theme
+                                };
+                                let _ = tx.try_send(theme);
                             }
                             Err(e) => {
-                                log::error!("Error fetching user for saved theme: {e:?}");
+                                log::error!("Saved color scheme decode failed: {e:?}");
                                 let _ = crate::get_toast_sender()
-                                    .try_send(crate::ToastMessage::Error("Could not reach the server to restore your theme".into()));
+                                    .try_send(crate::ToastMessage::Error("Saved theme could not be read".into()));
                             }
                         }
-                    });
+                    }
+                    Ok(None) => {
+                        log::warn!("Not signed in; cannot restore saved theme");
+                        let _ = crate::get_toast_sender()
+                            .try_send(crate::ToastMessage::Warning("Sign in to restore your saved theme".into()));
+                    }
+                    Err(e) => {
+                        log::error!("Error fetching user for saved theme: {e:?}");
+                        let _ = crate::get_toast_sender()
+                            .try_send(crate::ToastMessage::Error("Could not reach the server to restore your theme".into()));
+                    }
                 }
             });
+        }
+    }
 
-            self.backdrop_blur_row(ui, ctx);
-        });
+    pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<SavedTheme>) -> (bool, Arc<Style>) {
+        let m = Metrics::get(ctx);
+        let frame = Frame::side_top_panel(&ctx.global_style()).inner_margin(Margin::ZERO);
+        let mut saved = false;
+        eframe::egui::Panel::top("Theme Menu top bar")
+            .frame(frame)
+            .exact_size(3.0 * BarKind::Tool.height(&m))
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                saved = controls::bar(ui, BarKind::Tool, |ui| self.preset_row(ui, ctx, &tx));
+                controls::bar(ui, BarKind::Tool, |ui| self.restore_row(ui, ctx, &tx));
+                controls::bar(ui, BarKind::Tool, |ui| self.backdrop_blur_row(ui, ctx));
+            });
 
-        ui.add_space(10.);
+        ui.add_space(m.gap.y);
 
         ScrollArea::vertical()
         .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
@@ -739,8 +868,13 @@ impl ThemeConfig {
         .show(ui, |ui|
         {
             glass_backdrop::preview(ui, glass_backdrop::params(ctx));
-            ui.add_space(10.);
-            ctx.settings_ui(ui);
+            ui.add_space(m.gap.y);
+            self.layout_row(ui, ctx);
+            if controls::section_header(ui, "theme_control_preview", icons::svg::SQUARES_FOUR, "Control preview") {
+                ui.push_id("theme_control_preview", controls::gallery);
+            }
+            controls::hairline(ui);
+            self.colors_ui(ui, ctx);
         });
         /*
         ScrollArea::vertical()
@@ -1045,7 +1179,7 @@ impl ThemeConfig {
         }); 
         */
 
-        ret
+        (saved, ctx.global_style())
     }
 }
 
@@ -1086,8 +1220,6 @@ impl ThemeConfig {
             link_color: visuals.hyperlink_color,
             window_stroke_color: visuals.window_stroke.color,
             rounding: visuals.window_corner_radius,
-            font: style.override_font_id.clone().map(|f| f.family).unwrap_or(FontFamily::Proportional),
-            font_size: style.override_font_id.clone().map(|f| f.size).unwrap_or(12.0),
             preset_style: PresetStyles::Custom,
         }
     }
@@ -1122,8 +1254,6 @@ impl ThemeConfig {
         assign(&mut visuals.widgets.active, self.active_bg_fill, self.active_weak_bg_fill, self.active_bg_stroke_color, self.active_fg_stroke_color);
         assign(&mut visuals.widgets.open, self.open_bg_fill, self.open_weak_bg_fill, self.open_bg_stroke_color, self.open_fg_stroke_color);
 
-        // Font override
-        style.override_font_id = Some(FontId { family: self.font.clone(), size: self.font_size });
         style
     }
 }
@@ -1131,6 +1261,7 @@ impl ThemeConfig {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PresetStyles {
     ShippedClassic,
+    MtechStudio,
     LegacyClassic,
     DefaultEgui,
     MtechNoir,
@@ -1169,6 +1300,7 @@ impl PresetStyles {
     pub fn as_str(&self) -> &str {
         match self {
             PresetStyles::ShippedClassic => "Shipped Classic",
+            PresetStyles::MtechStudio => mtech_studio::NAME,
             PresetStyles::LegacyClassic => "Legacy Classic",
             PresetStyles::DefaultEgui => "Default Egui",
             PresetStyles::MtechNoir => "MTech Noir",
@@ -1201,6 +1333,7 @@ impl PresetStyles {
     pub fn from_str(str: &str) -> Self {
         match str {
             "Shipped Classic" => Self::ShippedClassic,
+            mtech_studio::NAME => Self::MtechStudio,
             "Legacy Classic" => Self::LegacyClassic,
             "Default Egui" => Self::DefaultEgui,
             "MTech Noir" => Self::MtechNoir,
@@ -1239,20 +1372,6 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
 
     let theme = CarlDark;
     let mut custom_style: Style = theme.custom_style();
-            // Font settings
-            let mut font = FontId::default();
-            font.size = config.font_size;
-            // font.family = FontFamily::Proportional;
-            font.family = config.font.clone();
-
-            // Assign custom font
-            custom_style.override_font_id = Some(font);
-
-            // Adjust spacing and interactions
-            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
-            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-            custom_style.spacing.combo_height = 200.0;
-            custom_style.spacing.combo_width = 100.0;
             custom_style.interaction.selectable_labels = true;
             custom_style.interaction.interact_radius = 10.0;
             custom_style.interaction.show_tooltips_only_when_still = false;
@@ -1386,7 +1505,7 @@ impl ThemeConfig {
         var!("link-color", color_to_rgba(self.link_color));
         var!("window-stroke-color", color_to_rgba(self.window_stroke_color));
         // Numeric values
-        var!("font-size", format!("{:.2}px", self.font_size));
+        var!("font-size", format!("{:.2}px", type_scale::BODY));
         // CornerRadius is a uniform value in our usage (same for all corners via .ne)
         var!("rounding", format!("{:.2}px", self.rounding.ne));
         out.push_str("}\n");
@@ -1402,7 +1521,129 @@ mod tests {
         SavedTheme {
             style: style_for_preset(preset),
             glass: Some(glass_params_for_preset(preset)),
+            density: Density::default(),
+            text_scale: TextScale::default(),
         }
+    }
+
+    fn all_presets() -> impl Iterator<Item = PresetStyles> {
+        MATCHABLE_PRESETS.into_iter().chain([PresetStyles::Custom])
+    }
+
+    #[test]
+    fn every_preset_round_trips_as_itself_under_the_overlay() {
+        for preset in MATCHABLE_PRESETS {
+            let bytes = encode_theme(&saved(preset)).unwrap();
+            let decoded = decode_theme(&bytes).unwrap();
+            assert_eq!(
+                preset_matching_style(&decoded.style),
+                Some(preset),
+                "{} did not round trip",
+                preset.as_str(),
+            );
+        }
+    }
+
+    #[test]
+    fn every_preset_shares_the_overlay_geometry() {
+        let regular = Metrics::for_density(Density::Regular);
+        for preset in all_presets() {
+            let style = style_for_preset(preset);
+            let name = preset.as_str();
+            assert_eq!(style.spacing.interact_size.y, regular.control_h, "{name}: control height");
+            assert_eq!(style.spacing.button_padding, regular.pad, "{name}: padding");
+            assert!(style.override_font_id.is_none(), "{name}: font override");
+
+            let w = &style.visuals.widgets;
+            let radius = w.inactive.corner_radius;
+            for state in [&w.noninteractive, &w.inactive, &w.hovered, &w.active, &w.open] {
+                for width in [state.bg_stroke.width, state.fg_stroke.width] {
+                    assert_eq!(width, width.round(), "{name}: fractional stroke {width}");
+                }
+                assert_eq!(state.expansion, 0.0, "{name}: widget grows");
+                assert_eq!(state.corner_radius, radius, "{name}: states disagree on radius");
+            }
+        }
+    }
+
+    #[test]
+    fn density_and_text_scale_round_trip_through_the_account_record() {
+        let theme = SavedTheme {
+            density: Density::Comfortable,
+            text_scale: TextScale::Large,
+            ..saved(PresetStyles::MtechNoirGlass)
+        };
+        let decoded = decode_theme(&encode_theme(&theme).unwrap()).unwrap();
+        assert_eq!(decoded.density, Density::Comfortable);
+        assert_eq!(decoded.text_scale, TextScale::Large);
+        assert_eq!(decoded.glass, theme.glass);
+
+        let from_file = super::super::theme_from_json(&super::super::theme_to_json(&theme).unwrap()).unwrap();
+        assert_eq!(from_file.density, Density::Comfortable);
+        assert_eq!(from_file.text_scale, TextScale::Large);
+    }
+
+    #[test]
+    fn a_record_without_density_or_text_scale_loads_the_defaults() {
+        let json = serde_json::json!({ "style": style_for_preset(PresetStyles::MtechNoir) });
+        let theme = super::super::theme_from_json(json.to_string().as_bytes()).unwrap();
+        assert_eq!(theme.density, Density::Regular);
+        assert_eq!(theme.text_scale, TextScale::Normal);
+        assert_eq!(preset_matching_style(&theme.style), Some(PresetStyles::MtechNoir));
+    }
+
+    // A Compact save restores as its own preset, at Compact.
+    #[test]
+    fn a_compact_save_restores_its_preset_and_density() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::ObsidianGlass);
+        set_density(&ctx, Density::Compact);
+        set_text_scale(&ctx, TextScale::XLarge);
+        let bytes = encode_theme(&SavedTheme::current(&ctx)).unwrap();
+
+        let decoded = decode_theme(&bytes).unwrap();
+        assert_eq!(preset_matching_style(&decoded.style), Some(PresetStyles::ObsidianGlass));
+
+        let fresh = Context::default();
+        bootstrap_startup_theme(&fresh);
+        apply_user_color_scheme(&fresh, &bytes);
+        let compact = Metrics::for_density(Density::Compact);
+        assert_eq!(metrics::density(&fresh), Density::Compact);
+        assert_eq!(fonts::text_scale(&fresh), TextScale::XLarge);
+        assert_eq!(Metrics::get(&fresh), compact);
+        assert_eq!(fresh.global_style().spacing.interact_size.y, compact.control_h);
+        assert_eq!(glass_backdrop::params(&fresh), glass_params_for_preset(PresetStyles::ObsidianGlass));
+    }
+
+    #[test]
+    fn switching_density_reinstalls_the_current_style() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::MtechGlassFull);
+        let fill = ctx.global_style().visuals.widgets.inactive.weak_bg_fill;
+
+        set_density(&ctx, Density::Comfortable);
+        let style = ctx.global_style();
+        assert_eq!(style.spacing.interact_size.y, Metrics::for_density(Density::Comfortable).control_h);
+        assert_eq!(style.visuals.widgets.inactive.weak_bg_fill, fill);
+    }
+
+    #[test]
+    fn bootstrap_returns_to_the_default_density_and_text_size() {
+        let ctx = Context::default();
+        set_density(&ctx, Density::Compact);
+        set_text_scale(&ctx, TextScale::Small);
+        bootstrap_startup_theme(&ctx);
+        assert_eq!(metrics::density(&ctx), Density::Regular);
+        assert_eq!(fonts::text_scale(&ctx), TextScale::Normal);
+    }
+
+    // An egui-default record still reads as "no theme saved".
+    #[test]
+    fn a_blank_default_record_is_still_recognised() {
+        let legacy = Style { visuals: Visuals::dark(), ..Style::default() };
+        assert!(is_blank_default_style(&legacy));
+        assert!(is_blank_default_style(&normalized(&legacy)));
+        assert!(!is_blank_default_style(&style_for_preset(PresetStyles::ShippedClassic)));
     }
 
     // Builds every preset style (the startup restore path); none may panic on decode,
@@ -1613,6 +1854,138 @@ mod tests {
         apply_user_color_scheme(&ctx, &bytes);
 
         assert_eq!(glass_backdrop::params(&ctx), mtech_noir_glass_params());
+    }
+
+    #[test]
+    fn mtech_studio_publishes_its_exact_tokens_on_every_install_path() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::MtechStudio);
+        assert_eq!(Tokens::get(&ctx), mtech_studio::TOKENS);
+        assert_eq!(glass_backdrop::params(&ctx), mtech_studio::studio_glass_params());
+
+        set_density(&ctx, Density::Compact);
+        assert_eq!(Tokens::get(&ctx), mtech_studio::TOKENS);
+
+        let bytes = encode_theme(&SavedTheme::current(&ctx)).unwrap();
+        let decoded = decode_theme(&bytes).unwrap();
+        assert_eq!(preset_matching_style(&decoded.style), Some(PresetStyles::MtechStudio));
+        assert_eq!(decoded.density, Density::Compact);
+
+        let fresh = Context::default();
+        bootstrap_startup_theme(&fresh);
+        assert_ne!(Tokens::get(&fresh), mtech_studio::TOKENS);
+        apply_user_color_scheme(&fresh, &bytes);
+        assert_eq!(Tokens::get(&fresh), mtech_studio::TOKENS);
+        assert_eq!(glass_backdrop::params(&fresh), mtech_studio::studio_glass_params());
+        assert_eq!(fresh.global_style().spacing.interact_size.y, Metrics::for_density(Density::Compact).control_h);
+    }
+
+    #[test]
+    fn leaving_mtech_studio_publishes_derived_tokens() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::MtechStudio);
+        apply_preset(&ctx, PresetStyles::ShippedClassic);
+        let (success, accent2) = semantic_colors_for_preset(PresetStyles::ShippedClassic);
+        assert_eq!(Tokens::get(&ctx), Tokens::derive(&ctx.global_style(), success, accent2));
+    }
+
+    #[test]
+    fn every_preset_publishes_opaque_tokens_with_its_semantic_colors() {
+        let ctx = Context::default();
+        for preset in all_presets() {
+            apply_preset(&ctx, preset);
+            let tokens = Tokens::get(&ctx);
+            let name = preset.as_str();
+            for (slot, c) in tokens.colors() {
+                assert_eq!(c.a(), 255, "{name}: {slot} is translucent");
+            }
+            let (success, accent2) = semantic_colors_for_preset(preset);
+            assert_eq!(tokens.success, super::super::tokens::composite(success, tokens.base), "{name}: success");
+            assert_eq!(tokens.secondary, super::super::tokens::composite(accent2, tokens.base), "{name}: secondary");
+        }
+    }
+
+    #[test]
+    fn every_preset_name_round_trips() {
+        for preset in all_presets() {
+            assert_eq!(PresetStyles::from_str(preset.as_str()), preset, "{}", preset.as_str());
+        }
+    }
+
+    #[test]
+    fn saved_themes_never_name_the_weight_families() {
+        let ctx = Context::default();
+        for preset in all_presets() {
+            apply_preset(&ctx, preset);
+            let current = SavedTheme::current(&ctx);
+            let from_file = super::super::theme_to_json(&saved(preset)).unwrap();
+            let file_style = super::super::theme_from_json(&from_file).unwrap().style;
+            let record = decode_theme(&encode_theme(&current).unwrap()).unwrap().style;
+            for style in [&current.style, &file_style, &record] {
+                for (text_style, font) in &style.text_styles {
+                    assert!(
+                        !matches!(font.family, eframe::egui::FontFamily::Name(_)),
+                        "{}: {text_style:?} saved as {:?}",
+                        preset.as_str(),
+                        font.family,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resetting_memory_keeps_the_theme_density_and_text_size() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::MtechStudio);
+        set_density(&ctx, Density::Compact);
+        set_text_scale(&ctx, TextScale::Large);
+
+        reset_memory(&ctx);
+
+        assert_eq!(Metrics::get(&ctx), Metrics::for_density(Density::Compact));
+        assert_eq!(fonts::text_scale(&ctx), TextScale::Large);
+        assert_eq!(Tokens::get(&ctx), mtech_studio::TOKENS);
+        assert_eq!(glass_backdrop::params(&ctx), mtech_studio::studio_glass_params());
+        assert_eq!(
+            ctx.global_style().spacing.interact_size.y,
+            Metrics::for_density(Density::Compact).control_h,
+        );
+    }
+
+    #[test]
+    fn an_origin_era_mtech_glass_record_loads_as_the_current_preset() {
+        let json = serde_json::json!({
+            "style": legacy_glass_style(),
+            "glass": GlassParams::OFF,
+        });
+        let bytes = zstd::encode_all(json.to_string().as_bytes(), 3).unwrap();
+        let decoded = decode_theme(&bytes).unwrap();
+        assert_eq!(preset_matching_style(&decoded.style), Some(PresetStyles::MtechGlassFull));
+
+        let ctx = Context::default();
+        bootstrap_startup_theme(&ctx);
+        apply_user_color_scheme(&ctx, &bytes);
+        assert!(styles_visually_equal(
+            &normalized(&ctx.global_style()),
+            &style_for_preset(PresetStyles::MtechGlassFull),
+        ));
+        assert_eq!(
+            glass_backdrop::params(&ctx),
+            glass_params_for_preset(PresetStyles::MtechGlassFull),
+        );
+        let (success, accent2) = semantic_colors_for_preset(PresetStyles::MtechGlassFull);
+        assert_eq!(super::super::theme::success_ctx(&ctx), success);
+        assert_eq!(super::super::theme::accent_secondary_ctx(&ctx), accent2);
+    }
+
+    #[test]
+    fn mtech_glass_full_carries_a_live_glass_material() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::MtechGlassFull);
+        let params = glass_backdrop::params(&ctx);
+        assert_eq!(params, glass_params_for_style(&glass_style()));
+        assert!(params.is_visible());
     }
 }
 

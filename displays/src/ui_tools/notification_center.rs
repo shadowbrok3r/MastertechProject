@@ -1,13 +1,43 @@
 use database::schema::assistant::{
-    complete_assistant_task, snooze_notification, TYPE_MORNING_BRIEF, TYPE_OVERDUE, TYPE_PART_REQUEST, TYPE_REMINDER,
+    TYPE_MORNING_BRIEF, TYPE_OVERDUE, TYPE_PART_REQUEST, TYPE_REMINDER, complete_assistant_task,
+    snooze_notification,
 };
-use database::schema::{utilities::NotificationMod, Notification, RecordId};
+use database::schema::{Notification, RecordId, utilities::NotificationMod};
 use eframe::egui::*;
 
-use crate::{ui_tools::{icons, theme}, PlatformSpawner, Spawner};
+use crate::{
+    PlatformSpawner, Spawner,
+    ui_tools::{
+        controls::{self, IconBox, IconButton, IconLabel, MenuButton, Metrics, Tokens},
+        icons::svg::{self, Icon},
+    },
+};
 
 /// Notification types that carry an assistant task a person can finish or snooze.
 const ACTIONABLE_TYPES: [&str; 3] = [TYPE_REMINDER, TYPE_OVERDUE, TYPE_PART_REQUEST];
+
+/// Width of the search field.
+const SEARCH_W: f32 = 240.0;
+/// Height `show_rows` assumes for a notification row.
+const ROW_H: f32 = 100.0;
+
+/// The icon a notification category shows.
+fn category_icon(category: &str) -> Icon {
+    match category {
+        "ALERT" => svg::WARNING,
+        "Task Update" => svg::ARROWS_CLOCKWISE,
+        "Task Created" => svg::PLUS_CIRCLE,
+        "AI Attention" => svg::ROBOT,
+        "AI Followup" => svg::SPARKLE,
+        "Admin" => svg::MEGAPHONE,
+        "System" => svg::GEAR,
+        TYPE_MORNING_BRIEF => svg::SUN_HORIZON,
+        TYPE_REMINDER => svg::ALARM,
+        TYPE_OVERDUE => svg::CLOCK_COUNTDOWN,
+        TYPE_PART_REQUEST => svg::PACKAGE,
+        _ => svg::BELL,
+    }
+}
 
 /// A click on a notification row, applied after the list is drawn.
 enum RowAction {
@@ -47,92 +77,57 @@ pub struct NotificationCenter {
 
 impl NotificationCenter {
     pub fn ui(
-        &mut self, 
+        &mut self,
         ui: &mut Ui,
-        task_names: &std::collections::BTreeSet<String>, 
-        ui_actions_tx: crossbeam::channel::Sender<crate::TaskUiActions>, 
-        tasks: &Vec<database::schema::LiveTaskPayload>
+        task_names: &std::collections::BTreeSet<String>,
+        ui_actions_tx: crossbeam::channel::Sender<crate::TaskUiActions>,
+        tasks: &Vec<database::schema::LiveTaskPayload>,
     ) {
-        ui.add_space(10.0);
+        let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+        ui.add_space(m.gap.y);
         if self.notifications.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new("No notifications").heading().weak());
-            });
+            controls::empty_state(
+                ui,
+                svg::BELL_SLASH,
+                "No notifications",
+                "You're all caught up.",
+                &[],
+            );
             return;
         }
 
-        // Search input under the Show Notifications button
         ui.vertical_centered(|ui| {
-            let edit = TextEdit::singleline(&mut self.search_query)
-                .hint_text("Search notifications...")
-                .desired_width(ui.available_width() - 120.0);
-            ui.add(edit);
-            if !self.search_query.is_empty() {
-                if ui.button("Clear").clicked() {
-                    self.search_query.clear();
-                }
-            }
+            let width = SEARCH_W.min(ui.available_width());
+            controls::search_field(ui, &mut self.search_query, "Search notifications…", width);
         });
 
-        // Category filter buttons
-        ui.add_space(5.0);
+        ui.add_space(m.gap.y);
         ui.horizontal_wrapped(|ui| {
-            // "All" button
-            let all_selected = self.selected_category.is_none();
-            let all_color = if all_selected {
-                Color32::from_rgb(42, 222, 192)
-            } else {
-                ui.style().visuals.text_color()
-            };
-            if ui.add(
-                Button::new(RichText::new("All").color(all_color).small())
-                    .stroke(if all_selected { 
-                        Stroke::new(1.0_f32, Color32::from_rgb(42, 222, 192)) 
-                    } else { 
-                        ui.style().visuals.noninteractive().fg_stroke 
-                    })
-                    .fill(ui.style().visuals.noninteractive().bg_fill)
-            ).clicked() {
+            if controls::pill(
+                ui,
+                svg::SQUARES_FOUR,
+                "All",
+                self.selected_category.is_none(),
+            )
+            .clicked()
+            {
                 self.selected_category = None;
             }
-
-            // Dynamic category buttons based on what's in notifications
-            let categories = self.get_categories();
-            for cat in &categories {
+            for cat in &self.get_categories() {
                 let is_selected = self.selected_category.as_ref() == Some(cat);
                 let unread_in_cat = self.unread_count_for_category(cat);
-                
-                // Color alert category differently
-                let cat_color = if cat == "ALERT" {
-                    theme::error(ui)
-                } else if is_selected {
-                    Color32::from_rgb(42, 222, 192)
-                } else {
-                    ui.style().visuals.text_color()
-                };
-                
                 let label = if unread_in_cat > 0 {
                     format!("{} ({})", cat, unread_in_cat)
                 } else {
                     cat.clone()
                 };
-                
-                if ui.add(
-                    Button::new(RichText::new(label).color(cat_color).small())
-                        .stroke(if is_selected { 
-                            Stroke::new(1.0_f32, cat_color) 
-                        } else { 
-                            ui.style().visuals.noninteractive().fg_stroke 
-                        })
-                        .fill(ui.style().visuals.noninteractive().bg_fill)
-                ).clicked() {
+                if controls::pill(ui, category_icon(cat), &label, is_selected).clicked() {
                     self.selected_category = Some(cat.clone());
                 }
             }
         });
-        ui.add_space(5.0);
+        ui.add_space(m.gap.y);
 
-        // Build filtered index list so mutations apply to the real data
         let query = self.search_query.trim().to_lowercase();
         let selected_cat = self.selected_category.clone();
         let filtered_indices: Vec<usize> = self
@@ -140,13 +135,12 @@ impl NotificationCenter {
             .iter()
             .enumerate()
             .filter_map(|(idx, n)| {
-                // Category filter
-                if let Some(ref cat) = selected_cat {
-                    if &n.notification_type != cat {
-                        return None;
-                    }
+                if let Some(ref cat) = selected_cat
+                    && &n.notification_type != cat
+                {
+                    return None;
                 }
-                
+
                 let matches_query = if query.is_empty() {
                     true
                 } else {
@@ -165,53 +159,53 @@ impl NotificationCenter {
             .collect();
 
         ui.horizontal(|ui| {
-            // Left: Read button
-            let read_button = Button::new(RichText::new("Read").color(Color32::from_rgba_premultiplied(42, 222, 192, 60)))
-                .stroke(ui.style().visuals.noninteractive().fg_stroke)
-                .fill(ui.style().visuals.noninteractive().bg_fill);
-            if ui.add(read_button).clicked() {
-                self.read_notifications = true;
-            }
-
-            ui.add_space(ui.available_width()/3.0);
-
-            // Middle: Mark All toggle for the currently filtered set
-            let all_label = if self.read_notifications { "Mark All Unread" } else { "Mark All Read" };
-            if ui
-                .add(
-                    Button::new(RichText::new(all_label))
-                        .stroke(ui.style().visuals.noninteractive().fg_stroke)
-                        .fill(ui.style().visuals.noninteractive().bg_fill),
-                )
-                .on_hover_text("Apply to all currently filtered notifications")
+            if controls::pill(ui, svg::ENVELOPE_SIMPLE, "Unread", !self.read_notifications)
                 .clicked()
             {
-                let make_read = !self.read_notifications; // if viewing Unread -> mark all Read; if viewing Read -> mark all Unread
-                self.mark_all_by_indices(&filtered_indices, make_read);
+                self.read_notifications = false;
             }
-
-            // Right: Unread button (push to right)
+            if controls::pill(ui, svg::CHECKS, "Read", self.read_notifications).clicked() {
+                self.read_notifications = true;
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let unread_button = Button::new(RichText::new("Unread").color(Color32::from_rgb(191, 33, 101)))
-                    .stroke(ui.style().visuals.noninteractive().fg_stroke)
-                    .fill(ui.style().visuals.noninteractive().bg_fill);
-                if ui.add(unread_button).clicked() {
-                    self.read_notifications = false;
+                let (icon, all_label) = if self.read_notifications {
+                    (svg::ENVELOPE_SIMPLE, "Mark all unread")
+                } else {
+                    (svg::CHECKS, "Mark all read")
+                };
+                if controls::TextButton::new(all_label)
+                    .icon(icon)
+                    .kind(controls::ButtonKind::Ghost)
+                    .show(ui)
+                    .on_hover_text("Apply to all currently filtered notifications")
+                    .clicked()
+                {
+                    let make_read = !self.read_notifications;
+                    self.mark_all_by_indices(&filtered_indices, make_read);
                 }
             });
         });
+        ui.add_space(m.gap.y / 2.0);
 
-    let row_height = 100.;
         let total_rows = filtered_indices.len();
         let scroll_area = ScrollArea::vertical().auto_shrink(false);
-        ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 15.0);
+        ui.ctx()
+            .options_mut(|o| o.input_options.line_scroll_speed = 15.0);
+
+        if total_rows == 0 {
+            let title = if self.read_notifications {
+                "Nothing read yet"
+            } else {
+                "No unread notifications"
+            };
+            controls::empty_state(ui, svg::TRAY, title, "Try another category or search.", &[]);
+            return;
+        }
 
         ui.scope(|ui| {
-            let _ = ui.style_mut().visuals.extreme_bg_color + Color32::from_rgb(30,30,30);
-            // clone indices for the closure
             let indices = filtered_indices.clone();
             let mut actions: Vec<RowAction> = Vec::new();
-            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+            scroll_area.show_rows(ui, ROW_H, total_rows, |ui, row_range| {
                 for row in row_range {
                     if let Some(&idx) = indices.get(row) {
                         let notification = &mut self.notifications[idx];
@@ -219,77 +213,68 @@ impl NotificationCenter {
                             && notification.task.is_some()
                             && ACTIONABLE_TYPES.contains(&notification.notification_type.as_str());
                         let is_brief = notification.notification_type == TYPE_MORNING_BRIEF;
-                        
+
                         Frame::new()
-                        .corner_radius(eframe::egui::CornerRadius::same(8))
-                        .fill(ui.style().visuals.code_bg_color)
-                        .inner_margin(Margin::same(6))
-                        .outer_margin(Margin::same(3))
+                        .corner_radius(CornerRadius::same(t.radius_md))
+                        .fill(t.raised)
+                        .stroke(Stroke::new(1.0, t.card_border))
+                        .inner_margin(Margin::same(m.gap.x as i8))
+                        .outer_margin(Margin::symmetric(0, (m.gap.y / 2.0) as i8))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.colored_label(
-                                    Color32::from_rgba_premultiplied(42, 222, 192, 60),
-                                    RichText::new(notification.notification_type.clone())
-                                );
-                                
+                                let kind = notification.notification_type.as_str();
+                                let tone = if kind == "ALERT" { t.error } else { t.tertiary };
+                                IconLabel::new(category_icon(kind), kind).tone(tone).show(ui);
+
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    // Dynamic toggle label + color for clarity
-                                    let (toggle_label, toggle_color) = if notification.status == "Read" {
-                                        ("Mark Unread", Color32::from_rgb(191, 33, 101))
+                                    let read = notification.status == "Read";
+                                    let (icon, tip) = if read {
+                                        (svg::ENVELOPE_SIMPLE, "Mark unread")
                                     } else {
-                                        ("Mark Read", Color32::from_rgba_premultiplied(42, 222, 192, 60))
+                                        (svg::CHECKS, "Mark read")
                                     };
-                                    
-                                    let button = Button::new(
-                                    RichText::new(toggle_label).color(toggle_color)
-                                    )
-                                    .stroke(ui.style().visuals.noninteractive().fg_stroke)
-                                    .fill(ui.style().visuals.noninteractive().bg_fill)
-                                    .min_size(Vec2::new(80.0, 22.0))
-                                    .ui(ui)
-                                    .on_hover_text("Toggle this notification's status");
-                                    
-                                    if button.clicked() {
-                                        // Toggle read/unread locally and persist
+                                    let toggle = IconButton::new(icon, IconBox::Sm).tip(tip).show(ui);
+
+                                    if toggle.clicked() {
                                         let mut notif = notification.clone();
-                                        if notification.status == "Read" {
+                                        if read {
                                             notification.status = "Unread".to_string();
                                             PlatformSpawner::spawn(async move {
                                                 let _ = notif.mark_notification(false).await;
                                             });
                                         } else {
                                             notification.status = "Read".to_string();
-                                                                                        PlatformSpawner::spawn(async move {
+                                            PlatformSpawner::spawn(async move {
                                                 let _ = notif.mark_notification(true).await;
                                             });
                                         }
                                     }
                                     if actionable {
                                         let now = chrono::Utc::now();
-                                        ui.menu_button(icons::menu_item(icons::SNOOZE, "Snooze"), |ui| {
-                                            if ui.button("1 hour").clicked() {
+                                        let _ = MenuButton::new("").icon(svg::ALARM).tip("Snooze").show(ui, |ui| {
+                                            if controls::menu_item(ui, svg::CLOCK, "1 hour").clicked() {
                                                 actions.push(RowAction::Snooze(idx, now + chrono::Duration::hours(1)));
                                                 ui.close();
                                             }
-                                            if ui.button("Next open morning").clicked() {
+                                            if controls::menu_item(ui, svg::SUN_HORIZON, "Next open morning").clicked() {
                                                 let until = database::schema::task_schedule::next_open_morning(now);
                                                 actions.push(RowAction::Snooze(idx, until));
                                                 ui.close();
                                             }
                                         });
-                                        if ui.small_button(icons::menu_item(icons::CHECK, "Done")).clicked() {
+                                        if controls::icon_button(ui, svg::CHECK, IconBox::Sm, false, "Done").clicked() {
                                             actions.push(RowAction::Done(idx));
                                         }
                                     }
                                 });
                             });
 
-                            ui.separator();
+                            controls::hairline(ui);
                             if is_brief {
                                 let first = notification.notification_description.lines().next().unwrap_or("");
                                 ui.horizontal(|ui| {
                                     ui.label(first);
-                                    if ui.small_button("Open brief").clicked() {
+                                    if controls::icon_text_button(ui, svg::SUN_HORIZON, "Open brief").clicked() {
                                         actions.push(RowAction::OpenBrief(idx));
                                     }
                                 });
@@ -297,13 +282,12 @@ impl NotificationCenter {
                                 crate::ui_tools::show_notification(
                                     ui,
                                     &notification.notification_description,
-                                    &task_names,
+                                    task_names,
                                     ui_actions_tx.clone(),
-                                    &tasks,
+                                    tasks,
                                 );
                             }
-                        })
-                        .inner;
+                        });
                     }
                 }
             });
@@ -321,7 +305,9 @@ impl NotificationCenter {
                 }
             }
             RowAction::Done(idx) => {
-                let Some(n) = self.notifications.get_mut(idx) else { return };
+                let Some(n) = self.notifications.get_mut(idx) else {
+                    return;
+                };
                 n.status = "Read".to_string();
                 let mut notif = n.clone();
                 let task = n.task.clone();
@@ -335,7 +321,9 @@ impl NotificationCenter {
                 });
             }
             RowAction::Snooze(idx, until) => {
-                let Some(n) = self.notifications.get_mut(idx) else { return };
+                let Some(n) = self.notifications.get_mut(idx) else {
+                    return;
+                };
                 n.status = "Snoozed".to_string();
                 let id: RecordId = n.id.clone();
                 PlatformSpawner::spawn(async move {
@@ -356,8 +344,12 @@ impl NotificationCenter {
     /// Marks the brief notification read once its window closes.
     fn close_brief(&mut self) {
         self.brief = None;
-        let Some(id) = self.brief_id.take() else { return };
-        let Some(n) = self.notifications.iter_mut().find(|n| n.id == id) else { return };
+        let Some(id) = self.brief_id.take() else {
+            return;
+        };
+        let Some(n) = self.notifications.iter_mut().find(|n| n.id == id) else {
+            return;
+        };
         if n.status != "Read" {
             n.status = "Read".to_string();
             let mut notif = n.clone();
@@ -369,9 +361,11 @@ impl NotificationCenter {
 
     /// The morning brief window, while one is open.
     pub fn brief_window(&mut self, ctx: &Context) {
-        let Some(text) = self.brief.clone() else { return };
+        let Some(text) = self.brief.clone() else {
+            return;
+        };
         let mut open = true;
-        Window::new(format!("{} Morning brief", icons::MORNING_BRIEF))
+        controls::icon_window(ctx, svg::SUN_HORIZON, "Morning brief")
             .id(Id::new("morning_brief_window"))
             .open(&mut open)
             .default_width(460.0)
@@ -403,7 +397,11 @@ impl NotificationCenter {
 
     /// Replaces the row with the same id, or adds it first.
     pub fn apply_update(&mut self, notification: Notification) {
-        match self.notifications.iter_mut().find(|n| n.id == notification.id) {
+        match self
+            .notifications
+            .iter_mut()
+            .find(|n| n.id == notification.id)
+        {
             Some(existing) => *existing = notification,
             None => self.notifications.insert(0, notification),
         }
@@ -417,10 +415,15 @@ impl NotificationCenter {
     fn mark_all_by_indices(&mut self, indices: &[usize], make_read: bool) {
         for &idx in indices {
             if let Some(n) = self.notifications.get_mut(idx) {
-                let should_change = (make_read && n.status != "Read") || (!make_read && n.status == "Read");
+                let should_change =
+                    (make_read && n.status != "Read") || (!make_read && n.status == "Read");
                 if should_change {
                     let mut clone = n.clone();
-                    n.status = if make_read { "Read".to_string() } else { "Unread".to_string() };
+                    n.status = if make_read {
+                        "Read".to_string()
+                    } else {
+                        "Unread".to_string()
+                    };
                     PlatformSpawner::spawn(async move {
                         let _ = clone.mark_notification(make_read).await;
                     });
@@ -431,7 +434,10 @@ impl NotificationCenter {
 
     /// Get total count of unread notifications
     pub fn unread_count(&self) -> usize {
-        self.notifications.iter().filter(|n| n.status == "Unread").count()
+        self.notifications
+            .iter()
+            .filter(|n| n.status == "Unread")
+            .count()
     }
 
     /// Get count of unread notifications for a specific category
@@ -449,7 +455,8 @@ impl NotificationCenter {
 
     /// Get all unique notification categories present in the notifications
     pub fn get_categories(&self) -> Vec<String> {
-        let mut categories: Vec<String> = self.notifications
+        let mut categories: Vec<String> = self
+            .notifications
             .iter()
             .map(|n| n.notification_type.clone())
             .collect::<std::collections::HashSet<_>>()

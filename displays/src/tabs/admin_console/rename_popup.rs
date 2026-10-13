@@ -3,11 +3,12 @@
 //! clears both, so the row falls back to the connection string and to
 //! client-side auto-detection.
 
+use crate::ui_tools::controls::{self, BarKind, IconLabel, Role, SpinnerSize, TextField};
 use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::{db, schema::ConnectedClient};
-use eframe::egui::{self, Context, RichText, TextEdit};
+use eframe::egui::{self, Context, RichText};
 
 pub struct RenameClientPopup {
     client: ConnectedClient,
@@ -69,7 +70,7 @@ impl RenameClientPopup {
         }
 
         let mut open = true;
-        egui::Window::new(format!("{} Rename client", icons::EDIT))
+        controls::icon_window(ctx, icons::svg::PENCIL_SIMPLE, "Rename client")
             .id(egui::Id::new((
                 "admin_rename_client",
                 self.client.connection_string.as_str(),
@@ -79,33 +80,41 @@ impl RenameClientPopup {
             .default_width(320.)
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.label(
-                    RichText::new(&self.client.connection_string)
-                        .small()
-                        .color(theme::weak_text(ui)),
-                );
+                IconLabel::new(icons::svg::DESKTOP, &self.client.connection_string)
+                    .small(true)
+                    .tone(theme::weak_text(ui))
+                    .show(ui);
                 ui.add_space(4.);
-                let edit = ui.add(
-                    TextEdit::singleline(&mut self.name)
-                        .hint_text("Friendly name (empty to clear)")
-                        .desired_width(f32::INFINITY),
-                );
+                let edit = TextField::new(&mut self.name)
+                    .hint("Friendly name (empty to clear)")
+                    .icon(icons::svg::TAG)
+                    .invalid(self.error.is_some())
+                    .width(ui.available_width())
+                    .show(ui);
                 let submitted = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if let Some(e) = self.error.as_deref() {
                     ui.add_space(2.);
-                    ui.label(RichText::new(e).small().color(theme::error(ui)));
+                    IconLabel::new(icons::svg::WARNING_CIRCLE, &e)
+                        .tone(theme::error(ui))
+                        .small(true)
+                        .wrap(true)
+                        .show(ui);
                 }
-                ui.add_space(6.);
-                ui.horizontal(|ui| {
+                ui.add_space(8.);
+                controls::bar(ui, BarKind::Footer, |ui| {
                     if self.saving {
-                        ui.spinner();
+                        controls::spinner(ui, SpinnerSize::Sm);
                         ui.label(RichText::new("Saving…").weak());
                         return;
                     }
-                    if ui.button(format!("{} Save", icons::SAVE)).clicked() || submitted {
+                    let clicked = controls::dialog_buttons(
+                        ui,
+                        &[(Role::Primary, "Save"), (Role::Cancel, "Cancel")],
+                    );
+                    if clicked == Some(0) || submitted {
                         self.save();
                     }
-                    if ui.button(format!("{} Cancel", icons::CLOSE)).clicked() {
+                    if clicked == Some(1) {
                         still_open = false;
                     }
                 });

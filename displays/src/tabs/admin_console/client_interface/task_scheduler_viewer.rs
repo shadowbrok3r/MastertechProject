@@ -1,6 +1,6 @@
+use crate::ui_tools::metrics::Metrics;
 use eframe::egui::{
-    self, Color32, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
-    Widget, scroll_area,
+    self, Color32, KeyboardShortcut, RichText, ScrollArea, Ui, Widget, scroll_area,
 };
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
@@ -10,8 +10,9 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, ScheduledTask};
-use crate::ui_tools::icons;
-use crate::ui_tools::theme;
+use crate::ui_tools::controls::{self, BarKind, IconLabel, Role};
+use crate::ui_tools::icons::{self, svg};
+use crate::ui_tools::{glass_card, theme};
 
 const NUM_COLUMNS: usize = 7;
 
@@ -165,92 +166,97 @@ impl TaskSchedulerViewer {
             }
         }
 
-        // Toolbar
-        ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+        controls::bar(ui, BarKind::Tool, |ui| {
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                 self.loading = true;
                 self.table.clear();
                 self.entries.clear();
                 let _ = cmd_tx.try_send(Cmd::ListScheduledTasks { folder: None });
             }
 
-            ui.label("Filter:");
-            TextEdit::singleline(&mut self.viewer.filter)
-                .hint_text("Search tasks...")
-                .desired_width(200.)
-                .show(ui);
+            controls::search_field(ui, &mut self.viewer.filter, "Search tasks...", 200.);
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { theme::success(ui) } else { theme::error(ui) };
-                ui.colored_label(color, msg);
+                let (icon, color) = if *success {
+                    (svg::CHECK_CIRCLE, theme::success(ui))
+                } else {
+                    (svg::WARNING_CIRCLE, theme::error(ui))
+                };
+                controls::note(ui, icon, msg.as_str(), color);
             }
         });
 
         ui.add_space(4.);
 
         if self.loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading scheduled tasks...");
-            });
+            controls::loading_state(ui, "Loading scheduled tasks...");
             return;
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No tasks loaded. Click Refresh to fetch.").italics().color(theme::weak_text(ui)));
+            controls::empty_state(
+                ui,
+                svg::CALENDAR_CHECK,
+                "No tasks loaded",
+                "Click Refresh to fetch.",
+                &[],
+            );
             return;
         }
 
         // Detail window
         if let Some(task) = self.detail_task.clone() {
-            egui::Window::new(format!("Task: {}", task.name))
+            let title = format!("Task: {}", task.name);
+            controls::icon_window(ui.ctx(), svg::CALENDAR_CHECK, &title)
                 .collapsible(true)
                 .resizable(true)
                 .default_width(500.)
                 .show(ui.ctx(), |ui| {
                     egui::Grid::new("task_detail_grid").num_columns(2).show(ui, |ui| {
-                        ui.label(RichText::new("Name:").strong());
+                        detail_key(ui, svg::TAG, "Name");
                         ui.label(&task.name);
                         ui.end_row();
 
-                        ui.label(RichText::new("Path:").strong());
+                        detail_key(ui, svg::FOLDER, "Path");
                         ui.label(&task.path);
                         ui.end_row();
 
-                        ui.label(RichText::new("State:").strong());
+                        detail_key(ui, svg::PULSE, "State");
                         let color = state_color(ui, &task.state);
                         ui.colored_label(color, &task.state);
                         ui.end_row();
 
-                        ui.label(RichText::new("Last Run:").strong());
+                        detail_key(ui, svg::CLOCK_COUNTER_CLOCKWISE, "Last Run");
                         ui.label(task.last_run.as_deref().unwrap_or("Never"));
                         ui.end_row();
 
-                        ui.label(RichText::new("Next Run:").strong());
+                        detail_key(ui, svg::CLOCK_CLOCKWISE, "Next Run");
                         ui.label(task.next_run.as_deref().unwrap_or("N/A"));
                         ui.end_row();
 
-                        ui.label(RichText::new("Description:").strong());
+                        detail_key(ui, svg::NOTE, "Description");
                         ui.label(&task.description);
                         ui.end_row();
                     });
 
                     ui.add_space(8.);
-                    ui.label(RichText::new("Triggers:").strong());
+                    glass_card::card_header(ui, svg::ALARM, "Triggers", None);
                     for trigger in &task.triggers {
-                        ui.label(format!("  - {}", trigger));
+                        bullet(ui, trigger);
                     }
 
                     ui.add_space(4.);
-                    ui.label(RichText::new("Actions:").strong());
+                    glass_card::card_header(ui, svg::PLAY, "Actions", None);
                     for action in &task.actions {
-                        ui.label(format!("  - {}", action));
+                        bullet(ui, action);
                     }
 
                     ui.add_space(8.);
-                    if ui.button("Close").clicked() {
-                        self.detail_task = None;
-                    }
+                    controls::bar(ui, BarKind::Footer, |ui| {
+                        if controls::dialog_buttons(ui, &[(Role::Cancel, "Close")]).is_some() {
+                            self.detail_task = None;
+                        }
+                    });
                 });
         }
 
@@ -306,13 +312,16 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
             0 => {
                 let color = state_color(ui, &row.state);
                 let icon = match row.state.as_str() {
-                    "Ready" => icons::STATUS_READY,
-                    "Disabled" => icons::STATUS_DISABLED,
-                    "Running" => icons::PLAY,
-                    "Queued" => icons::STATUS_QUEUED,
-                    _ => icons::STATUS_DOT,
+                    "Ready" => svg::CHECK,
+                    "Disabled" => svg::PROHIBIT,
+                    "Running" => svg::PLAY,
+                    "Queued" => svg::CLOCK,
+                    _ => svg::DOT,
                 };
-                ui.label(RichText::new(format!("{} {}", icon, row.state)).color(color));
+                ui.horizontal(|ui| {
+                    icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+                    ui.label(RichText::new(&row.state).color(color));
+                });
             }
             1 => {
                 ui.label(RichText::new(&row.name).color(theme::text(ui)));
@@ -440,7 +449,7 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
         items.push(CustomMenuItem::new("enable", "Enable").icon(icons::STATUS_READY).enabled(has_selection && is_disabled));
         items.push(CustomMenuItem::new("disable", "Disable").icon(icons::STATUS_DISABLED).enabled(has_selection && is_ready));
         items.push(CustomMenuItem::new("run_now", "Run Now").icon(icons::PLAY).enabled(has_selection && is_ready));
-        items.push(CustomMenuItem::new("detail", "View Details").icon("?").enabled(has_selection));
+        items.push(CustomMenuItem::new("detail", "View Details").icon(svg::INFO.glyph()).enabled(has_selection));
         items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items
     }
@@ -484,6 +493,22 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
             _ => {}
         }
     }
+}
+
+/// A detail-grid key with a leading icon.
+fn detail_key(ui: &mut egui::Ui, icon: svg::Icon, text: &str) {
+    ui.horizontal(|ui| {
+        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+        ui.label(RichText::new(text).strong());
+    });
+}
+
+/// One wrapped list line behind a dot.
+fn bullet(ui: &mut egui::Ui, text: &str) {
+    IconLabel::new(svg::DOT, text)
+        .icon_tone(theme::weak_text(ui))
+        .wrap(true)
+        .show(ui);
 }
 
 fn state_color(ui: &egui::Ui, state: &str) -> Color32 {

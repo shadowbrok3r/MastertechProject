@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" data-glyph="SCREENCAST">
+<rect x="32" y="48" width="192" height="136" rx="16"/>
+<path d="M96,216H160"/>
+<path d="M88,100H168M152,84L168,100L152,116"/>
+<path d="M168,140H88M104,124L88,140L104,156"/>
+</svg>

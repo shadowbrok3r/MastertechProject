@@ -1,6 +1,8 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction};
-use eframe::egui::{Button, CentralPanel, ComboBox, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget, scroll_area};
-use crate::ui_tools::icons;
+use eframe::egui::{Align, CentralPanel, Frame, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Ui, Widget, vec2, scroll_area};
+use crate::ui_tools::controls::{self, BarKind, IconLabel, Metrics, SpinnerSize};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::Process;
 use egui_extras::Column;
@@ -134,59 +136,45 @@ impl ProcessTableViewer {
     }
 
     pub fn show(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
         eframe::egui::Panel::top("Process Viewer Top Panel")
-            .exact_size(30.)
-            .show(ui, |ui| 
+            .frame(Frame::NONE)
+            .exact_size(m.bar_h)
+            .show(ui, |ui|
         {
-            ui.horizontal_top(|ui| {
-                TextEdit::singleline(&mut self.process_viewer.filter)
-                    .hint_text(" Search for Process ")
-                    .ui(ui);
+            controls::bar(ui, BarKind::Tool, |ui| {
+                controls::search_field(ui, &mut self.process_viewer.filter, "Search for Process", 220.);
 
-                ui.add_space(10.);
-                
                 // Refresh rate dropdown
-                ui.label("Refresh:");
-                let current_label = REFRESH_RATE_OPTIONS.get(self.refresh_rate_idx)
-                    .map(|(_, label)| *label)
-                    .unwrap_or("1 second");
-                
-                ComboBox::from_id_salt("process_refresh_rate")
-                    .selected_text(current_label)
-                    .show_ui(ui, |ui| {
-                        for (idx, (ms, label)) in REFRESH_RATE_OPTIONS.iter().enumerate() {
-                            if ui.selectable_value(&mut self.refresh_rate_idx, idx, *label).clicked() {
-                                self.refresh_rate_ms = *ms;
-                            }
-                        }
-                    });
-                
-                ui.add_space(10.);
+                controls::icon_label(ui, svg::TIMER, "Refresh");
+                let options: Vec<(usize, &str)> = REFRESH_RATE_OPTIONS
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, (_, label))| (idx, *label))
+                    .collect();
+                if controls::dropdown(ui, "process_refresh_rate", &mut self.refresh_rate_idx, &options, 120.)
+                    .changed()
+                    && let Some((ms, _)) = REFRESH_RATE_OPTIONS.get(self.refresh_rate_idx)
+                {
+                    self.refresh_rate_ms = *ms;
+                }
 
                 let label = if self.process_viewer.open_hotkeys {
-                    " Hide Hotkeys "
+                    "Hide Hotkeys"
                 } else {
-                    " Show Hotkeys "
+                    "Show Hotkeys"
                 };
-                if Button::new(label).ui(ui).clicked() {
+                if controls::icon_text_button(ui, svg::KEYBOARD, label).clicked() {
                     self.process_viewer.open_hotkeys = !self.process_viewer.open_hotkeys;
                 }
 
                 // Selecting a row holds the refresh so the selected process
                 // doesn't move out from under the pointer while it's read.
                 if let Some(held) = self.process_viewer.selected.clone() {
-                    ui.add_space(10.);
-                    ui.label(
-                        RichText::new(format!(
-                            "{} Paused on {} ({})",
-                            icons::PAUSE,
-                            held.name,
-                            held.id
-                        ))
-                        .color(ui.global_style().visuals.warn_fg_color),
-                    );
-                    let release = Button::new(format!("{} Resume", icons::PLAY))
-                        .ui(ui)
+                    controls::vline(ui, m.control_h);
+                    let paused = format!("Paused on {} ({})", held.name, held.id);
+                    IconLabel::new(svg::PAUSE, &paused).tone(theme::warn(ui)).show(ui);
+                    let release = controls::icon_text_button(ui, svg::PLAY, "Resume")
                         .on_hover_text("Resume live refresh (Esc)")
                         .clicked();
                     if release || ui.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
@@ -202,23 +190,19 @@ impl ProcessTableViewer {
             .max_size(240.)
             .show_collapsible(ui, &mut hotkeys_open, |ui|
         {
-            ui.vertical_centered(|ui| ui.heading("Hotkeys"));
-            ui.vertical_centered_justified(|ui| ui.separator());
+            controls::panel_header(ui, svg::KEYBOARD, "Hotkeys", |_| {});
 
             ui.horizontal_wrapped(|ui| {
-                ui.style_mut().spacing.item_spacing.y = 5.0;
-                ui.add_space(2.);
                 let mut count = 0;
                 for (k, a) in &self.process_viewer.hotkeys {
-                    Button::new(format!("{a:?}"))
-                        .min_size(Vec2::new(280., 25.))
-                        .shortcut_text(
-                            RichText::new(ui.ctx().format_shortcut(k))
-                            .code()
-                            .color(ui.global_style().visuals.warn_fg_color)
-                        )
-                        .ui(ui);
-                    
+                    ui.allocate_ui_with_layout(vec2(280., m.control_h), Layout::left_to_right(Align::Center), |ui| {
+                        ui.label(format!("{a:?}"));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let shortcut = ui.ctx().format_shortcut(k);
+                            ui.label(RichText::new(shortcut).code().color(theme::warn(ui)));
+                        });
+                    });
+
                     count += 1;
                     if count % 4 == 0 {
                         ui.end_row();
@@ -230,17 +214,10 @@ impl ProcessTableViewer {
         CentralPanel::default()
             .show(ui, |ui| 
         {
-            ui.horizontal(|ui| {
-                ui.add_space(10.);
-            
-                if self.loading {
-                    ui.ctx().request_repaint();
-                    ui.add_space(10.);
-                    Spinner::new().color(ui.global_style().visuals.error_fg_color).ui(ui);
-                }
-
-            });
-            ui.add_space(5.);
+            if self.loading {
+                ui.ctx().request_repaint();
+                controls::spinner(ui, SpinnerSize::Sm);
+            }
             ScrollArea::horizontal()
                 .auto_shrink(false)
                 .show(ui, |ui| 
@@ -303,10 +280,10 @@ impl RowViewer<Process> for ProcessRowViewer {
         vec![
             // Process-specific actions (require selection)
             CustomMenuItem::new("kill_process", "Kill Process")
-                .icon("🔫")
+                .icon(svg::SKULL.glyph())
                 .enabled(has_selection),
             CustomMenuItem::new("open_in_explorer", "Open in Explorer")
-                .icon("📂")
+                .icon(svg::FOLDER_OPEN.glyph())
                 .enabled(single_selection),
         ]
     }
@@ -341,7 +318,7 @@ impl RowViewer<Process> for ProcessRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &Process, column: usize) {
         let _ = match column {
-            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.global_style().visuals.warn_fg_color, format!(" {}", row.id.clone()))).inner,
+            0 => ui.horizontal_centered(|ui| ui.colored_label(theme::warn(ui), format!(" {}", row.id.clone()))).inner,
             1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.name.clone()))).inner,
             2 => ui.horizontal_centered(|ui| ui.label(format!(" {:.2}%", row.cpu_usage.clone()))).inner,
             3 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb", row.memory.clone()))).inner,
@@ -399,21 +376,19 @@ impl RowViewer<Process> for ProcessRowViewer {
         }
         
         // Show context menu on right-click
-        resp.context_menu(|ui| {
-            ui.set_min_width(180.0);
-            
+        resp.context_menu(|ui| controls::menu_body(ui, |ui| {
             ui.label(RichText::new(format!("Process: {}", row.name)).strong());
             ui.label(RichText::new(format!("PID: {}", row.id)).small());
-            ui.separator();
-            
-            if ui.button("🔫 Kill Process").clicked() {
+            controls::hairline(ui);
+
+            if controls::menu_danger_item(ui, svg::SKULL, "Kill Process").clicked() {
                 if let Some(tx) = &self.action_tx {
                     let _ = tx.try_send(ProcessAction::Kill(row.id));
                 }
                 ui.close();
             }
-            
-            if ui.button("📂 Open in Explorer").clicked() {
+
+            if controls::menu_item(ui, svg::FOLDER_OPEN, "Open in Explorer").clicked() {
                 // Use the exe_path if available, otherwise use cmd
                 let path = row.exe_path.clone().unwrap_or_else(|| row.cmd.clone());
                 if let Some(tx) = &self.action_tx {
@@ -421,7 +396,7 @@ impl RowViewer<Process> for ProcessRowViewer {
                 }
                 ui.close();
             }
-        });
+        }));
     
         resp
             .clone()

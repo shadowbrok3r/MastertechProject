@@ -12,10 +12,15 @@ use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::schema::{
     Datetime, HardwareKind, RecordId, RecordIdExt, RunResult, StressTestEvent,
 };
-use eframe::egui::{Align, ComboBox, Layout, RichText, ScrollArea, TextEdit, Ui, vec2};
+use eframe::egui::{Align, Color32, Layout, RichText, ScrollArea, Ui, vec2};
 
-use crate::ui_tools::framed_controls::{FramedSelectable, selectable_card};
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::framed_controls::selectable_card;
+use crate::ui_tools::{
+    controls::{self, BarKind, ButtonKind, Icon, IconBox, Segment, SpinnerSize, TextButton},
+    icons::svg,
+    metrics::Metrics,
+    theme,
+};
 use crate::{PlatformSpawner, Spawner};
 
 use data::{ComponentInfo, RunRecord, SeriesBucket};
@@ -134,26 +139,45 @@ fn result_color(ui: &Ui, result: RunResult) -> eframe::egui::Color32 {
     }
 }
 
-fn result_glyph(result: RunResult) -> &'static str {
+fn result_icon(result: RunResult) -> Icon {
     match result {
-        RunResult::Pass => icons::p::CHECK_CIRCLE,
-        RunResult::Fail => icons::p::X_CIRCLE,
-        RunResult::Aborted => icons::p::PROHIBIT,
-        RunResult::Inconclusive => icons::p::QUESTION,
-        RunResult::InProgress => icons::p::HOURGLASS_SIMPLE,
+        RunResult::Pass => svg::CHECK_CIRCLE,
+        RunResult::Fail => svg::X_CIRCLE,
+        RunResult::Aborted => svg::PROHIBIT,
+        RunResult::Inconclusive => svg::QUESTION,
+        RunResult::InProgress => svg::HOURGLASS_SIMPLE,
     }
 }
 
-fn kind_glyph(kind: HardwareKind) -> &'static str {
+fn kind_icon(kind: HardwareKind) -> Icon {
     match kind {
-        HardwareKind::Cpu => icons::p::CPU,
-        HardwareKind::Gpu => icons::p::GRAPHICS_CARD,
-        HardwareKind::RamModule | HardwareKind::RamKit => icons::p::MEMORY,
-        HardwareKind::Ssd | HardwareKind::Hdd => icons::p::HARD_DRIVE,
-        HardwareKind::Motherboard => icons::p::CIRCUITRY,
-        HardwareKind::Psu => icons::p::LIGHTNING,
-        HardwareKind::Cooler => icons::p::FAN,
+        HardwareKind::Cpu => svg::CPU,
+        HardwareKind::Gpu => svg::GRAPHICS_CARD,
+        HardwareKind::RamModule | HardwareKind::RamKit => svg::MEMORY,
+        HardwareKind::Ssd | HardwareKind::Hdd => svg::HARD_DRIVE,
+        HardwareKind::Motherboard => svg::CIRCUITRY,
+        HardwareKind::Psu => svg::LIGHTNING,
+        HardwareKind::Cooler => svg::FAN,
     }
+}
+
+/// Hardware kinds offered by the kind filter.
+const KIND_FILTERS: [HardwareKind; 9] = [
+    HardwareKind::Cpu,
+    HardwareKind::Gpu,
+    HardwareKind::RamKit,
+    HardwareKind::RamModule,
+    HardwareKind::Ssd,
+    HardwareKind::Hdd,
+    HardwareKind::Motherboard,
+    HardwareKind::Psu,
+    HardwareKind::Cooler,
+];
+
+/// A column heading with its item count.
+fn column_heading(ui: &mut Ui, icon: Icon, title: &str, count: usize) {
+    controls::subheading(ui, icon, title);
+    controls::badge(ui, &count.to_string(), theme::weak_text(ui));
 }
 
 /// Series color for index `i`. The CVD-validated palette holds six; past that
@@ -313,9 +337,8 @@ impl StressLab {
         }
         self.toolbar(ui);
         for err in self.errors.values() {
-            ui.colored_label(theme::error(ui), err);
+            controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
         }
-        ui.separator();
 
         match self.view {
             View::Browse => self.browse_ui(ui),
@@ -719,84 +742,23 @@ impl StressLab {
     // ---- chrome ----------------------------------------------------------
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .framed_selectable_label(self.view == View::Browse, format!("{} Browse", icons::LIST))
-                .clicked()
-            {
-                self.view = View::Browse;
-            }
-            if ui
-                .framed_selectable_label(
-                    self.view == View::Compare,
-                    format!("{} Compare", icons::p::CHART_LINE),
-                )
-                .clicked()
-            {
-                self.view = View::Compare;
-            }
-            ui.separator();
-            if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
+        controls::bar(ui, BarKind::Tool, |ui| {
+            let views = [
+                Segment::new(View::Browse, "Browse").icon(svg::LIST),
+                Segment::new(View::Compare, "Compare").icon(svg::CHART_LINE),
+            ];
+            controls::segmented(ui, &mut self.view, &views);
+            crate::tabs::bar_rule(ui);
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                 self.refresh_all();
             }
-
-            let prev_kind = self.kind_filter;
-            ComboBox::from_id_salt("stress_lab_kind_filter")
-                .selected_text(match self.kind_filter {
-                    Some(kind) => kind.as_str(),
-                    None => "All kinds",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.kind_filter, None, "All kinds");
-                    for kind in [
-                        HardwareKind::Cpu,
-                        HardwareKind::Gpu,
-                        HardwareKind::RamKit,
-                        HardwareKind::RamModule,
-                        HardwareKind::Ssd,
-                        HardwareKind::Hdd,
-                        HardwareKind::Motherboard,
-                        HardwareKind::Psu,
-                        HardwareKind::Cooler,
-                    ] {
-                        ui.selectable_value(&mut self.kind_filter, Some(kind), kind.as_str());
-                    }
-                });
-            if self.kind_filter != prev_kind {
-                self.selected_component = None;
-                self.compare.dirty = true;
-            }
-
-            ComboBox::from_id_salt("stress_lab_tool_filter")
-                .selected_text(match &self.tool_filter {
-                    Some(tool) => tool.as_str(),
-                    None => "All stressors",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.tool_filter, None, "All stressors");
-                    for tool in self.tools.clone() {
-                        ui.selectable_value(&mut self.tool_filter, Some(tool.clone()), tool);
-                    }
-                });
-
-            ui.add(
-                TextEdit::singleline(&mut self.search)
-                    .hint_text(format!("{} Search runs & hardware", icons::SEARCH))
-                    .desired_width(220.0),
-            );
-            if !self.search.is_empty() && ui.button(icons::CLOSE).clicked() {
-                self.search.clear();
-            }
-
-            ui.checkbox(&mut self.only_with_runs, "Tested hardware only");
-            ui.checkbox(&mut self.interactive_charts, "Pan/zoom charts");
 
             if self.loading_components
                 || self.loading_runs
                 || self.loading_detail
                 || self.loading_compare
             {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(
@@ -808,6 +770,33 @@ impl StressLab {
                     .weak(),
                 );
             });
+        });
+
+        controls::bar(ui, BarKind::Tool, |ui| {
+            let prev_kind = self.kind_filter;
+            let mut kinds: Vec<(Option<HardwareKind>, &str)> = vec![(None, "All kinds")];
+            kinds.extend(KIND_FILTERS.iter().map(|k| (Some(*k), k.as_str())));
+            controls::dropdown(ui, "stress_lab_kind_filter", &mut self.kind_filter, &kinds, 130.0);
+            if self.kind_filter != prev_kind {
+                self.selected_component = None;
+                self.compare.dirty = true;
+            }
+
+            let tools = self.tools.clone();
+            let mut stressors: Vec<(Option<String>, &str)> = vec![(None, "All stressors")];
+            stressors.extend(tools.iter().map(|t| (Some(t.clone()), t.as_str())));
+            controls::dropdown(
+                ui,
+                "stress_lab_tool_filter",
+                &mut self.tool_filter,
+                &stressors,
+                160.0,
+            );
+
+            controls::search_field(ui, &mut self.search, "Search runs & hardware", 220.0);
+
+            controls::toggle(ui, &mut self.only_with_runs, "Tested hardware only");
+            controls::toggle(ui, &mut self.interactive_charts, "Pan/zoom charts");
         });
     }
 
@@ -821,9 +810,9 @@ impl StressLab {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     self.components_panel(ui);
-                    ui.separator();
+                    controls::hairline(ui);
                     self.runs_panel(ui);
-                    ui.separator();
+                    controls::hairline(ui);
                     self.detail_panel(ui);
                 });
             return;
@@ -835,11 +824,11 @@ impl StressLab {
             column(ui, hardware_w, height, "stress_lab_hardware_col", |ui| {
                 self.components_panel(ui)
             });
-            ui.separator();
+            controls::vline(ui, height);
             column(ui, runs_w, height, "stress_lab_runs_col", |ui| {
                 self.runs_panel(ui)
             });
-            ui.separator();
+            controls::vline(ui, height);
             let rest = ui.available_width().max(240.0);
             column(ui, rest, height, "stress_lab_detail_col", |ui| {
                 self.detail_panel(ui)
@@ -853,59 +842,67 @@ impl StressLab {
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
-        ui.horizontal(|ui| {
-            ui.heading("Hardware");
-            ui.label(RichText::new(format!("{}", visible.len())).weak());
+        let mut clear = false;
+        controls::bar(ui, BarKind::Header, |ui| {
+            column_heading(ui, svg::CIRCUITRY, "Hardware", visible.len());
+            if self.selected_component.is_some() {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    clear = TextButton::new("Clear")
+                        .icon(svg::X)
+                        .kind(ButtonKind::Ghost)
+                        .show(ui)
+                        .on_hover_text("Clear selection")
+                        .clicked();
+                });
+            }
         });
-
-        if self.selected_component.is_some() && ui.button("Clear selection").clicked() {
+        if clear {
             self.selected_component = None;
         }
 
         if visible.is_empty() {
-            ui.label(RichText::new("No hardware matches the filters.").weak());
+            controls::empty_state(
+                ui,
+                svg::FUNNEL_SIMPLE,
+                "No hardware matches the filters",
+                "",
+                &[],
+            );
             return;
         }
 
+        let m = Metrics::get(ui.ctx());
         for component in visible {
             let selected = self.selected_component.as_ref() == Some(&component.id);
             let stats = self.component_stats(&component.id);
             let response = selectable_card(ui, ("hw", component.id.key_string()), selected, |ui| {
-                ui.label(RichText::new(format!(
-                    "{} {}",
-                    kind_glyph(component.kind),
-                    component.display_name
-                )));
+                ui.horizontal(|ui| {
+                    ui.add(kind_icon(component.kind).image(m.icon_md).tint(theme::primary(ui)));
+                    controls::elided_label(ui, &component.display_name, ui.available_width());
+                });
                 ui.label(
                     RichText::new(format!("{} · {}", component.kind.as_str(), component.id.key_string()))
                         .weak()
                         .small(),
                 );
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("{} runs", stats.runs)).small());
+                    controls::badge(ui, &format!("{} runs", stats.runs), theme::weak_text(ui));
                     if stats.pass > 0 {
-                        ui.label(
-                            RichText::new(format!("{} pass", stats.pass))
-                                .color(theme::result_pass(ui))
-                                .small(),
-                        );
+                        controls::badge(ui, &format!("{} pass", stats.pass), theme::result_pass(ui));
                     }
                     if stats.fail > 0 {
-                        ui.label(
-                            RichText::new(format!("{} fail", stats.fail))
-                                .color(theme::result_fail(ui))
-                                .small(),
-                        );
+                        controls::badge(ui, &format!("{} fail", stats.fail), theme::result_fail(ui));
                     }
                     if stats.aborted > 0 {
-                        ui.label(
-                            RichText::new(format!("{} aborted", stats.aborted))
-                                .color(theme::result_aborted(ui))
-                                .small(),
-                        );
+                        let text = format!("{} aborted", stats.aborted);
+                        controls::badge(ui, &text, theme::result_aborted(ui));
                     }
                     if let Some(temp) = stats.peak_temp_c {
-                        ui.label(RichText::new(format!("{temp:.0}°C peak")).small());
+                        let text = format!("{temp:.0}°C peak");
+                        controls::IconLabel::new(svg::THERMOMETER, &text)
+                            .tone(theme::weak_text(ui))
+                            .small(true)
+                            .show(ui);
                     }
                 });
             })
@@ -925,69 +922,59 @@ impl StressLab {
                 self.detail = None;
                 self.loading_detail = false;
             }
-            ui.add_space(3.0);
+            ui.add_space(m.gap.y / 2.0);
         }
     }
 
     fn runs_panel(&mut self, ui: &mut Ui) {
         let visible: Vec<RunRecord> = self.visible_runs().into_iter().cloned().collect();
 
-        ui.horizontal(|ui| {
-            ui.heading("Runs");
-            ui.label(RichText::new(format!("{}", visible.len())).weak());
+        controls::bar(ui, BarKind::Header, |ui| {
+            column_heading(ui, svg::MT_STRESS, "Runs", visible.len());
         });
         ui.horizontal_wrapped(|ui| {
-            ComboBox::from_id_salt("stress_lab_result_filter")
-                .width(126.0)
-                .selected_text(self.result_filter.label())
-                .show_ui(ui, |ui| {
-                    for filter in ResultFilter::VALUES {
-                        ui.selectable_value(&mut self.result_filter, filter, filter.label());
-                    }
-                });
-            ComboBox::from_id_salt("stress_lab_sort")
-                .width(140.0)
-                .selected_text(format!("Sort: {}", self.run_sort.label()))
-                .show_ui(ui, |ui| {
-                    for sort in RunSort::VALUES {
-                        ui.selectable_value(&mut self.run_sort, sort, sort.label());
-                    }
-                });
-            let glyph = if self.sort_desc {
-                icons::p::SORT_DESCENDING
+            let filters: Vec<(ResultFilter, &str)> =
+                ResultFilter::VALUES.iter().map(|f| (*f, f.label())).collect();
+            controls::dropdown(
+                ui,
+                "stress_lab_result_filter",
+                &mut self.result_filter,
+                &filters,
+                126.0,
+            );
+            let sorts: Vec<(RunSort, &str)> =
+                RunSort::VALUES.iter().map(|s| (*s, s.label())).collect();
+            controls::dropdown(ui, "stress_lab_sort", &mut self.run_sort, &sorts, 140.0);
+            let icon = if self.sort_desc {
+                svg::SORT_DESCENDING
             } else {
-                icons::p::SORT_ASCENDING
+                svg::SORT_ASCENDING
             };
-            if ui.button(glyph).on_hover_text("Reverse sort").clicked() {
+            if controls::icon_button(ui, icon, IconBox::Md, false, "Reverse sort").clicked() {
                 self.sort_desc = !self.sort_desc;
             }
         });
         if let Some(component) = self.selected_component.clone() {
-            ui.label(
-                RichText::new(format!("Filtered to {}", self.component_name(&component)))
-                    .weak()
-                    .small(),
-            );
+            let text = format!("Filtered to {}", self.component_name(&component));
+            controls::IconLabel::new(svg::FUNNEL_SIMPLE, &text)
+                .tone(theme::weak_text(ui))
+                .small(true)
+                .show(ui);
         }
 
         if visible.is_empty() {
-            ui.label(RichText::new("No runs match the filters.").weak());
+            controls::empty_state(ui, svg::FUNNEL_SIMPLE, "No runs match the filters", "", &[]);
             return;
         }
 
+        let m = Metrics::get(ui.ctx());
         for run in visible {
             let selected = self.selected_run.as_ref() == Some(&run.id);
             let response = selectable_card(ui, ("run", run.id.key_string()), selected, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new(format!(
-                            "{} {}",
-                            result_glyph(run.result),
-                            run.result.as_str()
-                        ))
-                        .color(result_color(ui, run.result))
-                        .strong(),
-                    );
+                    let tone = result_color(ui, run.result);
+                    ui.add(result_icon(run.result).image(m.icon_md).tint(tone));
+                    ui.label(RichText::new(run.result.as_str()).color(tone).strong());
                     ui.label(RichText::new(fmt_datetime(&run.started_at)).weak().small());
                 });
                 ui.label(RichText::new(format!(
@@ -996,34 +983,29 @@ impl StressLab {
                     run.preset_label.as_deref().unwrap_or("—")
                 )));
                 ui.horizontal_wrapped(|ui| {
+                    let weak = theme::weak_text(ui);
                     if let Some(host) = &run.hostname {
-                        ui.label(RichText::new(host).weak().small());
+                        run_fact(ui, svg::DESKTOP, host, weak);
                     }
                     if let Some(target) = &run.target_component {
-                        ui.label(
-                            RichText::new(self.component_name(target))
-                                .weak()
-                                .small(),
-                        );
+                        run_fact(ui, svg::CROSSHAIR, &self.component_name(target), weak);
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
+                    let text = theme::text(ui);
                     if let (Some(tp), Some(unit)) = (run.peak_throughput(), run.throughput_unit())
                     {
-                        ui.label(RichText::new(format!("peak {tp:.1} {unit}")).small());
+                        run_fact(ui, svg::GAUGE, &format!("peak {tp:.1} {unit}"), text);
                     }
                     if let Some(temp) = run.peak_temp_c() {
-                        ui.label(RichText::new(format!("{temp:.0}°C")).small());
+                        run_fact(ui, svg::THERMOMETER, &format!("{temp:.0}°C"), text);
                     }
                     if let Some(secs) = run.duration_actual_secs {
-                        ui.label(RichText::new(fmt_duration(secs)).small());
+                        run_fact(ui, svg::TIMER, &fmt_duration(secs), text);
                     }
                     if run.failure_kind != "none" {
-                        ui.label(
-                            RichText::new(&run.failure_kind)
-                                .color(result_color(ui, run.result))
-                                .small(),
-                        );
+                        let tone = result_color(ui, run.result);
+                        run_fact(ui, svg::WARNING, &run.failure_kind, tone);
                     }
                 });
             })
@@ -1032,62 +1014,84 @@ impl StressLab {
             if response.clicked() {
                 self.select_run(&run.id);
             }
-            ui.add_space(3.0);
+            ui.add_space(m.gap.y / 2.0);
         }
     }
 
     fn detail_panel(&mut self, ui: &mut Ui) {
-        ui.heading("Run detail");
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::subheading(ui, svg::CHART_LINE, "Run detail");
+        });
         let Some(run_id) = self.selected_run.clone() else {
-            ui.label(RichText::new("Select a run to view its telemetry and events.").weak());
+            controls::empty_state(
+                ui,
+                svg::CURSOR_CLICK,
+                "No run selected",
+                "Select a run to view its telemetry and events.",
+                &[],
+            );
             return;
         };
 
         if let Some(run) = self.runs.iter().find(|r| r.id == run_id).cloned() {
-            ui.label(
-                RichText::new(format!("{} · {}", run.tool_label, run.result.as_str()))
-                    .color(result_color(ui, run.result))
-                    .strong(),
-            );
+            let m = Metrics::get(ui.ctx());
+            ui.horizontal(|ui| {
+                let tone = result_color(ui, run.result);
+                ui.add(result_icon(run.result).image(m.icon_md).tint(tone));
+                ui.label(
+                    RichText::new(format!("{} · {}", run.tool_label, run.result.as_str()))
+                        .color(tone)
+                        .strong(),
+                );
+            });
             ui.label(RichText::new(run.id.key_string()).weak().small());
             if let Some(target) = &run.target_component {
-                ui.label(format!(
+                let text = format!(
                     "Target: {} ({})",
                     self.component_name(target),
                     run.target_kind.as_str()
-                ));
+                );
+                controls::icon_label(ui, svg::CROSSHAIR, &text);
             }
             if let Some(preset) = &run.preset_label {
-                ui.label(format!("Preset: {preset}"));
+                controls::icon_label(ui, svg::SLIDERS_HORIZONTAL, &format!("Preset: {preset}"));
             }
             ui.horizontal_wrapped(|ui| {
                 if let Some(secs) = run.duration_actual_secs {
-                    ui.label(fmt_duration(secs));
+                    controls::icon_label(ui, svg::TIMER, &fmt_duration(secs));
                 }
                 if let Some(host) = &run.hostname {
-                    ui.label(host);
+                    controls::icon_label(ui, svg::DESKTOP, host);
                 }
                 if run.failure_kind != "none" {
-                    ui.label(
-                        RichText::new(format!("failure: {}", run.failure_kind))
-                            .color(theme::result_fail(ui)),
-                    );
+                    let text = format!("failure: {}", run.failure_kind);
+                    controls::IconLabel::new(svg::WARNING, &text)
+                        .tone(theme::result_fail(ui))
+                        .show(ui);
                 }
             });
         }
 
-        ui.separator();
+        controls::hairline(ui);
         match &self.detail {
             Some(detail) if detail.run == run_id => {
                 plots::run_detail(ui, detail.bucket_secs, &detail.buckets, self.interactive_charts);
-                ui.separator();
+                controls::hairline(ui);
                 plots::events(ui, &detail.events);
             }
             _ => {
-                ui.label(RichText::new("Loading telemetry…").weak());
+                controls::loading_state(ui, "Loading telemetry…");
             }
         }
     }
+}
+
+/// A small run fact: icon and text in `tone`.
+fn run_fact(ui: &mut Ui, icon: Icon, text: &str, tone: Color32) {
+    controls::IconLabel::new(icon, text)
+        .tone(tone)
+        .small(true)
+        .show(ui);
 }
 
 /// A fixed-width, independently scrolling column.

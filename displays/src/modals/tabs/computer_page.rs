@@ -1,9 +1,17 @@
-use eframe::egui::{Button, Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
+use eframe::egui::{Grid, ScrollArea, Ui, Vec2, Vec2b};
 use database::schema::{random_record_id, ComputerData, RecordIdExt, TicketData, COMPUTER_TABLE};
 
-use crate::{ui_tools::icons, PlatformSpawner, Spawner};
-
-use super::return_colors;
+use crate::{
+    ui_tools::{
+        controls::{
+            self, BarKind, ButtonKind, IconBox, IconLabel, Metrics, TextButton, TextField, Tokens,
+        },
+        glass_card,
+        icons::{self, svg},
+        theme,
+    },
+    PlatformSpawner, Spawner,
+};
 
 /// Computer selection data for switching computers in task modal
 pub struct ComputerSearchData<'a> {
@@ -35,8 +43,10 @@ fn delete_computer_button(ui: &mut Ui, computer: &ComputerData) {
         "Double click to delete this computer record.\n\
          Refused if any client, diagnostic session, or service order still links to it."
     };
-    let response = Button::new(RichText::new(format!("{} Delete", icons::TRASH)).color(Color32::LIGHT_RED))
-        .ui(ui)
+    let response = TextButton::new("Delete")
+        .kind(ButtonKind::Danger)
+        .icon(svg::TRASH)
+        .show(ui)
         .on_hover_text(hint);
 
     if !response.double_clicked() {
@@ -75,8 +85,8 @@ fn computer_label(comp: &ComputerData) -> String {
 }
 
 pub fn display_computer_page(
-    ui: &mut Ui, 
-    service_ticket: Option<&mut TicketData>, 
+    ui: &mut Ui,
+    service_ticket: Option<&mut TicketData>,
     computer: Option<&mut ComputerData>,
     avail_size: Vec2
 ) {
@@ -84,8 +94,8 @@ pub fn display_computer_page(
 }
 
 pub fn display_computer_page_with_search(
-    ui: &mut Ui, 
-    service_ticket: Option<&mut TicketData>, 
+    ui: &mut Ui,
+    service_ticket: Option<&mut TicketData>,
     computer: Option<&mut ComputerData>,
     avail_size: Vec2,
     search_data: Option<ComputerSearchData>,
@@ -95,10 +105,13 @@ pub fn display_computer_page_with_search(
         ticket
     } else { &mut TicketData::default() };
 
-    let computer = if let Some(computer) = computer { 
-        computer 
+    let computer = if let Some(computer) = computer {
+        computer
     } else { &mut ComputerData{ id: random_record_id(COMPUTER_TABLE), ..Default::default() } };
 
+    let t = Tokens::get(ui.ctx());
+    let m = Metrics::get(ui.ctx());
+    let col_w = avail_size.x / 2.14;
 
     ScrollArea::vertical()
         .max_height(f32::INFINITY)
@@ -115,57 +128,51 @@ pub fn display_computer_page_with_search(
                         .map(|c| computer_label(c))
                         .collect();
 
-                    ui.group(|ui| {
-                        ui.label(RichText::new("Customer's Computers").strong().color(Color32::LIGHT_BLUE));
+                    glass_card::group(ui, |ui| {
+                        glass_card::card_header(ui, icons::p::DESKTOP_TOWER, "Customer's Computers", None);
 
-                        let selected_text = if search.search_query.is_empty() {
-                            "Select a computer…"
-                        } else {
-                            search.search_query.as_str()
-                        };
+                        let current = labels.iter().position(|l| *l == *search.search_query);
+                        let mut options: Vec<(Option<usize>, &str)> = labels
+                            .iter()
+                            .enumerate()
+                            .map(|(i, label)| (Some(i), label.as_str()))
+                            .collect();
+                        if current.is_none() {
+                            options.insert(0, (None, "Select a computer…"));
+                        }
+                        let mut picked = current;
+                        let width = ui.available_width() - m.gap.x;
+                        controls::dropdown(ui, "customer_computers_combo", &mut picked, &options, width);
 
-                        let mut picked: Option<usize> = None;
-                        ComboBox::from_id_salt("customer_computers_combo")
-                            .selected_text(selected_text)
-                            .width(ui.available_width() - 8.0)
-                            .show_ui(ui, |ui| {
-                                for (i, label) in labels.iter().enumerate() {
-                                    let is_selected = *search.search_query == *label;
-                                    if ui.selectable_label(is_selected, label).clicked() {
-                                        picked = Some(i);
-                                    }
-                                }
-                            });
-
-                        if let Some(idx) = picked {
-                            if let Some(comp) = search.customer_computers.get(idx) {
-                                *search.search_query = labels[idx].clone();
-                                computer.id = comp.id.clone();
-                                computer.hostname = comp.hostname.clone();
-                                computer.cpu = comp.cpu.clone();
-                                computer.gpu = comp.gpu.clone();
-                                computer.ram = comp.ram.clone();
-                                computer.operating_system = comp.operating_system.clone();
-                                computer.drives = comp.drives.clone();
-                                computer.motherboard_name = comp.motherboard_name.clone();
-                                computer.device_name = comp.device_name.clone();
-                                computer.device_mfg = comp.device_mfg.clone();
-                                computer.device_model = comp.device_model.clone();
-                                computer.device_serial = comp.device_serial.clone();
-                                computer.customer = comp.customer.clone();
-                                computer.seb_info = comp.seb_info.clone();
-                                computer.windows_active = comp.windows_active.clone();
-                                ticket.computer = Some(computer.id.clone());
-                                log::info!("Selected computer: {} ({})", comp.hostname, comp.id.key_string());
-                            }
+                        if let Some(idx) = picked.filter(|_| picked != current)
+                            && let Some(comp) = search.customer_computers.get(idx)
+                        {
+                            *search.search_query = labels[idx].clone();
+                            computer.id = comp.id.clone();
+                            computer.hostname = comp.hostname.clone();
+                            computer.cpu = comp.cpu.clone();
+                            computer.gpu = comp.gpu.clone();
+                            computer.ram = comp.ram.clone();
+                            computer.operating_system = comp.operating_system.clone();
+                            computer.drives = comp.drives.clone();
+                            computer.motherboard_name = comp.motherboard_name.clone();
+                            computer.device_name = comp.device_name.clone();
+                            computer.device_mfg = comp.device_mfg.clone();
+                            computer.device_model = comp.device_model.clone();
+                            computer.device_serial = comp.device_serial.clone();
+                            computer.customer = comp.customer.clone();
+                            computer.seb_info = comp.seb_info.clone();
+                            computer.windows_active = comp.windows_active;
+                            ticket.computer = Some(computer.id.clone());
+                            log::info!("Selected computer: {} ({})", comp.hostname, comp.id.key_string());
                         }
 
-                        ui.add_space(4.0);
+                        ui.add_space(m.pad.y);
                         ui.horizontal(|ui| {
-                            if ui.button("Import from PrestaShop").clicked() {
+                            if controls::icon_text_button(ui, svg::STOREFRONT, "Import from PrestaShop").clicked() {
                                 *search.import_presta_clicked = true;
                             }
-                            if ui.button("Import from Everest").clicked() {
+                            if controls::icon_text_button(ui, svg::DATABASE, "Import from Everest").clicked() {
                                 *search.import_everest_clicked = true;
                             }
                         });
@@ -177,25 +184,33 @@ pub fn display_computer_page_with_search(
                             .cloned()
                             .collect();
                         if !others.is_empty() {
-                            ui.add_space(6.0);
-                            ui.separator();
-                            ui.label(RichText::new("Other computers for this customer").weak());
+                            ui.add_space(m.gap.y);
+                            controls::hairline(ui);
+                            controls::section_label(ui, "Other computers for this customer");
                             for comp in &others {
                                 ui.horizontal(|ui| {
-                                    ui.label(computer_label(comp));
-                                    if ui.button(format!("{} Open", icons::OPEN)).on_hover_text("View this computer in a separate window").clicked() {
+                                    controls::icon_label(ui, svg::LAPTOP, &computer_label(comp));
+                                    if controls::icon_button(
+                                        ui,
+                                        svg::ARROW_SQUARE_OUT,
+                                        IconBox::Md,
+                                        false,
+                                        "View this computer in a separate window",
+                                    )
+                                    .clicked()
+                                    {
                                         *search.open_in_second_modal = Some(comp.clone());
                                     }
                                 });
                             }
                         }
                     });
-                    ui.add_space(10.0);
+                    ui.add_space(m.gap.y);
                 }
             }
-            
-            ui.horizontal(|ui| {
-                if ui.button("Update").clicked() {
+
+            controls::bar(ui, BarKind::Tool, |ui| {
+                if controls::icon_text_button(ui, svg::FLOPPY_DISK, "Update").clicked() {
                     let computer_data: ComputerData = computer.clone();
                     let ticket_computer = ticket.computer.clone();
                     PlatformSpawner::spawn(async move {
@@ -213,126 +228,119 @@ pub fn display_computer_page_with_search(
                     delete_computer_button(ui, computer);
                 }
             });
-            ui.group(|ui| {
+            glass_card::group(ui, |ui| {
+                glass_card::card_header(ui, icons::p::CPU, "Hardware", None);
                 Grid::new(format!("{} grid", computer.cpu))
-                .max_col_width(avail_size.x / 2.14)
-                .min_col_width(avail_size.x / 2.14)
-                .with_row_color(|num, style| return_colors(num, style))
+                .max_col_width(col_w)
+                .min_col_width(col_w)
+                .striped(true)
                 .show(ui, |ui| {
-                    ui.colored_label(Color32::LIGHT_RED, "ID");
+                    ui.colored_label(t.text_dim, "ID");
                     if let Some(sho) = service_history_open.as_deref_mut() {
-                        if ui.button(
-                            RichText::new(computer.id.key_string())
-                                .color(Color32::LIGHT_BLUE)
-                        ).on_hover_text("View all services for this computer").clicked() {
+                        if TextButton::new(&computer.id.key_string())
+                            .kind(ButtonKind::Ghost)
+                            .icon(svg::CLOCK_COUNTER_CLOCKWISE)
+                            .show(ui)
+                            .on_hover_text("View all services for this computer")
+                            .clicked()
+                        {
                             *sho = true;
                         }
                     } else {
                         ui.label(computer.id.key_string());
                     }
                     ui.end_row();
-                    
-                    ui.colored_label(Color32::LIGHT_RED, "Linked Customer");
+
+                    ui.colored_label(t.text_dim, "Linked Customer");
                     ui.label(computer.customer.as_ref().map_or_else(|| "—".to_string(), |id| id.key_string()));
                     ui.end_row();
 
-                    ui.colored_label(Color32::LIGHT_RED, "Hostname");
-                    TextEdit::singleline(&mut computer.hostname).desired_width(avail_size.x / 2.14).ui(ui);
+                    ui.colored_label(t.text_dim, "Hostname");
+                    TextField::new(&mut computer.hostname).width(col_w).show(ui);
                     ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "Operating System");
-                    TextEdit::singleline(&mut computer.operating_system).desired_width(avail_size.x / 2.14).ui(ui);
+                    ui.colored_label(t.text_dim, "Operating System");
+                    TextField::new(&mut computer.operating_system).width(col_w).icon(svg::WINDOWS_LOGO).show(ui);
                     ui.end_row();
                     if let Some(active) = &computer.windows_active {
-                        ui.colored_label(Color32::LIGHT_RED, "Windows Active");
+                        ui.colored_label(t.text_dim, "Windows Active");
                         ui.label(format!("{active}"));
                         ui.end_row();
                     }
-                    ui.colored_label(Color32::LIGHT_RED, "CPU");
-                    TextEdit::singleline(&mut computer.cpu).desired_width(avail_size.x / 2.14).ui(ui);
+                    ui.colored_label(t.text_dim, "CPU");
+                    TextField::new(&mut computer.cpu).width(col_w).icon(svg::CPU).show(ui);
                     ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "GPU");
-                    TextEdit::singleline(&mut computer.gpu).desired_width(avail_size.x / 2.14).ui(ui);
+                    ui.colored_label(t.text_dim, "GPU");
+                    TextField::new(&mut computer.gpu).width(col_w).icon(svg::GRAPHICS_CARD).show(ui);
                     ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "RAM");
-                    TextEdit::singleline(&mut computer.ram).desired_width(avail_size.x / 2.14).ui(ui);
+                    ui.colored_label(t.text_dim, "RAM");
+                    TextField::new(&mut computer.ram).width(col_w).icon(svg::MEMORY).show(ui);
                     ui.end_row();
                     if let Some(battery) = computer.battery.clone() {
-                        ui.colored_label(Color32::LIGHT_RED, "Battery");
-                        let color = match battery.health_percent() {
-                            Some(pct) if pct < 60 => crate::ui_tools::theme::error(ui),
-                            Some(pct) if pct < 80 => crate::ui_tools::theme::warn(ui),
-                            _ => ui.style().visuals.text_color(),
+                        ui.colored_label(t.text_dim, "Battery");
+                        let (icon, color) = match battery.health_percent() {
+                            Some(pct) if pct < 60 => (svg::BATTERY_WARNING, theme::error(ui)),
+                            Some(pct) if pct < 80 => (svg::BATTERY_LOW, theme::warn(ui)),
+                            _ => (svg::BATTERY_FULL, theme::text(ui)),
                         };
-                        ui.colored_label(color, battery.summary())
+                        IconLabel::new(icon, &battery.summary())
+                            .tone(color)
+                            .show(ui)
                             .on_hover_text(battery.name.clone());
                         ui.end_row();
                     }
-                    ui.colored_label(Color32::LIGHT_RED, "Device Name");
-                    if let Some(device_name) = computer.device_name.as_mut() {
-                        TextEdit::singleline(device_name).desired_width(avail_size.x / 2.14).ui(ui);
-                    } else {
-                        ui.label(&format!(" - "));
+                    let optional_rows = [
+                        ("Device Name", computer.device_name.as_mut()),
+                        ("Device Mfg", computer.device_mfg.as_mut()),
+                        ("Device Model", computer.device_model.as_mut()),
+                        ("Device Serial", computer.device_serial.as_mut()),
+                    ];
+                    for (label, value) in optional_rows {
+                        ui.colored_label(t.text_dim, label);
+                        if let Some(value) = value {
+                            TextField::new(value).width(col_w).show(ui);
+                        } else {
+                            ui.label(" - ");
+                        }
+                        ui.end_row();
                     }
                     ui.end_row();
 
-                    ui.colored_label(Color32::LIGHT_RED, "Device Mfg");
-                    if let Some(device_mfg) = computer.device_mfg.as_mut() {
-                        TextEdit::singleline(device_mfg).desired_width(avail_size.x / 2.14).ui(ui);
-                    } else {
-                        ui.label(&format!(" - "));
-                    }
-                    ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "Device Model");
-                    if let Some(device_model) = computer.device_model.as_mut() {
-                        TextEdit::singleline(device_model).desired_width(avail_size.x / 2.14).ui(ui);
-                    } else {
-                        ui.label(&format!(" - "));
-                    }
-                    ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "Device Serial");
-                    if let Some(device_serial) = computer.device_serial.as_mut() {
-                        TextEdit::singleline(device_serial).desired_width(avail_size.x / 2.14).ui(ui);
-                    } else {
-                        ui.label(&format!(" - "));
-                    }
-                    
-                    ui.end_row();
-                    ui.end_row();
-
-                    ui.colored_label(Color32::LIGHT_RED, "HDD Test:");
+                    ui.colored_label(t.text_dim, "HDD Test:");
                     ui.label(&ticket.hardware_test_results.hdd_test);
                     ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "SSD Test:");
+                    ui.colored_label(t.text_dim, "SSD Test:");
                     ui.label(&ticket.hardware_test_results.ssd_test);
                     ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "RAM Test:");
+                    ui.colored_label(t.text_dim, "RAM Test:");
                     ui.label(&ticket.hardware_test_results.ram_test);
                     ui.end_row();
 
                 });
             });
 
-            ui.add_space(15.);
+            ui.add_space(2.0 * m.gap.y);
 
-            ui.group(|ui| {
-                Grid::new("group1").max_col_width(avail_size.x / 3.2 - 2.).min_col_width(avail_size.x / 3.2-2.).with_row_color(|num, style| return_colors(num, style))
+            glass_card::group(ui, |ui| {
+                glass_card::card_header(ui, icons::p::HARD_DRIVES, "Drives", None);
+                let drive_w = avail_size.x / 3.2 - 2.0;
+                Grid::new("group1").max_col_width(drive_w).min_col_width(drive_w).striped(true)
                 .show(ui, |ui| {
-                    ui.colored_label(Color32::LIGHT_RED, "Letter");
-                    ui.colored_label(Color32::LIGHT_RED, "Type");
-                    ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
+                    ui.colored_label(t.text_dim, "Letter");
+                    ui.colored_label(t.text_dim, "Type");
+                    ui.colored_label(t.text_dim, "Space Left / Total Size");
                     ui.end_row();
 
                     for drive_data in &computer.drives{
-                        ui.colored_label(Color32::LIGHT_RED, &drive_data.drive_letter);
+                        controls::icon_label(ui, svg::HARD_DRIVE, &drive_data.drive_letter);
                         ui.label(&drive_data.drive_type);
-                        ui.label(format!("{} Gb / {} Gb", &drive_data.space_left, &drive_data.total_size));
+                        ui.label(format!("{} Gb / {} Gb", drive_data.space_left, drive_data.total_size));
                         ui.end_row();
                     }
                 });
             });
 
-            ui.add_space(15.);
+            ui.add_space(2.0 * m.gap.y);
         });
     });
-    
+
 }

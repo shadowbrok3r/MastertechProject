@@ -8,18 +8,27 @@ use database::agent_chat::{self, ReplyState};
 use database::schema::service_task::find_service_task;
 use database::schema::{LiveTaskPayload, RecordId, RecordIdExt, general_connection};
 use eframe::egui::{
-    Align2, Color32, Context, Frame, Id, Key, KeyboardShortcut, Margin, Modal, Modifiers, RichText, ScrollArea, Shadow,
-    Stroke, TextEdit, Ui, vec2,
+    Align, Align2, Context, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modal, Modifiers,
+    RichText, ScrollArea, Shadow, Stroke, Ui, vec2,
 };
 
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{
+    self, ButtonKind, IconLabel, Metrics, SpinnerSize, TextButton, TextField, Tokens,
+};
+use crate::ui_tools::icons::svg;
 use crate::{PlatformSpawner, Spawner, TaskUiActions};
 
 const POLL: Duration = Duration::from_secs(2);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(600);
 const SHORTCUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
-/// How dark the app gets behind the open bar.
-const BACKDROP: Color32 = Color32::from_black_alpha(150);
+/// Opacity of the panel colour dimming the app behind the open bar.
+const BACKDROP_ALPHA: f32 = 0.6;
+/// Width of the bar's contents.
+const BAR_W: f32 = 560.0;
+/// Tallest the reply grows before it scrolls.
+const REPLY_MAX_H: f32 = 320.0;
+/// Distance from the top of the window to the bar.
+const TOP_OFFSET: f32 = 64.0;
 
 /// A task the bar tells the assistant about.
 #[derive(Clone, Debug)]
@@ -92,8 +101,16 @@ pub fn service_numbers(text: &str) -> Vec<String> {
 pub fn compose(input: &str, task: Option<&FocusedTask>, client: Option<&str>) -> String {
     let mut lines = Vec::new();
     if let Some(t) = task {
-        let sn = t.service_number.as_deref().map(|s| format!(", service {s}")).unwrap_or_default();
-        lines.push(format!("[Viewing task \"{}\"{sn}, task id {}]", t.name, t.id.key_string()));
+        let sn = t
+            .service_number
+            .as_deref()
+            .map(|s| format!(", service {s}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "[Viewing task \"{}\"{sn}, task id {}]",
+            t.name,
+            t.id.key_string()
+        ));
     }
     if let Some(cs) = client {
         lines.push(format!("[Focused client {cs}]"));
@@ -104,7 +121,12 @@ pub fn compose(input: &str, task: Option<&FocusedTask>, client: Option<&str>) ->
 
 /// The menu bar's button that opens the bar; true when clicked.
 pub fn open_button(ui: &mut Ui) -> bool {
-    ui.button(format!("{} Ask", icons::ROBOT)).on_hover_text("Ask the assistant (Ctrl+K)").clicked()
+    TextButton::new("Ask")
+        .icon(svg::ROBOT)
+        .kind(ButtonKind::Ghost)
+        .show(ui)
+        .on_hover_text("Ask the assistant (Ctrl+K)")
+        .clicked()
 }
 
 impl CommandBar {
@@ -146,11 +168,20 @@ impl CommandBar {
         let tx = self.tx.clone();
         PlatformSpawner::spawn(async move {
             let cs = general_connection(&email);
-            let sent = agent_chat::send(&cs, Some(&email), store.as_deref(), service_number.as_deref(), &text).await;
+            let sent = agent_chat::send(
+                &cs,
+                Some(&email),
+                store.as_deref(),
+                service_number.as_deref(),
+                &text,
+            )
+            .await;
             let sent = match sent {
                 Ok(sent) => sent,
                 Err(e) => {
-                    let _ = tx.send(Update::Failed(format!("Could not reach the assistant: {e}")));
+                    let _ = tx.send(Update::Failed(format!(
+                        "Could not reach the assistant: {e}"
+                    )));
                     return;
                 }
             };
@@ -171,7 +202,9 @@ impl CommandBar {
                     }
                 }
                 if waited >= REPLY_TIMEOUT {
-                    let _ = tx.send(Update::Failed("No reply within 10 minutes; see the Ai tab.".into()));
+                    let _ = tx.send(Update::Failed(
+                        "No reply within 10 minutes; see the Ai tab.".into(),
+                    ));
                     return;
                 }
                 database::sleep_compat(POLL).await;
@@ -197,7 +230,10 @@ impl CommandBar {
             let open = requested || !self.open;
             if open && !self.open {
                 self.focus = true;
-                self.context = self.last_task.clone().filter(|t| open_tasks.contains(&t.name));
+                self.context = self
+                    .last_task
+                    .clone()
+                    .filter(|t| open_tasks.contains(&t.name));
                 self.client = focused_client;
             }
             self.open = open;
@@ -211,33 +247,48 @@ impl CommandBar {
 
         let id = Id::new("command_bar");
         let style = ctx.global_style();
-        let accent = style.visuals.selection.bg_fill;
+        let (t, m) = (Tokens::get(ctx), Metrics::get(ctx));
         let frame = Frame::popup(&style)
-            .inner_margin(Margin::same(12))
-            .stroke(Stroke::new(2.0, accent))
-            .shadow(Shadow { offset: [0, 0], blur: 28, spread: 2, color: accent.gamma_multiply(0.6) });
+            .inner_margin(Margin::same(m.window_margin))
+            .stroke(Stroke::new(1.0, t.primary_border))
+            .shadow(Shadow {
+                offset: [0, 0],
+                blur: 28,
+                spread: 2,
+                color: t.primary.gamma_multiply(0.6),
+            });
         let modal = Modal::new(id)
-            .area(Modal::default_area(id).anchor(Align2::CENTER_TOP, vec2(0.0, 64.0)))
-            .backdrop_color(BACKDROP)
+            .area(Modal::default_area(id).anchor(Align2::CENTER_TOP, vec2(0.0, TOP_OFFSET)))
+            .backdrop_color(t.base.gamma_multiply(BACKDROP_ALPHA))
             .frame(frame)
             .show(ctx, |ui| {
-                ui.set_width(560.0);
+                ui.set_width(BAR_W);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{} Ask the assistant", icons::ROBOT)).strong().color(accent));
-                    ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                        ui.label(RichText::new("Esc or a click outside closes").small().weak());
+                    controls::heading(ui, svg::ROBOT, "Ask the assistant");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("Esc or a click outside closes")
+                                .small()
+                                .color(t.text_faint),
+                        );
                     });
                 });
-                if let Some(t) = &self.context {
-                    ui.label(RichText::new(format!("Viewing: {}", t.name)).small().color(theme::weak_text(ui)));
+                ui.add_space(m.gap.y);
+                if let Some(task) = &self.context {
+                    IconLabel::new(svg::CLIPBOARD_TEXT, &format!("Viewing: {}", task.name))
+                        .tone(t.text_dim)
+                        .small(true)
+                        .wrap(true)
+                        .show(ui);
                 }
                 let busy = self.phase == Phase::Waiting;
-                let edit = TextEdit::singleline(&mut self.input)
-                    .hint_text("e.g. remind Sam every Monday at 10 to count thermal paste")
-                    .desired_width(f32::INFINITY)
-                    .interactive(!busy)
-                    .show(ui)
-                    .response;
+                let edit = TextField::new(&mut self.input)
+                    .hint("e.g. remind Sam every Monday at 10 to count thermal paste")
+                    .icon(svg::SPARKLE)
+                    .width(ui.available_width())
+                    .id_salt("command_bar_input")
+                    .enabled(!busy)
+                    .show(ui);
                 if self.focus {
                     edit.request_focus();
                     self.focus = false;
@@ -248,35 +299,49 @@ impl CommandBar {
                     self.input.clear();
                 }
                 match self.phase {
-                    Phase::Idle => {}
+                    Phase::Idle | Phase::Done => {}
                     Phase::Waiting => {
                         ui.horizontal(|ui| {
-                            ui.spinner();
+                            controls::spinner(ui, SpinnerSize::Sm);
                             ui.label(
-                                RichText::new("Working… approvals, if any, pop up separately.").small().weak(),
+                                RichText::new("Working… approvals, if any, pop up separately.")
+                                    .small()
+                                    .color(t.text_dim),
                             );
                         });
                     }
                     Phase::Failed => {
-                        ui.label(RichText::new(&self.reply).small().color(theme::error(ui)));
+                        IconLabel::new(svg::WARNING_CIRCLE, &self.reply)
+                            .tone(t.error)
+                            .small(true)
+                            .wrap(true)
+                            .show(ui);
                     }
-                    Phase::Done => {}
                 }
                 if !self.reply.is_empty() && self.phase != Phase::Failed {
-                    ui.separator();
-                    ScrollArea::vertical().id_salt("command_bar_reply").max_height(320.0).show(ui, |ui| {
-                        crate::markdown_editor::chat_markdown::render(ui, &self.reply);
-                    });
+                    ui.add_space(m.gap.y);
+                    controls::hairline(ui);
+                    ScrollArea::vertical()
+                        .id_salt("command_bar_reply")
+                        .max_height(REPLY_MAX_H)
+                        .show(ui, |ui| {
+                            crate::markdown_editor::chat_markdown::render(ui, &self.reply);
+                        });
                     let numbers = service_numbers(&self.reply);
                     if !numbers.is_empty() {
+                        ui.add_space(m.gap.y);
                         ui.horizontal_wrapped(|ui| {
                             for sn in numbers.into_iter().take(6) {
-                                if ui.small_button(format!("{} {sn}", icons::OPEN)).clicked() {
+                                let open = controls::pill(ui, svg::ARROW_SQUARE_OUT, &sn, false)
+                                    .on_hover_text("Open this service order's task");
+                                if open.clicked() {
                                     let tx = ui_actions_tx.clone();
                                     PlatformSpawner::spawn(async move {
                                         match find_service_task(&sn).await {
                                             Ok(Some(task)) => {
-                                                let _ = tx.try_send(TaskUiActions::OpenTaskModalById(task.id));
+                                                let _ = tx.try_send(
+                                                    TaskUiActions::OpenTaskModalById(task.id),
+                                                );
                                             }
                                             _ => {
                                                 let _ = crate::get_toast_sender().try_send(
@@ -321,7 +386,10 @@ mod tests {
             text,
             "[Viewing task \"Kayleen Reese - 2154905\", service 2154905, task id abc]\nremind me tomorrow to call her"
         );
-        assert_eq!(compose("hi", None, Some("DESKTOP-1:abc")), "[Focused client DESKTOP-1:abc]\nhi");
+        assert_eq!(
+            compose("hi", None, Some("DESKTOP-1:abc")),
+            "[Focused client DESKTOP-1:abc]\nhi"
+        );
     }
 
     #[test]
@@ -329,8 +397,10 @@ mod tests {
         let ctx = Context::default();
         let (tx, _rx) = unbounded();
         let mut bar = CommandBar::default();
-        let mut frame = |bar: &mut CommandBar| {
-            let mut out = ctx.run_ui(Default::default(), |ui| bar.ui(ui.ctx(), None, &[], None, tx.clone()));
+        let frame = |bar: &mut CommandBar| {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                bar.ui(ui.ctx(), None, &[], None, tx.clone())
+            });
             out.textures_delta.clear();
         };
         bar.request_open();

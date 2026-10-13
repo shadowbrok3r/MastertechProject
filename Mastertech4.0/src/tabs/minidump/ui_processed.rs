@@ -1,12 +1,20 @@
 #![allow(clippy::too_many_arguments)]
-use crate::tabs::minidump::{frame_signature, MiniDumpApp, Tab, frame_source, listing, threadname};
 use super::processor::ProcessingStatus;
+use crate::tabs::minidump::{MiniDumpApp, Tab, frame_signature, frame_source, listing, threadname};
+use displays::ui_tools::{
+    controls::{self, Metrics, SpinnerSize},
+    glass_card,
+    icons::svg,
+};
 use eframe::egui;
-use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui};
+use egui::{Color32, Context, FontId, Frame, ScrollArea, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
 use minidump_common::utils::basename;
 use minidump_processor::ProcessState;
 use minidump_unwind::{CallStack, StackFrame};
+
+/// Width of the thread and frame pickers.
+const PICKER_W: f32 = 400.0;
 
 pub struct ProcessedUiState {
     pub cur_thread: usize,
@@ -47,8 +55,13 @@ mod inline_shim {
 impl MiniDumpApp {
     pub fn ui_processed(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         if let Some(Err(e)) = &self.minidump {
-            ui.label("Minidump couldn't be read!");
-            ui.label(e.to_string());
+            controls::empty_state(
+                ui,
+                svg::FILE_X,
+                "Minidump couldn't be read!",
+                &e.to_string(),
+                &[],
+            );
             return;
         }
         if let Some(state) = &self.processed {
@@ -57,8 +70,13 @@ impl MiniDumpApp {
                     self.ui_processed_good(ui, ctx, &state.clone());
                 }
                 Err(e) => {
-                    ui.label("Minidump couldn't be processed!");
-                    ui.label(e.to_string());
+                    controls::empty_state(
+                        ui,
+                        svg::WARNING_OCTAGON,
+                        "Minidump couldn't be processed!",
+                        &e.to_string(),
+                        &[],
+                    );
                 }
             }
         }
@@ -76,7 +94,7 @@ impl MiniDumpApp {
         eframe::egui::Panel::bottom("progress")
             .frame(Frame::new())
             .show(ui, |ui| {
-                ui.add_space(2.0);
+                ui.add_space(Metrics::get(ui.ctx()).gap.y / 2.0);
                 ui.horizontal(|ui| {
                     let stats = self.analysis_state.stats.lock().unwrap();
                     let symbols = stats.pending_symbols.lock().unwrap().clone();
@@ -94,24 +112,33 @@ impl MiniDumpApp {
                     let in_progress = self.cur_status < ProcessingStatus::Done;
                     let progress = if in_progress { estimated_progress } else { 1.0 };
 
-                    ui.label(format!(
-                        "fetching symbols {}/{}",
-                        symbols.symbols_processed, symbols.symbols_requested
-                    ));
-                    ui.label(format!("processing threads {t_done}/{t_todo}"));
-                    ui.label(format!("frames walked {frames_walked}"));
+                    controls::icon_label(
+                        ui,
+                        svg::CLOUD_ARROW_DOWN,
+                        &format!(
+                            "fetching symbols {}/{}",
+                            symbols.symbols_processed, symbols.symbols_requested
+                        ),
+                    );
+                    controls::icon_label(
+                        ui,
+                        svg::GIT_BRANCH,
+                        &format!("processing threads {t_done}/{t_todo}"),
+                    );
+                    controls::icon_label(ui, svg::STACK, &format!("frames walked {frames_walked}"));
 
-                    let progress_bar = egui::ProgressBar::new(progress)
-                        .show_percentage()
-                        .animate(in_progress);
-
-                    ui.add(progress_bar);
+                    if in_progress {
+                        controls::spinner(ui, SpinnerSize::Sm);
+                    }
+                    controls::ProgressBar::new(progress)
+                        .percentage(true)
+                        .show(ui);
                 });
             });
         egui::CentralPanel::default()
             .frame(Frame::new())
             .show(ui, |ui| {
-                ui.separator();
+                controls::hairline(ui);
 
                 if let Some(stack) = state.threads.get(self.processed_ui_state.cur_thread) {
                     self.ui_processed_backtrace(ui, ctx, stack);
@@ -130,8 +157,7 @@ impl MiniDumpApp {
             .frame(Frame::new())
             .show(ui, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading("Process");
-                    ui.separator();
+                    glass_card::card_header(ui, svg::APP_WINDOW, "Process", None);
 
                     listing(
                         ui,
@@ -169,10 +195,10 @@ impl MiniDumpApp {
                             (
                                 "Crash Address".to_owned(),
                                 state
-                                .exception_info
-                                .as_ref()
-                                .map(|e| self.format_addr(e.address.0))
-                                .unwrap_or_default(),
+                                    .exception_info
+                                    .as_ref()
+                                    .map(|e| self.format_addr(e.address.0))
+                                    .unwrap_or_default(),
                             ),
                             ("Crashing Thread".to_owned(), cur_threadname.clone()),
                         ],
@@ -183,32 +209,30 @@ impl MiniDumpApp {
             .frame(Frame::new())
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("Thread ");
-                    ComboBox::from_label("  ")
-                        .width(400.0)
-                        .selected_text(
-                            state
-                                .threads
-                                .get(self.processed_ui_state.cur_thread)
-                                .map(threadname)
-                                .unwrap_or_default(),
-                        )
-                        .show_ui(ui, |ui| {
-                            for (idx, stack) in state.threads.iter().enumerate() {
-                                if ui
-                                    .selectable_value(
-                                        &mut self.processed_ui_state.cur_thread,
-                                        idx,
-                                        threadname(stack),
-                                    )
-                                    .changed()
-                                {
-                                    self.processed_ui_state.cur_frame = 0;
-                                };
-                            }
-                        });
+                    controls::icon_label(ui, svg::GIT_BRANCH, "Thread");
+                    let names: Vec<(usize, String)> = state
+                        .threads
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, stack)| (idx, threadname(stack)))
+                        .collect();
+                    let options: Vec<(usize, &str)> = names
+                        .iter()
+                        .map(|(idx, name)| (*idx, name.as_str()))
+                        .collect();
+                    if controls::dropdown(
+                        ui,
+                        "minidump.processed.thread",
+                        &mut self.processed_ui_state.cur_thread,
+                        &options,
+                        PICKER_W,
+                    )
+                    .changed()
+                    {
+                        self.processed_ui_state.cur_frame = 0;
+                    }
                 });
-                ui.separator();
+                controls::hairline(ui);
                 ScrollArea::vertical().show(ui, |ui| {
                     if let Some(thread) = state.threads.get(self.processed_ui_state.cur_thread) {
                         listing(
@@ -224,30 +248,32 @@ impl MiniDumpApp {
                             )],
                         );
                         if let Some(frame) = thread.frames.get(self.processed_ui_state.cur_frame) {
-                            ui.add_space(20.0);
+                            ui.add_space(Metrics::get(ui.ctx()).gap.y * 4.0);
                             ui.horizontal(|ui| {
                                 use std::fmt::Write;
-                                let mut label = String::new();
-                                write!(&mut label, "{:02} - ", self.processed_ui_state.cur_frame)
-                                    .unwrap();
-                                frame_signature(&mut label, frame).unwrap();
-                                ui.heading("Frame ");
-
-                                ComboBox::from_label(" ")
-                                    .width(400.0)
-                                    .selected_text(label)
-                                    .show_ui(ui, |ui| {
-                                        for (idx, frame) in thread.frames.iter().enumerate() {
-                                            let mut label = String::new();
-                                            write!(&mut label, "{idx:02} - ").unwrap();
-                                            frame_signature(&mut label, frame).unwrap();
-                                            ui.selectable_value(
-                                                &mut self.processed_ui_state.cur_frame,
-                                                idx,
-                                                label,
-                                            );
-                                        }
-                                    });
+                                controls::icon_label(ui, svg::STACK, "Frame");
+                                let names: Vec<(usize, String)> = thread
+                                    .frames
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(idx, frame)| {
+                                        let mut label = String::new();
+                                        write!(&mut label, "{idx:02} - ").unwrap();
+                                        frame_signature(&mut label, frame).unwrap();
+                                        (idx, label)
+                                    })
+                                    .collect();
+                                let options: Vec<(usize, &str)> = names
+                                    .iter()
+                                    .map(|(idx, name)| (*idx, name.as_str()))
+                                    .collect();
+                                controls::dropdown(
+                                    ui,
+                                    "minidump.processed.frame",
+                                    &mut self.processed_ui_state.cur_frame,
+                                    &options,
+                                    PICKER_W,
+                                );
                             });
 
                             let regs = frame
@@ -265,29 +291,21 @@ impl MiniDumpApp {
         let font = egui::style::TextStyle::Body.resolve(ui.style());
         TableBuilder::new(ui)
             .striped(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Min).with_cross_align(egui::Align::Center))
+            .cell_layout(
+                egui::Layout::left_to_right(egui::Align::Min).with_cross_align(egui::Align::Center),
+            )
             .column(Column::initial(60.0).at_least(40.0))
             .column(Column::initial(80.0).at_least(40.0))
             .column(Column::initial(160.0).at_least(40.0))
             .column(Column::initial(160.0).at_least(40.0))
             .column(Column::remainder().at_least(60.0))
             .resizable(true)
-            .header(20.0, |mut header| {
-                header.col(|ui| {
-                    ui.heading("Frame");
-                });
-                header.col(|ui| {
-                    ui.heading("Trust");
-                });
-                header.col(|ui| {
-                    ui.heading("Module");
-                });
-                header.col(|ui| {
-                    ui.heading("Source");
-                });
-                header.col(|ui| {
-                    ui.heading("Signature");
-                });
+            .header(Metrics::get(ctx).row_h, |mut header| {
+                for title in ["Frame", "Trust", "Module", "Source", "Signature"] {
+                    header.col(|ui| {
+                        controls::section_label(ui, title);
+                    });
+                }
             })
             .body(|mut body| {
                 let mut frame_count = 0;
@@ -324,13 +342,14 @@ impl MiniDumpApp {
         let col3_width = widths[2];
         let col4_width = widths[3];
         let col5_width = widths[4];
+        let pad = Metrics::get(ctx).gap.y;
 
         let (col1, col2, col3, col4, col5, row_height) = ctx.fonts_mut(|fonts| {
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),
                     font.clone(),
-                    Color32::WHITE,
+                    Color32::PLACEHOLDER,
                     col1_width,
                 )
             };
@@ -344,7 +363,12 @@ impl MiniDumpApp {
                     minidump_unwind::FrameTrust::PreWalked => "prewalked",
                     minidump_unwind::FrameTrust::Context => "context",
                 };
-                fonts.layout(trust.to_owned(), font.clone(), Color32::WHITE, col2_width)
+                fonts.layout(
+                    trust.to_owned(),
+                    font.clone(),
+                    Color32::PLACEHOLDER,
+                    col2_width,
+                )
             };
             let col3 = {
                 let label = if let Some(module) = &frame.module {
@@ -352,17 +376,17 @@ impl MiniDumpApp {
                 } else {
                     String::new()
                 };
-                fonts.layout(label, font.clone(), Color32::WHITE, col3_width)
+                fonts.layout(label, font.clone(), Color32::PLACEHOLDER, col3_width)
             };
             let col4 = {
                 let mut label = String::new();
                 frame_source(&mut label, frame).unwrap();
-                fonts.layout(label, font.clone(), Color32::WHITE, col4_width)
+                fonts.layout(label, font.clone(), Color32::PLACEHOLDER, col4_width)
             };
             let col5 = {
                 let mut label = String::new();
                 frame_signature(&mut label, frame).unwrap();
-                fonts.layout(label, font.clone(), Color32::WHITE, col5_width)
+                fonts.layout(label, font.clone(), Color32::PLACEHOLDER, col5_width)
             };
 
             let row_height = col1
@@ -372,7 +396,7 @@ impl MiniDumpApp {
                 .max(col3.rect.height())
                 .max(col4.rect.height())
                 .max(col5.rect.height())
-                + 6.0;
+                + pad;
             (col1, col2, col3, col4, col5, row_height)
         });
 
@@ -422,18 +446,24 @@ impl MiniDumpApp {
         let col3_width = widths[2];
         let col4_width = widths[3];
         let col5_width = widths[4];
+        let pad = Metrics::get(ctx).gap.y;
         let (col1, col2, col3, col4, col5, row_height) = ctx.fonts_mut(|fonts| {
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),
                     font.clone(),
-                    Color32::WHITE,
+                    Color32::PLACEHOLDER,
                     col1_width,
                 )
             };
             let col2 = {
                 let trust = "inlined";
-                fonts.layout(trust.to_owned(), font.clone(), Color32::WHITE, col2_width)
+                fonts.layout(
+                    trust.to_owned(),
+                    font.clone(),
+                    Color32::PLACEHOLDER,
+                    col2_width,
+                )
             };
             let col3 = {
                 let label = if let Some(module) = &real_frame.module {
@@ -441,7 +471,7 @@ impl MiniDumpApp {
                 } else {
                     String::new()
                 };
-                fonts.layout(label, font.clone(), Color32::WHITE, col3_width)
+                fonts.layout(label, font.clone(), Color32::PLACEHOLDER, col3_width)
             };
             let col4 = {
                 let label = if let (Some(source_file), Some(line)) =
@@ -451,11 +481,11 @@ impl MiniDumpApp {
                 } else {
                     String::new()
                 };
-                fonts.layout(label, font.clone(), Color32::WHITE, col4_width)
+                fonts.layout(label, font.clone(), Color32::PLACEHOLDER, col4_width)
             };
             let col5 = {
                 let label = frame.function_name.clone();
-                fonts.layout(label, font.clone(), Color32::WHITE, col5_width)
+                fonts.layout(label, font.clone(), Color32::PLACEHOLDER, col5_width)
             };
 
             let row_height = col1
@@ -465,7 +495,7 @@ impl MiniDumpApp {
                 .max(col3.rect.height())
                 .max(col4.rect.height())
                 .max(col5.rect.height())
-                + 6.0;
+                + pad;
             (col1, col2, col3, col4, col5, row_height)
         });
         body.row(row_height, |mut row| {

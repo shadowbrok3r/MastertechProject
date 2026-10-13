@@ -2,6 +2,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::tabs::egui_file_dialog::{FileDialogConfig, FileDialogLabels, FileSystem};
+use displays::ui_tools::{
+    controls::{self, IconBox, IconButton, Metrics, TextField, Tokens},
+    icons::svg,
+};
+
+/// Width of the new-folder name field.
+const NAME_W: f32 = 200.0;
 
 pub struct CreateDirectoryResponse {
     /// Contains the path to the directory that was created.
@@ -107,9 +114,14 @@ impl CreateDirectoryDialog {
         let mut result = CreateDirectoryResponse::new_empty();
 
         ui.horizontal(|ui| {
-            ui.label(&config.default_folder_icon);
+            let t = Tokens::get(ui.ctx());
+            let m = Metrics::get(ui.ctx());
+            ui.add(svg::FOLDER_PLUS.image(m.icon_md).tint(t.tertiary));
 
-            let text_edit_response = ui.text_edit_singleline(&mut self.input);
+            let text_edit_response = TextField::new(&mut self.input)
+                .hint("New folder")
+                .width(NAME_W)
+                .show(ui);
 
             if self.init {
                 text_edit_response.scroll_to_me(Some(egui::Align::Center));
@@ -129,14 +141,16 @@ impl CreateDirectoryDialog {
                 self.error = self.validate_input(&config.labels);
             }
 
-            let apply_button_response =
-                ui.add_enabled(self.error.is_none(), egui::Button::new("✔"));
+            let apply_button_response = IconButton::new(svg::CHECK, IconBox::Md)
+                .tip("Create folder")
+                .enabled(self.error.is_none())
+                .show(ui);
 
             if apply_button_response.clicked() {
                 result = self.submit();
             }
 
-            if ui.button("✖").clicked()
+            if controls::icon_button(ui, svg::X, IconBox::Md, false, "Cancel").clicked()
                 || (text_edit_response.lost_focus() && !apply_button_response.contains_pointer())
             {
                 self.close();
@@ -144,18 +158,14 @@ impl CreateDirectoryDialog {
         });
 
         if let Some(err) = &self.error {
-            ui.add_space(5.0);
+            let t = Tokens::get(ui.ctx());
+            let m = Metrics::get(ui.ctx());
+            ui.add_space(m.pad.y);
 
             let response = ui
                 .horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-
-                    ui.colored_label(
-                        ui.style().visuals.error_fg_color,
-                        format!("{} ", config.err_icon),
-                    );
-
-                    ui.label(err);
+                    ui.add(svg::WARNING.image(m.icon_sm).tint(t.error));
+                    ui.colored_label(t.error, err);
                 })
                 .response;
 

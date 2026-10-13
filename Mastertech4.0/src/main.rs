@@ -135,8 +135,6 @@ impl eframe::App for app_state::MasterTechApp {
         displays::ui_tools::glass_backdrop::frost_open_windows(ui.ctx());
 
         self.receive_ui(ui.ctx(), frame);
-        // Before any tab content: painting this is what admits RemoteExec jobs.
-        remote_exec::banner_egui::show(ui);
         let on_workspace = matches!(
             self.context.shared_ctx.state,
             AppState::Authenticated(MainPages::Tasks)
@@ -147,17 +145,18 @@ impl eframe::App for app_state::MasterTechApp {
         // The picker stands in for the whole workspace, menu bar included.
         let picking =
             on_workspace && !awaiting_account && self.context.work_mode.active.is_none();
-        if !picking && !awaiting_account {
-            self.menu_bar(ui);
-        }
+        self.title_bar(ui, !picking && !awaiting_account);
+        // Before any tab content: painting this is what admits RemoteExec jobs.
+        remote_exec::banner_egui::show(ui);
 
         match &self.context.shared_ctx.state {
             AppState::Authenticated(page) => match page {
                 MainPages::Tasks => {
                     if awaiting_account {
                         ui.vertical_centered(|ui| {
+                            use displays::ui_tools::controls::{self, SpinnerSize};
                             ui.add_space(ui.available_height() / 3.0);
-                            ui.spinner();
+                            controls::spinner(ui, SpinnerSize::Lg);
                             ui.label("Loading your workspace...");
                         });
                     } else if picking {
@@ -199,6 +198,10 @@ impl eframe::App for app_state::MasterTechApp {
             self.context.plugin_manager.clone(),
         );
         plugin_handle.render_plugin_uis(ui);
+
+        if self.context.chrome.frameless {
+            mtech_ui::title_bar::window_edges(ui);
+        }
     }
 
     fn persist_egui_memory(&self) -> bool { true }
@@ -326,6 +329,8 @@ struct LaunchOptions {
     force_cpu: bool,
     /// Switch the glass backdrop-blur pass off for this run.
     no_frost: bool,
+    /// Keep the OS title bar for this run whatever the saved preference says.
+    system_titlebar: bool,
 }
 
 /// Install every log sink for this launch. The file sink is unconditional; stderr is added only
@@ -432,18 +437,26 @@ async fn run_gui(opts: LaunchOptions, minidump: MinidumpArgs) -> eframe::Result<
         try_software_gui(minidump)
     } else {
         let glow_minidump = minidump.clone();
+        let frameless =
+            !opts.system_titlebar && utilities::window_prefs::load_custom_title_bar();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", database::version_with_build!()).as_str(),
             eframe::NativeOptions {
                 viewport: eframe::egui::ViewportBuilder::default()
                     .with_inner_size([1000.0, 750.0])
                     .with_drag_and_drop(true)
+                    .with_decorations(!frameless)
                     .with_icon(load_icon()),
                 ..Default::default()
             },
             Box::new(move |cc| {
                 egui_extras::install_image_loaders(&cc.egui_ctx);
-                Ok(Box::new(app_state::MasterTechApp::new(cc, glow_minidump)))
+                let mut app = app_state::MasterTechApp::new(cc, glow_minidump);
+                app.context.chrome = utilities::window_prefs::Chrome {
+                    frameless,
+                    available: true,
+                };
+                Ok(Box::new(app))
             }),
         );
         match eframe_app {
@@ -531,6 +544,12 @@ fn cli() -> clap::Command {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
+            clap::Arg::new("system-titlebar")
+                .long("system-titlebar")
+                .help("Use the Windows title bar for this launch instead of MasterTech's own")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             clap::Arg::new("watchdog")
                 .long("watchdog")
                 .help("Scheduled relaunch: exit at once when MasterTech is already running")
@@ -594,6 +613,7 @@ async fn main() -> eframe::Result<()> {
         mirror_to_console: console_attached,
         force_cpu: matches.get_flag("cpu"),
         no_frost: matches.get_flag("no-frost"),
+        system_titlebar: matches.get_flag("system-titlebar"),
     };
 
     utilities::safe_swap::cleanup_update_leftovers();

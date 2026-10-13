@@ -1,8 +1,14 @@
 #[allow(deprecated)]
 use eframe::egui::{
-    collapsing_header::CollapsingState, Popup, Align, CentralPanel, Color32,
+    collapsing_header::CollapsingState, Popup, Align, CentralPanel,
     Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside,
-    ProgressBar, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget,
+    RichText, ScrollArea, Stroke, Ui,
+};
+use crate::ui_tools::{
+    controls::{self, BarKind, IconBox, Metrics, Role, TextField, Tokens},
+    icons::svg::{self, Icon},
+    list_row::{Lead, ListRow},
+    theme,
 };
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
 use database::schema::{Node, User, buckets::normalize_prefix, file_storage};
@@ -14,6 +20,40 @@ use uuid::Uuid;
 use log::info;
 #[cfg(feature="tokio")]
 use std::path::PathBuf;
+
+/// Content width of the create-folder and rename dialogs.
+const DIALOG_W: f32 = 320.0;
+/// Inner margin of the create-folder and rename dialogs.
+const DIALOG_MARGIN: i8 = 16;
+
+/// The pack icon for a file name's extension.
+fn file_icon(name: &str) -> Icon {
+    let ext = name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "ps1" | "psm1" | "psd1" | "bat" | "cmd" | "sh" | "vbs" => svg::FILE_CODE,
+        "json" | "xml" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "reg" => svg::BRACKETS_CURLY,
+        "txt" | "log" => svg::FILE_TXT,
+        "md" => svg::FILE_MD,
+        "csv" => svg::FILE_CSV,
+        "pdf" => svg::FILE_PDF,
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" => svg::FILE_IMAGE,
+        "svg" => svg::FILE_SVG,
+        "zip" | "7z" | "rar" | "tar" | "gz" | "cab" => svg::FILE_ZIP,
+        "exe" | "msi" => svg::APP_WINDOW,
+        "doc" | "docx" => svg::FILE_DOC,
+        "xls" | "xlsx" => svg::FILE_XLS,
+        "ppt" | "pptx" => svg::FILE_PPT,
+        "html" | "htm" => svg::FILE_HTML,
+        "css" => svg::FILE_CSS,
+        "js" => svg::FILE_JS,
+        "py" => svg::FILE_PY,
+        "rs" => svg::FILE_RS,
+        "sql" | "surql" => svg::FILE_SQL,
+        "mp3" | "wav" | "flac" => svg::FILE_AUDIO,
+        "mp4" | "mkv" | "avi" | "mov" => svg::FILE_VIDEO,
+        _ => svg::FILE,
+    }
+}
 
 /// Fetcher implementation for SurrealDB file storage
 /// 
@@ -191,9 +231,9 @@ impl FileSysHelper for FileSystem {
             },
             FileSystemAction::EnterDirectory(directory) => {
                 info!("directory double clicked: {directory:?}");
-                self.double_click_folder(&directory);
+                self.double_click_folder(directory);
             }
-            FileSystemAction::ExpandDirectory(directory) => self.expand_folder(&directory),
+            FileSystemAction::ExpandDirectory(directory) => self.expand_folder(directory),
             FileSystemAction::NavigateHome => {
                 self.navigation_stack.clear();
                 self.current_prefix.clear();
@@ -477,62 +517,56 @@ impl FileSystem {
             let _ = self.request_contents("");
         }
         let size = ui.available_size_before_wrap();
-        let mut inner_margin_top = Margin::default();
-        inner_margin_top.bottom = 5;
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
 
         let btm_panel_frame = Frame::default()
-            .inner_margin(inner_margin_top)
-            .corner_radius(eframe::egui::CornerRadius::same(10));
-
-        let top_panel_frame = Frame::default()
-            .outer_margin(Margin::symmetric(5, 2));
+            .inner_margin(Margin { bottom: 4, ..Margin::ZERO })
+            .corner_radius(t.radius_md);
 
         let panel_frame = Frame::default()
-            .fill(Color32::from_rgb(12, 12, 14))
+            .fill(t.sunken)
             .inner_margin(Margin::same(6))
-            .corner_radius(eframe::egui::CornerRadius::same(10))
-            .stroke(Stroke::new(1.0_f32, Color32::from_additive_luminance(50)));
-        
-        ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
+            .corner_radius(t.radius_md)
+            .stroke(Stroke::new(1.0, t.card_border));
 
-
+        let path_id = self.scroll_id.with("path");
         eframe::egui::Panel::top("FileBrowserTop")
-            .frame(top_panel_frame)
-            .exact_size(40.)
-            .show(ui, |ui| 
+            .frame(Frame::NONE)
+            .exact_size(m.bar_h)
+            .show_separator_line(false)
+            .show(ui, |ui|
         {
-            ui.horizontal_centered(|ui| {
-                // Navigation buttons on the left
-                let home_res = ui.button(RichText::new("🏠")).on_hover_text("Home");
-                if home_res.clicked(){
+            controls::bar(ui, BarKind::Tool, |ui| {
+                if controls::icon_button(ui, svg::HOUSE, IconBox::Md, false, "Home").clicked() {
                     info!("Home clicked. root: {:?}", self.root);
                     let send = self.fs_actions_channel.0.try_send(FileSystemAction::NavigateHome);
                     info!("Sending FS Action: {send:?}");
                 }
 
-                let parent_res = ui.button(RichText::new("⬆")).on_hover_text("Parent Folder");
-                if parent_res.clicked() {
+                if controls::icon_button(ui, svg::ARROW_UP, IconBox::Md, false, "Parent folder").clicked() {
                     let navigate_up = self.navigate_up();
                     info!("Navigating up: {navigate_up:?}");
                 }
-                
-                let force_refresh = ui.button(RichText::new("⟲")).on_hover_text("Refresh Current Directory Contents");
-                if force_refresh.clicked() {
+
+                if controls::icon_button(ui, svg::ARROW_CLOCKWISE, IconBox::Md, false, "Refresh current directory contents").clicked() {
                     let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
                 }
-                
-                ui.add_space(8.);
-                
-                // Bucket name as prefix label
+
+                controls::vline(ui, m.control_h);
+
                 let bucket_name = self.user.get_user_bucket_name();
-                ui.label(RichText::new(format!("{}:/", bucket_name)).color(Color32::GRAY).monospace());
-                
-                // Path textedit - takes remaining space
+                ui.label(RichText::new(format!("{}:/", bucket_name)).color(t.text_dim).monospace());
+
                 let pre_modified_path = self.current_prefix.clone();
-                let response = TextEdit::singleline(&mut self.current_prefix)
-                    .desired_width(ui.available_width() - 10.0)
-                    .hint_text("path/to/folder")
-                    .ui(ui);
+                let width = ui.available_width();
+                let response = TextField::new(&mut self.current_prefix)
+                    .hint("path/to/folder")
+                    .icon(svg::FOLDER_OPEN)
+                    .mono(true)
+                    .width(width)
+                    .id_salt(path_id)
+                    .show(ui);
 
                 if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                     info!("Lost focus on self.current_prefix TextEdit: {pre_modified_path} // curr {}", self.current_prefix);
@@ -546,8 +580,8 @@ impl FileSystem {
         eframe::egui::Panel::bottom("FileBrowserBottom")
             .frame(btm_panel_frame)
             .show_separator_line(false)
-            .show(ui, |ui| 
-                ui.vertical_centered(|ui | 
+            .show(ui, |ui|
+                ui.vertical_centered(|ui |
                     self.show_progress(ui)
                 )
             );
@@ -560,38 +594,53 @@ impl FileSystem {
             if size.x > 1000. {
                 eframe::egui::Panel::right(Id::new("FileBrowserSidePanel"))
                     .default_size(ui.available_width()/2.0)
-                    .show(ui, |ui| 
+                    .show(ui, |ui|
                 {
                     self.file_editor.show(ui, file);
                 });
             } else {
                 eframe::egui::Panel::bottom(Id::new("FileBrowserBottomPanel"))
                     .default_size(ui.available_height()/2.0)
-                    .show(ui, |ui| 
+                    .show(ui, |ui|
                 {
                     self.file_editor.show(ui, file);
                 });
             }
         }
-        ui.add_space(5.0);
+        ui.add_space(4.0);
 
-        // Create Folder Dialog
         if self.show_create_folder_dialog {
+            let frame = Frame::window(&ui.ctx().global_style()).inner_margin(DIALOG_MARGIN);
             eframe::egui::Window::new("Create New Folder")
-                .collapsible(false)
+                .title_bar(false)
+                .frame(frame)
                 .resizable(false)
                 .anchor(eframe::egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ui.ctx(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Folder name:");
-                        ui.text_edit_singleline(&mut self.new_folder_name);
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("Create").clicked() && !self.new_folder_name.is_empty() {
-                            // Build the full path for the new folder
-                            let base_path = if self.current_prefix.is_empty() { 
-                                String::new() 
-                            } else { 
+                    let buttons = [(Role::Primary, "Create"), (Role::Cancel, "Cancel")];
+                    let (_, clicked) = controls::dialog_contents(
+                        ui,
+                        Some(svg::FOLDER_PLUS),
+                        "Create New Folder",
+                        DIALOG_W,
+                        &buttons,
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Folder name");
+                                let width = ui.available_width();
+                                TextField::new(&mut self.new_folder_name)
+                                    .hint("New folder")
+                                    .icon(svg::FOLDER)
+                                    .width(width)
+                                    .show(ui);
+                            });
+                        },
+                    );
+                    match clicked {
+                        Some(0) if !self.new_folder_name.is_empty() => {
+                            let base_path = if self.current_prefix.is_empty() {
+                                String::new()
+                            } else {
                                 format!("{}/", self.current_prefix.trim_matches('/'))
                             };
                             let folder_path = format!("{}{}", base_path, self.new_folder_name);
@@ -599,28 +648,46 @@ impl FileSystem {
                             self.new_folder_name.clear();
                             self.show_create_folder_dialog = false;
                         }
-                        if ui.button("Cancel").clicked() {
+                        Some(1) => {
                             self.new_folder_name.clear();
                             self.show_create_folder_dialog = false;
                         }
-                    });
+                        _ => {}
+                    }
                 });
         }
 
-        // Rename Dialog
         if self.show_rename_dialog {
+            let frame = Frame::window(&ui.ctx().global_style()).inner_margin(DIALOG_MARGIN);
             eframe::egui::Window::new("Rename")
-                .collapsible(false)
+                .title_bar(false)
+                .frame(frame)
                 .resizable(false)
                 .anchor(eframe::egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ui.ctx(), |ui| {
-                    ui.label(format!("Renaming: {}", self.rename_source_path));
-                    ui.horizontal(|ui| {
-                        ui.label("New name:");
-                        ui.text_edit_singleline(&mut self.rename_new_name);
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("Rename").clicked() && !self.rename_new_name.is_empty() {
+                    let buttons = [(Role::Primary, "Rename"), (Role::Cancel, "Cancel")];
+                    let (_, clicked) = controls::dialog_contents(
+                        ui,
+                        Some(svg::PENCIL_SIMPLE),
+                        "Rename",
+                        DIALOG_W,
+                        &buttons,
+                        |ui| {
+                            let source = format!("Renaming: {}", self.rename_source_path);
+                            controls::elided_label(ui, &source, DIALOG_W);
+                            ui.horizontal(|ui| {
+                                ui.label("New name");
+                                let width = ui.available_width();
+                                TextField::new(&mut self.rename_new_name)
+                                    .hint("New name")
+                                    .icon(svg::PENCIL_SIMPLE)
+                                    .width(width)
+                                    .show(ui);
+                            });
+                        },
+                    );
+                    match clicked {
+                        Some(0) if !self.rename_new_name.is_empty() => {
                             let _ = self.fs_actions_channel.0.try_send(
                                 FileSystemAction::Rename(self.rename_source_path.clone(), self.rename_new_name.clone())
                             );
@@ -628,63 +695,67 @@ impl FileSystem {
                             self.rename_new_name.clear();
                             self.show_rename_dialog = false;
                         }
-                        if ui.button("Cancel").clicked() {
+                        Some(1) => {
                             self.rename_source_path.clear();
                             self.rename_new_name.clear();
                             self.show_rename_dialog = false;
                         }
-                    });
+                        _ => {}
+                    }
                 });
         }
 
         let central_response = CentralPanel::default().frame(panel_frame)
-            .show(ui, |ui| 
+            .show(ui, |ui|
         {
             ScrollArea::vertical()
                 .id_salt(self.scroll_id)
                 .max_width(size.x)
-                .max_width(size.y)
+                .max_height(size.y)
                 .auto_shrink(false)
-                .show(ui, |ui| 
+                .show(ui, |ui|
             {
                 ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), |ui| {
                     self.display_directory_contents(
-                        ui, 
+                        ui,
                         self.get_current_folder().unwrap_or(&self.root)
                     );
                 });
             });
         });
-        
+
         // Background context menu (right-click on empty area of the central panel)
         central_response.response.context_menu(|ui| {
-            if ui.button("📁 New Folder").clicked() {
-                self.show_create_folder_dialog = true;
-                ui.close();
-            }
-            if ui.button("📄 New File").clicked() {
-                self.show_create_folder_dialog = true;
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("⟲ Refresh").clicked() {
-                let _ = self.fs_actions_channel.0.try_send(
-                    FileSystemAction::RequestNewContents(self.current_prefix.clone())
-                );
-                ui.close();
-            }
-            #[cfg(not(any(target_os = "ios", target_os = "android")))]
-            if ui.button("📤 Upload File").clicked() {
-                self.upload(self.current_prefix.clone());
-                ui.close();
-            }
+            controls::menu_body(ui, |ui| {
+                if controls::menu_item(ui, svg::FOLDER_PLUS, "New Folder").clicked() {
+                    self.show_create_folder_dialog = true;
+                    ui.close();
+                }
+                if controls::menu_item(ui, svg::FILE_PLUS, "New File").clicked() {
+                    self.show_create_folder_dialog = true;
+                    ui.close();
+                }
+                controls::menu_separator(ui);
+                if controls::menu_item(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
+                    let _ = self.fs_actions_channel.0.try_send(
+                        FileSystemAction::RequestNewContents(self.current_prefix.clone())
+                    );
+                    ui.close();
+                }
+                #[cfg(not(any(target_os = "ios", target_os = "android")))]
+                if controls::menu_item(ui, svg::UPLOAD_SIMPLE, "Upload File").clicked() {
+                    self.upload(self.current_prefix.clone());
+                    ui.close();
+                }
+            });
         });
-        
+
     }
 
     pub fn display_directory_contents(&self, ui: &mut Ui, node: &Node){
         let tx = self.fs_actions_channel.0.clone();
-        ui.vertical(|ui| 
+        let folder_tint = theme::secondary(ui);
+        ui.vertical(|ui|
         {
             let mut count = 0;
             if let Node::Folder(_, children) = node {
@@ -704,61 +775,53 @@ impl FileSystem {
 
                     if let Node::Folder(full_path, _) = node {
                         count+=1;
-                        
+
                         let id = ui.make_persistent_id(format!("virtual_fs_collapsing-header-{:?}-{}-{}", self.scroll_id, label, count));
 
                         let res = CollapsingState::load_with_default_open(
-                            ui.ctx(), 
-                            id, 
+                            ui.ctx(),
+                            id,
                             false
                         )
-                        .show_header(ui, |ui| 
+                        .show_header(ui, |ui|
                         {
                             let is_selected = self.selected_items.borrow().contains(label);
-                            let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗀   {}", label)));
+                            let row = ListRow::new(label)
+                                .lead(Lead::Icon(svg::FOLDER, Some(folder_tint)))
+                                .selected(is_selected)
+                                .show(ui);
 
-                            if selectable_label.clicked() { // If the item was already selected, deselect it
+                            if row.clicked() {
                                 let _ = tx.try_send(FileSystemAction::Select((modifiers, normalize_prefix(full_path))));
                             }
 
-                            if selectable_label.double_clicked(){
+                            if row.double_clicked(){
                                 let _ = tx.try_send(FileSystemAction::EnterDirectory(full_path.clone()));
                             }
 
-                            Popup::context_menu(&selectable_label)
+                            Popup::context_menu(&row)
                                 .close_behavior(CloseOnClickOutside)
                                 .show(|ui|
                             {
-                                ui.vertical_centered_justified(|ui| {
-                                    ui.set_width(200.0);
-
+                                controls::menu_body(ui, |ui| {
                                     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                                    if ui.button("Download").clicked(){
+                                    if controls::menu_item(ui, svg::DOWNLOAD_SIMPLE, "Download").clicked(){
                                         info!("Path: {:?}", full_path.clone());
                                         self.download_selection(full_path.to_string(), label.clone());
                                     }
 
-                                    ui.add_space(5.0);
-
                                     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                                    if ui.button("Upload").clicked(){
+                                    if controls::menu_item(ui, svg::UPLOAD_SIMPLE, "Upload").clicked(){
                                         info!("Dir: {:?}", full_path.clone());
                                         self.upload(full_path.to_string());
                                     }
 
-                                    ui.add_space(5.0);
-
-                                    if ui.button("Upload Folder").clicked(){
-                                        // if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                        //     #[cfg(target_os="windows")]
-                                        //     self.upload_folder(dir);
-                                        // }
-                                    }
-                                }).inner;
+                                    let _ = controls::menu_item(ui, svg::MT_FOLDER_UPLOAD, "Upload Folder");
+                                });
                             });
                         })
-                        .body(|ui| 
-                            self.display_directory_contents(ui, &node)
+                        .body(|ui|
+                            self.display_directory_contents(ui, node)
                         );
 
                         if res.0.clicked() {
@@ -769,75 +832,62 @@ impl FileSystem {
                             .close_behavior(CloseOnClickOutside)
                             .show(|ui|
                         {
-                            ui.vertical_centered_justified(|ui| {
-                                ui.set_width(200.0);
-
-                                if ui.button("Upload").clicked(){
-                                    // self.upload(dir);
-                                }
-
-                                ui.add_space(5.0);
-
-                                if ui.button("Upload Folder").clicked(){
-                                    // self.upload_folder(dir);
-                                }
-                            }).inner;
+                            controls::menu_body(ui, |ui| {
+                                let _ = controls::menu_item(ui, svg::UPLOAD_SIMPLE, "Upload");
+                                let _ = controls::menu_item(ui, svg::MT_FOLDER_UPLOAD, "Upload Folder");
+                            });
                         });
 
                     } else if let Node::File((full_path, label)) = node {
 
-                        // let id = ui.make_persistent_id(format!("sub_menu-{:?}", full_path));
                         let file_selected = self.selected_items.borrow().contains(full_path);
-                        let selectable_label = ui.selectable_label(file_selected, RichText::new(format!("🗋   {}", label)));
+                        let row = ListRow::new(label)
+                            .lead(Lead::Icon(file_icon(label), None))
+                            .selected(file_selected)
+                            .show(ui);
 
-                        if selectable_label.clicked() {
+                        if row.clicked() {
                             let path = normalize_prefix(full_path);
                             let _ = tx.try_send(FileSystemAction::Select((modifiers, path.clone())));
                         }
 
-                        if selectable_label.double_clicked(){
+                        if row.double_clicked(){
                             let _ = tx.try_send(FileSystemAction::Execute(full_path.clone()));
                         }
 
-                        Popup::context_menu(&selectable_label)
+                        Popup::context_menu(&row)
                             .close_behavior(CloseOnClickOutside)
                             .show(|ui|
                         {
-                            ui.vertical_centered_justified(|ui| {
-                                ui.set_width(200.0);
+                            controls::menu_body(ui, |ui| {
                                 #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                                if ui.button("Download").clicked(){
+                                if controls::menu_item(ui, svg::DOWNLOAD_SIMPLE, "Download").clicked(){
                                     self.download_selection(full_path.clone(), label.clone());
                                 }
 
-                                ui.add_space(5.0);
-
-                                if ui.button("Copy To Client").clicked(){
+                                if controls::menu_item(ui, svg::ARROW_SQUARE_OUT, "Copy To Client").clicked(){
                                     let _ = tx.try_send(FileSystemAction::CopyToClient(full_path.clone()));
                                 }
 
-                                ui.add_space(5.0);
-
-                                if ui.button("Copy From Client").clicked(){
+                                if controls::menu_item(ui, svg::ARROW_SQUARE_IN, "Copy From Client").clicked(){
                                     let _ = tx.try_send(FileSystemAction::CopyFromClient(full_path.clone()));
                                 }
 
-                                ui.add_space(5.0);
-
                                 let ext = full_path.rsplit('.').next().unwrap_or("").to_lowercase();
-                                if matches!(ext.as_str(), "ps1" | "bat" | "cmd") {
-                                    if ui.button("▶ Run on Remote").clicked(){
-                                        let _ = tx.try_send(FileSystemAction::RunOnRemote(full_path.clone(), label.clone()));
-                                        ui.close();
-                                    }
-                                    ui.add_space(5.0);
+                                if matches!(ext.as_str(), "ps1" | "bat" | "cmd")
+                                    && controls::menu_item(ui, svg::PLAY, "Run on Remote").clicked()
+                                {
+                                    let _ = tx.try_send(FileSystemAction::RunOnRemote(full_path.clone(), label.clone()));
+                                    ui.close();
                                 }
 
-                                if ui.button("Delete File").clicked(){
+                                controls::menu_separator(ui);
+
+                                if controls::menu_danger_item(ui, svg::TRASH, "Delete File").clicked(){
                                     info!("Deleting file: {full_path}-{label}");
                                     let _ = tx.try_send(FileSystemAction::Delete(full_path.clone()));
                                 }
-                            }).inner
+                            })
                         });
                     };
                 }
@@ -1023,12 +1073,9 @@ impl FileSystem {
         }
 
         if self.progress > 0. {
-            ProgressBar::new(self.progress / self.total_size)
-                .show_percentage()
-                .fill(
-                    Color32::from_rgba_premultiplied(50, 10, 50, 65)
-                )
-                .ui(ui);
+            controls::ProgressBar::new(self.progress / self.total_size)
+                .percentage(true)
+                .show(ui);
         }
     }
 

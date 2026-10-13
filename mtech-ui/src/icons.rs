@@ -1,5 +1,6 @@
 //! Phosphor icon glyphs for egui.
 
+pub use crate::icon_pack as svg;
 pub use egui_phosphor::regular as p;
 
 use eframe::egui::{Color32, FontDefinitions, FontFamily, RichText};
@@ -34,15 +35,6 @@ pub fn icon_colored(glyph: &str, color: Color32) -> RichText {
     icon(glyph).color(color)
 }
 
-pub fn menu_label(name: &str) -> String {
-    format!("{name} {}", p::CARET_DOWN)
-}
-
-pub fn menu_item(icon_glyph: &str, label: &str) -> String {
-    format!("{icon_glyph} {label}")
-}
-
-pub const MENU_SUFFIX: &str = p::CARET_DOWN;
 pub const CHEV_OPEN: &str = p::CARET_DOWN;
 pub const CHEV_CLOSED: &str = p::CARET_RIGHT;
 
@@ -50,13 +42,7 @@ pub const STOP: &str = p::STOP;
 pub const PLAY: &str = p::PLAY;
 pub const PAUSE: &str = p::PAUSE;
 
-pub const POPOUT: &str = p::ARROW_SQUARE_OUT;
-pub const FULLSCREEN_ENTER: &str = p::CORNERS_OUT;
-pub const FULLSCREEN_EXIT: &str = p::CORNERS_IN;
-
 pub const UP: &str = p::ARROW_UP;
-pub const SORT_ASC: &str = p::SORT_ASCENDING;
-pub const SORT_DESC: &str = p::SORT_DESCENDING;
 pub const REFRESH: &str = p::ARROW_CLOCKWISE;
 pub const HOME: &str = p::HOUSE;
 
@@ -74,18 +60,8 @@ pub const STATUS_DOT: &str = p::DOT;
 pub const INFO: &str = p::INFO;
 pub const CRITICAL: &str = p::SKULL;
 
-pub const FOCUS: &str = p::CROSSHAIR;
 pub const OPEN: &str = p::ARROWS_OUT_SIMPLE;
 pub const CLOSE: &str = p::X;
-
-/// Client-row actions, as icons with the action in hover text.
-pub const DISCONNECT: &str = p::LINK_BREAK;
-pub const FLOAT: &str = p::PICTURE_IN_PICTURE;
-pub const DOCK: &str = p::ARROW_SQUARE_IN;
-pub const RELINK: &str = p::USER_SWITCH;
-pub const LINK_COMPUTER: &str = p::PLUGS_CONNECTED;
-pub const REPAIR_LINKS: &str = p::WRENCH;
-pub const AUTOPILOT: &str = p::ROBOT;
 
 pub const BETA: &str = p::TEST_TUBE;
 pub const BETA_TAG: &str = BETA;
@@ -106,7 +82,6 @@ pub const PACKAGE: &str = p::PACKAGE;
 pub const DOWNLOAD: &str = p::DOWNLOAD;
 pub const UPLOAD: &str = p::UPLOAD;
 pub const TRASH: &str = p::TRASH;
-pub const SAVE: &str = p::FLOPPY_DISK;
 pub const EYE: &str = p::EYE;
 pub const SEARCH: &str = p::MAGNIFYING_GLASS;
 pub const GEAR: &str = p::GEAR;
@@ -114,11 +89,8 @@ pub const PLUS: &str = p::PLUS;
 pub const EDIT: &str = p::PENCIL;
 pub const COPY: &str = p::COPY;
 pub const CLIPBOARD: &str = p::CLIPBOARD;
-pub const TASK_CREATE: &str = p::CLIPBOARD;
-pub const TASK_EXISTS: &str = p::CLIPBOARD_TEXT;
 pub const LIST: &str = p::LIST;
 pub const SCROLL: &str = p::SCROLL;
-pub const CHART: &str = p::CHART_BAR;
 pub const WRENCH: &str = p::WRENCH;
 pub const LIGHTBULB: &str = p::LIGHTBULB;
 pub const ROBOT: &str = p::ROBOT;
@@ -134,7 +106,6 @@ pub const MUSIC: &str = p::MUSIC_NOTES;
 pub const IMAGE: &str = p::IMAGE;
 pub const VIDEO: &str = p::VIDEO;
 pub const HARD_DRIVE: &str = p::HARD_DRIVE;
-pub const DIAGNOSTICS: &str = p::MICROSCOPE;
 pub const GRID: &str = p::SQUARES_FOUR;
 pub const CARET_LEFT: &str = p::CARET_LEFT;
 pub const CARET_RIGHT: &str = p::CARET_RIGHT;

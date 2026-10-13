@@ -11,6 +11,8 @@
 
 use eframe::egui::{Color32, Context, Id, Ui};
 
+use crate::tokens::Tokens;
+
 const SUCCESS_KEY: &str = "mtech.theme.success_color";
 const ACCENT2_KEY: &str = "mtech.theme.accent_secondary";
 
@@ -46,6 +48,7 @@ pub fn success_ctx(ctx: &Context) -> Color32 {
         .unwrap_or(Color32::from_rgb(72, 199, 142))
 }
 
+/// Selection wash, for fills only; use [`primary`] for text and icon ink.
 pub fn accent(ui: &Ui) -> Color32 {
     ui.visuals().selection.bg_fill
 }
@@ -57,6 +60,33 @@ pub fn accent_secondary(ui: &Ui) -> Color32 {
 pub fn accent_secondary_ctx(ctx: &Context) -> Color32 {
     ctx.data(|d| d.get_temp::<Color32>(accent2_id()))
         .unwrap_or(Color32::from_rgb(191, 33, 101))
+}
+
+/// Primary accent role from the published [`Tokens`].
+pub fn primary(ui: &Ui) -> Color32 {
+    primary_ctx(ui.ctx())
+}
+
+pub fn primary_ctx(ctx: &Context) -> Color32 {
+    Tokens::get(ctx).primary
+}
+
+/// Secondary accent role from the published [`Tokens`].
+pub fn secondary(ui: &Ui) -> Color32 {
+    secondary_ctx(ui.ctx())
+}
+
+pub fn secondary_ctx(ctx: &Context) -> Color32 {
+    Tokens::get(ctx).secondary
+}
+
+/// Tertiary accent role from the published [`Tokens`].
+pub fn tertiary(ui: &Ui) -> Color32 {
+    tertiary_ctx(ui.ctx())
+}
+
+pub fn tertiary_ctx(ctx: &Context) -> Color32 {
+    Tokens::get(ctx).tertiary
 }
 
 pub fn strong_text(ui: &Ui) -> Color32 {

@@ -34,6 +34,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::{MastertechPlugin, PluginHost};
+use crate::ui_tools::{
+    controls::{self, BarKind},
+    icons::svg,
+};
 
 // ─── Wire types ────────────────────────────────────────────────────────────────
 
@@ -912,15 +916,17 @@ impl MastertechPlugin for EguiRemoteViewer {
         let screen_min_y = self.latest_frame.as_ref().unwrap().screen_min_y;
         let remote_origin = egui::pos2(screen_min_x, screen_min_y);
 
-        egui::Window::new("Remote Egui Viewer")
+        controls::icon_window(ui.ctx(), svg::SCREENCAST, "Remote Egui Viewer")
             .default_size([width.max(400.0), height.max(300.0)])
             .show(ui.ctx(), move |ui| {
-                ui.label(format!(
+                let stats = format!(
                     "Frame #{frame_count} | {}×{} @{ppp:.1}x | {mesh_count} meshes",
                     width as u32,
                     height as u32,
-                ));
-                ui.separator();
+                );
+                controls::bar(ui, BarKind::Header, |ui| {
+                    controls::icon_label(ui, svg::MONITOR_PLAY, &stats);
+                });
 
                 let canvas_rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(width, height));
                 let response = ui.allocate_rect(

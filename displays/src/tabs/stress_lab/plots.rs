@@ -4,6 +4,8 @@ use database::schema::StressTestEvent;
 use eframe::egui::{Color32, RichText, Ui};
 use egui_plot::{Legend, Line, PlotPoints};
 
+use crate::ui_tools::controls::{self, IconLabel, Metrics};
+use crate::ui_tools::icons::svg::{self, Icon};
 use crate::ui_tools::{plots as plot_tools, theme};
 
 use super::data::SeriesBucket;
@@ -13,7 +15,7 @@ use super::metrics::SeriesMetric;
 /// time axis. Buckets are absolute so the first one anchors elapsed zero.
 pub fn run_detail(ui: &mut Ui, bucket_secs: u32, buckets: &[SeriesBucket], interactive: bool) {
     if buckets.is_empty() {
-        ui.label(RichText::new("No telemetry samples for this run.").weak());
+        controls::empty_state(ui, svg::CHART_LINE, "No telemetry samples for this run", "", &[]);
         return;
     }
 
@@ -41,32 +43,38 @@ pub fn run_detail(ui: &mut Ui, bucket_secs: u32, buckets: &[SeriesBucket], inter
         if points.len() < 2 {
             continue;
         }
-        let color = match metric {
-            SeriesMetric::Throughput => palette.throughput,
-            SeriesMetric::CpuTempC | SeriesMetric::GpuTempC => palette.temperature,
-            SeriesMetric::CpuClockMhz | SeriesMetric::GpuClockMhz => palette.clock,
-            SeriesMetric::PowerW | SeriesMetric::GpuPowerW => palette.disk,
-            SeriesMetric::CpuUsagePct | SeriesMetric::GpuUsagePct => palette.avg_cpu,
-            SeriesMetric::MemoryUsedPct => palette.memory,
-            SeriesMetric::WheaDelta => palette.whea,
+        let (color, icon) = match metric {
+            SeriesMetric::Throughput => (palette.throughput, svg::GAUGE),
+            SeriesMetric::CpuTempC | SeriesMetric::GpuTempC => (palette.temperature, svg::THERMOMETER),
+            SeriesMetric::CpuClockMhz | SeriesMetric::GpuClockMhz => (palette.clock, svg::SPEEDOMETER),
+            SeriesMetric::PowerW | SeriesMetric::GpuPowerW => (palette.disk, svg::LIGHTNING),
+            SeriesMetric::CpuUsagePct => (palette.avg_cpu, svg::CPU),
+            SeriesMetric::GpuUsagePct => (palette.avg_cpu, svg::GRAPHICS_CARD),
+            SeriesMetric::MemoryUsedPct => (palette.memory, svg::MEMORY),
+            SeriesMetric::WheaDelta => (palette.whea, svg::SHIELD_WARNING),
         };
-        line_chart(ui, metric.label(), &points, color, interactive);
+        line_chart(ui, icon, metric.label(), &points, color, interactive);
         charted += 1;
     }
 
     if charted == 0 {
-        ui.label(
-            RichText::new(format!(
+        note(
+            ui,
+            svg::HOURGLASS,
+            &format!(
                 "Only {} telemetry bucket(s) at {bucket_secs}s — too short to chart.",
                 buckets.len()
-            ))
-            .weak(),
+            ),
         );
     }
 }
 
-fn line_chart(ui: &mut Ui, label: &str, points: &[[f64; 2]], color: Color32, interactive: bool) {
-    ui.label(RichText::new(label).small());
+fn line_chart(ui: &mut Ui, icon: Icon, label: &str, points: &[[f64; 2]], color: Color32, interactive: bool) {
+    ui.horizontal(|ui| {
+        let size = Metrics::get(ui.ctx()).icon_sm;
+        ui.add(icon.image(size).tint(color));
+        ui.label(RichText::new(label).small());
+    });
     plot_tools::maybe_pinned(("stress_lab_detail", label), interactive)
         .legend(Legend::default())
         .height(130.0)
@@ -79,25 +87,36 @@ fn line_chart(ui: &mut Ui, label: &str, points: &[[f64; 2]], color: Color32, int
 }
 
 pub fn events(ui: &mut Ui, events: &[StressTestEvent]) {
-    ui.heading("Events");
+    let m = Metrics::get(ui.ctx());
+    controls::panel_header(ui, svg::LIST_BULLETS, "Events", |_| {});
     if events.is_empty() {
-        ui.label(RichText::new("No stress_test_event rows.").weak());
+        note(ui, svg::CHECK_CIRCLE, "No stress_test_event rows.");
         return;
     }
     for e in events {
         let at = chrono::DateTime::<chrono::Utc>::from(e.at)
             .format("%H:%M:%S")
             .to_string();
-        let color = match e.kind.as_str() {
+        let (color, icon) = match e.kind.as_str() {
             "bsod" | "whea_hit" | "disk_io_error" | "memory_error" | "tdr"
-            | "unexpected_shutdown" => theme::result_fail(ui),
-            "thermal_throttle" | "vrm_throttle" => theme::result_aborted(ui),
-            _ => theme::weak_text(ui),
+            | "unexpected_shutdown" => (theme::result_fail(ui), svg::WARNING_OCTAGON),
+            "thermal_throttle" | "vrm_throttle" => (theme::result_aborted(ui), svg::THERMOMETER_HOT),
+            _ => (theme::weak_text(ui), svg::DOT),
         };
         ui.horizontal_wrapped(|ui| {
+            ui.add(icon.image(m.icon_sm).tint(color));
             ui.label(RichText::new(at).weak().small());
             ui.label(RichText::new(e.kind.as_str()).color(color).small());
             ui.label(RichText::new(format!("[{}] {}", e.source, e.detail)).small());
         });
     }
+}
+
+/// Faint icon and wrapping weak text.
+fn note(ui: &mut Ui, icon: Icon, text: &str) {
+    IconLabel::new(icon, text)
+        .tone(theme::weak_text(ui))
+        .icon_tone(theme::faint_text(ui))
+        .wrap(true)
+        .show(ui);
 }

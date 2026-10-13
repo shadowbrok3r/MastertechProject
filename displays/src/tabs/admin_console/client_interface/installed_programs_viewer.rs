@@ -1,5 +1,4 @@
-//! Installed Programs viewer — slice 3 of the connected-client
-//! refactor. Modeled after `services_viewer.rs`: an egui_data_table
+//! Installed Programs viewer, modeled after `services_viewer.rs`: an egui_data_table
 //! `Renderer` over a `Vec<InstalledProgram>` with a toolbar for
 //! refresh / filter and a context menu that fires uninstall
 //! actions through a channel.
@@ -10,10 +9,8 @@
 //! the message in the status row. A successful uninstall also
 //! re-fetches the program list so the row disappears.
 
-use eframe::egui::{
-    self, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
-    Widget, scroll_area,
-};
+use crate::ui_tools::metrics::Metrics;
+use eframe::egui::{self, KeyboardShortcut, RichText, ScrollArea, Ui, Widget, scroll_area};
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
     viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext, CustomActionContext, CustomActionEditor},
@@ -23,7 +20,8 @@ use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 
 use crate::{Cmd, InstalledProgram};
-use crate::ui_tools::icons;
+use crate::ui_tools::controls::{self, BarKind, Role};
+use crate::ui_tools::icons::{self, svg};
 use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 6;
@@ -227,14 +225,21 @@ impl InstalledProgramsViewer {
 
         // Confirmation modal.
         if let Some((msg, pending_action)) = self.confirm_action.clone() {
-            egui::Window::new("Confirm Uninstall")
+            controls::icon_window(ui.ctx(), svg::TRASH, "Confirm Uninstall")
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
-                    ui.label(&msg);
+                    ui.horizontal_top(|ui| {
+                        svg::WARNING.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::warn(ui));
+                        ui.label(&msg);
+                    });
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Uninstall").clicked() {
+                    controls::bar(ui, BarKind::Footer, |ui| {
+                        let clicked = controls::dialog_buttons(
+                            ui,
+                            &[(Role::Danger, "Uninstall"), (Role::Cancel, "Cancel")],
+                        );
+                        if clicked == Some(0) {
                             match &pending_action {
                                 InstalledProgramAction::UninstallSilent(id) => {
                                     let _ = cmd_tx.try_send(Cmd::UninstallProgram {
@@ -252,16 +257,15 @@ impl InstalledProgramsViewer {
                             }
                             self.confirm_action = None;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if clicked == Some(1) {
                             self.confirm_action = None;
                         }
                     });
                 });
         }
 
-        // Toolbar.
-        ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+        controls::bar(ui, BarKind::Tool, |ui| {
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                 self.loading = true;
                 self.table.clear();
                 self.entries.clear();
@@ -269,35 +273,34 @@ impl InstalledProgramsViewer {
                 let _ = cmd_tx.try_send(Cmd::ListInstalledPrograms);
             }
 
-            ui.label("Filter:");
-            TextEdit::singleline(&mut self.viewer.filter)
-                .hint_text("Search programs…")
-                .desired_width(220.)
-                .show(ui);
+            controls::search_field(ui, &mut self.viewer.filter, "Search programs…", 220.);
 
-            ui.checkbox(&mut self.viewer.uninstallable_only, "Uninstallable only");
+            controls::toggle(ui, &mut self.viewer.uninstallable_only, "Uninstallable only");
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { theme::success(ui) } else { theme::error(ui) };
-                ui.colored_label(color, msg);
+                let (icon, color) = if *success {
+                    (svg::CHECK_CIRCLE, theme::success(ui))
+                } else {
+                    (svg::WARNING_CIRCLE, theme::error(ui))
+                };
+                controls::note(ui, icon, msg.as_str(), color);
             }
         });
 
         ui.add_space(4.);
 
         if self.loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading installed programs…");
-            });
+            controls::loading_state(ui, "Loading installed programs…");
             return;
         }
 
         if self.entries.is_empty() {
-            ui.label(
-                RichText::new("No programs loaded. Click Refresh to fetch.")
-                    .italics()
-                    .color(theme::weak_text(ui)),
+            controls::empty_state(
+                ui,
+                svg::PACKAGE,
+                "No programs loaded",
+                "Click Refresh to fetch.",
+                &[],
             );
             return;
         }
@@ -382,7 +385,7 @@ impl RowViewer<InstalledProgram> for InstalledProgramRowViewer {
                 // on it.
                 if row.is_wow6432 {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("32").small().color(theme::accent_secondary(ui)));
+                        controls::badge(ui, "32", theme::accent_secondary(ui));
                         ui.label(RichText::new(&row.name).color(theme::text(ui)));
                     });
                 } else {
@@ -517,7 +520,7 @@ impl RowViewer<InstalledProgram> for InstalledProgramRowViewer {
                 .icon(icons::CLOSE)
                 .enabled(has_selection && has_uninstall),
             CustomMenuItem::new("uninstall_interactive", "Uninstall (interactive)")
-                .icon("M")
+                .icon(svg::HAND.glyph())
                 .enabled(has_selection && has_uninstall),
             CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true),
         ]

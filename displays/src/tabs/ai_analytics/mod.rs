@@ -13,11 +13,15 @@ use database::schema::{
     OutcomeOverride, RoiSummary, SessionOutcomeRow, TurnaroundStats, TECH_RATE_HIGH,
     TECH_RATE_LOW,
 };
-use eframe::egui::{Align, Button, Layout, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{Align, Layout, RichText, ScrollArea, Ui};
 use egui_plot::{Bar, BarChart, Legend};
 use web_time::Instant;
 
-use crate::ui_tools::{icons, info_card, plots, theme};
+use crate::ui_tools::controls::{
+    self, BarKind, ButtonKind, IconLabel, Metrics, SpinnerSize, TextButton, TextField,
+};
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::{info_card, plots, theme};
 use crate::{PlatformSpawner, Spawner};
 
 const LOOKBACKS: [u32; 4] = [30, 60, 90, 180];
@@ -231,44 +235,44 @@ impl AiAnalytics {
         }
 
         let mut requery = false;
-        ui.horizontal(|ui| {
-            if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Tool, |ui| {
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                 requery = true;
             }
-            ui.separator();
-            ui.label("Lookback:");
+            controls::vline(ui, m.control_h);
+            controls::icon_label(ui, svg::CALENDAR_DOTS, "Lookback");
             for days in LOOKBACKS {
-                if ui.selectable_label(self.lookback_days == days, format!("{days}d")).clicked() {
+                if controls::pill(ui, None, &format!("{days}d"), self.lookback_days == days).clicked() {
                     self.lookback_days = days;
                     requery = true;
                 }
             }
-            ui.separator();
-            ui.label("Comeback window:");
+            controls::vline(ui, m.control_h);
+            controls::icon_label(ui, svg::ARROW_U_UP_LEFT, "Comeback window");
             for days in WINDOWS {
-                if ui.selectable_label(self.window_days == days, format!("{days}d")).clicked() {
+                if controls::pill(ui, None, &format!("{days}d"), self.window_days == days).clicked() {
                     self.window_days = days;
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let text = if self.loading { "loading...".to_string() } else { self.status.clone() };
-                ui.label(RichText::new(text).weak());
+                if self.loading {
+                    controls::spinner(ui, SpinnerSize::Sm);
+                } else {
+                    ui.label(RichText::new(&self.status).weak());
+                }
             });
         });
         if requery {
             self.refresh();
         }
-        ui.separator();
 
         let Some(summary) = self.summary.clone() else {
-            ui.label(
-                RichText::new(if self.loading {
-                    "Computing fleet ROI..."
-                } else {
-                    "No data yet. Refresh to compute."
-                })
-                .weak(),
-            );
+            if self.loading {
+                controls::loading_state(ui, "Computing fleet ROI…");
+            } else {
+                controls::empty_state(ui, svg::CHART_BAR, "No data yet", "Refresh to compute.", &[]);
+            }
             return;
         };
 
@@ -298,54 +302,56 @@ impl AiAnalytics {
         } else {
             "Scored by the twice-daily sweep before anyone plugs the machine in. Score is a sort order for attention, not a measurement."
         };
-        info_card::section_card(ui, icons::ROBOT, "Waiting on the shelf", Some(subtitle), |ui| {
+        let m = Metrics::get(ui.ctx());
+        info_card::section_card(ui, svg::ROBOT, "Waiting on the shelf", Some(subtitle), |ui| {
             for c in &summary.shelf_candidates {
                 ui.horizontal(|ui| {
                     let color = if c.score >= 50 {
-                        theme::accent(ui)
+                        theme::primary(ui)
                     } else if c.score >= 25 {
                         theme::warn(ui)
                     } else {
                         theme::weak_text(ui)
                     };
-                    info_card::badge(ui, &format!("{}", c.score), color);
+                    controls::badge(ui, &format!("{}", c.score), color);
                     ui.label(RichText::new(format!("#{}", c.service_number)).strong());
                     if let Some(store) = &c.store {
-                        ui.label(RichText::new(store).weak());
+                        meta(ui, svg::STOREFRONT, store);
                     }
                     if let Some(h) = c.waiting_open_hours {
-                        ui.label(RichText::new(format!("{h:.0}h open")).weak());
+                        meta(ui, svg::CLOCK, &format!("{h:.0}h open"));
                     }
                 });
                 ui.label(RichText::new(&c.reason).weak());
-                ui.add_space(4.0);
+                ui.add_space(m.pad.y);
             }
         });
     }
 
     fn outcome_panel(&self, ui: &mut Ui, summary: &RoiSummary) {
         let window = self.window_days;
+        let m = Metrics::get(ui.ctx());
         info_card::section_card(
             ui,
-            icons::CHECK,
+            svg::SEAL_CHECK,
             "Did the fix stick?",
             Some("A diagnostic counts as fixed only when the same computer has not come back, and only once the window has fully elapsed."),
             |ui| {
                 let Some(b) = summary.outcome.overall.iter().find(|b| b.window_days == window) else {
-                    ui.label(RichText::new("no bucket for this window").weak());
+                    controls::note(ui, svg::CIRCLE_DASHED, "no bucket for this window", theme::faint_text(ui));
                     return;
                 };
                 let decided = b.confirmed_fixed + b.comeback;
                 ui.horizontal_wrapped(|ui| {
-                    info_card::badge(ui, &format!("{} fixed", b.confirmed_fixed), theme::success(ui));
-                    info_card::badge(ui, &format!("{} came back", b.comeback), theme::error(ui));
-                    info_card::badge(
+                    controls::badge(ui, &format!("{} fixed", b.confirmed_fixed), theme::success(ui));
+                    controls::badge(ui, &format!("{} came back", b.comeback), theme::error(ui));
+                    controls::badge(
                         ui,
                         &format!("{} undecided", b.indeterminate),
                         theme::weak_text(ui),
                     );
                 });
-                ui.add_space(4.0);
+                ui.add_space(m.pad.y);
                 info_card::kv_row(
                     ui,
                     "Comeback rate",
@@ -380,7 +386,7 @@ impl AiAnalytics {
                     );
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(m.gap.y);
                 let (fixed_color, comeback_color) = (theme::success(ui), theme::error(ui));
                 let bars: Vec<Bar> = summary
                     .outcome
@@ -426,7 +432,7 @@ impl AiAnalytics {
     fn cost_panel(&self, ui: &mut Ui, summary: &RoiSummary) {
         info_card::section_card(
             ui,
-            icons::CHART,
+            svg::CURRENCY_CIRCLE_DOLLAR,
             "What it cost",
             Some("AI cost is measured from the usage ledger at API-equivalent rates. Technician labor is the audited active-minute floor priced across the pay band."),
             |ui| {
@@ -457,13 +463,8 @@ impl AiAnalytics {
                     &format!("${:.2} - ${:.2}", summary.tech_labor_low_usd, summary.tech_labor_high_usd),
                 );
                 if summary.ai_usage_rows == 0 {
-                    ui.label(
-                        RichText::new(
-                            "No AI cost rows in this window. Only Claude Code sessions report usage; \
-                             Claude Desktop work is invisible to the ledger.",
-                        )
-                        .color(theme::warn(ui)),
-                    );
+                    controls::note(ui, svg::WARNING, "No AI cost rows in this window. Only Claude Code sessions report usage; \
+                         Claude Desktop work is invisible to the ledger.", theme::warn(ui));
                 }
             },
         );
@@ -472,7 +473,7 @@ impl AiAnalytics {
     fn turnaround_panel(&self, ui: &mut Ui, summary: &RoiSummary) {
         info_card::section_card(
             ui,
-            icons::STATUS_QUEUED,
+            svg::TIMER,
             "Turnaround by origin",
             Some("Check-in to first completion. Open hours count only 10-19 local, Monday through Saturday."),
             |ui| {
@@ -507,7 +508,7 @@ impl AiAnalytics {
                         })
                     })
                     .collect();
-                let bar_color = theme::accent(ui);
+                let bar_color = theme::primary(ui);
                 if !bars.is_empty() {
                     plots::pinned("turnaround_by_origin")
                         .height(130.0)
@@ -520,13 +521,8 @@ impl AiAnalytics {
                         });
                 }
                 if summary.ai_turnaround.n == 0 {
-                    ui.label(
-                        RichText::new(
-                            "No AI-origin tasks completed in this window - task.origin is stamped \
-                             only when a diagnostic session creates or links the task.",
-                        )
-                        .color(theme::warn(ui)),
-                    );
+                    controls::note(ui, svg::WARNING, "No AI-origin tasks completed in this window - task.origin is stamped \
+                         only when a diagnostic session creates or links the task.", theme::warn(ui));
                 }
             },
         );
@@ -534,9 +530,10 @@ impl AiAnalytics {
 
     fn gaps_panel(&self, ui: &mut Ui, summary: &RoiSummary) {
         let g = &summary.gaps;
+        let m = Metrics::get(ui.ctx());
         info_card::section_card(
             ui,
-            icons::STATUS_WARN,
+            svg::EYE_SLASH,
             "What we cannot see yet",
             Some("Every number above is a floor. These counters are the reason."),
             |ui| {
@@ -565,7 +562,7 @@ impl AiAnalytics {
                     "Tasks with no origin stamp",
                     &format!("{} in the lookback window", g.tasks_without_origin),
                 );
-                ui.add_space(4.0);
+                ui.add_space(m.pad.y);
                 ui.label(
                     RichText::new(
                         "Not measured here: comebacks that went to another shop, customers who gave \
@@ -590,16 +587,24 @@ impl AiAnalytics {
         let shown = recent.len().min(CORRECTABLE_LIMIT);
         let empty: Vec<SessionOutcomeRow> = Vec::new();
         let excluded = summary.outcome.excluded_sessions.as_ref().unwrap_or(&empty);
+        let m = Metrics::get(ui.ctx());
 
         info_card::section_card(
             ui,
-            icons::EDIT,
+            svg::NOTE_PENCIL,
             "Correct a verdict",
             Some("A correction is recorded against your name with your reason, and the panel above counts how many verdicts came from people rather than from data."),
             |ui| {
                 if !self.write_status.is_empty() {
-                    ui.label(RichText::new(&self.write_status).weak());
-                    ui.add_space(4.0);
+                    let (icon, color) = if self.write_busy {
+                        (svg::HOURGLASS, theme::weak_text(ui))
+                    } else if self.write_status.starts_with("write failed") {
+                        (svg::WARNING_CIRCLE, theme::error(ui))
+                    } else {
+                        (svg::CHECK_CIRCLE, theme::weak_text(ui))
+                    };
+                    controls::note(ui, icon, &self.write_status, color);
+                    ui.add_space(m.pad.y);
                 }
                 ui.label(
                     RichText::new(format!(
@@ -608,22 +613,24 @@ impl AiAnalytics {
                     ))
                     .weak(),
                 );
-                ui.add_space(4.0);
+                ui.add_space(m.pad.y);
                 for row in recent.into_iter().take(CORRECTABLE_LIMIT) {
                     self.session_row(ui, row, window, now);
                 }
 
                 if !excluded.is_empty() {
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.label(RichText::new("Set aside by hand").strong());
+                    ui.add_space(m.gap.y);
+                    controls::hairline(ui);
+                    controls::icon_label(ui, svg::PROHIBIT, "Set aside by hand");
                     for row in excluded {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(&row.hostname).strong());
                             if let Some(by) = &row.override_by {
-                                ui.label(RichText::new(by.as_str()).weak());
+                                meta(ui, svg::USER, by.as_str());
                             }
-                            if ui.button("Count it again").clicked() {
+                            if controls::icon_text_button(ui, svg::ARROW_COUNTER_CLOCKWISE, "Count it again")
+                                .clicked()
+                            {
                                 self.clear_override(row);
                             }
                         });
@@ -634,12 +641,12 @@ impl AiAnalytics {
                 }
 
                 if summary.outcome.internal_computer_count > 0 {
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.label(RichText::new("Staff and test machines").strong());
+                    ui.add_space(m.gap.y);
+                    controls::hairline(ui);
+                    controls::icon_label(ui, svg::DESKTOP_TOWER, "Staff and test machines");
                     ui.label(
                         RichText::new(format!(
-                            "{} machines are flagged; every session on them is excluded, past and                              future. Only the {} that cost a session here are listed.",
+                            "{} machines are flagged; every session on them is excluded, past and future. Only the {} that cost a session here are listed.",
                             summary.outcome.internal_computer_count,
                             summary.outcome.internal_computers.len()
                         ))
@@ -648,7 +655,9 @@ impl AiAnalytics {
                     for key in &summary.outcome.internal_computers {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(key.as_str()).monospace());
-                            if ui.button("Treat as a customer machine").clicked() {
+                            if controls::icon_text_button(ui, svg::USER, "Treat as a customer machine")
+                                .clicked()
+                            {
                                 self.set_internal(key, false);
                             }
                         });
@@ -660,7 +669,7 @@ impl AiAnalytics {
 
     fn session_row(&mut self, ui: &mut Ui, row: &SessionOutcomeRow, window: u32, now: i64) {
         let (success, error, weak, accent) =
-            (theme::success(ui), theme::error(ui), theme::weak_text(ui), theme::accent(ui));
+            (theme::success(ui), theme::error(ui), theme::weak_text(ui), theme::primary(ui));
         let verdict = verdict_at(row, window);
         let (label, color) = match verdict {
             "confirmed_fixed" => ("fixed", success),
@@ -669,34 +678,37 @@ impl AiAnalytics {
         };
         let editing = self.editing.as_deref() == Some(row.session_id.as_str());
         let mut toggle = false;
+        let m = Metrics::get(ui.ctx());
         ui.horizontal(|ui| {
-            info_card::badge(ui, label, color);
+            controls::badge(ui, label, color);
+            ui.add(svg::DESKTOP.image(m.icon_sm).tint(weak));
             ui.label(RichText::new(&row.hostname).strong());
             ui.label(RichText::new(&row.status).weak());
             if let Some(end) = row.ended_at_unix {
-                ui.label(RichText::new(ago(now, end)).weak());
+                meta(ui, svg::CLOCK_COUNTER_CLOCKWISE, &ago(now, end));
             }
             if row.outcome_override.is_some() {
-                info_card::badge(ui, "by hand", accent);
+                controls::badge(ui, "by hand", accent);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let text = if editing { "Close" } else { "Correct" };
-                if ui.button(format!("{} {text}", icons::EDIT)).clicked() {
+                let (icon, text) = if editing {
+                    (svg::X, "Close")
+                } else {
+                    (svg::PENCIL_SIMPLE, "Correct")
+                };
+                if controls::icon_text_button(ui, icon, text).clicked() {
                     toggle = true;
                 }
             });
         });
         if let Some(cb) = &row.comeback {
-            ui.label(
-                RichText::new(format!(
+            controls::note(ui, svg::ARROW_U_UP_LEFT, &format!(
                     "same computer returned on #{} after {} days",
                     cb.service_number, cb.days_after_end
-                ))
-                .weak(),
-            );
+                ), weak);
         }
         if let (Some(by), Some(reason)) = (&row.override_by, &row.override_reason) {
-            ui.label(RichText::new(format!("{by}: {reason}")).weak());
+            controls::note(ui, svg::USER, &format!("{by}: {reason}"), weak);
         }
         if toggle {
             self.editing = if editing { None } else { Some(row.session_id.clone()) };
@@ -706,7 +718,7 @@ impl AiAnalytics {
         if editing && !toggle {
             self.editor(ui, row);
         }
-        ui.add_space(4.0);
+        ui.add_space(m.pad.y);
     }
 
     fn editor(&mut self, ui: &mut Ui, row: &SessionOutcomeRow) {
@@ -716,53 +728,57 @@ impl AiAnalytics {
         let mut action: Option<Action> = None;
         ui.indent("correction_editor", |ui| {
             ui.horizontal_wrapped(|ui| {
-                if ui.selectable_label(self.draft_verdict.is_none(), "Leave it to the data").clicked()
+                if controls::pill(ui, svg::DATABASE, "Leave it to the data", self.draft_verdict.is_none())
+                    .clicked()
                 {
                     self.draft_verdict = None;
                 }
                 for v in OutcomeOverride::ALL {
-                    if ui.selectable_label(self.draft_verdict == Some(v), v.label()).clicked() {
+                    if controls::pill(ui, None, v.label(), self.draft_verdict == Some(v)).clicked() {
                         self.draft_verdict = Some(v);
                     }
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Why:");
-                ui.add(
-                    TextEdit::singleline(&mut self.draft_reason)
-                        .desired_width(360.0)
-                        .hint_text("what you know that the service orders do not show"),
-                );
+                ui.label("Why");
+                TextField::new(&mut self.draft_reason)
+                    .icon(svg::NOTE_PENCIL)
+                    .hint("what you know that the service orders do not show")
+                    .width(360.0)
+                    .show(ui);
             });
             let needs_reason = self.draft_verdict.is_some() && self.draft_reason.trim().is_empty();
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !busy && !needs_reason,
-                        Button::new(format!("{} Apply", icons::CHECK)),
-                    )
-                    .clicked()
-                {
+                let apply = TextButton::new("Apply")
+                    .kind(ButtonKind::Primary)
+                    .icon(svg::CHECK)
+                    .enabled(!busy && !needs_reason)
+                    .show(ui);
+                if apply.clicked() {
                     action = Some(Action::Apply);
                 }
-                if has_override && ui.add_enabled(!busy, Button::new("Clear override")).clicked() {
+                if has_override
+                    && TextButton::new("Clear override")
+                        .icon(svg::X_CIRCLE)
+                        .enabled(!busy)
+                        .show(ui)
+                        .clicked()
+                {
                     action = Some(Action::Clear);
                 }
-                if let Some(key) = computer.as_deref() {
-                    if ui
-                        .add_enabled(
-                            !busy,
-                            Button::new(format!("{} This is a staff machine", icons::DESKTOP)),
-                        )
+                if let Some(key) = computer.as_deref()
+                    && TextButton::new("This is a staff machine")
+                        .icon(svg::DESKTOP)
+                        .enabled(!busy)
+                        .show(ui)
                         .on_hover_text("Excludes every session on this computer, past and future")
                         .clicked()
-                    {
-                        action = Some(Action::Internal(key.to_string()));
-                    }
+                {
+                    action = Some(Action::Internal(key.to_string()));
                 }
             });
             if needs_reason {
-                ui.label(RichText::new("A correction needs a reason.").weak());
+                controls::note(ui, svg::INFO, "A correction needs a reason.", theme::weak_text(ui));
             }
         });
         match action {
@@ -772,6 +788,14 @@ impl AiAnalytics {
             None => {},
         }
     }
+}
+
+/// Faint icon and weak text inline in a row.
+fn meta(ui: &mut Ui, icon: Icon, text: &str) {
+    IconLabel::new(icon, text)
+        .tone(theme::weak_text(ui))
+        .icon_tone(theme::faint_text(ui))
+        .show(ui);
 }
 
 /// Deferred so a click can borrow the editor's own state first.

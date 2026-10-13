@@ -4,9 +4,16 @@
 use std::sync::mpsc;
 
 use eframe::egui;
-use egui_phosphor::regular as p;
 use egui_plot::{Line, Plot, PlotPoints, VLine};
+use mtech_ui::controls::{self, BarKind, Icon, MenuButton, Metrics, SpinnerSize};
+use mtech_ui::icons::svg;
+use mtech_ui::theme;
 use stress_runner::{RecordId, RunReportModel, StressTestRun};
+
+/// Height of one report plot.
+const PLOT_H: f32 = 160.0;
+/// Verdict text size.
+const VERDICT_PT: f32 = 16.0;
 
 enum ViewMsg {
     Model(Box<RunReportModel>),
@@ -107,23 +114,25 @@ impl ReportView {
             .default_size([900.0, 640.0])
             .resizable(true)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button(format!("{} Past runs", p::CLOCK_COUNTER_CLOCKWISE)).clicked() {
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    if controls::icon_text_button(ui, svg::CLOCK_COUNTER_CLOCKWISE, "Past runs")
+                        .clicked()
+                    {
                         refresh = true;
                     }
                     if self.runs_loading {
-                        ui.add(egui::Spinner::new());
+                        controls::spinner(ui, SpinnerSize::Sm);
                     }
                     if !self.runs.is_empty() {
-                        egui::ComboBox::from_id_salt("report_run_picker")
-                            .width(420.0)
-                            .selected_text(
-                                self.model
-                                    .as_ref()
-                                    .map(|m| m.run_id.clone())
-                                    .unwrap_or_else(|| "pick a run".into()),
-                            )
-                            .show_ui(ui, |ui| {
+                        let current = self
+                            .model
+                            .as_ref()
+                            .map(|m| m.run_id.clone())
+                            .unwrap_or_else(|| "pick a run".into());
+                        MenuButton::new(&current)
+                            .icon(svg::LIST_BULLETS)
+                            .tip("Load a past run's report")
+                            .show(ui, |ui| {
                                 for run in &self.runs {
                                     let label = format!(
                                         "{}  {}  {}",
@@ -131,33 +140,34 @@ impl ReportView {
                                         run.preset_label.as_deref().unwrap_or(&run.tool_label),
                                         run.result.as_str(),
                                     );
-                                    if ui.selectable_label(false, label).clicked() {
+                                    let icon = result_icon(run.result.as_str());
+                                    if controls::menu_item(ui, icon, &label).clicked() {
                                         load_run = Some(run.id.clone());
                                     }
                                 }
                             });
                     }
                     if self.loading {
-                        ui.add(egui::Spinner::new());
+                        controls::spinner(ui, SpinnerSize::Sm);
                         ui.label("loading…");
                     }
                 });
 
                 if let Some(err) = &self.error {
-                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), err);
+                    let tone = theme::error(ui);
+                    controls::status_label(ui, svg::X_CIRCLE, err, tone);
                 }
-
-                ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     if let Some(model) = &self.model {
                         render_report(ui, model);
                     } else if !self.loading {
-                        ui.label(
-                            egui::RichText::new(
-                                "No report loaded — pick a past run or finish a stress run.",
-                            )
-                            .weak(),
+                        controls::empty_state(
+                            ui,
+                            svg::CLIPBOARD_TEXT,
+                            "No report loaded",
+                            "Pick a past run or finish a stress run.",
+                            &[],
                         );
                     }
                 });
@@ -186,9 +196,20 @@ impl RunLabel for StressTestRun {
     }
 }
 
+/// Icon for a run result string.
+fn result_icon(result: &str) -> Icon {
+    match result {
+        "pass" => svg::CHECK_CIRCLE,
+        "fail" => svg::X_CIRCLE,
+        "aborted" => svg::PROHIBIT,
+        _ => svg::MINUS_CIRCLE,
+    }
+}
+
 fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
+    let metrics = Metrics::get(ui.ctx());
     let (verdict_text, verdict_color) = match m.result.as_str() {
-        "pass" => ("PASS".to_string(), egui::Color32::from_rgb(50, 160, 90)),
+        "pass" => ("PASS".to_string(), theme::result_pass(ui)),
         "fail" => (
             format!(
                 "FAIL — {}",
@@ -197,25 +218,46 @@ fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
                     .or_else(|| m.failure_kind.clone())
                     .unwrap_or_default()
             ),
-            egui::Color32::from_rgb(200, 60, 60),
+            theme::result_fail(ui),
         ),
-        "aborted" => ("ABORTED".to_string(), egui::Color32::from_rgb(180, 140, 50)),
-        other => (other.to_uppercase(), egui::Color32::from_rgb(160, 160, 160)),
+        "aborted" => ("ABORTED".to_string(), theme::result_aborted(ui)),
+        other => (other.to_uppercase(), theme::result_unknown(ui)),
     };
-    ui.colored_label(verdict_color, egui::RichText::new(verdict_text).strong().size(16.0));
+    ui.horizontal(|ui| {
+        result_icon(m.result.as_str()).show_tinted(ui, metrics.icon_lg, verdict_color);
+        ui.colored_label(
+            verdict_color,
+            egui::RichText::new(verdict_text).strong().size(VERDICT_PT),
+        );
+    });
 
+    let wide = metrics.gap.x * 2.0;
+    let tight = metrics.pad.y / 2.0;
     egui::Grid::new("report_header")
         .num_columns(4)
-        .spacing([18.0, 2.0])
+        .spacing([wide, tight])
         .show(ui, |ui| {
             let kv = |ui: &mut egui::Ui, k: &str, v: String| {
                 ui.label(egui::RichText::new(k).small().weak());
                 ui.label(egui::RichText::new(v).small().monospace());
             };
             kv(ui, "Run", m.run_id.clone());
-            kv(ui, "Preset", m.preset_label.clone().unwrap_or_else(|| m.tool_label.clone()));
+            kv(
+                ui,
+                "Preset",
+                m.preset_label
+                    .clone()
+                    .unwrap_or_else(|| m.tool_label.clone()),
+            );
             ui.end_row();
-            kv(ui, "Machine", m.hostname.clone().or(m.machine_id.clone()).unwrap_or_default());
+            kv(
+                ui,
+                "Machine",
+                m.hostname
+                    .clone()
+                    .or(m.machine_id.clone())
+                    .unwrap_or_default(),
+            );
             kv(ui, "Tech", m.tech.clone().unwrap_or_default());
             ui.end_row();
             kv(ui, "Started", m.started_at.clone());
@@ -233,18 +275,22 @@ fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
             }
         });
 
-    ui.add_space(4.0);
+    ui.add_space(metrics.pad.y);
     ui.group(|ui| {
         egui::Grid::new("report_summary")
             .num_columns(8)
-            .spacing([14.0, 2.0])
+            .spacing([wide, tight])
             .show(ui, |ui| {
                 for (i, r) in m.summary_rows().into_iter().enumerate() {
                     let label = ui.label(egui::RichText::new(&r.label).small().weak());
                     if let Some(h) = &r.hover {
                         label.on_hover_text(h);
                     }
-                    let value = if r.value.is_empty() { "—" } else { r.value.as_str() };
+                    let value = if r.value.is_empty() {
+                        "—"
+                    } else {
+                        r.value.as_str()
+                    };
                     ui.label(egui::RichText::new(value).small().monospace());
                     if i % 4 == 3 {
                         ui.end_row();
@@ -252,43 +298,45 @@ fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
                 }
             });
         if m.thermal_throttle_detected || m.vrm_throttle_detected {
-            ui.colored_label(
-                egui::Color32::from_rgb(180, 140, 50),
-                format!(
-                    "{} {}",
-                    p::WARNING,
-                    if m.thermal_throttle_detected {
-                        "thermal throttle observed"
-                    } else {
-                        "clock collapse without temp breach (VRM/power suspect)"
-                    }
-                ),
-            );
+            let warn = theme::warn(ui);
+            let text = if m.thermal_throttle_detected {
+                "thermal throttle observed"
+            } else {
+                "clock collapse without temp breach (VRM/power suspect)"
+            };
+            controls::status_label(ui, svg::WARNING, text, warn);
         }
     });
 
+    let row_gap = [metrics.gap.x + metrics.pad.y, tight];
     if !m.stages.is_empty() {
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new("Stages").strong());
+        ui.add_space(metrics.pad.y);
+        controls::subheading(ui, svg::LIST_CHECKS, "Stages");
         egui::Grid::new("report_stages")
             .num_columns(8)
-            .spacing([12.0, 2.0])
+            .spacing(row_gap)
             .striped(true)
             .show(ui, |ui| {
-                for h in ["", "Stage", "Stressor", "Time", "Avg throughput", "Errors", "WHEA/TDR", "Notes"] {
+                for h in [
+                    "",
+                    "Stage",
+                    "Stressor",
+                    "Time",
+                    "Avg throughput",
+                    "Errors",
+                    "WHEA/TDR",
+                    "Notes",
+                ] {
                     ui.label(egui::RichText::new(h).small().strong());
                 }
                 ui.end_row();
                 for s in &m.stages {
-                    match s.result.as_deref() {
-                        Some("pass") => {
-                            ui.colored_label(egui::Color32::from_rgb(50, 160, 90), p::CHECK_CIRCLE)
-                        }
-                        Some("fail") => {
-                            ui.colored_label(egui::Color32::from_rgb(200, 60, 60), p::X_CIRCLE)
-                        }
-                        _ => ui.label(egui::RichText::new(p::MINUS_CIRCLE).weak()),
+                    let (icon, tone) = match s.result.as_deref() {
+                        Some("pass") => (svg::CHECK_CIRCLE, theme::result_pass(ui)),
+                        Some("fail") => (svg::X_CIRCLE, theme::result_fail(ui)),
+                        _ => (svg::MINUS_CIRCLE, theme::weak_text(ui)),
                     };
+                    icon.show_tinted(ui, metrics.icon_sm, tone);
                     ui.label(egui::RichText::new(&s.label).small());
                     ui.label(egui::RichText::new(&s.stressor).small().weak());
                     ui.label(
@@ -305,14 +353,20 @@ fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
                         .small()
                         .monospace(),
                     );
-                    ui.label(egui::RichText::new(s.errors.to_string()).small().monospace());
+                    ui.label(
+                        egui::RichText::new(s.errors.to_string())
+                            .small()
+                            .monospace(),
+                    );
                     ui.label(
                         egui::RichText::new(format!("{}/{}", s.whea_delta, s.tdr_delta))
                             .small()
                             .monospace(),
                     );
                     let notes = if s.violations.is_empty() {
-                        s.throughput_cv.map(|cv| format!("CV {cv:.3}")).unwrap_or_default()
+                        s.throughput_cv
+                            .map(|cv| format!("CV {cv:.3}"))
+                            .unwrap_or_default()
                     } else {
                         s.violations.join("; ")
                     };
@@ -322,32 +376,52 @@ fn render_report(ui: &mut egui::Ui, m: &RunReportModel) {
             });
     }
 
-    ui.add_space(6.0);
-    report_plot(ui, "report_temp", "°C", &[
-        (&m.cpu_temp, egui::Color32::from_rgb(230, 130, 70)),
-        (&m.gpu_temp, egui::Color32::from_rgb(120, 180, 240)),
-    ], m);
-    report_plot(ui, "report_clock", "MHz", &[
-        (&m.avg_clock, egui::Color32::from_rgb(150, 220, 150)),
-    ], m);
-    report_plot(ui, "report_tp", &m.throughput.unit.clone(), &[
-        (&m.throughput, egui::Color32::from_rgb(200, 160, 240)),
-    ], m);
+    ui.add_space(metrics.gap.y);
+    report_plot(
+        ui,
+        "report_temp",
+        "°C",
+        &[
+            (&m.cpu_temp, egui::Color32::from_rgb(230, 130, 70)),
+            (&m.gpu_temp, egui::Color32::from_rgb(120, 180, 240)),
+        ],
+        m,
+    );
+    report_plot(
+        ui,
+        "report_clock",
+        "MHz",
+        &[(&m.avg_clock, egui::Color32::from_rgb(150, 220, 150))],
+        m,
+    );
+    report_plot(
+        ui,
+        "report_tp",
+        &m.throughput.unit.clone(),
+        &[(&m.throughput, egui::Color32::from_rgb(200, 160, 240))],
+        m,
+    );
 
     if !m.timeline.is_empty() {
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("Events").strong());
+        ui.add_space(metrics.gap.y);
+        controls::subheading(ui, svg::PULSE, "Events");
         egui::Grid::new("report_timeline")
             .num_columns(4)
-            .spacing([12.0, 2.0])
+            .spacing(row_gap)
             .striped(true)
             .show(ui, |ui| {
                 for e in m.timeline.iter().take(200) {
                     ui.label(
-                        egui::RichText::new(format!("{:.0}s", e.at_secs)).small().monospace(),
+                        egui::RichText::new(format!("{:.0}s", e.at_secs))
+                            .small()
+                            .monospace(),
                     );
                     ui.label(egui::RichText::new(&e.kind).small());
-                    ui.label(egui::RichText::new(e.code.clone().unwrap_or_default()).small().weak());
+                    ui.label(
+                        egui::RichText::new(e.code.clone().unwrap_or_default())
+                            .small()
+                            .weak(),
+                    );
                     ui.label(egui::RichText::new(&e.detail).small().weak());
                     ui.end_row();
                 }
@@ -373,8 +447,10 @@ fn report_plot(
     if series.iter().all(|(s, _)| s.points.is_empty()) {
         return;
     }
+    let boundary = theme::faint_text(ui);
+    let event = theme::error(ui);
     Plot::new(id)
-        .height(160.0)
+        .height(PLOT_H)
         .allow_drag(false)
         .allow_scroll(false)
         .show_background(false)
@@ -385,14 +461,14 @@ fn report_plot(
             for b in &m.stage_boundaries {
                 plot_ui.vline(
                     VLine::new(b.label.clone(), b.at_secs)
-                        .color(egui::Color32::from_gray(90))
+                        .color(boundary)
                         .width(1.0),
                 );
             }
             for e in &m.event_markers {
                 plot_ui.vline(
                     VLine::new(e.kind.clone(), e.at_secs)
-                        .color(egui::Color32::from_rgb(200, 60, 60))
+                        .color(event)
                         .width(1.0),
                 );
             }

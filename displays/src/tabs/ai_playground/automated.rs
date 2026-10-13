@@ -5,12 +5,16 @@ use std::time::Duration;
 use chrono::{DateTime, Local, Utc};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{DiagnosticSession, RecordIdExt, UnthreadedSessionRef, User, UserAuthorization};
-use eframe::egui::{self, Color32, RichText, ScrollArea, Ui};
+use eframe::egui::{Color32, ScrollArea, Ui};
 use web_time::Instant;
 
 use crate::modals::tabs::diagnostics_page::{self, DiagnosticSessionView};
 use crate::ui_tools::list_row::{Lead, ListRow};
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{
+    controls::{self, Icon, Section},
+    icons::svg,
+    theme,
+};
 use crate::{PlatformSpawner, Spawner};
 
 const LIST_POLL: Duration = Duration::from_secs(60);
@@ -77,12 +81,12 @@ fn mentions(row: &UnthreadedSessionRef, needle: &str) -> bool {
         .any(|f| f.to_lowercase().contains(needle))
 }
 
-fn status_mark(ui: &Ui, status: &str) -> (&'static str, Color32) {
+fn status_mark(ui: &Ui, status: &str) -> (Icon, Color32) {
     match status {
-        "open" => (icons::ROBOT, theme::accent(ui)),
-        "escalated" => (icons::STATUS_WARN, theme::warn(ui)),
-        "resolved" | "closed" => (icons::STATUS_ON, theme::success(ui)),
-        _ => (icons::STATUS_OFF, theme::weak_text(ui)),
+        "open" => (svg::ROBOT, theme::primary(ui)),
+        "escalated" => (svg::WARNING, theme::warn(ui)),
+        "resolved" | "closed" => (svg::CHECK_CIRCLE, theme::success(ui)),
+        _ => (svg::CIRCLE_DASHED, theme::weak_text(ui)),
     }
 }
 
@@ -151,48 +155,54 @@ impl AutomatedView {
         let needle = needle.trim().to_lowercase();
         let rows: Vec<&UnthreadedSessionRef> = self.rows.iter().filter(|r| mentions(r, &needle)).collect();
         let open = rows.iter().filter(|r| r.status == "open" || r.status == "escalated").count();
-        let header = if open > 0 {
-            format!("Automated  {}  \u{00b7} {open} open", rows.len())
-        } else {
-            format!("Automated  {}", rows.len())
-        };
-        let mut clicked = None;
-        egui::CollapsingHeader::new(header)
-            .id_salt("enhanced_ai_automated")
+        let count = rows.len().to_string();
+        let open_note = format!("\u{00b7} {open} open");
+        let mut section = Section::new("enhanced_ai_automated", "Automated")
+            .icon(svg::ROBOT)
+            .suffix(&count, None)
             .default_open(false)
-            .open((!needle.is_empty()).then_some(true))
-            .show(ui, |ui| {
-                if let Some(err) = &self.error {
-                    ui.label(RichText::new(format!("{} {err}", icons::STATUS_ERR)).color(theme::error(ui)).small());
+            .open((!needle.is_empty()).then_some(true));
+        if open > 0 {
+            section = section.suffix(&open_note, None);
+        }
+        let mut clicked = None;
+        section.show(ui, |ui| {
+            if let Some(err) = &self.error {
+                controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
+            }
+            if rows.is_empty() {
+                if self.loading_list {
+                    controls::loading_row(ui, "Loading\u{2026}");
+                } else {
+                    controls::IconLabel::new(svg::TRAY, "No automated sessions")
+                        .tone(theme::faint_text(ui))
+                        .show(ui);
                 }
-                if rows.is_empty() {
-                    let empty = if self.loading_list { "Loading\u{2026}" } else { "No automated sessions" };
-                    ui.label(RichText::new(empty).color(theme::weak_text(ui)).small());
+            }
+            for row in rows {
+                let key = row.id.key_string();
+                let selected = self.picked.as_deref() == Some(key.as_str());
+                let (icon, color) = status_mark(ui, &row.status);
+                let title = match row.customer_name.as_deref().filter(|c| !c.is_empty()) {
+                    Some(customer) => format!("{} \u{00b7} {customer}", row.hostname),
+                    None => row.hostname.clone(),
+                };
+                let detail = format!("{} \u{00b7} {} \u{00b7} {}", row.ran_by(), row.status, local(&row.started_at));
+                let hover = match row.current_theory.as_deref() {
+                    Some(theory) => format!("{title}\n{detail}\n{theory}"),
+                    None => format!("{title}\n{detail}"),
+                };
+                let resp = ListRow::new(&title)
+                    .lead(Lead::Icon(icon, Some(color)))
+                    .detail(&detail)
+                    .selected(selected)
+                    .show(ui)
+                    .on_hover_text(hover);
+                if resp.clicked() && !selected {
+                    clicked = Some(key);
                 }
-                for row in rows {
-                    let key = row.id.key_string();
-                    let selected = self.picked.as_deref() == Some(key.as_str());
-                    let (icon, color) = status_mark(ui, &row.status);
-                    let title = match row.customer_name.as_deref().filter(|c| !c.is_empty()) {
-                        Some(customer) => format!("{} \u{00b7} {customer}", row.hostname),
-                        None => row.hostname.clone(),
-                    };
-                    let detail = format!("{} \u{00b7} {} \u{00b7} {}", row.ran_by(), row.status, local(&row.started_at));
-                    let hover = match row.current_theory.as_deref() {
-                        Some(theory) => format!("{title}\n{detail}\n{theory}"),
-                        None => format!("{title}\n{detail}"),
-                    };
-                    let resp = ListRow::new(&title)
-                        .lead(Lead::Icon(icon, Some(color)))
-                        .detail(&detail)
-                        .selected(selected)
-                        .show(ui)
-                        .on_hover_text(hover);
-                    if resp.clicked() && !selected {
-                        clicked = Some(key);
-                    }
-                }
-            });
+            }
+        });
         clicked
     }
 
@@ -200,20 +210,16 @@ impl AutomatedView {
     pub fn detail_ui(&mut self, ui: &mut Ui) {
         let Some(key) = self.picked.clone() else { return };
         if let Some(err) = &self.error {
-            ui.label(RichText::new(format!("{} {err}", icons::STATUS_ERR)).color(theme::error(ui)));
+            controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
         }
         let Some(view) = self.detail.as_ref().filter(|d| d.session.id.key_string() == key) else {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading session\u{2026}");
-            });
+            controls::loading_state(ui, "Loading session\u{2026}");
             return;
         };
-        ui.label(
-            RichText::new(format!("Read-only: run by {}, with no chat behind it.", view.session.ran_by()))
-                .color(theme::weak_text(ui))
-                .small(),
-        );
+        let note = format!("Read-only: run by {}, with no chat behind it.", view.session.ran_by());
+        controls::IconLabel::new(svg::LOCK, &note)
+            .tone(theme::weak_text(ui))
+            .show(ui);
         ScrollArea::vertical()
             .id_salt("enhanced_ai_automated_detail")
             .auto_shrink([false, false])

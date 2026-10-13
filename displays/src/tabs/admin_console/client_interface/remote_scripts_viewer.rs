@@ -1,12 +1,11 @@
+use crate::ui_tools::metrics::Metrics;
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{
-    self, Align, Label, Layout, RichText, ScrollArea, TextEdit,
-    Ui,
-};
+use eframe::egui::{self, Align, Label, Layout, RichText, ScrollArea, Ui};
 
+use crate::ui_tools::controls::{self, BarKind, ButtonKind, SpinnerSize, TextButton, TextField};
+use crate::ui_tools::list_row::{Lead, ListRow};
+use crate::ui_tools::{glass_card, icons::svg, theme};
 use crate::{Cmd, PlatformSpawner, RemoteScriptItem, RemoteScriptStatus, Spawner};
-use crate::ui_tools::framed_controls::FramedSelectable;
-use crate::ui_tools::theme;
 
 /// Log lines retained in the viewer; the oldest are dropped past this.
 const MAX_LOG_LINES: usize = 5_000;
@@ -172,18 +171,22 @@ impl RemoteScriptsViewer {
 
     pub fn set_complete(&mut self) {
         self.running = false;
-        self.log_messages.push("--- All scripts completed ---".into());
+        self.log_messages
+            .push("--- All scripts completed ---".into());
     }
 
     fn get_selected_scripts(&self) -> Vec<RemoteScriptItem> {
         self.categories
             .iter()
             .flat_map(|cat| {
-                cat.items.iter().filter(|i| i.checked).map(|i| RemoteScriptItem {
-                    name: i.name.clone(),
-                    category: i.category.clone(),
-                    content: i.content.clone(),
-                })
+                cat.items
+                    .iter()
+                    .filter(|i| i.checked)
+                    .map(|i| RemoteScriptItem {
+                        name: i.name.clone(),
+                        category: i.category.clone(),
+                        content: i.content.clone(),
+                    })
             })
             .collect()
     }
@@ -192,41 +195,47 @@ impl RemoteScriptsViewer {
         self.poll_custom_scripts();
 
         if self.loading {
-            ui.centered_and_justified(|ui| {
-                ui.spinner();
-            });
+            controls::loading_state(ui, "Loading scripts…");
             return;
         }
 
         if self.categories.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label("No script list received. Click the Scripts tab to request it.");
-            });
+            controls::empty_state(
+                ui,
+                svg::SCROLL,
+                "No script list received",
+                "Click the Scripts tab to request it.",
+                &[],
+            );
             return;
         }
 
         let panel_id = ui.id().with("scripts_top_bar");
         eframe::egui::Panel::top(panel_id).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("SO #:");
-                ui.add(
-                    TextEdit::singleline(&mut self.service_number)
-                        .desired_width(120.0)
-                        .interactive(!self.running),
-                );
-                ui.label("Email:");
-                ui.add(
-                    TextEdit::singleline(&mut self.customer_email)
-                        .desired_width(180.0)
-                        .interactive(!self.running),
-                );
+            controls::bar(ui, BarKind::Tool, |ui| {
+                TextField::new(&mut self.service_number)
+                    .hint("SO #")
+                    .icon(svg::RECEIPT)
+                    .width(120.0)
+                    .enabled(!self.running)
+                    .show(ui);
+                TextField::new(&mut self.customer_email)
+                    .hint("Customer email")
+                    .icon(svg::ENVELOPE_SIMPLE)
+                    .width(200.0)
+                    .enabled(!self.running)
+                    .show(ui);
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if self.running {
-                        ui.spinner();
+                        controls::spinner(ui, SpinnerSize::Sm);
                         ui.label("Running...");
                     } else {
-                        if ui.button("Run Selected").clicked() {
+                        let run = TextButton::new("Run Selected")
+                            .icon(svg::PLAY)
+                            .kind(ButtonKind::Primary)
+                            .show(ui);
+                        if run.clicked() {
                             let scripts = self.get_selected_scripts();
                             if !scripts.is_empty() {
                                 self.running = true;
@@ -247,15 +256,17 @@ impl RemoteScriptsViewer {
                                 });
                             }
                         }
-                        if ui.button("Select All").clicked() {
-                            if let Some(cat) = self.categories.get_mut(self.selected_category) {
-                                let all_checked = cat.items.iter().all(|i| i.checked);
-                                for item in &mut cat.items {
-                                    item.checked = !all_checked;
-                                }
+                        let select_all =
+                            controls::icon_text_button(ui, svg::CHECK_SQUARE, "Select All");
+                        if select_all.clicked()
+                            && let Some(cat) = self.categories.get_mut(self.selected_category)
+                        {
+                            let all_checked = cat.items.iter().all(|i| i.checked);
+                            for item in &mut cat.items {
+                                item.checked = !all_checked;
                             }
                         }
-                        if ui.button("Clear Log").clicked() {
+                        if controls::icon_text_button(ui, svg::ERASER, "Clear Log").clicked() {
                             self.log_messages.clear();
                         }
                     }
@@ -266,22 +277,29 @@ impl RemoteScriptsViewer {
         if self.reboot_recommended && !self.running {
             let banner_id = ui.id().with("scripts_reboot_banner");
             eframe::egui::Panel::top(banner_id).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(
-                            "Webroot was re-keyed — a client reboot finalizes the new device identity.",
-                        )
-                        .color(theme::warn(ui)),
+                controls::bar(ui, BarKind::Status, |ui| {
+                    controls::note(
+                        ui,
+                        svg::WARNING,
+                        "Webroot was re-keyed — a client reboot finalizes the new device \
+                         identity.",
+                        theme::warn(ui),
                     );
-                    if ui.button("Reboot client & relaunch MasterTech").clicked() {
+                    let reboot = controls::icon_text_button(
+                        ui,
+                        svg::ARROW_CLOCKWISE,
+                        "Reboot client & relaunch MasterTech",
+                    );
+                    if reboot.clicked() {
                         let _ = cmd_tx.try_send(Cmd::RebootSystem {
                             persist_mastertech: true,
                             terminal_mode: false,
                         });
-                        self.log_messages.push("Reboot sent — client relaunches MasterTech after login.".into());
+                        self.log_messages
+                            .push("Reboot sent — client relaunches MasterTech after login.".into());
                         self.reboot_recommended = false;
                     }
-                    if ui.button("Dismiss").clicked() {
+                    if controls::ghost_button(ui, "Dismiss").clicked() {
                         self.reboot_recommended = false;
                     }
                 });
@@ -293,8 +311,7 @@ impl RemoteScriptsViewer {
             .resizable(false)
             .default_size(160.0_f32)
             .show(ui, |ui| {
-                ui.heading("Categories");
-                ui.separator();
+                glass_card::card_header(ui, svg::FOLDERS, "Categories", None);
                 for (i, cat) in self.categories.iter().enumerate() {
                     let selected = i == self.selected_category;
                     let checked_count = cat.items.iter().filter(|it| it.checked).count();
@@ -303,7 +320,16 @@ impl RemoteScriptsViewer {
                     } else {
                         cat.name.clone()
                     };
-                    if ui.framed_selectable_label(selected, &label).clicked() {
+                    let icon = if selected {
+                        svg::FOLDER_OPEN
+                    } else {
+                        svg::FOLDER
+                    };
+                    let row = ListRow::new(&label)
+                        .lead(Lead::Icon(icon, None))
+                        .selected(selected)
+                        .show(ui);
+                    if row.clicked() {
                         self.selected_category = i;
                     }
                 }
@@ -315,24 +341,22 @@ impl RemoteScriptsViewer {
             .default_size(200.0_f32)
             .min_size(80.0_f32)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.strong("Script Log");
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(format!("{} lines", self.log_messages.len()));
-                    });
-                });
-                ui.separator();
+                let lines = format!("{} lines", self.log_messages.len());
+                glass_card::card_header(ui, svg::TERMINAL_WINDOW, "Script Log", Some(&lines));
                 let scroll = ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .stick_to_bottom(self.auto_scroll);
                 scroll.show(ui, |ui| {
                     for msg in &self.log_messages {
-                        let color = if msg.starts_with("Error") || msg.contains("error") || msg.contains("Failed") {
+                        let color = if msg.starts_with("Error")
+                            || msg.contains("error")
+                            || msg.contains("Failed")
+                        {
                             theme::error(ui)
                         } else if msg.starts_with("Starting:") || msg.starts_with("---") {
                             theme::info(ui)
                         } else {
-                            ui.visuals().text_color()
+                            theme::text(ui)
                         };
                         ui.add(Label::new(RichText::new(msg).color(color).monospace()));
                     }
@@ -341,40 +365,45 @@ impl RemoteScriptsViewer {
 
         egui::CentralPanel::default().show(ui, |ui| {
             if let Some(cat) = self.categories.get_mut(self.selected_category) {
-                ui.heading(&cat.name);
-                ui.separator();
+                glass_card::card_header(ui, svg::FOLDER_OPEN, &cat.name, None);
 
-                ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    for item in &mut cat.items {
-                        ui.horizontal(|ui| {
-                            let status_icon = match &item.status {
-                                Some(RemoteScriptStatus::Running) => {
-                                    ui.spinner();
-                                    None
+                ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for item in &mut cat.items {
+                            ui.horizontal(|ui| {
+                                let status_icon = match &item.status {
+                                    Some(RemoteScriptStatus::Running) => {
+                                        controls::spinner(ui, SpinnerSize::Sm);
+                                        None
+                                    }
+                                    Some(RemoteScriptStatus::Success) => {
+                                        Some((svg::CHECK_CIRCLE, theme::success(ui)))
+                                    }
+                                    Some(RemoteScriptStatus::Failed) => {
+                                        Some((svg::X_CIRCLE, theme::error(ui)))
+                                    }
+                                    None => None,
+                                };
+
+                                controls::checkbox(ui, &mut item.checked, &item.name);
+
+                                if let Some((icon, tone)) = status_icon {
+                                    icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, tone);
                                 }
-                                Some(RemoteScriptStatus::Success) => {
-                                    Some(RichText::new("✓").color(theme::success(ui)).strong())
+
+                                if item.content.is_some() {
+                                    svg::FILE_CODE
+                                        .show_tinted(
+                                            ui,
+                                            Metrics::get(ui.ctx()).icon_sm,
+                                            theme::weak_text(ui),
+                                        )
+                                        .on_hover_text("Custom script");
                                 }
-                                Some(RemoteScriptStatus::Failed) => {
-                                    Some(RichText::new("✗").color(theme::error(ui)).strong())
-                                }
-                                None => None,
-                            };
-
-                            ui.checkbox(&mut item.checked, "");
-
-                            if let Some(icon) = status_icon {
-                                ui.label(icon);
-                            }
-
-                            if item.content.is_some() {
-                                ui.label(RichText::new(&item.name).italics());
-                            } else {
-                                ui.label(&item.name);
-                            }
-                        });
-                    }
-                });
+                            });
+                        }
+                    });
             }
         });
     }

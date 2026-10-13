@@ -1,17 +1,29 @@
 //! SurrealQL write approvals: the Root requester gets the modal, other active Roots a toast that opens it.
 
+use crate::ui_tools::controls::IconLabel;
+use crate::ui_tools::metrics::Metrics;
 use std::collections::HashSet;
 
 use crate::modals::approval_toast::{self, ApprovalNotice, NoticeKind};
+use crate::ui_tools::controls::{self, BarKind, Role, SpinnerSize, TextArea, TextField};
+use crate::ui_tools::icons::svg;
 use crate::ui_tools::toasts::Toasts;
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::theme;
 use crate::{PlatformSpawner, Spawner};
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::schema::sql_approval::{ApprovalStatus, DecideOutcome, SqlApproval};
 use database::schema::{
     approval_audience, ApprovalAudience, ApprovalViewer, RecordId, RecordIdExt, User, SQL_APPROVAL_TABLE,
 };
-use eframe::egui::{self, Align, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit};
+use eframe::egui::{self, Align, Grid, Id, Layout, Modal, RichText, ScrollArea, Ui};
+
+/// A field name with a leading icon, for the approval form.
+fn meta_key(ui: &mut Ui, icon: svg::Icon, text: &str) {
+    ui.horizontal(|ui| {
+        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+        ui.label(RichText::new(text).strong());
+    });
+}
 
 /// Modal for the Root who requested it, a toast for every other active Root, nothing for anyone else.
 fn sql_audience(req: &SqlApproval, viewer: Option<&ApprovalViewer>) -> ApprovalAudience {
@@ -331,35 +343,20 @@ impl SqlApprovalQueue {
             ui.set_width(680.0);
 
             ui.horizontal(|ui| {
-                ui.heading(format!("{} SurrealQL Approval", icons::LOCK));
+                controls::heading(ui, svg::LOCK_KEY, "SurrealQL Approval");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if queued > 1 {
-                        ui.label(
-                            RichText::new(format!("{} queued", queued))
-                                .color(theme::warn(ui))
-                                .strong(),
-                        );
+                        IconLabel::new(svg::QUEUE, &format!("{} queued", queued)).tone(theme::warn(ui)).strong(true).wrap(true).show(ui);
                     }
                 });
             });
-            ui.separator();
+            controls::hairline(ui);
 
             if destructive {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new(format!("{} ", icons::STATUS_WARN))
-                            .color(theme::error(ui))
-                            .strong(),
-                    );
-                    ui.label(
-                        RichText::new(format!(
-                            "{} can destroy or overwrite data.",
-                            req.statement_kind.to_uppercase()
-                        ))
-                        .color(theme::error(ui))
-                        .strong(),
-                    );
-                });
+                IconLabel::new(svg::WARNING_OCTAGON, &format!(
+                        "{} can destroy or overwrite data.",
+                        req.statement_kind.to_uppercase()
+                    )).tone(theme::error(ui)).strong(true).wrap(true).show(ui);
                 ui.add_space(4.);
             }
 
@@ -367,7 +364,7 @@ impl SqlApprovalQueue {
                 .num_columns(2)
                 .spacing([12.0, 4.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Requested by").strong());
+                    meta_key(ui, svg::USER, "Requested by");
                     ui.label(if req.requested_label.is_empty() {
                         "unknown".to_string()
                     } else {
@@ -376,22 +373,22 @@ impl SqlApprovalQueue {
                     ui.end_row();
 
                     if !req.origin_host.is_empty() {
-                        ui.label(RichText::new("Origin").strong());
+                        meta_key(ui, svg::DESKTOP, "Origin");
                         ui.label(&req.origin_host);
                         ui.end_row();
                     }
 
-                    ui.label(RichText::new("Statement").strong());
+                    meta_key(ui, svg::CODE, "Statement");
                     ui.label(req.statement_kind.to_uppercase());
                     ui.end_row();
 
                     if let Some(table) = req.target_table.as_ref() {
-                        ui.label(RichText::new("Target table").strong());
+                        meta_key(ui, svg::TABLE, "Target table");
                         ui.label(table);
                         ui.end_row();
                     }
 
-                    ui.label(RichText::new("Impact").strong());
+                    meta_key(ui, svg::GAUGE, "Impact");
                     match req.impact_rows {
                         Some(n) => {
                             let color = if n == 0 {
@@ -424,14 +421,14 @@ impl SqlApprovalQueue {
                     }
                     ui.end_row();
 
-                    ui.label(RichText::new("Expires in").strong());
+                    meta_key(ui, svg::TIMER, "Expires in");
                     let secs = req.secs_remaining();
                     ui.label(
                         RichText::new(format!("{}m {:02}s", secs / 60, secs % 60)).color(
                             if secs < 60 {
                                 theme::error(ui)
                             } else {
-                                ui.visuals().weak_text_color()
+                                theme::weak_text(ui)
                             },
                         ),
                     );
@@ -439,90 +436,59 @@ impl SqlApprovalQueue {
                 });
 
             ui.add_space(6.);
-            ui.label(RichText::new("Reason given").strong());
+            meta_key(ui, svg::CHAT_TEXT, "Reason given");
             ui.label(&req.reason);
 
             ui.add_space(6.);
-            ui.label(RichText::new("Statement").strong());
+            meta_key(ui, svg::CODE_BLOCK, "Statement");
             ScrollArea::vertical()
                 .max_height(180.0)
                 .id_salt("sql_approval_stmt")
                 .show(ui, |ui| {
-                    let mut stmt = req.statement.clone();
-                    // Read-only TextEdit: monospace, selectable, copyable.
-                    ui.add(
-                        TextEdit::multiline(&mut stmt)
-                            .code_editor()
-                            .desired_width(f32::INFINITY)
-                            .interactive(false),
-                    );
+                    let mut stmt = req.statement.as_str();
+                    TextArea::new(&mut stmt).mono(true).rows(1).show(ui);
                 });
 
             if req.impact_rows.is_some() {
                 if let Some(note) = req.impact_note.as_ref() {
                     ui.add_space(2.);
-                    ui.label(
-                        RichText::new(note)
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
+                    ui.label(RichText::new(note).small().color(theme::weak_text(ui)));
                 }
             }
 
             ui.add_space(8.);
-            ui.label(RichText::new("Denial note (optional)").strong());
-            ui.add(
-                TextEdit::singleline(&mut self.deny_reason)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Sent back to the requester when you deny"),
-            );
+            meta_key(ui, svg::NOTE_PENCIL, "Denial note (optional)");
+            TextField::new(&mut self.deny_reason)
+                .icon(svg::CHAT_TEXT)
+                .hint("Sent back to the requester when you deny")
+                .width(ui.available_width())
+                .show(ui);
 
             if let Some(err) = self.last_error.as_ref() {
                 ui.add_space(4.);
-                ui.label(
-                    RichText::new(format!("{} {err}", icons::STATUS_ERR)).color(theme::error(ui)),
-                );
+                controls::note(ui, svg::X_CIRCLE, &err.as_str(), theme::error(ui));
             }
 
-            ui.add_space(10.);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(!busy, |ui| {
-                    if ui
-                        .button(
-                            RichText::new(format!("{} Deny", icons::STATUS_ERR))
-                                .color(theme::error(ui)),
-                        )
-                        .clicked()
-                    {
-                        deny = true;
-                    }
-                    ui.add_space(6.);
-                    if ui
-                        .button(
-                            RichText::new(format!("{} Approve & Run", icons::STATUS_ON))
-                                .color(theme::success(ui)),
-                        )
-                        .clicked()
-                    {
-                        approve = true;
-                    }
-                    if summoned {
-                        ui.add_space(6.);
-                        later = ui.button("Later").clicked();
-                    }
-                });
+            ui.add_space(8.);
+            controls::bar(ui, BarKind::Footer, |ui| {
+                controls::IconLabel::new(svg::HASH, &req.id.key_string())
+                    .small(true)
+                    .tone(theme::weak_text(ui))
+                    .show(ui);
                 if busy {
-                    ui.add_space(8.);
-                    ui.spinner();
+                    controls::spinner(ui, SpinnerSize::Sm);
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(req.id.key_string())
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                });
+                let mut buttons = vec![(Role::Danger, "Deny"), (Role::Primary, "Approve & Run")];
+                if summoned {
+                    buttons.push((Role::Cancel, "Later"));
+                }
+                let clicked = controls::dialog_buttons_enabled(ui, &buttons, &[!busy; 3]);
+                match clicked {
+                    Some(0) => deny = true,
+                    Some(1) => approve = true,
+                    Some(_) => later = true,
+                    None => {}
+                }
             });
         });
 

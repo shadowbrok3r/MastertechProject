@@ -1,5 +1,14 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, Store};
-use crate::{app_state::SharedContext, ui_tools::store_picker::presta_store_options, PlatformSpawner, Spawner};
+use crate::{
+    app_state::SharedContext,
+    ui_tools::{
+        controls,
+        icons::svg,
+        metrics::Metrics,
+        tokens::Tokens,
+    },
+    PlatformSpawner, Spawner,
+};
 use eframe::egui::*;
 use log::info;
 
@@ -38,6 +47,12 @@ pub use dock_session::{default_dock_session_native, default_dock_session_wasm, D
 pub use tab_id::{TabContext, TabId, WAREHOUSE_DEFAULT_OPEN};
 pub use work_mode::WorkMode;
 
+/// A vertical rule sized for a toolbar row.
+pub(crate) fn bar_rule(ui: &mut Ui) -> Response {
+    let height = Metrics::get(ui.ctx()).control_h - 8.0;
+    controls::vline(ui, height)
+}
+
 impl SharedContext {
     pub fn tab_context(&self) -> TabContext {
         TabContext::for_user(
@@ -51,11 +66,12 @@ impl SharedContext {
     pub fn store_selection_menu(&mut self, ui: &mut Ui) {
         let selected = &mut self.store_selection;
         let current = selected.clone();
-        let selected_text = Store::from_presta_store_id(&selected.to_string());
-
-        ComboBox::new("Store_Selection", "")
-            .selected_text(selected_text.as_str())
-            .show_ui(ui, |ui| presta_store_options(ui, selected, &Store::VALUES));
+        let options: Vec<(u64, &str)> = Store::VALUES
+            .iter()
+            .map(|store| (store.into_store_id() as u64, store.as_str()))
+            .collect();
+        let width = Metrics::get(ui.ctx()).combo_w;
+        controls::dropdown(ui, "Store_Selection", selected, &options, width);
 
         if *selected != current {
             let tasks_tx = self.initial_tasks_tx.clone();
@@ -121,8 +137,8 @@ impl egui_dock::TabViewer for SharedContext {
                 }
             }
             TabId::Logs => crate::ui_tools::egui_logger::logger_ui()
-                .warn_color(Color32::from_rgb(94, 215, 221))
-                .error_color(Color32::from_rgb(255, 55, 102))
+                .warn_color(Tokens::get(ui.ctx()).warn)
+                .error_color(Tokens::get(ui.ctx()).error)
                 .log_levels([true, true, true, false, false])
                 .enable_category("eframe".to_string(), false)
                 .enable_category("eframe::native::glow_integration".to_string(), false)
@@ -153,31 +169,43 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::SessionBoard => self.session_board.ui(ui),
             #[cfg(target_arch = "wasm32")]
             TabId::SessionBoard => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.label("The session board reads local Claude Code state; desktop only.");
-                });
+                controls::empty_state(
+                    ui,
+                    svg::KANBAN,
+                    "Desktop only",
+                    "The session board reads local Claude Code state.",
+                    &[],
+                );
             }
             TabId::ResourceMonitor => self.resource_mon.display(ui),
             TabId::Scripts => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.label("Scripts are available in the desktop application.");
-                });
+                controls::empty_state(
+                    ui,
+                    svg::SCROLL,
+                    "Desktop only",
+                    "Scripts are available in the desktop application.",
+                    &[],
+                );
             }
             #[cfg(not(target_arch = "wasm32"))]
             TabId::Plugins => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.label("Plugin management is available in the desktop application.");
-                });
+                controls::empty_state(
+                    ui,
+                    svg::MT_PLUGIN,
+                    "Desktop only",
+                    "Plugin management is available in the desktop application.",
+                    &[],
+                );
             }
             #[cfg(target_arch = "wasm32")]
             TabId::Plugins => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.label("Plugin management is not available in web mode.");
-                });
+                controls::empty_state(
+                    ui,
+                    svg::MT_PLUGIN,
+                    "Not available on the web",
+                    "Plugin management is not available in web mode.",
+                    &[],
+                );
             }
             _ => {
                 let _ = ctx;
@@ -195,13 +223,13 @@ impl egui_dock::TabViewer for SharedContext {
         match *tab {
             TabId::StoreTasks => self.store_selection_menu(ui),
             _ => {
-                ui.label(tab.title(ctx));
+                controls::icon_label(ui, tab.icon(), tab.title(ctx));
             }
         }
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.title(self.tab_context()).into()
+        tab.label(self.tab_context())
     }
 
     fn on_close(&mut self, _tab: &mut Self::Tab) -> egui_dock::tab_viewer::OnCloseResponse {
@@ -213,22 +241,22 @@ impl egui_dock::TabViewer for SharedContext {
     }
 
     fn add_popup(&mut self, ui: &mut Ui, path: egui_dock::NodePath) {
-        ui.set_width(100.0);
         let tab_ctx = self.tab_context();
         let is_root = crate::tabs::admin_console::current_user_is_root();
-        for tab in TabId::visible_for_user(tab_ctx, is_root) {
-            let label = tab.title(tab_ctx);
-            let open = self.dock.is_open(tab);
-            if ui.selectable_label(open, label).clicked() {
-                if !open {
-                    self.on_add(path);
-                    self.pending_tab_adds.push((path, tab));
-                } else {
-                    self.pending_tab_removes.push(tab);
+        controls::menu_body(ui, |ui| {
+            for tab in TabId::visible_for_user(tab_ctx, is_root) {
+                let open = self.dock.is_open(tab);
+                if controls::menu_check_item(ui, tab.icon(), tab.title(tab_ctx), open).clicked() {
+                    if !open {
+                        self.on_add(path);
+                        self.pending_tab_adds.push((path, tab));
+                    } else {
+                        self.pending_tab_removes.push(tab);
+                    }
+                    ui.close_kind(UiKind::Menu);
                 }
-                ui.close_kind(UiKind::Menu);
             }
-        }
+        });
     }
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &Response) {

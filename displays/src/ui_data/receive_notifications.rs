@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
-use crate::{app_state::SharedContext, ui_tools::{theme, toasts::ToastStyle}};
+use crate::{app_state::SharedContext, ui_tools::{glass_card, icons::{p, svg}, theme, toasts::ToastStyle}};
 use database::schema::LiveTaskPayload;
-use crate::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
-use eframe::egui::{Button, FontId, Margin, RichText, Ui, Widget};
+use crate::{ui_tools::{controls::TextButton, toasts::{Toast, ToastKind, ToastOptions}}, TaskUiActions};
+use eframe::egui::{FontId, RichText, Ui};
 use regex::Regex;
 use database::live_data::Action;
 
@@ -114,7 +114,8 @@ impl SharedContext {
                                 let auth_toast = Toast {
                                     kind: ToastKind::Info,
                                     text: RichText::new(format!(
-                                        "Notification\n\n{}",
+                                        "{} Notification\n\n{}",
+                                        p::BELL_RINGING,
                                         notification.notification_description
                                     ))
                                     .color(theme::success_ctx(ctx))
@@ -211,41 +212,30 @@ pub fn show_notification(
             let before = &notification_description[..pos];
             let after = &notification_description[pos + task_name.len()..];
 
-            // Display the text parts with different formatting
-            eframe::egui::Frame::new()
-                .fill(ui.style().visuals.window_fill)
-                .corner_radius(eframe::egui::CornerRadius::same(12))
-                .inner_margin(Margin::same(15))
-                .outer_margin(Margin::same(5))
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        // Show the text before the task name
-                        ui.label(RichText::new(before));
+            glass_card::group(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(before));
 
-                        // Show the task name in a different color (e.g., blue)
-                        if Button::new(
-                            RichText::new(task_name)
-                                .color(theme::accent(ui)),
-                        )
-                        .ui(ui)
+                    if TextButton::new(task_name)
+                        .icon(svg::CLIPBOARD_TEXT)
+                        .show(ui)
+                        .on_hover_text("Open task")
                         .clicked()
-                        {
-                            let task = tasks.iter().find(|&x| {
-                                x.task_name == *task_name
-                                    || format!("{}", x.service_number.clone().unwrap_or_default())
-                                        == format!("{}", *task_name)
-                            });
+                    {
+                        let task = tasks.iter().find(|&x| {
+                            x.task_name == *task_name
+                                || x.service_number.as_deref().unwrap_or_default() == task_name.as_str()
+                        });
 
-                            if let Some(task) = task {
-                                let _ = ui_actions_tx
-                                    .try_send(TaskUiActions::OpenTaskModal(task.clone()));
-                            }
+                        if let Some(task) = task {
+                            let _ = ui_actions_tx
+                                .try_send(TaskUiActions::OpenTaskModal(task.clone()));
                         }
+                    }
 
-                        // Show the text after the task name
-                        ui.label(after);
-                    });
+                    ui.label(after);
                 });
+            });
         } else {
             // If no task name is found, display the whole description normally
             ui.label(notification_description);

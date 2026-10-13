@@ -14,7 +14,7 @@ use crossbeam::channel::Sender;
 use database::schema::{random_record_id, Datetime, RecordId, Store};
 use database::SurrealValue;
 use database::{db, ODOO_API_KEY, ODOO_JSONRPC_URL};
-use eframe::egui::{Button, Color32, Link, OpenUrl, Response, RichText, Spinner, Ui, Widget};
+use eframe::egui::{Link, OpenUrl, Response, RichText, Ui, Widget};
 use egui_data_table::{
     viewer::{DecodeErrorBehavior, RowCodec},
     RowViewer,
@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::tabs::stock::everest_lookup::{OdooMoveLine, OdooSerialHistory};
+use crate::ui_tools::controls::{self, BarKind};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 
 pub const INVENTORY_AUDIT_TABLE: &str = "inventory_audit";
 
@@ -255,10 +258,10 @@ impl RowViewer<SerialHistoryRow> for SerialHistoryViewer {
             }
             1 => {
                 let color = match row.state.as_str() {
-                    "done" => Color32::LIGHT_GREEN,
-                    "cancel" => Color32::from_rgb(200, 100, 100),
-                    "draft" => Color32::GRAY,
-                    _ => Color32::LIGHT_GRAY,
+                    "done" => theme::success(ui),
+                    "cancel" => theme::error(ui),
+                    "draft" => theme::faint_text(ui),
+                    _ => theme::weak_text(ui),
                 };
                 ui.label(RichText::new(&row.state).color(color));
             }
@@ -380,34 +383,27 @@ pub fn render_history_windows(
         } else {
             format!("History — {}", win.serial)
         };
-        eframe::egui::Window::new(title)
+        controls::icon_window(ctx, svg::CLOCK_COUNTER_CLOCKWISE, &title)
             .id(eframe::egui::Id::new(("inv_hist", win.serial.clone())))
             .resizable(true)
             .default_size([760., 360.])
             .open(&mut open)
             .show(ctx, |ui| {
                 if win.loading {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(20.);
-                        Spinner::new().size(28.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                        ui.label("Fetching Odoo movements...");
-                    });
+                    controls::loading_state(ui, "Fetching Odoo movements...");
                     return;
                 }
                 if let Some(err) = &win.error {
-                    ui.colored_label(ui.global_style().visuals.error_fg_color, err);
+                    controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
                     return;
                 }
-                if win.table.len() < 1 {
-                    ui.label(RichText::new("No movements found.").color(Color32::GRAY));
+                if win.table.is_empty() {
+                    controls::empty_state(ui, svg::CLOCK_COUNTER_CLOCKWISE, "No movements found", "", &[]);
                     return;
                 }
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Filter:").color(Color32::GRAY));
-                    eframe::egui::TextEdit::singleline(&mut win.viewer.filter)
-                        .desired_width(220.)
-                        .ui(ui);
-                    if Button::new("Open in Odoo").ui(ui).clicked() {
+                controls::bar(ui, BarKind::Header, |ui| {
+                    controls::search_field(ui, &mut win.viewer.filter, "Filter movements", 220.);
+                    if controls::icon_text_button(ui, svg::ARROW_SQUARE_OUT, "Open in Odoo").clicked() {
                         // Best-effort: open the lot list filtered by serial.
                         let url = format!(
                             "https://odoo.pclaptops.com/odoo/inventory/lots?search={}",
@@ -416,7 +412,6 @@ pub fn render_history_windows(
                         ui.ctx().open_url(OpenUrl::new_tab(url));
                     }
                 });
-                ui.add_space(2.);
                 egui_data_table::Renderer::new(&mut win.table, &mut win.viewer)
                     .with_style_modify(|s| {
                         s.scroll_bar_visibility =

@@ -1,7 +1,14 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
+use crate::ui_tools::metrics::Metrics;
+use eframe::egui::{
+    epaint::Shadow, Align, CentralPanel, Frame, Id, Key, KeyboardShortcut, Layout, Margin,
+    Modifiers, RichText, ScrollArea, TextEdit, Ui,
+};
 use crate::ui_tools::terminal_font::{terminal_font, TERMINAL_FONT_SIZE};
 use crate::tabs::admin_console::WebSocketClient;
-use crate::ui_tools::icons::{self};
+use crate::ui_tools::controls::{IconBox, IconButton};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::ui_tools::controls::{self, SpinnerSize};
+use crate::ui_tools::icons::svg;
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
 #[cfg(not(target_arch="wasm32"))]
@@ -79,10 +86,8 @@ impl WebSocketClient {
             };
             ui.horizontal(|ui| {
                 ui.add_space(4.);
-                let resp = ui.checkbox(
-                    &mut self.use_beta_terminal,
-                    RichText::new(format!("{} Terminal View", icons::BETA)).color(beta_toggle_color).strong(),
-                );
+                svg::TEST_TUBE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, beta_toggle_color);
+                let resp = controls::toggle(ui, &mut self.use_beta_terminal, "Terminal View");
                 if resp.changed() && self.use_beta_terminal {
                     let host = self
                         .client
@@ -176,7 +181,7 @@ impl WebSocketClient {
             }
         }
 
-        let b_panel_marg = Margin::symmetric(5, 10);
+        let b_panel_marg = Margin::symmetric(4, 8);
 
         let id = ui.auto_id_with(format!("Chat {:?}", self.client.client_hash));
 
@@ -187,14 +192,7 @@ impl WebSocketClient {
         {
             let well = theme::bg_extreme(ui);
             ui.visuals_mut().code_bg_color = well;
-            ui.style_mut().visuals.widgets.inactive.bg_fill = well;
 
-            let style = ui.style_mut();
-            let default_rounding = eframe::egui::CornerRadius::same(2);
-            style.visuals.widgets.inactive.corner_radius = default_rounding;
-            style.visuals.widgets.active.corner_radius = default_rounding;
-            style.visuals.widgets.hovered.corner_radius = default_rounding;
-            
             let mut layouter = |ui: &Ui, buf: &dyn eframe::egui::TextBuffer, _: f32| {
                 let mut layout_job: eframe::egui::text::LayoutJob = highlight(
                     ui.ctx(), 
@@ -207,43 +205,46 @@ impl WebSocketClient {
                 ui.fonts_mut(|f| f.layout_job(layout_job))
             };
 
-            ui.add_space(3.);
+            ui.add_space(4.);
 
             // AI Command Completion Section
             ui.horizontal(|ui| {
                 #[cfg(not(target_arch="wasm32"))]
                 if self.ai_completion_enabled {
-                    ui.label(icons::ROBOT);
-                    if ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion").changed() {
-                        if !self.ai_completion_enabled {
-                            self.command_suggestions.clear();
-                            self.show_suggestions = false;
-                            // Also cancel any in-flight request
-                            if let Some(cancel) = self.completion_cancel_tx.take() {
-                                let _ = cancel.send(());
-                            }
+                    svg::ROBOT.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::info(ui));
+                    let label = "AI Command Completion";
+                    let toggled = controls::toggle(ui, &mut self.ai_completion_enabled, label);
+                    if toggled.changed() && !self.ai_completion_enabled {
+                        self.command_suggestions.clear();
+                        self.show_suggestions = false;
+                        // Also cancel any in-flight request
+                        if let Some(cancel) = self.completion_cancel_tx.take() {
+                            let _ = cancel.send(());
                         }
                     }
                     if self.completion_cancel_tx.is_some() {
-                        ui.spinner();
+                        controls::spinner(ui, SpinnerSize::Sm);
                         ui.label(RichText::new("Thinking...").weak());
                     }
                 } else {
-                    ui.label(icons::ROBOT);
-                    ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion");
+                    svg::ROBOT.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                    controls::toggle(ui, &mut self.ai_completion_enabled, "AI Command Completion");
                 }
 
                 /*
                     Selectable labels for Command prompt, Powershell, etc.
                 */
                 
-                ui.add_space(10.);
-                
+                ui.add_space(8.);
+
                 #[cfg(not(target_arch="wasm32"))]
                 if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
-                    ui.label(format!("{} {} suggestions", icons::LIGHTBULB, self.command_suggestions.len()));
+                    svg::LIGHTBULB.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::warn(ui));
+                    ui.label(format!("{} suggestions", self.command_suggestions.len()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
+                        let refresh =
+                            controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh");
+                        if refresh.clicked() {
                             self.get_ai_command_completions();
                         }
                     });
@@ -302,11 +303,11 @@ impl WebSocketClient {
             #[cfg(not(target_arch="wasm32"))]
             #[cfg(not(target_arch="wasm32"))]
             if self.ai_completion_enabled && !self.command_suggestions.is_empty() && self.show_suggestions {
-                ui.add_space(5.);
-                ui.group(|ui| {
+                ui.add_space(4.);
+                glass_card::group(ui, |ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(format!("{} AI Command Suggestions:", icons::ROBOT)).strong().color(theme::info(ui)));
-                        
+                        controls::subheading(ui, svg::ROBOT, "AI Command Suggestions");
+
                         ScrollArea::vertical().max_width(150.).show(ui, |ui| {
                             let len = self.command_suggestions.len();
                             for idx in 0..len {
@@ -314,12 +315,9 @@ impl WebSocketClient {
                                 let selected = idx == self.selected_suggestion;
                                 
                                 ui.horizontal(|ui| {
-                                    let response = ui.selectable_label(
-                                        selected,
-                                        RichText::new(&suggestion.completion)
-                                            .monospace()
-                                            .color(if selected { theme::accent_secondary(ui) } else { theme::strong_text(ui) })
-                                    );
+                                    let completion = suggestion.completion.as_str();
+                                    let response =
+                                        controls::pill(ui, svg::TERMINAL, completion, selected);
                                     
                                     if response.clicked() {
                                         let completion_str = suggestion.completion.clone();
@@ -329,8 +327,8 @@ impl WebSocketClient {
                                         text_edit.request_focus();
                                     }
                                     
-                                    ui.add_space(5.);
-                                    
+                                    ui.add_space(4.);
+
                                     if let Some(desc) = &suggestion.description {
                                         ui.label(RichText::new(desc).weak().italics());
                                     }
@@ -343,10 +341,12 @@ impl WebSocketClient {
                         });
                         
                         ui.horizontal(|ui| {
-                            if ui.button(format!("{} Close", icons::CLOSE)).clicked() {
+                            if controls::icon_text_button(ui, svg::X, "Close").clicked() {
                                 self.show_suggestions = false;
                             }
-                            ui.label(RichText::new(format!("{} Click suggestion to use, or press Tab to cycle", icons::LIGHTBULB)).small().weak());
+                            svg::LIGHTBULB.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                            let hint = "Click suggestion to use, or press Tab to cycle";
+                            ui.label(RichText::new(hint).small().weak());
                         });
                     });
                 });
@@ -529,12 +529,14 @@ impl WebSocketClient {
                 // Render messages with improved styling
                 for item in display_messages.iter().chain(buffer_preview.iter()) {
                     let is_message_from_myself = if item.from.eq("You"){ true } else { false };
-                    let username_txt_color = ui.global_style().visuals.hyperlink_color;
-                    let from = if is_message_from_myself {
-                        RichText::new("Command Sent:").strong().monospace().color(username_txt_color)
-                    }else {
-                        RichText::new("Client Response:").strong().monospace().color(username_txt_color)
+                    let username_txt_color = theme::info(ui);
+                    let (from_icon, from_text) = if is_message_from_myself {
+                        (svg::PAPER_PLANE_RIGHT, "Command Sent:")
+                    } else {
+                        (svg::TERMINAL_WINDOW, "Client Response:")
                     };
+                    let from =
+                        RichText::new(from_text).strong().monospace().color(username_txt_color);
                     // Messages from the user are right-aligned.
                     let layout = if is_message_from_myself {
                         Layout::top_down(Align::Max)
@@ -589,40 +591,34 @@ impl WebSocketClient {
                             ui.set_width(max_msg_width);
                             // Use a vertical layout to stack the name and message content
                             ui.vertical_centered(|ui| {
-                                let btn_txt_color = ui.global_style().visuals.error_fg_color;
                                 if is_message_from_myself {
                                     ui.horizontal(|ui| {
-                                        let btn_txt_color = ui.global_style().visuals.error_fg_color;
-                                        if Button::new(RichText::new(icons::COPY).color(btn_txt_color))
-                                        .ui(ui)
-                                        .on_hover_text(RichText::new("Copy Message"))
-                                        .clicked() {
+                                        let copy = IconButton::new(svg::COPY, IconBox::Sm)
+                                            .tip("Copy Message")
+                                            .show(ui);
+                                        if copy.clicked() {
                                             ui.ctx().copy_text(item.message.clone());
                                         }
-                                        ui.add_space(5.);
+                                        ui.add_space(4.);
 
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui|{
-                                            Button::new(from).fill(theme::bg_surface(ui)).min_size(Vec2::new(30., 35.)).ui(ui);
-                                            ui.add_space(5.);
+                                            ui.label(from);
+                                            from_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, username_txt_color);
+                                            ui.add_space(4.);
                                             ui.label(RichText::new(item.timestamp.clone()).weak()); // .format("%m/%d @ %I:%M%p").to_string()
                                         });
                                     });
 
                                 } else {
                                     ui.horizontal(|ui| {
-                                        let btn = Button::new(from).fill(theme::bg_surface(ui)).min_size(Vec2::new(30., 35.)).ui(ui);
-
-                                        if btn.has_focus() {
-                                            btn.surrender_focus();
-                                            if let Some(res) = text_response {
-                                                res.request_focus();
-                                            }
-                                        }
+                                        from_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, username_txt_color);
+                                        ui.label(from);
 
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                            if Button::new(RichText::new(icons::COPY).color(btn_txt_color))
-                                            .ui(ui)
-                                            .clicked(){
+                                            let copy = IconButton::new(svg::COPY, IconBox::Sm)
+                                                .tip("Copy Message")
+                                                .show(ui);
+                                            if copy.clicked() {
                                                 ui.ctx().copy_text(item.message.clone());
                                             }
                                         });

@@ -4,11 +4,13 @@
 //! client keeps its records in memory whether or not it was launched with
 //! `--log-to-file`, so this works against any connected client.
 
+use crate::ui_tools::controls::IconLabel;
 use crossbeam::channel::Sender;
-use eframe::egui::{self, ComboBox, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{self, RichText, ScrollArea, TextEdit, Ui};
 
-use crate::ui_tools::icons;
 use crate::Cmd;
+use crate::ui_tools::controls::{self, BarKind, Metrics, TextButton};
+use crate::ui_tools::icons::svg;
 use crate::ui_tools::theme;
 
 /// How much of the client's ring to pull.
@@ -89,44 +91,46 @@ impl ClientLogViewer {
     }
 
     pub fn display(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
-        ui.horizontal_wrapped(|ui| {
+        controls::bar(ui, BarKind::Tool, |ui| {
+            let rule_h = Metrics::get(ui.ctx()).control_h;
             ui.label(RichText::new("Fetch:").strong());
-            ComboBox::from_id_salt("client_log_mode")
-                .selected_text(match self.mode {
-                    LogFetchMode::Tail => "Last N lines",
-                    LogFetchMode::Full => "Full log",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.mode, LogFetchMode::Tail, "Last N lines");
-                    ui.selectable_value(&mut self.mode, LogFetchMode::Full, "Full log");
-                });
+            controls::dropdown(
+                ui,
+                "client_log_mode",
+                &mut self.mode,
+                &[
+                    (LogFetchMode::Tail, "Last N lines"),
+                    (LogFetchMode::Full, "Full log"),
+                ],
+                120.0,
+            );
 
             if self.mode == LogFetchMode::Tail {
-                ui.add(
-                    egui::DragValue::new(&mut self.tail_lines)
-                        .range(10..=10_000)
-                        .speed(10.0)
-                        .suffix(" lines"),
-                );
+                controls::value_field(ui, &mut self.tail_lines, 10..=10_000, "lines", 96.0);
             }
 
-            if ui
-                .add_enabled(!self.loading, egui::Button::new(format!("{} Fetch", icons::REFRESH)))
-                .clicked()
-            {
+            let fetch = TextButton::new("Fetch")
+                .icon(svg::DOWNLOAD_SIMPLE)
+                .enabled(!self.loading)
+                .show(ui);
+            if fetch.clicked() {
                 self.loading = true;
                 self.status = None;
                 if cmd_tx.try_send(self.fetch_cmd()).is_err() {
                     self.loading = false;
-                    self.status = Some("Could not queue the request — client not connected.".into());
+                    self.status =
+                        Some("Could not queue the request — client not connected.".into());
                 }
             }
 
-            ui.separator();
+            controls::vline(ui, rule_h);
 
             let have_text = !self.text.is_empty();
-            if ui
-                .add_enabled(have_text, egui::Button::new(format!("{} Copy", icons::COPY)))
+            let copy = TextButton::new("Copy")
+                .icon(svg::COPY)
+                .enabled(have_text)
+                .show(ui);
+            if copy
                 .on_hover_text("Copy what is shown (filter applied) to the clipboard")
                 .clicked()
             {
@@ -137,40 +141,42 @@ impl ClientLogViewer {
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            if ui
-                .add_enabled(have_text, egui::Button::new(format!("{} Save", icons::SAVE)))
+            if TextButton::new("Save")
+                .icon(svg::FLOPPY_DISK)
+                .enabled(have_text)
+                .show(ui)
                 .clicked()
             {
                 self.save_to_file();
             }
 
-            ui.separator();
-            ui.label("Filter:");
-            TextEdit::singleline(&mut self.filter)
-                .hint_text("Substring, case-insensitive")
-                .desired_width(180.0)
-                .show(ui);
+            controls::vline(ui, rule_h);
+            let hint = "Filter: substring, case-insensitive";
+            controls::search_field(ui, &mut self.filter, hint, 220.0);
         });
 
         ui.add_space(4.0);
 
         if let Some(status) = &self.status {
-            ui.label(RichText::new(status).color(theme::success(ui)).small());
+            IconLabel::new(svg::INFO, &status)
+                .tone(theme::success(ui))
+                .small(true)
+                .wrap(true)
+                .show(ui);
         }
 
         if self.loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Fetching client log...");
-            });
+            controls::loading_state(ui, "Fetching client log...");
             return;
         }
 
         if self.text.is_empty() {
-            ui.label(
-                RichText::new("No log fetched yet. Click Fetch to pull the client's log ring.")
-                    .italics()
-                    .color(theme::weak_text(ui)),
+            controls::empty_state(
+                ui,
+                svg::SCROLL,
+                "No log fetched yet",
+                "Click Fetch to pull the client's log ring.",
+                &[],
             );
             return;
         }
@@ -185,6 +191,7 @@ impl ClientLogViewer {
             if let Some(at) = self.fetched_at {
                 summary.push_str(&format!("  |  fetched {}", at.format("%I:%M:%S %p")));
             }
+            svg::LIST_NUMBERS.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
             ui.label(RichText::new(summary).small().color(theme::weak_text(ui)));
         });
 

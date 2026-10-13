@@ -6,13 +6,18 @@ use displays::scripts::{
     CATEGORY_ORDER, LogLevel, ScriptCategory, ScriptItem, ScriptLogEntry, ScriptStatus,
     category_display_name,
 };
-use displays::ui_tools::framed_controls::{FramedSelectable, selectable_card};
-use displays::ui_tools::info_card::{badge, expandable_text, kv_row};
+use displays::ui_tools::controls::{
+    self, BarKind, ButtonKind, IconBox, IconButton, Metrics, ModalWidth, Role, SpinnerSize,
+    TextButton, TextField,
+};
+use displays::ui_tools::framed_controls::selectable_card;
+use displays::ui_tools::icons::svg::{self, Icon};
+use displays::ui_tools::info_card::{expandable_text, kv_row};
 use displays::ui_tools::{glass_card, icons, theme};
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{
-    self, Align, Button, Color32, FontId, Id, Label, Layout, ProgressBar, RichText, ScrollArea,
-    TextEdit, TextFormat, TextStyle, Ui, vec2,
+    Align, Color32, FontId, Id, Label, Layout, RichText, ScrollArea, TextFormat, TextStyle, Ui,
+    vec2,
 };
 use egui_extras::{Size, StripBuilder};
 
@@ -22,8 +27,17 @@ use crate::app_state::MastertechContext;
 /// Below this width the log stacks under the queue instead of taking its own column.
 const THREE_COLUMN_MIN_WIDTH: f32 = 1000.0;
 const CATALOG_WIDTH: f32 = 280.0;
-const HEADER_HEIGHT: f32 = 34.0;
 const STANDARD_PRESET: &str = "standard-tuneup";
+/// Width of the service-number field.
+const SERVICE_FIELD_W: f32 = 130.0;
+/// Width of the queue progress bar.
+const QUEUE_PROGRESS_W: f32 = 140.0;
+/// Width of the download progress bar.
+const DOWNLOAD_PROGRESS_W: f32 = 120.0;
+/// Tallest the transfer source list grows before it scrolls.
+const SOURCES_MAX_H: f32 = 220.0;
+/// Smallest width a dialog footer button takes.
+const DIALOG_BUTTON_MIN_W: f32 = 88.0;
 
 /// What the details card is showing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,8 +69,9 @@ impl MastertechContext {
         self.reboot_modal(ui);
         self.data_transfer_modal(ui);
 
+        let header = Metrics::get(ui.ctx()).bar_h;
         StripBuilder::new(ui)
-            .size(Size::exact(HEADER_HEIGHT))
+            .size(Size::exact(header))
             .size(Size::remainder())
             .vertical(|mut strip| {
                 strip.cell(|ui| scripts_header(ui, &mut self.scripts_tab));
@@ -81,38 +96,29 @@ impl MastertechContext {
         if !self.scripts_tab.reboot_prompt_open {
             return;
         }
-        let modal = egui::Modal::new(Id::new("scripts_reboot_prompt")).show(ui.ctx(), |ui| {
-            ui.set_max_width(380.0);
-            ui.label(
-                RichText::new(format!("{} Reboot required", icons::REFRESH))
-                    .strong()
-                    .color(theme::strong_text(ui)),
-            );
-            ui.add_space(4.0);
-            ui.label("Webroot was re-keyed over an existing install.");
-            ui.label(
-                "A reboot finalizes the new device identity. MasterTech will relaunch after login.",
-            );
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let reboot = ui
-                    .button(RichText::new("Reboot now").color(theme::success(ui)))
-                    .clicked();
-                let later = ui.button("Later").clicked();
-                (reboot, later)
-            })
-            .inner
-        });
+        let modal = controls::modal(
+            ui.ctx(),
+            Id::new("scripts_reboot_prompt"),
+            svg::ARROWS_CLOCKWISE,
+            "Reboot required",
+            ModalWidth::Narrow,
+            &[(Role::Primary, "Reboot now"), (Role::Cancel, "Later")],
+            |ui| {
+                ui.label("Webroot was re-keyed over an existing install.");
+                ui.label(
+                    "A reboot finalizes the new device identity. MasterTech will relaunch after login.",
+                );
+            },
+        );
 
-        let (reboot, later) = modal.inner;
-        if reboot {
+        if modal.clicked == Some(0) {
             #[cfg(target_os = "windows")]
             crate::utilities::windows::reboot::spawn_reboot_with_relaunch(
                 false,
                 "Mastertech reboot to finalize Webroot activation",
             );
             self.scripts_tab.reboot_prompt_open = false;
-        } else if later || modal.should_close() {
+        } else if modal.should_close {
             self.scripts_tab.reboot_prompt_open = false;
         }
     }
@@ -123,81 +129,89 @@ impl MastertechContext {
         if !tab.show_data_transfer_ui {
             return;
         }
-        let modal = egui::Modal::new(Id::new("scripts_data_transfer")).show(ui.ctx(), |ui| {
-            ui.set_width(520.0);
-            ui.label(
-                RichText::new(format!("{} Data Transfer", icons::FOLDER_OPEN))
-                    .strong()
-                    .color(theme::strong_text(ui)),
-            );
-            ui.label(
-                RichText::new("Select source folders to transfer and a destination.")
-                    .color(theme::weak_text(ui)),
-            );
-            ui.add_space(8.0);
+        let modal = controls::modal(
+            ui.ctx(),
+            Id::new("scripts_data_transfer"),
+            svg::FOLDER_OPEN,
+            "Data Transfer",
+            ModalWidth::Regular,
+            &[],
+            |ui| {
+                let m = Metrics::get(ui.ctx());
+                ui.label(
+                    RichText::new("Select source folders to transfer and a destination.")
+                        .color(theme::weak_text(ui)),
+                );
+                ui.add_space(m.gap.y);
 
-            ui.label(RichText::new("Source folders").strong());
-            ScrollArea::vertical()
-                .id_salt("scripts_transfer_sources")
-                .max_height(220.0)
-                .show(ui, |ui| {
-                    for (path, size) in &tab.data_transfer_candidates {
-                        let mut checked = tab.selected_sources.contains(path);
-                        if ui
-                            .checkbox(&mut checked, format!("{path} ({size})"))
-                            .changed()
-                        {
-                            if checked {
-                                tab.selected_sources.push(path.clone());
-                            } else {
-                                tab.selected_sources.retain(|p| p != path);
+                controls::section_label(ui, "Source folders");
+                ScrollArea::vertical()
+                    .id_salt("scripts_transfer_sources")
+                    .max_height(SOURCES_MAX_H)
+                    .show(ui, |ui| {
+                        for (path, size) in &tab.data_transfer_candidates {
+                            let mut checked = tab.selected_sources.contains(path);
+                            if controls::checkbox(ui, &mut checked, &format!("{path} ({size})"))
+                                .changed()
+                            {
+                                if checked {
+                                    tab.selected_sources.push(path.clone());
+                                } else {
+                                    tab.selected_sources.retain(|p| p != path);
+                                }
                             }
                         }
+                    });
+
+                ui.add_space(m.gap.y);
+                controls::section_label(ui, "Destination");
+                ui.horizontal(|ui| {
+                    let shown = tab
+                        .selected_destination
+                        .as_deref()
+                        .unwrap_or("Select destination...");
+                    controls::icon_label(ui, svg::FOLDER, shown);
+                    if controls::icon_text_button(ui, svg::FOLDER_OPEN, "Browse...").clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_folder()
+                    {
+                        tab.selected_destination = Some(path.to_string_lossy().to_string());
                     }
                 });
 
-            ui.add_space(8.0);
-            ui.label(RichText::new("Destination").strong());
-            ui.horizontal(|ui| {
-                let shown = tab
-                    .selected_destination
-                    .as_deref()
-                    .unwrap_or("Select destination...");
-                ui.label(shown);
-                if ui.button(format!("{} Browse...", icons::FOLDER)).clicked()
-                    && let Some(path) = rfd::FileDialog::new().pick_folder()
-                {
-                    tab.selected_destination = Some(path.to_string_lossy().to_string());
-                }
-            });
-
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                let ready = !tab.selected_sources.is_empty() && tab.selected_destination.is_some();
-                let start = Button::new(
-                    RichText::new(format!("{} Start transfer", icons::PLAY))
-                        .color(theme::success(ui)),
-                );
-                if ui.add_enabled(ready, start).clicked()
-                    && let Some(destination) = tab.selected_destination.clone()
-                {
-                    return Some(TransferAction::Start(
-                        tab.selected_sources.clone(),
-                        destination,
-                    ));
-                }
-                if ui
-                    .button(
-                        RichText::new(format!("{} Cancel", icons::CLOSE)).color(theme::error(ui)),
-                    )
-                    .clicked()
-                {
-                    return Some(TransferAction::Cancel);
-                }
-                None
-            })
-            .inner
-        });
+                ui.add_space(m.gap.y);
+                controls::bar(ui, BarKind::Footer, |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let cancel = TextButton::new("Cancel")
+                            .icon(svg::X)
+                            .prominent(true)
+                            .min_width(DIALOG_BUTTON_MIN_W)
+                            .show(ui);
+                        if cancel.clicked() {
+                            return Some(TransferAction::Cancel);
+                        }
+                        let ready =
+                            !tab.selected_sources.is_empty() && tab.selected_destination.is_some();
+                        let start = TextButton::new("Start transfer")
+                            .icon(svg::PLAY)
+                            .kind(ButtonKind::Primary)
+                            .prominent(true)
+                            .min_width(DIALOG_BUTTON_MIN_W)
+                            .enabled(ready)
+                            .show(ui);
+                        if start.clicked()
+                            && let Some(destination) = tab.selected_destination.clone()
+                        {
+                            return Some(TransferAction::Start(
+                                tab.selected_sources.clone(),
+                                destination,
+                            ));
+                        }
+                        None
+                    })
+                    .inner
+                })
+            },
+        );
 
         // A click outside must not discard a half-made selection.
         match modal.inner {
@@ -211,79 +225,76 @@ impl MastertechContext {
 }
 
 fn scripts_header(ui: &mut Ui, tab: &mut EguiScriptsTab) {
-    ui.horizontal_centered(|ui| {
-        ui.label(RichText::new("Service #").color(theme::weak_text(ui)));
-        ui.add(
-            TextEdit::singleline(&mut tab.service_number_input)
-                .desired_width(110.0)
-                .hint_text("SO number"),
-        );
-        ui.add_space(8.0);
+    controls::bar(ui, BarKind::Tool, |ui| {
+        TextField::new(&mut tab.service_number_input)
+            .hint("SO number")
+            .icon(svg::HASH)
+            .width(SERVICE_FIELD_W)
+            .id_salt("scripts.service_number")
+            .show(ui)
+            .on_hover_text("Service #");
 
         let queued = tab.state.queue.len();
         if let Some(name) = tab.stopping_name().map(str::to_owned) {
-            ui.label(
-                RichText::new(format!(
-                    "{} Stopping, waiting for {name}",
-                    icons::STATUS_WAIT
-                ))
-                .color(theme::warn(ui)),
-            );
-            let abandon = ui
-                .small_button("Abandon")
+            controls::spinner(ui, SpinnerSize::Sm);
+            ui.label(RichText::new(format!("Stopping, waiting for {name}")).color(theme::warn(ui)));
+            let abandon = TextButton::new("Abandon")
+                .icon(svg::X_CIRCLE)
+                .kind(ButtonKind::Ghost)
+                .show(ui)
                 .on_hover_text("Stop waiting; the script may keep running in the background");
             if abandon.clicked() {
                 tab.abandon_stopped_run();
             }
         } else if tab.state.queue.is_running() {
-            let stop =
-                Button::new(RichText::new(format!("{} Stop", icons::STOP)).color(theme::error(ui)));
-            if ui.add(stop).clicked() {
+            let stop = TextButton::new("Stop")
+                .icon(svg::STOP)
+                .kind(ButtonKind::Danger)
+                .show(ui);
+            if stop.clicked() {
                 tab.stop_queue();
             }
         } else {
             let plural = if queued == 1 { "" } else { "s" };
-            let run = Button::new(
-                RichText::new(format!("{} Run {queued} script{plural}", icons::PLAY))
-                    .color(theme::success(ui)),
-            );
-            if ui.add_enabled(queued > 0, run).clicked() {
+            let label = format!("Run {queued} script{plural}");
+            let run = TextButton::new(&label)
+                .icon(svg::PLAY)
+                .kind(ButtonKind::Primary)
+                .enabled(queued > 0)
+                .show(ui);
+            if run.clicked() {
                 tab.run_queue();
             }
         }
 
         let (done, total) = tab.state.queue.progress();
         if total > 0 {
-            ui.add(
-                ProgressBar::new(done as f32 / total as f32)
-                    .desired_width(140.0)
-                    .text(format!("{done} / {total}")),
-            );
+            controls::ProgressBar::new(done as f32 / total as f32)
+                .width(QUEUE_PROGRESS_W)
+                .text(&format!("{done} / {total}"))
+                .show(ui);
         }
 
         if tab.show_data_transfer_ui {
-            ui.label(
-                RichText::new(format!(
-                    "{} Waiting for the Data Transfer selection",
-                    icons::STATUS_WAIT
-                ))
-                .color(theme::warn(ui)),
+            controls::status_label(
+                ui,
+                svg::HOURGLASS,
+                "Waiting for the Data Transfer selection",
+                theme::warn(ui),
             );
         } else if let Some(name) = tab.current_script_name.as_deref() {
-            ui.label(
-                RichText::new(format!("{} {name}", icons::STATUS_WAIT)).color(theme::info(ui)),
-            );
+            controls::spinner(ui, SpinnerSize::Sm);
+            ui.label(RichText::new(name).color(theme::info(ui)));
         }
 
         if let Some((current, total)) = tab.download_progress
             && total > 0
         {
             let fraction = current as f32 / total as f32;
-            ui.add(
-                ProgressBar::new(fraction)
-                    .desired_width(120.0)
-                    .text(format!("{} {:.0}%", icons::DOWNLOAD, fraction * 100.0)),
-            );
+            controls::ProgressBar::new(fraction)
+                .width(DOWNLOAD_PROGRESS_W)
+                .text(&format!("{} {:.0}%", icons::DOWNLOAD, fraction * 100.0))
+                .show(ui);
         }
     });
 }
@@ -316,19 +327,19 @@ fn scripts_body(ui: &mut Ui, tab: &mut EguiScriptsTab) {
 }
 
 fn catalog_column(ui: &mut Ui, tab: &mut EguiScriptsTab) {
-    ui.add(
-        TextEdit::singleline(&mut tab.search)
-            .hint_text(format!("{} Filter scripts", icons::SEARCH))
-            .desired_width(f32::INFINITY),
-    );
-    ui.add_space(4.0);
+    let m = Metrics::get(ui.ctx());
+    let full = ui.available_width();
+    controls::search_field(ui, &mut tab.search, "Filter scripts", full);
+    ui.add_space(m.gap.y);
 
     if let Some(preset) = CATALOG.preset(STANDARD_PRESET) {
-        let text = RichText::new(format!("{} {}", icons::STAR, preset.name))
-            .strong()
-            .color(theme::accent(ui));
-        let button = Button::new(text).min_size(vec2(ui.available_width(), 28.0));
-        if ui.add(button).on_hover_text(&preset.summary).clicked() {
+        let button = TextButton::new(&preset.name)
+            .icon(svg::STAR)
+            .kind(ButtonKind::Primary)
+            .prominent(true)
+            .min_width(full)
+            .show(ui);
+        if button.on_hover_text(&preset.summary).clicked() {
             let ids: Vec<String> = preset
                 .scripts
                 .iter()
@@ -345,12 +356,16 @@ fn catalog_column(ui: &mut Ui, tab: &mut EguiScriptsTab) {
         .flatten()
         .filter(|s| s.is_selected())
         .count();
-    let add = Button::new(format!("{} Add {selected} selected", icons::PLUS))
-        .min_size(vec2(ui.available_width(), 24.0));
-    if ui.add_enabled(selected > 0, add).clicked() {
+    let label = format!("Add {selected} selected");
+    let add = TextButton::new(&label)
+        .icon(svg::PLUS)
+        .min_width(full)
+        .enabled(selected > 0)
+        .show(ui);
+    if add.clicked() {
         tab.queue_selected();
     }
-    ui.add_space(6.0);
+    ui.add_space(m.gap.y);
 
     let terms: Vec<String> = tab
         .search
@@ -400,26 +415,37 @@ fn category_card(
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             let chevron = if expanded {
-                icons::CHEV_OPEN
+                svg::CARET_DOWN
             } else {
-                icons::CHEV_CLOSED
+                svg::CARET_RIGHT
             };
-            let title = RichText::new(format!(
-                "{chevron} {} {}",
-                category_glyph(category),
-                category_display_name(category)
-            ))
-            .strong()
-            .color(theme::strong_text(ui));
-            if ui.add(Button::new(title).frame(false)).clicked() && !searching {
+            let tip = if expanded { "Collapse" } else { "Expand" };
+            let toggled = IconButton::new(chevron, IconBox::Sm)
+                .tip(tip)
+                .show(ui)
+                .clicked();
+            let title = TextButton::new(category_display_name(category))
+                .icon(category_icon(category))
+                .kind(ButtonKind::Ghost)
+                .show(ui)
+                .clicked();
+            if (toggled || title) && !searching {
                 tab.state
                     .category_expanded
                     .insert(category.clone(), !expanded);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if !searching {
-                    let label = if picked > 0 { "None" } else { "All" };
-                    if ui.small_button(label).clicked() {
+                    let (icon, label) = if picked > 0 {
+                        (svg::SQUARE, "None")
+                    } else {
+                        (svg::CHECK_SQUARE, "All")
+                    };
+                    let pick = TextButton::new(label)
+                        .icon(icon)
+                        .kind(ButtonKind::Ghost)
+                        .show(ui);
+                    if pick.clicked() {
                         if picked > 0 {
                             tab.state.deselect_category(category);
                         } else {
@@ -440,15 +466,16 @@ fn category_card(
         }
         let weak = theme::weak_text(ui);
         let check = theme::success(ui);
+        let icon_size = Metrics::get(ui.ctx()).icon_sm;
         for (index, name, summary, selected) in rows {
             let response = selectable_card(ui, ("scripts_catalog_row", &name), selected, |ui| {
                 ui.horizontal(|ui| {
-                    let (glyph, color) = if selected {
-                        (icons::STATUS_ON, check)
+                    let (icon, color) = if selected {
+                        (svg::CHECK_CIRCLE, check)
                     } else {
-                        (icons::STATUS_IDLE, weak)
+                        (svg::CIRCLE, weak)
                     };
-                    ui.label(icons::icon_colored(glyph, color));
+                    ui.add(icon.image(icon_size).tint(color));
                     ui.add(Label::new(RichText::new(&name).strong()).truncate());
                 });
                 if !summary.is_empty() {
@@ -486,28 +513,27 @@ fn queue_column(ui: &mut Ui, tab: &mut EguiScriptsTab) {
 }
 
 fn queue_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
+    let m = Metrics::get(ui.ctx());
     let running = tab.state.queue.is_running();
-    ui.horizontal(|ui| {
-        ui.label(icons::icon_colored(
-            icons::LIST,
-            theme::accent_secondary(ui),
-        ));
+    controls::bar(ui, BarKind::Header, |ui| {
+        ui.add(
+            svg::QUEUE
+                .image(m.icon_md)
+                .tint(theme::accent_secondary(ui)),
+        );
         ui.label(
             RichText::new("Queue")
                 .strong()
                 .color(theme::strong_text(ui)),
         );
-        ui.label(
-            RichText::new(tab.state.queue.len().to_string())
-                .small()
-                .color(theme::weak_text(ui)),
-        );
+        controls::badge(ui, &tab.state.queue.len().to_string(), theme::weak_text(ui));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let clear = Button::new(format!("{} Clear", icons::TRASH)).small();
-            if ui
-                .add_enabled(!running && !tab.state.queue.is_empty(), clear)
-                .clicked()
-            {
+            let clear = TextButton::new("Clear")
+                .icon(svg::TRASH)
+                .kind(ButtonKind::Ghost)
+                .enabled(!running && !tab.state.queue.is_empty())
+                .show(ui);
+            if clear.clicked() {
                 tab.state.queue.clear();
                 tab.outcomes.clear();
                 if matches!(tab.focus, Some(ScriptFocus::Queued(_))) {
@@ -516,22 +542,15 @@ fn queue_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
             }
         });
     });
-    glass_card::hairline(ui);
 
     if tab.state.queue.is_empty() {
-        ui.vertical_centered(|ui| {
-            ui.add_space(24.0);
-            ui.label(
-                RichText::new("Queue is empty")
-                    .italics()
-                    .color(theme::weak_text(ui)),
-            );
-            ui.label(
-                RichText::new("Pick scripts on the left, or use Standard Tune-up")
-                    .small()
-                    .color(theme::weak_text(ui)),
-            );
-        });
+        controls::empty_state(
+            ui,
+            svg::QUEUE,
+            "Queue is empty",
+            "Pick scripts on the left, or use Standard Tune-up",
+            &[],
+        );
         return;
     }
 
@@ -557,18 +576,26 @@ fn queue_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
             for (i, row) in rows.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        let up = Button::new(icons::UP).small();
-                        if ui.add_enabled(!running && i > 0, up).clicked() {
+                        let up = IconButton::new(svg::CARET_UP, IconBox::Sm)
+                            .tip("Move up")
+                            .enabled(!running && i > 0)
+                            .show(ui);
+                        if up.clicked() {
                             action = Some(QueueAction::Move(i, i - 1));
                         }
-                        let down = Button::new(icons::ARROW_DOWN).small();
-                        if ui.add_enabled(!running && i + 1 < len, down).clicked() {
+                        let down = IconButton::new(svg::CARET_DOWN, IconBox::Sm)
+                            .tip("Move down")
+                            .enabled(!running && i + 1 < len)
+                            .show(ui);
+                        if down.clicked() {
                             action = Some(QueueAction::Move(i, i + 1));
                         }
                     });
 
                     // Width left after the remove button.
-                    let card_width = (ui.available_width() - 28.0).max(80.0);
+                    let card_width =
+                        (ui.available_width() - IconBox::Sm.side(&m) - ui.spacing().item_spacing.x)
+                            .max(80.0);
                     let focused = tab.focus == Some(ScriptFocus::Queued(row.token));
                     let (label, color) =
                         status_badge(ui, &row.status, tab.outcomes.get(&row.token));
@@ -591,7 +618,7 @@ fn queue_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
                                             ui.with_layout(
                                                 Layout::right_to_left(Align::Center),
                                                 |ui| {
-                                                    badge(ui, label, color);
+                                                    controls::badge(ui, label, color);
                                                     ui.add(
                                                         Label::new(
                                                             RichText::new(&row.name).strong(),
@@ -613,12 +640,11 @@ fn queue_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
                     }
 
                     let removable = !(running && row.status == ScriptStatus::Running);
-                    let remove = Button::new(icons::CLOSE).small();
-                    if ui
-                        .add_enabled(removable, remove)
-                        .on_hover_text("Remove from the queue")
-                        .clicked()
-                    {
+                    let remove = IconButton::new(svg::X, IconBox::Sm)
+                        .tip("Remove from the queue")
+                        .enabled(removable)
+                        .show(ui);
+                    if remove.clicked() {
                         action = Some(QueueAction::Remove(row.token));
                     }
                 });
@@ -672,31 +698,26 @@ fn detail_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
         .auto_shrink(false)
         .show(ui, |ui| {
             glass_card::group(ui, |ui| {
+                let m = Metrics::get(ui.ctx());
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.label(icons::icon_colored(
-                        icons::INFO,
-                        theme::accent_secondary(ui),
-                    ));
+                    ui.add(svg::INFO.image(m.icon_md).tint(theme::accent_secondary(ui)));
                     ui.label(RichText::new(&name).strong().color(theme::strong_text(ui)));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui
-                            .small_button(icons::CLOSE)
-                            .on_hover_text("Close")
-                            .clicked()
+                        if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Close").clicked()
                         {
                             close = true;
                         }
                     });
                 });
-                glass_card::hairline(ui);
+                controls::hairline(ui);
 
                 if let Some(def) = def {
                     definition_rows(ui, def);
                 }
                 if let Some(status) = status {
-                    ui.add_space(6.0);
-                    glass_card::hairline(ui);
+                    ui.add_space(m.gap.y);
+                    controls::hairline(ui);
                     kv_row(ui, "Status", &status.to_string());
                     if let Some(outcome) = outcome {
                         outcome_rows(ui, outcome);
@@ -710,6 +731,7 @@ fn detail_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
 }
 
 fn definition_rows(ui: &mut Ui, def: &ScriptDef) {
+    let m = Metrics::get(ui.ctx());
     kv_row(ui, "Category", category_display_name(&def.category()));
     kv_row(ui, "Time limit", &format_budget(def.timeout_secs));
     let elevation = match def.elevation {
@@ -736,7 +758,7 @@ fn definition_rows(ui: &mut Ui, def: &ScriptDef) {
         &def.detail
     };
     if !about.trim().is_empty() {
-        ui.add_space(4.0);
+        ui.add_space(m.gap.y / 2.0);
         expandable_text(ui, def.id.as_str(), about, 3);
     }
 
@@ -746,11 +768,11 @@ fn definition_rows(ui: &mut Ui, def: &ScriptDef) {
         ("FAIL", theme::error(ui), def.fail.as_deref()),
     ];
     if criteria.iter().any(|(_, _, text)| text.is_some()) {
-        ui.add_space(4.0);
+        ui.add_space(m.gap.y / 2.0);
         for (label, color, text) in criteria {
             if let Some(text) = text {
                 ui.horizontal_top(|ui| {
-                    badge(ui, label, color);
+                    controls::badge(ui, label, color);
                     ui.add(Label::new(text).wrap());
                 });
             }
@@ -761,7 +783,7 @@ fn definition_rows(ui: &mut Ui, def: &ScriptDef) {
 fn outcome_rows(ui: &mut Ui, outcome: &ScriptOutcome) {
     let (label, color) = result_badge(ui, &outcome.result);
     ui.horizontal_top(|ui| {
-        badge(ui, label, color);
+        controls::badge(ui, label, color);
         ui.add(Label::new(outcome.result.message()).wrap());
     });
     kv_row(
@@ -781,41 +803,39 @@ fn outcome_rows(ui: &mut Ui, outcome: &ScriptOutcome) {
 }
 
 fn log_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
-    ui.horizontal(|ui| {
-        ui.label(icons::icon_colored(
-            icons::SCROLL,
-            theme::accent_secondary(ui),
-        ));
+    let m = Metrics::get(ui.ctx());
+    controls::bar(ui, BarKind::Header, |ui| {
+        ui.add(
+            svg::SCROLL
+                .image(m.icon_md)
+                .tint(theme::accent_secondary(ui)),
+        );
         ui.label(RichText::new("Log").strong().color(theme::strong_text(ui)));
         let filters = [
-            ("All", None),
-            ("Info", Some(LogLevel::Info)),
-            ("OK", Some(LogLevel::Success)),
-            ("Warn", Some(LogLevel::Warning)),
-            ("Error", Some(LogLevel::Error)),
+            (svg::LIST, "All", None),
+            (svg::INFO, "Info", Some(LogLevel::Info)),
+            (svg::CHECK_CIRCLE, "OK", Some(LogLevel::Success)),
+            (svg::WARNING, "Warn", Some(LogLevel::Warning)),
+            (svg::X_CIRCLE, "Error", Some(LogLevel::Error)),
         ];
-        for (label, level) in filters {
-            ui.framed_selectable_value(&mut tab.log_filter, level, label);
+        for (icon, label, level) in filters {
+            if controls::pill(ui, icon, label, tab.log_filter == level).clicked() {
+                tab.log_filter = level;
+            }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui
-                .small_button(icons::TRASH)
-                .on_hover_text("Clear the log")
-                .clicked()
+            if controls::icon_button(ui, svg::TRASH, IconBox::Md, false, "Clear the log").clicked()
             {
                 tab.state.clear_logs();
             }
-            if ui
-                .small_button(icons::COPY)
-                .on_hover_text("Copy the shown lines")
+            if controls::icon_button(ui, svg::COPY, IconBox::Md, false, "Copy the shown lines")
                 .clicked()
             {
                 ui.ctx().copy_text(export_log(tab));
             }
-            ui.checkbox(&mut tab.auto_scroll_logs, "Follow");
+            controls::toggle(ui, &mut tab.auto_scroll_logs, "Follow");
         });
     });
-    glass_card::hairline(ui);
 
     let filter = tab.log_filter;
     let rows: Vec<usize> = tab
@@ -827,17 +847,9 @@ fn log_panel(ui: &mut Ui, tab: &mut EguiScriptsTab) {
         .map(|(i, _)| i)
         .collect();
     if rows.is_empty() {
-        ui.vertical_centered(|ui| {
-            ui.add_space(24.0);
-            ui.label(
-                RichText::new("No log entries yet")
-                    .italics()
-                    .color(theme::weak_text(ui)),
-            );
-        });
+        controls::empty_state(ui, svg::SCROLL, "No log entries yet", "", &[]);
         return;
     }
-
     let row_height = ui
         .spacing()
         .interact_size
@@ -974,14 +986,14 @@ fn requirement_label(requirement: &Requirement) -> &'static str {
     }
 }
 
-fn category_glyph(category: &ScriptCategory) -> &'static str {
+fn category_icon(category: &ScriptCategory) -> Icon {
     match category {
-        ScriptCategory::Tuneup => icons::WRENCH,
-        ScriptCategory::Informational => icons::INFO,
-        ScriptCategory::JunkwareRemoval => icons::TRASH,
-        ScriptCategory::StressTests => icons::FLASK,
-        ScriptCategory::UserScripts(_) => icons::FILE_TEXT,
-        ScriptCategory::Custom(_) => icons::GEAR,
+        ScriptCategory::Tuneup => svg::WRENCH,
+        ScriptCategory::Informational => svg::INFO,
+        ScriptCategory::JunkwareRemoval => svg::TRASH,
+        ScriptCategory::StressTests => svg::FLASK,
+        ScriptCategory::UserScripts(_) => svg::FILE_TEXT,
+        ScriptCategory::Custom(_) => svg::GEAR,
     }
 }
 

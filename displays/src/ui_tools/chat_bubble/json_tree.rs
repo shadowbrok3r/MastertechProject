@@ -1,20 +1,18 @@
-//! Collapsible JSON tree: a framed toggle and copy button per container, leaves as wrapped text.
+//! Collapsible JSON tree: a tinted toggle and copy button per container, leaves as wrapped text.
 
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, Id, Layout, RichText, Stroke, TextFormat, Ui,
-    text::LayoutJob,
+    self, Align, Color32, Id, Layout, Stroke, TextFormat, Ui, pos2, text::LayoutJob, vec2,
 };
 use serde_json::Value;
 
-use super::{ChatStyle, pane, shell, tinted, wrap_width};
-use crate::ui_tools::icons;
+use super::{ChatStyle, one_row, row_icon, shell, tinted_row, wrap_width};
+use crate::ui_tools::controls::{IconBox, IconButton, Metrics};
+use crate::ui_tools::icons::svg;
 
 /// Pixels each nesting level is inset by.
 const INDENT: f32 = 12.0;
 /// Longest string shown inline with its key.
 const INLINE: usize = 60;
-/// Width of a header row's copy button.
-const COPY_W: f32 = 30.0;
 const ROW_H: f32 = 20.0;
 
 /// What a node is called in its header or on its line.
@@ -40,34 +38,41 @@ fn node(ui: &mut Ui, id: Id, label: Label<'_>, v: &Value, depth: usize, style: &
 fn container(ui: &mut Ui, id: Id, label: Label<'_>, v: &Value, depth: usize, style: &ChatStyle) {
     let open_id = id.with("open");
     let mut open = ui.data_mut(|d| *d.get_temp_mut_or(open_id, depth == 0));
+    let m = Metrics::get(ui.ctx());
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let w = (ui.available_width() - COPY_W).max(48.0);
-        let text = RichText::new(header(&label, v, open))
-            .font(style.mono.clone())
-            .color(style.tertiary);
-        let clicked = tinted(ui, style.primary_hue, |ui| {
-            ui.add_sized(
-                [w, ROW_H],
-                egui::Button::new((text, egui::Atom::grow()))
-                    .wrap_mode(egui::TextWrapMode::Truncate),
-            )
-        })
-        .clicked();
-        if clicked {
+        ui.spacing_mut().item_spacing.x = m.gap.x / 2.0;
+        let copy_w = IconBox::Sm.side(&m) + ui.spacing().item_spacing.x;
+        let w = (ui.available_width() - copy_w).max(48.0);
+        let row = tinted_row(ui, vec2(w, ROW_H), style.primary_hue, style.radius);
+        if ui.is_rect_visible(row.rect) {
+            let rect = row.rect;
+            let chevron = if open {
+                svg::CARET_DOWN
+            } else {
+                svg::CARET_RIGHT
+            };
+            let x = row_icon(
+                ui,
+                chevron,
+                rect.left() + m.gap.x / 2.0,
+                rect,
+                style.tertiary,
+            );
+            let job =
+                LayoutJob::simple_singleline(header(&label, v), style.mono.clone(), style.tertiary);
+            let galley = one_row(ui, job, rect.right() - x - m.gap.x / 2.0);
+            let y = (rect.center().y - galley.size().y / 2.0).round();
+            ui.painter().galley(pos2(x, y), galley, style.tertiary);
+        }
+        if row.clicked() {
             open = !open;
             ui.data_mut(|d| d.insert_temp(open_id, open));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let copy = egui::Button::new(RichText::new(icons::COPY).font(style.small.clone()))
-                .fill(pane(style.primary_hue, 0.06))
-                .stroke(Stroke::new(1.0, style.rim))
-                .corner_radius(CornerRadius::same(5));
-            if ui
-                .add_sized([COPY_W - 4.0, ROW_H], copy)
-                .on_hover_text("Copy this JSON")
-                .clicked()
-            {
+            let copy = IconButton::new(svg::COPY, IconBox::Sm)
+                .tip("Copy this JSON")
+                .show(ui);
+            if copy.clicked() {
                 ui.ctx()
                     .copy_text(serde_json::to_string_pretty(v).unwrap_or_default());
             }
@@ -101,13 +106,8 @@ fn container(ui: &mut Ui, id: Id, label: Label<'_>, v: &Value, depth: usize, sty
     );
 }
 
-/// The text of a container's header button.
-fn header(label: &Label<'_>, v: &Value, open: bool) -> String {
-    let marker = if open {
-        icons::CHEV_OPEN
-    } else {
-        icons::CHEV_CLOSED
-    };
+/// The text of a container's header row.
+fn header(label: &Label<'_>, v: &Value) -> String {
     let braces = match v {
         Value::Object(o) if o.is_empty() => "{}".to_string(),
         Value::Array(a) if a.is_empty() => "[]".to_string(),
@@ -116,9 +116,9 @@ fn header(label: &Label<'_>, v: &Value, open: bool) -> String {
         _ => String::new(),
     };
     match label {
-        Label::Root => format!("{marker} {braces}"),
-        Label::Key(k) => format!("{marker} \"{k}\": {braces}"),
-        Label::Index(i) => format!("{marker} [{i}]: {braces}"),
+        Label::Root => braces,
+        Label::Key(k) => format!("\"{k}\": {braces}"),
+        Label::Index(i) => format!("[{i}]: {braces}"),
     }
 }
 
@@ -207,25 +207,10 @@ mod tests {
     #[test]
     fn headers_name_the_node_and_count_its_children() {
         let v = json!({"a": 1, "b": 2, "c": 3});
-        assert_eq!(
-            header(&Label::Root, &v, false),
-            format!("{} {{3}}", icons::CHEV_CLOSED)
-        );
-        assert_eq!(
-            header(&Label::Key("args"), &v, true),
-            format!("{} \"args\": {{3}}", icons::CHEV_OPEN)
-        );
-        assert_eq!(
-            header(&Label::Index(2), &json!([1]), false),
-            format!("{} [2]: [1]", icons::CHEV_CLOSED)
-        );
-        assert_eq!(
-            header(&Label::Root, &json!({}), true),
-            format!("{} {{}}", icons::CHEV_OPEN)
-        );
-        assert_eq!(
-            header(&Label::Root, &json!([]), true),
-            format!("{} []", icons::CHEV_OPEN)
-        );
+        assert_eq!(header(&Label::Root, &v), "{3}");
+        assert_eq!(header(&Label::Key("args"), &v), "\"args\": {3}");
+        assert_eq!(header(&Label::Index(2), &json!([1])), "[2]: [1]");
+        assert_eq!(header(&Label::Root, &json!({})), "{}");
+        assert_eq!(header(&Label::Root, &json!([])), "[]");
     }
 }

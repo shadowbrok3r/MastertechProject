@@ -2,17 +2,42 @@
 //! fleet crash-intel (prior sightings/verdicts, known-bad-driver hits,
 //! sighting ingest + verdict recording).
 
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::schema::{
-    module_stem, CrashIngest, CrashSignature, CrashVerdict, KnownBadDriver, ParsedCrash,
-    SightingContext,
+    CrashIngest, CrashSignature, CrashVerdict, KnownBadDriver, ParsedCrash, SightingContext,
+    module_stem,
 };
 use database::shape_walk::{self, Row};
+use displays::ui_tools::{
+    controls::{self, ButtonKind, Metrics, SpinnerSize, TextButton, TextField, Tokens},
+    fonts, glass_card,
+    icons::svg,
+};
 use dump_triage::KernelDumpTriage;
-use eframe::egui::{self, Color32, Grid, RichText, TextEdit, Ui, Widget};
+use eframe::egui::{self, Color32, Grid, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
-use super::{listing, listing_rows, MiniDumpApp};
+use super::{MiniDumpApp, listing, listing_rows};
+
+/// Bugcheck title size.
+const TITLE_PT: f32 = 18.0;
+/// Hex-dump text size.
+const HEX_PT: f32 = 11.0;
+/// Width of the client-link field.
+const LINK_W: f32 = 200.0;
+/// Width of the verdict and fix fields.
+const VERDICT_W: f32 = 360.0;
+/// Width of the confidence dropdown.
+const CONFIDENCE_W: f32 = 140.0;
+/// Width of the driver filter.
+const FILTER_W: f32 = 220.0;
+/// Verdict confidence values and their labels.
+const CONFIDENCE: [(&str, &str); 4] = [
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("confirmed", "Confirmed"),
+];
 
 /// Sort key for the module table.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -123,7 +148,11 @@ fn to_parsed_crash(triage: &KernelDumpTriage, dump_name: Option<String>) -> Pars
     );
     // Normalized crash-time module names — the fleet co-occurrence asset.
     let loaded_modules: Vec<String> = {
-        let mut v: Vec<String> = triage.drivers.iter().map(|d| module_stem(&d.name)).collect();
+        let mut v: Vec<String> = triage
+            .drivers
+            .iter()
+            .map(|d| module_stem(&d.name))
+            .collect();
         v.sort();
         v.dedup();
         v
@@ -164,19 +193,39 @@ fn unix_to_string(secs: i64) -> String {
         .unwrap_or_else(|| secs.to_string())
 }
 
+/// Success or error line for a finished background request.
+fn result_line(ui: &mut Ui, result: &Result<String, String>) {
+    let t = Tokens::get(ui.ctx());
+    let (icon, text, tone) = match result {
+        Ok(msg) => (svg::CHECK_CIRCLE, msg, t.success),
+        Err(e) => (svg::X_CIRCLE, e, t.error),
+    };
+    controls::status_label(ui, icon, text, tone);
+}
+
 impl MiniDumpApp {
     pub fn ui_kernel(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
         let triage = match &self.kernel_triage {
             Some(Ok(t)) => t.clone(),
             Some(Err(e)) => {
-                ui.colored_label(
-                    ui.style().visuals.error_fg_color,
-                    format!("Kernel dump triage failed: {e}"),
+                controls::status_label(
+                    ui,
+                    svg::WARNING_OCTAGON,
+                    &format!("Kernel dump triage failed: {e}"),
+                    t.error,
                 );
                 return;
             }
             None => {
-                ui.label("No kernel dump loaded.");
+                controls::empty_state(
+                    ui,
+                    svg::FILE_X,
+                    "No kernel dump loaded.",
+                    "Open a kernel dump from the Settings tab.",
+                    &[],
+                );
                 return;
             }
         };
@@ -193,28 +242,34 @@ impl MiniDumpApp {
 
         // Title row.
         ui.horizontal(|ui| {
-            ui.heading(
-                RichText::new(format!("{} ({})", triage.bugcheck_name, triage.bugcheck_code))
-                    .color(ui.style().visuals.error_fg_color),
+            ui.add(svg::WARNING_OCTAGON.image(m.icon_lg).tint(t.error));
+            ui.label(
+                RichText::new(format!(
+                    "{} ({})",
+                    triage.bugcheck_name, triage.bugcheck_code
+                ))
+                .font(fonts::semibold(TITLE_PT))
+                .color(t.error),
             );
-            ui.label(RichText::new(&triage.dump_type_name).weak());
+            controls::badge(ui, &triage.dump_type_name, t.text_dim);
             if let Some(name) = &dump_name {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(name).weak().monospace());
+                    ui.label(RichText::new(name).color(t.text_dim).monospace());
+                    ui.add(svg::FILE.image(m.icon_sm).tint(t.text_dim));
                 });
             }
         });
-        ui.separator();
+        controls::hairline(ui);
 
         // Top summary: bugcheck+params on the left, blame+fleet on the right.
         ui.columns(2, |cols| {
             render_bugcheck_panel(&mut cols[0], &ctx, &triage);
             render_blame(&mut cols[1], &triage);
-            cols[1].add_space(6.0);
+            cols[1].add_space(m.gap.y);
             self.render_fleet_intel(&mut cols[1], &triage, dump_name);
         });
 
-        ui.add_space(4.0);
+        ui.add_space(m.gap.y);
         render_registers(ui, &ctx, &triage);
         render_stack(ui, &triage);
         self.render_modules(ui, &triage);
@@ -299,78 +354,102 @@ impl MiniDumpApp {
         triage: &KernelDumpTriage,
         dump_name: Option<String>,
     ) {
-        ui.label(RichText::new("Fleet Crash Intel").strong().size(14.0));
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
+        glass_card::card_header(ui, svg::SHARE_NETWORK, "Fleet Crash Intel", None);
 
         let Some(lookup) = &self.kernel_intel.lookup else {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Checking fleet history…");
-            });
+            controls::loading_row(ui, "Checking fleet history…");
             return;
         };
 
         if let Some(err) = &lookup.error {
-            ui.colored_label(ui.style().visuals.warn_fg_color, err);
+            controls::status_label(ui, svg::WARNING, err, t.warn);
         }
 
         match &lookup.signature {
             Some(sig) => {
-                ui.label(format!(
-                    "Seen {} time(s) on {} machine(s), last {}",
-                    sig.sighting_count,
-                    sig.machines.len(),
-                    sig.last_seen,
-                ));
+                controls::status_label(
+                    ui,
+                    svg::CLOCK_COUNTER_CLOCKWISE,
+                    &format!(
+                        "Seen {} time(s) on {} machine(s), last {}",
+                        sig.sighting_count,
+                        sig.machines.len(),
+                        sig.last_seen,
+                    ),
+                    t.text,
+                );
                 if lookup.verdicts.is_empty() {
-                    ui.colored_label(
-                        ui.style().visuals.weak_text_color(),
+                    controls::status_label(
+                        ui,
+                        svg::NOTE,
                         "No verdicts recorded for this signature yet.",
+                        t.text_dim,
                     );
                 }
                 for v in &lookup.verdicts {
-                    ui.group(|ui| {
+                    glass_card::group(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(&v.confidence).small().strong());
+                            controls::badge(ui, &v.confidence, confidence_tone(&t, &v.confidence));
+                            ui.add(svg::USER.image(m.icon_sm).tint(t.text_dim));
                             ui.label(RichText::new(format!("{} ({})", v.author, v.source)).small());
-                            ui.label(RichText::new(v.created_at.to_string()).weak().small());
+                            ui.label(
+                                RichText::new(v.created_at.to_string())
+                                    .color(t.text_faint)
+                                    .small(),
+                            );
                         });
                         ui.label(&v.verdict);
                         if !v.fix.trim().is_empty() {
-                            ui.label(RichText::new(format!("Fix: {}", v.fix)).italics());
+                            ui.horizontal(|ui| {
+                                ui.add(svg::WRENCH.image(m.icon_sm).tint(t.success));
+                                ui.label(RichText::new(format!("Fix: {}", v.fix)).italics());
+                            });
                         }
                     });
                 }
             }
             None => {
-                ui.colored_label(
-                    ui.style().visuals.weak_text_color(),
+                controls::status_label(
+                    ui,
+                    svg::SPARKLE,
                     "New signature — not seen in the fleet before.",
+                    t.text_dim,
                 );
             }
         }
 
         if !lookup.known_bad.is_empty() {
-            ui.add_space(4.0);
+            ui.add_space(m.gap.y / 2.0);
             for (driver, row) in &lookup.known_bad {
-                ui.colored_label(
-                    ui.style().visuals.error_fg_color,
-                    format!(
-                        "⚠ Known-bad driver loaded: {} — {} (fix: {})",
+                controls::status_label(
+                    ui,
+                    svg::WARNING,
+                    &format!(
+                        "Known-bad driver loaded: {} — {} (fix: {})",
                         driver,
-                        if row.symptom.is_empty() { "see fleet notes" } else { &row.symptom },
+                        if row.symptom.is_empty() {
+                            "see fleet notes"
+                        } else {
+                            &row.symptom
+                        },
                         if row.fix.is_empty() { "n/a" } else { &row.fix },
                     ),
+                    t.error,
                 );
             }
         }
 
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
         ui.horizontal(|ui| {
-            ui.label("Link to client:");
-            TextEdit::singleline(&mut self.kernel_intel.ingest_link_cs)
-                .hint_text("connection_string (optional)")
-                .desired_width(200.0)
-                .ui(ui)
+            controls::icon_label(ui, svg::LINK, "Link to client");
+            TextField::new(&mut self.kernel_intel.ingest_link_cs)
+                .hint("connection_string (optional)")
+                .mono(true)
+                .width(LINK_W)
+                .id_salt("kernel_intel.link_cs")
+                .show(ui)
                 .on_hover_text(
                     "Optional. When set to a connected client's connection_string, the sighting \
                      links to that client's open session/task/computer and dedups on re-record. \
@@ -380,8 +459,11 @@ impl MiniDumpApp {
         ui.horizontal(|ui| {
             let can_ingest = !self.kernel_intel.ingest_running
                 && !matches!(self.kernel_intel.ingest_status, Some(Ok(_)));
-            if ui
-                .add_enabled(can_ingest, egui::Button::new("Record sighting to fleet intel"))
+            let ingest = TextButton::new("Record sighting to fleet intel")
+                .icon(svg::CLOUD_ARROW_UP)
+                .enabled(can_ingest)
+                .show(ui);
+            if ingest
                 .on_hover_text(
                     "Upserts the crash signature and adds a sighting row for this dump, \
                      so fleet history reflects bench analysis too.",
@@ -412,55 +494,60 @@ impl MiniDumpApp {
                 });
             }
             if self.kernel_intel.ingest_running {
-                ui.spinner();
-            }
-            match &self.kernel_intel.ingest_status {
-                Some(Ok(msg)) => {
-                    ui.colored_label(Color32::from_rgb(100, 200, 100), msg);
-                }
-                Some(Err(e)) => {
-                    ui.colored_label(ui.style().visuals.error_fg_color, e);
-                }
-                None => {}
+                controls::spinner(ui, SpinnerSize::Sm);
             }
         });
+        if let Some(status) = &self.kernel_intel.ingest_status {
+            result_line(ui, status);
+        }
 
-        ui.add_space(6.0);
-        ui.collapsing("Record verdict", |ui| {
-            Grid::new("kernel_verdict_grid").num_columns(2).show(ui, |ui| {
-                ui.label("Verdict");
-                TextEdit::singleline(&mut self.kernel_intel.verdict_text)
-                    .hint_text("Root cause, e.g. 'unstable XMP corrupting memory'")
-                    .desired_width(360.0)
-                    .ui(ui);
-                ui.end_row();
-                ui.label("Fix");
-                TextEdit::singleline(&mut self.kernel_intel.fix_text)
-                    .hint_text("What resolved it")
-                    .desired_width(360.0)
-                    .ui(ui);
-                ui.end_row();
-                ui.label("Confidence");
-                egui::ComboBox::from_id_salt("kernel_verdict_confidence")
-                    .selected_text(&self.kernel_intel.confidence)
-                    .show_ui(ui, |ui| {
-                        for c in ["low", "medium", "high", "confirmed"] {
-                            ui.selectable_value(
-                                &mut self.kernel_intel.confidence,
-                                c.to_string(),
-                                c,
-                            );
-                        }
-                    });
-                ui.end_row();
-            });
+        ui.add_space(m.gap.y);
+        if controls::Section::new("kernel_record_verdict", "Record verdict")
+            .icon(svg::GAVEL)
+            .default_open(false)
+            .header(ui)
+        {
+            Grid::new("kernel_verdict_grid")
+                .num_columns(2)
+                .spacing(m.gap)
+                .show(ui, |ui| {
+                    controls::icon_label(ui, svg::NOTE_PENCIL, "Verdict");
+                    TextField::new(&mut self.kernel_intel.verdict_text)
+                        .hint("Root cause, e.g. 'unstable XMP corrupting memory'")
+                        .width(VERDICT_W)
+                        .id_salt("kernel_intel.verdict")
+                        .show(ui);
+                    ui.end_row();
+                    controls::icon_label(ui, svg::WRENCH, "Fix");
+                    TextField::new(&mut self.kernel_intel.fix_text)
+                        .hint("What resolved it")
+                        .width(VERDICT_W)
+                        .id_salt("kernel_intel.fix")
+                        .show(ui);
+                    ui.end_row();
+                    controls::icon_label(ui, svg::GAUGE, "Confidence");
+                    let options: Vec<(String, &str)> = CONFIDENCE
+                        .iter()
+                        .map(|(value, label)| (value.to_string(), *label))
+                        .collect();
+                    controls::dropdown(
+                        ui,
+                        "kernel_verdict_confidence",
+                        &mut self.kernel_intel.confidence,
+                        &options,
+                        CONFIDENCE_W,
+                    );
+                    ui.end_row();
+                });
             ui.horizontal(|ui| {
                 let can_record = !self.kernel_intel.verdict_running
                     && !self.kernel_intel.verdict_text.trim().is_empty();
-                if ui
-                    .add_enabled(can_record, egui::Button::new("Record verdict"))
-                    .clicked()
-                {
+                let record = TextButton::new("Record verdict")
+                    .icon(svg::FLOPPY_DISK)
+                    .kind(ButtonKind::Primary)
+                    .enabled(can_record)
+                    .show(ui);
+                if record.clicked() {
                     self.kernel_intel.verdict_running = true;
                     self.kernel_intel.verdict_status = None;
                     let code = triage.bugcheck_code.clone();
@@ -476,7 +563,13 @@ impl MiniDumpApp {
                         let result = async {
                             let sig = CrashSignature::ensure(&code, &module).await?;
                             CrashVerdict::create(
-                                &sig.id, &verdict, &fix, &confidence, &author, "tech", None,
+                                &sig.id,
+                                &verdict,
+                                &fix,
+                                &confidence,
+                                &author,
+                                "tech",
+                                None,
                             )
                             .await?;
                             anyhow::Ok("Verdict recorded.".to_string())
@@ -487,19 +580,23 @@ impl MiniDumpApp {
                     });
                 }
                 if self.kernel_intel.verdict_running {
-                    ui.spinner();
-                }
-                match &self.kernel_intel.verdict_status {
-                    Some(Ok(msg)) => {
-                        ui.colored_label(Color32::from_rgb(100, 200, 100), msg);
-                    }
-                    Some(Err(e)) => {
-                        ui.colored_label(ui.style().visuals.error_fg_color, e);
-                    }
-                    None => {}
+                    controls::spinner(ui, SpinnerSize::Sm);
                 }
             });
-        });
+            if let Some(status) = &self.kernel_intel.verdict_status {
+                result_line(ui, status);
+            }
+        }
+    }
+}
+
+/// Badge colour for a verdict's confidence.
+fn confidence_tone(t: &Tokens, confidence: &str) -> Color32 {
+    match confidence {
+        "confirmed" => t.success,
+        "high" => t.info,
+        "low" => t.warn,
+        _ => t.secondary,
     }
 }
 
@@ -533,10 +630,18 @@ fn render_bugcheck_panel(ui: &mut Ui, ctx: &egui::Context, triage: &KernelDumpTr
         hover: hover("Number Processors"),
     });
     if let Some(rip) = &triage.rip {
-        meta.push(Row { label: "RIP".into(), value: rip.clone(), hover: hover("Rip") });
+        meta.push(Row {
+            label: "RIP".into(),
+            value: rip.clone(),
+            hover: hover("Rip"),
+        });
     }
     if let Some(rsp) = &triage.rsp {
-        meta.push(Row { label: "RSP".into(), value: rsp.clone(), hover: hover("Rsp") });
+        meta.push(Row {
+            label: "RSP".into(),
+            value: rsp.clone(),
+            hover: hover("Rsp"),
+        });
     }
     if let Some(exc) = &triage.exception_code {
         meta.push(Row {
@@ -545,63 +650,70 @@ fn render_bugcheck_panel(ui: &mut Ui, ctx: &egui::Context, triage: &KernelDumpTr
             hover: hover("Exception Code"),
         });
     }
+    glass_card::card_header(ui, svg::INFO, "Crash details", None);
     listing_rows(ui, ctx, 0xB50C_0001, meta);
 
     if !triage.bugcheck_parameters.is_empty() {
-        ui.add_space(4.0);
-        ui.label(RichText::new("Bugcheck parameters").strong());
+        let m = Metrics::get(ui.ctx());
+        ui.add_space(m.gap.y);
+        glass_card::card_header(ui, svg::LIST_NUMBERS, "Bugcheck parameters", None);
         let params = triage
             .bugcheck_parameters
             .iter()
             .enumerate()
             .map(|(i, p)| (format!("P{}", i + 1), p.clone()));
         listing(ui, ctx, 0xB50C_0002, params);
+        let dim = Tokens::get(ui.ctx()).text_dim;
         for note in &triage.parameter_notes {
-            ui.label(RichText::new(note).italics().weak());
+            ui.label(RichText::new(note).italics().color(dim));
         }
     }
 }
 
 fn render_blame(ui: &mut Ui, triage: &KernelDumpTriage) {
-    ui.label(RichText::new("Blame").strong().size(14.0));
+    let t = Tokens::get(ui.ctx());
+    glass_card::card_header(ui, svg::CROSSHAIR, "Blame", None);
     match &triage.blamed_module {
         Some(m) => {
             ui.horizontal(|ui| {
-                ui.label("Probable module:");
-                ui.label(
-                    RichText::new(m)
-                        .monospace()
-                        .strong()
-                        .color(ui.style().visuals.warn_fg_color),
-                );
+                controls::icon_label(ui, svg::PUZZLE_PIECE, "Probable module:");
+                ui.label(RichText::new(m).monospace().strong().color(t.warn));
             });
         }
         None if !triage.warnings.is_empty() => {
-            ui.colored_label(
-                ui.style().visuals.error_fg_color,
+            controls::status_label(
+                ui,
+                svg::X_CIRCLE,
                 "Blame unavailable — the dump's driver list could not be parsed.",
+                t.error,
             );
         }
         None => {
-            ui.colored_label(
-                ui.style().visuals.weak_text_color(),
+            controls::status_label(
+                ui,
+                svg::QUESTION,
                 "No module attribution available (RIP outside known module ranges).",
+                t.text_dim,
             );
         }
     }
     for warning in &triage.warnings {
-        ui.label(RichText::new(warning).italics().color(ui.style().visuals.warn_fg_color));
+        controls::status_label(ui, svg::WARNING, warning, t.warn);
     }
     if triage.rip_in_kernel_image {
-        ui.label(
-            RichText::new(
-                "RIP is inside the kernel image itself. Repeated dumps faulting in nt with \
-                 varied processes and no recurring third-party driver usually indicate \
-                 memory-subsystem instability (bad RAM / XMP / FCLK), not a driver bug.",
-            )
-            .italics()
-            .weak(),
-        );
+        ui.horizontal_top(|ui| {
+            let size = Metrics::get(ui.ctx()).icon_sm;
+            ui.add(svg::MEMORY.image(size).tint(t.text_dim));
+            ui.label(
+                RichText::new(
+                    "RIP is inside the kernel image itself. Repeated dumps faulting in nt with \
+                     varied processes and no recurring third-party driver usually indicate \
+                     memory-subsystem instability (bad RAM / XMP / FCLK), not a driver bug.",
+                )
+                .italics()
+                .color(t.text_dim),
+            );
+        });
     }
 }
 
@@ -610,83 +722,96 @@ fn render_registers(ui: &mut Ui, ctx: &egui::Context, triage: &KernelDumpTriage)
     if triage.registers.is_empty() {
         return;
     }
-    ui.collapsing(RichText::new("Registers").strong(), |ui| {
+    if controls::Section::new("kernel_registers", "Registers")
+        .icon(svg::CPU)
+        .default_open(false)
+        .header(ui)
+    {
         listing_rows(
             ui,
             ctx,
             0xB50C_0003,
-            triage
-                .registers
-                .iter()
-                .cloned()
-                .map(|(label, value)| Row { label, value, hover: None }),
+            triage.registers.iter().cloned().map(|(label, value)| Row {
+                label,
+                value,
+                hover: None,
+            }),
         );
-    });
+    }
 }
 
 /// Scanned-stack backtrace — mirrors the app-crash 5-column table.
 fn render_stack(ui: &mut Ui, triage: &KernelDumpTriage) {
+    let t = Tokens::get(ui.ctx());
+    let m = Metrics::get(ui.ctx());
     let n = triage.scanned_stack.len();
-    egui::CollapsingHeader::new(RichText::new(format!("Call stack ({n})")).strong())
-        .default_open(true)
-        .show(ui, |ui| {
-            if triage.scanned_stack.is_empty() {
-                ui.colored_label(
-                    ui.style().visuals.weak_text_color(),
-                    "No stack available for this dump type. Full/BMP/live dumps and \
-                     triage minidumps with an embedded call stack populate this.",
-                );
-                return;
-            }
-            ui.label(
-                RichText::new(
-                    "Scanned frames are heuristic (stack values that land in a module \
-                     range); they can include stale addresses.",
-                )
-                .weak()
-                .small(),
-            );
-            TableBuilder::new(ui)
-                .id_salt("kernel_stack_table")
-                .striped(true)
-                .vscroll(false)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::initial(44.0).at_least(36.0))
-                .column(Column::initial(60.0).at_least(48.0))
-                .column(Column::initial(160.0).at_least(80.0))
-                .column(Column::remainder().at_least(120.0))
-                .resizable(true)
-                .header(18.0, |mut h| {
-                    h.col(|ui| { ui.strong("#"); });
-                    h.col(|ui| { ui.strong("Trust"); });
-                    h.col(|ui| { ui.strong("Module"); });
-                    h.col(|ui| { ui.strong("Address / offset"); });
-                })
-                .body(|mut body| {
-                    for (i, f) in triage.scanned_stack.iter().enumerate() {
-                        body.row(18.0, |mut row| {
-                            row.col(|ui| { ui.monospace(i.to_string()); });
-                            row.col(|ui| {
-                                let color = if f.trust == "context" {
-                                    ui.style().visuals.warn_fg_color
-                                } else {
-                                    ui.style().visuals.weak_text_color()
-                                };
-                                ui.colored_label(color, &f.trust);
-                            });
-                            row.col(|ui| { ui.monospace(&f.module); });
-                            row.col(|ui| {
-                                ui.monospace(format!("{}+{:#x}", f.module, f.offset));
-                            });
-                        });
-                    }
+    if !controls::section_header(ui, "kernel_stack", svg::STACK, &format!("Call stack ({n})")) {
+        return;
+    }
+    if triage.scanned_stack.is_empty() {
+        controls::status_label(
+            ui,
+            svg::STACK,
+            "No stack available for this dump type. Full/BMP/live dumps and \
+             triage minidumps with an embedded call stack populate this.",
+            t.text_dim,
+        );
+        return;
+    }
+    controls::status_label(
+        ui,
+        svg::INFO,
+        "Scanned frames are heuristic (stack values that land in a module \
+         range); they can include stale addresses.",
+        t.text_faint,
+    );
+    TableBuilder::new(ui)
+        .id_salt("kernel_stack_table")
+        .striped(true)
+        .vscroll(false)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::initial(44.0).at_least(36.0))
+        .column(Column::initial(60.0).at_least(48.0))
+        .column(Column::initial(160.0).at_least(80.0))
+        .column(Column::remainder().at_least(120.0))
+        .resizable(true)
+        .header(m.row_h, |mut h| {
+            for title in ["#", "Trust", "Module", "Address / offset"] {
+                h.col(|ui| {
+                    controls::section_label(ui, title);
                 });
+            }
+        })
+        .body(|mut body| {
+            for (i, f) in triage.scanned_stack.iter().enumerate() {
+                body.row(m.row_h, |mut row| {
+                    row.col(|ui| {
+                        ui.monospace(i.to_string());
+                    });
+                    row.col(|ui| {
+                        let color = if f.trust == "context" {
+                            t.warn
+                        } else {
+                            t.text_dim
+                        };
+                        ui.colored_label(color, &f.trust);
+                    });
+                    row.col(|ui| {
+                        ui.monospace(&f.module);
+                    });
+                    row.col(|ui| {
+                        ui.monospace(format!("{}+{:#x}", f.module, f.offset));
+                    });
+                });
+            }
         });
 }
 
 /// Loaded-module table with a name filter and click-to-sort headers.
 impl MiniDumpApp {
     fn render_modules(&mut self, ui: &mut Ui, triage: &KernelDumpTriage) {
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
         let known_bad: Vec<String> = self
             .kernel_intel
             .lookup
@@ -695,102 +820,113 @@ impl MiniDumpApp {
             .unwrap_or_default();
         let blamed = triage.blamed_module.clone();
 
-        egui::CollapsingHeader::new(
-            RichText::new(format!("Loaded drivers ({})", triage.drivers.len())).strong(),
-        )
-        .show(ui, |ui| {
-            if triage.drivers.is_empty() {
-                ui.colored_label(
-                    ui.style().visuals.weak_text_color(),
-                    "No driver list available for this dump type.",
-                );
-                return;
-            }
+        let title = format!("Loaded drivers ({})", triage.drivers.len());
+        if !controls::Section::new("kernel_modules", &title)
+            .icon(svg::PUZZLE_PIECE)
+            .default_open(false)
+            .header(ui)
+        {
+            return;
+        }
+        if triage.drivers.is_empty() {
+            controls::status_label(
+                ui,
+                svg::PUZZLE_PIECE,
+                "No driver list available for this dump type.",
+                t.text_dim,
+            );
+            return;
+        }
 
-            ui.horizontal(|ui| {
-                ui.label("Filter:");
-                TextEdit::singleline(&mut self.kernel_intel.module_filter)
-                    .hint_text("driver name…")
-                    .desired_width(220.0)
-                    .ui(ui);
-                if ui.button("✕").on_hover_text("Clear filter").clicked() {
-                    self.kernel_intel.module_filter.clear();
-                }
-            });
+        controls::search_field(
+            ui,
+            &mut self.kernel_intel.module_filter,
+            "driver name…",
+            FILTER_W,
+        );
 
-            let filter = self.kernel_intel.module_filter.to_ascii_lowercase();
-            let mut rows: Vec<&dump_triage::DriverEntry> = triage
-                .drivers
-                .iter()
-                .filter(|d| filter.is_empty() || d.name.contains(&filter))
-                .collect();
-            let sort = self.kernel_intel.module_sort;
-            rows.sort_by(|a, b| match sort {
-                ModuleSort::Base => a.base.cmp(&b.base),
-                ModuleSort::Name => a.name.cmp(&b.name),
-                ModuleSort::Size => a.size.cmp(&b.size),
-            });
-            if self.kernel_intel.module_sort_desc {
-                rows.reverse();
-            }
-
-            let mut sort_header = |ui: &mut Ui, label: &str, key: ModuleSort| {
-                let active = self.kernel_intel.module_sort == key;
-                let arrow = if active {
-                    if self.kernel_intel.module_sort_desc { " ▼" } else { " ▲" }
-                } else {
-                    ""
-                };
-                if ui
-                    .selectable_label(active, RichText::new(format!("{label}{arrow}")).strong())
-                    .clicked()
-                {
-                    if active {
-                        self.kernel_intel.module_sort_desc = !self.kernel_intel.module_sort_desc;
-                    } else {
-                        self.kernel_intel.module_sort = key;
-                        self.kernel_intel.module_sort_desc = false;
-                    }
-                }
-            };
-
-            TableBuilder::new(ui)
-                .id_salt("kernel_module_table")
-                .striped(true)
-                .vscroll(false)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::remainder().at_least(160.0))
-                .column(Column::initial(150.0).at_least(100.0))
-                .column(Column::initial(90.0).at_least(60.0))
-                .resizable(true)
-                .header(20.0, |mut h| {
-                    h.col(|ui| sort_header(ui, "Driver", ModuleSort::Name));
-                    h.col(|ui| sort_header(ui, "Base", ModuleSort::Base));
-                    h.col(|ui| sort_header(ui, "Size", ModuleSort::Size));
-                })
-                .body(|mut body| {
-                    for d in rows {
-                        body.row(18.0, |mut row| {
-                            row.col(|ui| {
-                                let text = if known_bad.contains(&d.name) {
-                                    RichText::new(&d.name)
-                                        .monospace()
-                                        .color(ui.style().visuals.error_fg_color)
-                                } else if blamed.as_deref() == Some(d.name.as_str()) {
-                                    RichText::new(&d.name)
-                                        .monospace()
-                                        .color(ui.style().visuals.warn_fg_color)
-                                } else {
-                                    RichText::new(&d.name).monospace()
-                                };
-                                ui.label(text);
-                            });
-                            row.col(|ui| { ui.monospace(format!("{:#018x}", d.base)); });
-                            row.col(|ui| { ui.monospace(format!("{} KB", d.size / 1024)); });
-                        });
-                    }
-                });
+        let filter = self.kernel_intel.module_filter.to_ascii_lowercase();
+        let mut rows: Vec<&dump_triage::DriverEntry> = triage
+            .drivers
+            .iter()
+            .filter(|d| filter.is_empty() || d.name.contains(&filter))
+            .collect();
+        let sort = self.kernel_intel.module_sort;
+        rows.sort_by(|a, b| match sort {
+            ModuleSort::Base => a.base.cmp(&b.base),
+            ModuleSort::Name => a.name.cmp(&b.name),
+            ModuleSort::Size => a.size.cmp(&b.size),
         });
+        if self.kernel_intel.module_sort_desc {
+            rows.reverse();
+        }
+
+        let mut sort_header = |ui: &mut Ui, label: &str, key: ModuleSort| {
+            let active = self.kernel_intel.module_sort == key;
+            let (icon, kind) = match (active, self.kernel_intel.module_sort_desc) {
+                (true, true) => (svg::SORT_DESCENDING, ButtonKind::Neutral),
+                (true, false) => (svg::SORT_ASCENDING, ButtonKind::Neutral),
+                (false, _) => (svg::CARET_UP_DOWN, ButtonKind::Ghost),
+            };
+            if TextButton::new(label)
+                .icon(icon)
+                .kind(kind)
+                .show(ui)
+                .clicked()
+            {
+                if active {
+                    self.kernel_intel.module_sort_desc = !self.kernel_intel.module_sort_desc;
+                } else {
+                    self.kernel_intel.module_sort = key;
+                    self.kernel_intel.module_sort_desc = false;
+                }
+            }
+        };
+
+        TableBuilder::new(ui)
+            .id_salt("kernel_module_table")
+            .striped(true)
+            .vscroll(false)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::remainder().at_least(160.0))
+            .column(Column::initial(150.0).at_least(100.0))
+            .column(Column::initial(90.0).at_least(60.0))
+            .resizable(true)
+            .header(m.row_h, |mut h| {
+                h.col(|ui| sort_header(ui, "Driver", ModuleSort::Name));
+                h.col(|ui| sort_header(ui, "Base", ModuleSort::Base));
+                h.col(|ui| sort_header(ui, "Size", ModuleSort::Size));
+            })
+            .body(|mut body| {
+                for d in rows {
+                    body.row(m.row_h, |mut row| {
+                        row.col(|ui| {
+                            let flag = if known_bad.contains(&d.name) {
+                                Some((svg::WARNING_CIRCLE, t.error))
+                            } else if blamed.as_deref() == Some(d.name.as_str()) {
+                                Some((svg::CROSSHAIR, t.warn))
+                            } else {
+                                None
+                            };
+                            match flag {
+                                Some((icon, color)) => {
+                                    ui.add(icon.image(m.icon_sm).tint(color));
+                                    ui.label(RichText::new(&d.name).monospace().color(color));
+                                }
+                                None => {
+                                    ui.label(RichText::new(&d.name).monospace());
+                                }
+                            }
+                        });
+                        row.col(|ui| {
+                            ui.monospace(format!("{:#018x}", d.base));
+                        });
+                        row.col(|ui| {
+                            ui.monospace(format!("{} KB", d.size / 1024));
+                        });
+                    });
+                }
+            });
     }
 }
 
@@ -799,17 +935,22 @@ fn render_memory(ui: &mut Ui, triage: &KernelDumpTriage) {
     if triage.rip_region.is_none() && triage.rsp_region.is_none() {
         return;
     }
-    ui.collapsing(RichText::new("Memory").strong(), |ui| {
-        if let Some(r) = &triage.rip_region {
-            ui.label(RichText::new("Around RIP").weak());
-            hex_dump(ui, r);
-            ui.add_space(4.0);
-        }
-        if let Some(r) = &triage.rsp_region {
-            ui.label(RichText::new("At RSP").weak());
-            hex_dump(ui, r);
-        }
-    });
+    if !controls::Section::new("kernel_memory", "Memory")
+        .icon(svg::BINARY)
+        .default_open(false)
+        .header(ui)
+    {
+        return;
+    }
+    if let Some(r) = &triage.rip_region {
+        controls::section_label(ui, "Around RIP");
+        hex_dump(ui, r);
+        ui.add_space(Metrics::get(ui.ctx()).gap.y);
+    }
+    if let Some(r) = &triage.rsp_region {
+        controls::section_label(ui, "At RSP");
+        hex_dump(ui, r);
+    }
 }
 
 fn hex_dump(ui: &mut Ui, region: &dump_triage::HexRegion) {
@@ -819,9 +960,18 @@ fn hex_dump(ui: &mut Ui, region: &dump_triage::HexRegion) {
         let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02x}")).collect();
         let ascii: String = chunk
             .iter()
-            .map(|b| if b.is_ascii_graphic() { *b as char } else { '.' })
+            .map(|b| {
+                if b.is_ascii_graphic() {
+                    *b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         out.push_str(&format!("{addr:016x}  {:<47}  {ascii}\n", hex.join(" ")));
     }
-    ui.add(egui::Label::new(RichText::new(out).monospace().size(11.0)).wrap_mode(egui::TextWrapMode::Extend));
+    ui.add(
+        egui::Label::new(RichText::new(out).font(fonts::mono(HEX_PT)))
+            .wrap_mode(egui::TextWrapMode::Extend),
+    );
 }

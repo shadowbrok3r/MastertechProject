@@ -184,23 +184,14 @@ async fn main() -> eframe::Result<()> {
 
 /// Shared egui context setup: phosphor fonts, forced dark theme, global style.
 pub(crate) fn configure_egui_ctx(ctx: &egui::Context) {
-    // Phosphor icon glyphs merged into the default fonts. add_to_fonts only
-    // registers phosphor under Proportional; the style forces Monospace
-    // everywhere, so register it there too or icons tofu.
+    egui_extras::install_image_loaders(ctx);
     let mut fonts = egui::FontDefinitions::default();
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    if let Some(keys) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-        if !keys.iter().any(|k| k == "phosphor") {
-            keys.insert(1.min(keys.len()), "phosphor".into());
-        }
-    }
+    mtech_ui::icons::install_fonts(&mut fonts);
+    mtech_ui::fonts::install(&mut fonts);
     ctx.set_fonts(fonts);
     ctx.options_mut(|opt| opt.theme_preference = egui::ThemePreference::Dark);
     match serde_json::from_str::<Style>(STYLE) {
-        Ok(theme) => {
-            let style = std::sync::Arc::new(theme);
-            ctx.set_global_style(style);
-        }
+        Ok(theme) => mtech_ui::metrics::install_overlaid_style(ctx, theme),
         Err(e) => log::error!("Error setting theme: {e:?}"),
     };
 }

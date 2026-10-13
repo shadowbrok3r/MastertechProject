@@ -1,5 +1,8 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
-use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, Link, OpenUrl, Response, RichText, Ui, Widget};
+use eframe::egui::{KeyboardShortcut, Link, OpenUrl, Response, RichText, Ui, Widget};
+use crate::ui_tools::controls::{self, ButtonKind, IconBox, TextButton};
+use crate::ui_tools::icons::{self, svg};
+use crate::ui_tools::theme;
 use egui_extras::Column as TableColumnConfig;
 use serde::{Deserialize, Serialize};
 use database::schema::{ComputerData, RecordId};
@@ -197,40 +200,11 @@ impl RowViewer<SerialsData> for SerialsViewer {
                 ui.horizontal_centered(|ui| {
                     if let Some(splt) = row.0.split_once(']') {
                         let strings = splt.0.split_terminator('/').collect::<Vec<&str>>();
-                        if strings.len() == 2 {
-                            if let Some(s) = strings.get(0) {
-                                ui.colored_label(Color32::LIGHT_GREEN, s.to_string() + "/");
-                            }
-                            if let Some(s) = strings.get(1) {
-                                ui.colored_label(
-                                    Color32::from_rgb(42, 195, 222),
-                                    s.to_string() + "]",
-                                );
-                            }
-                        } else if strings.len() == 3 {
-                            if let Some(s) = strings.get(0) {
-                                ui.colored_label(Color32::LIGHT_GREEN, s.to_string() + "/");
-                            }
-
-                            if let Some(s) = strings.get(1) {
-                                ui.colored_label(Color32::LIGHT_BLUE, s.to_string() + "/");
-                            }
-
-                            if let Some(s) = strings.get(2) {
-                                ui.colored_label(
-                                    Color32::from_rgb(42, 195, 222),
-                                    s.to_string() + "]",
-                                );
-                            }
-                        } else {
-                            if let Some(s) = strings.get(0) {
-                                ui.colored_label(
-                                    Color32::from_rgb(42, 195, 222),
-                                    s.to_string() + "]",
-                                );
-                            }
+                        if !super::code_parts(ui, &strings)
+                            && let Some(s) = strings.first()
+                        {
+                            ui.colored_label(theme::info(ui), s.to_string() + "]");
                         }
-                        ui.add_space(10.);
                         ui.label(splt.1)
                     } else {
                         ui.label(&row.0)
@@ -242,12 +216,11 @@ impl RowViewer<SerialsData> for SerialsViewer {
             2 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.2))),
             3 => {
                 ui.horizontal_centered(|ui| {
-                    ui.add_space(5.);
                     // egui::Link gives hyperlink-style affordances for
                     // free: PointingHand cursor on hover, hover color
                     // change, underline — same look as the Cost
                     // Breakdown Odoo/Presta ID columns.
-                    let label = RichText::new(&row.4).color(Color32::from_rgb(42, 195, 222));
+                    let label = RichText::new(&row.4).color(theme::info(ui));
                     let res = Link::new(label)
                         .ui(ui)
                         .on_hover_text("Click to open Odoo movement history");
@@ -263,13 +236,17 @@ impl RowViewer<SerialsData> for SerialsViewer {
             4 => {
                 ui.vertical_centered_justified(|ui| {
                     let is_clickable = &row.5 != "Not Attached" && &row.5 != "S/N Info ⮫";
-                    let color = if !is_clickable {
-                        Color32::from_rgb(191, 33, 101)
-                    } else {
-                        Color32::from_rgb(51, 255, 189)
-                    };
-                    let res = Button::new(RichText::new(&row.5).color(color)).ui(ui);
-                    if is_clickable && res.clicked() {
+                    if !is_clickable {
+                        let text = if row.5 == "Not Attached" { "Not Attached" } else { "S/N Info" };
+                        return controls::badge(ui, text, theme::secondary(ui));
+                    }
+                    let res = TextButton::new(&row.5)
+                        .icon(svg::ARROW_SQUARE_OUT)
+                        .kind(ButtonKind::Ghost)
+                        .ink(theme::success(ui))
+                        .show(ui)
+                        .on_hover_text("Open order");
+                    if res.clicked() {
                         ui.ctx().open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.5, 7))));
                     }
                     res
@@ -291,7 +268,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     // attached-to-order indicator.
                     if self.audit_id.is_some() {
                         let mut found = row.7;
-                        let res = ui.checkbox(&mut found, "");
+                        let res = controls::checkbox(ui, &mut found, "");
                         if res.changed() {
                             if let (Some(id), Some(tx)) =
                                 (self.audit_id.clone(), self.found_toggle_tx.as_ref())
@@ -301,7 +278,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
                         }
                         res
                     } else {
-                        ui.checkbox(&mut { row.7 }, "")
+                        controls::checkbox(ui, &mut { row.7 }, "")
                     }
                 })
                 .inner,
@@ -321,17 +298,16 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     None
                 } else {
                     let url = row.5.clone();
-                    let res = Hyperlink::from_label_and_url(
-                        format!(" {}", row.5.clone()),
-                        xidax_order_url(last_n(&url, 7))
-                    )
-                    .open_in_new_tab(true)
-                    .ui(ui);
+                    let res = controls::IconLink::new(&row.5)
+                        .icon(svg::RECEIPT)
+                        .tone(theme::info(ui))
+                        .url(&xidax_order_url(last_n(&url, 7)))
+                        .show(ui);
                     Some(res)
                 }
             }
             7 if self.audit_id.is_some() => {
-                let res = ui.checkbox(&mut row.7, "");
+                let res = controls::checkbox(ui, &mut row.7, "");
                 if res.changed() {
                     if let (Some(id), Some(tx)) =
                         (self.audit_id.clone(), self.found_toggle_tx.as_ref())
@@ -471,7 +447,7 @@ impl RowCodec<SerialsData> for Codec {
 
                 if let Some(caps) = re.captures(&src_row.0) {
                     let inner_text = &caps[1];
-                    dst.push_str(&inner_text);
+                    dst.push_str(inner_text);
                 } else {
                     dst.push_str(&src_row.0);
                 }
@@ -692,27 +668,25 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
             // Odoo Product ID - links to Odoo product page
             0 => {
                 if row.0.is_empty() || row.0 == "0" {
-                    ui.label(RichText::new("-").color(Color32::GRAY))
+                    ui.label(RichText::new("-").color(theme::faint_text(ui)))
                 } else {
-                    Hyperlink::from_label_and_url(
-                        RichText::new(format!(" {}", row.0)).color(Color32::from_rgb(42, 195, 222)),
-                        format!("https://odoo.pclaptops.com/web#id={}&menu_id=244&cids=1&action=443&model=product.template&view_type=form", row.0)
-                    )
-                    .open_in_new_tab(true)
-                    .ui(ui)
+                    controls::IconLink::new(&row.0)
+                        .icon(svg::PACKAGE)
+                        .tone(theme::info(ui))
+                        .url(&format!("https://odoo.pclaptops.com/web#id={}&menu_id=244&cids=1&action=443&model=product.template&view_type=form", row.0))
+                        .show(ui)
                 }
             }
             // Prestashop Product ID - links to Prestashop product page
             1 => {
                 if row.1.is_empty() || row.1 == "0" {
-                    ui.label(RichText::new("-").color(Color32::GRAY))
+                    ui.label(RichText::new("-").color(theme::faint_text(ui)))
                 } else {
-                    Hyperlink::from_label_and_url(
-                        RichText::new(format!(" {}", row.1)).color(Color32::from_rgb(255, 165, 0)),
-                        xidax_product_url(&row.1)
-                    )
-                    .open_in_new_tab(true)
-                    .ui(ui)
+                    controls::IconLink::new(&row.1)
+                        .icon(svg::STOREFRONT)
+                        .tone(theme::warn(ui))
+                        .url(&xidax_product_url(&row.1))
+                        .show(ui)
                 }
             }
             2 => ui.label(&row.2),
@@ -720,9 +694,9 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
             4 => ui.label(format!("$ {:.2}", row.4)),
             5 => {
                 let color = if row.5 > 0.0 {
-                    Color32::from_rgb(51, 255, 189)
+                    theme::success(ui)
                 } else {
-                    Color32::from_rgb(150, 150, 150)
+                    theme::weak_text(ui)
                 };
                 ui.label(RichText::new(format!("$ {:.2}", row.5)).color(color))
             }
@@ -753,24 +727,22 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
                     if row.0.is_empty() || row.0 == "0" {
                         ui.label("-")
                     } else {
-                        Hyperlink::from_label_and_url(
-                            format!(" {}", row.0), 
-                            format!("https://odoo.pclaptops.com/web#id={}&menu_id=244&cids=1&action=443&model=product.template&view_type=form", row.0)
-                        )
-                        .open_in_new_tab(true)
-                        .ui(ui)
+                        controls::IconLink::new(&row.0)
+                        .icon(svg::PACKAGE)
+                        .tone(theme::info(ui))
+                        .url(&format!("https://odoo.pclaptops.com/web#id={}&menu_id=244&cids=1&action=443&model=product.template&view_type=form", row.0))
+                        .show(ui)
                     }
                 }
                 1 => {
                     if row.1.is_empty() || row.1 == "0" {
                         ui.label("-")
                     } else {
-                        Hyperlink::from_label_and_url(
-                            format!(" {}", row.1), 
-                            xidax_product_url(&row.1)
-                        )
-                        .open_in_new_tab(true)
-                        .ui(ui)
+                        controls::IconLink::new(&row.1)
+                        .icon(svg::STOREFRONT)
+                        .tone(theme::info(ui))
+                        .url(&xidax_product_url(&row.1))
+                        .show(ui)
                     }
                 }
                 2 => ui.label(&row.2),
@@ -904,10 +876,6 @@ pub struct BulkProductViewer {
     pub selected: HashSet<String>,
 }
 
-fn profit_color(v: f64) -> Color32 {
-    if v >= 0.0 { Color32::LIGHT_GREEN } else { Color32::from_rgb(220, 120, 120) }
-}
-
 impl RowViewer<BulkOrderData> for BulkOrderViewer {
     fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<BulkOrderData>> {
         Some(BulkOrderCodec)
@@ -938,22 +906,21 @@ impl RowViewer<BulkOrderData> for BulkOrderViewer {
         let _ = match column {
             0 => {
                 if row.0.is_empty() || row.0 == "0" {
-                    ui.label(RichText::new("-").color(Color32::GRAY))
+                    ui.label(RichText::new("-").color(theme::faint_text(ui)))
                 } else {
-                    Hyperlink::from_label_and_url(
-                        RichText::new(&row.0).color(Color32::from_rgb(255, 165, 0)),
-                        xidax_order_url(&row.0),
-                    )
-                    .open_in_new_tab(true)
-                    .ui(ui)
+                    controls::IconLink::new(&row.0)
+                        .icon(svg::RECEIPT)
+                        .tone(theme::warn(ui))
+                        .url(&xidax_order_url(&row.0))
+                        .show(ui)
                 }
             }
             1 => ui.label(&row.1),
             2 => ui.label(format!("{:.0}", row.2)),
             3 => ui.label(format!("$ {:.2}", row.3)),
-            4 => ui.colored_label(Color32::from_rgb(200, 100, 100), format!("$ {:.2}", row.4)),
-            5 => ui.colored_label(profit_color(row.5), format!("$ {:.2}", row.5)),
-            6 => ui.colored_label(profit_color(row.5), format!("{:.1}%", row.6)),
+            4 => ui.colored_label(theme::error(ui), format!("$ {:.2}", row.4)),
+            5 => ui.colored_label(super::profit_tone(ui, row.5).1, format!("$ {:.2}", row.5)),
+            6 => ui.colored_label(super::profit_tone(ui, row.5).1, format!("{:.1}%", row.6)),
             _ => unreachable!(),
         };
     }
@@ -1079,13 +1046,13 @@ impl RowViewer<BulkProductData> for BulkProductViewer {
         style.interaction.selectable_labels = false;
 
         let _ = match column {
-            0 => ui.label(RichText::new(&row.0).color(Color32::from_rgb(42, 195, 222))),
+            0 => ui.label(RichText::new(&row.0).color(theme::info(ui))),
             1 => ui.label(&row.1),
             2 => ui.label(format!("{:.0}", row.2)),
-            3 => ui.colored_label(Color32::from_rgb(200, 100, 100), format!("$ {:.2}", row.3)),
+            3 => ui.colored_label(theme::error(ui), format!("$ {:.2}", row.3)),
             4 => ui.label(format!("$ {:.2}", row.4)),
-            5 => ui.colored_label(profit_color(row.5), format!("$ {:.2}", row.5)),
-            6 => ui.colored_label(profit_color(row.5), format!("{:.1}%", row.6)),
+            5 => ui.colored_label(super::profit_tone(ui, row.5).1, format!("$ {:.2}", row.5)),
+            6 => ui.colored_label(super::profit_tone(ui, row.5).1, format!("{:.1}%", row.6)),
             _ => unreachable!(),
         };
     }
@@ -1325,12 +1292,11 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
         match column {
             // Order ID - hyperlink to Prestashop
             0 => {
-                Hyperlink::from_label_and_url(
-                    RichText::new(&row.order_id).color(Color32::from_rgb(42, 195, 222)),
-                    xidax_order_url(&row.order_id)
-                )
-                .open_in_new_tab(true)
-                .ui(ui);
+                controls::IconLink::new(&row.order_id)
+                        .icon(svg::RECEIPT)
+                        .tone(theme::info(ui))
+                        .url(&xidax_order_url(&row.order_id))
+                        .show(ui);
             }
             // Customer - clickable button to change customer (shows ID and name)
             1 => {
@@ -1343,10 +1309,13 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                 } else {
                     format!("[{}] {}", row.customer_id, row.customer_name)
                 };
-                if Button::new(RichText::new(&display_text).color(Color32::from_rgb(180, 180, 255)))
-                    .ui(ui)
+                if TextButton::new(&display_text)
+                    .icon(svg::USER_SWITCH)
+                    .kind(ButtonKind::Ghost)
+                    .ink(theme::secondary(ui))
+                    .show(ui)
                     .on_hover_text("Click to change customer")
-                    .clicked() 
+                    .clicked()
                 {
                     let _ = self.customer_change_tx.try_send(CustomerChangeRequest {
                         order_id: row.order_id.clone(),
@@ -1358,46 +1327,41 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
             3 => { ui.label(format!("${:.2}", row.price)); }
             4 => {
                 let color = if row.cost > 0.0 {
-                    Color32::from_rgb(200, 100, 100)
+                    theme::error(ui)
                 } else {
-                    Color32::GRAY
+                    theme::weak_text(ui)
                 };
                 ui.label(RichText::new(format!("${:.2}", row.cost)).color(color));
             }
             5 => {
-                let color = if row.revenue >= 0.0 {
-                    Color32::LIGHT_GREEN
-                } else {
-                    Color32::from_rgb(255, 80, 80)
-                };
+                let color = super::profit_tone(ui, row.revenue).1;
                 ui.label(RichText::new(format!("${:.2}", row.revenue)).color(color));
             }
             6 => {
-                ui.label(RichText::new(format!("${:.2}", row.spiff)).color(Color32::GOLD));
+                ui.label(RichText::new(format!("${:.2}", row.spiff)).color(theme::warn(ui)));
             }
             7 => {
-                let (color, text) = match row.system_type {
-                    SystemType::ReadyToRoll => (Color32::from_rgb(100, 200, 100), "R2R"),
-                    SystemType::Rci => (Color32::from_rgb(200, 150, 50), "RCI"),
-                    SystemType::Bsd => (Color32::from_rgb(100, 150, 200), "BSD"),
-                    SystemType::Demo => (Color32::from_rgb(200, 100, 200), "Demo"),
-                    SystemType::CustomBuild => (Color32::GRAY, "Custom"),
+                let tone = match row.system_type {
+                    SystemType::ReadyToRoll => theme::success(ui),
+                    SystemType::Rci => theme::warn(ui),
+                    SystemType::Bsd => theme::info(ui),
+                    SystemType::Demo => theme::secondary(ui),
+                    SystemType::CustomBuild => theme::weak_text(ui),
                 };
-                ui.label(RichText::new(text).color(color));
+                controls::badge(ui, row.system_type.as_str(), tone);
             }
             8 => { ui.label(&row.cpu); }
             9 => { ui.label(&row.gpu); }
             10 => { ui.label(format_ram_display(&row.ram)); }
-            11 => { 
-                let color = if row.warranty.is_empty() || row.warranty == "None" {
-                    Color32::GRAY
+            11 => {
+                if row.warranty.is_empty() || row.warranty == "None" {
+                    ui.label(RichText::new(&row.warranty).color(theme::weak_text(ui)));
                 } else {
-                    Color32::from_rgb(100, 180, 255)
-                };
-                ui.label(RichText::new(&row.warranty).color(color)); 
+                    controls::status_label(ui, svg::SHIELD_CHECK, &row.warranty, theme::info(ui));
+                }
             }
             12 => {
-                if Button::new("Create Task").ui(ui).clicked() {
+                if controls::icon_button(ui, icons::CREATE_TASK, IconBox::Md, false, "Create Task").clicked() {
                     let _ = self.task_create_tx.try_send(row.clone());
                 }
             }
@@ -1413,8 +1377,11 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
     ) -> Option<Response> {
         ui.vertical_centered_justified(|ui| {
             match column {
-                0 => Hyperlink::from_label_and_url(&row.order_id, xidax_order_url(&row.order_id))
-                    .open_in_new_tab(true).ui(ui),
+                0 => controls::IconLink::new(&row.order_id)
+                        .icon(svg::RECEIPT)
+                        .tone(theme::info(ui))
+                        .url(&xidax_order_url(&row.order_id))
+                        .show(ui),
                 1 => ui.label(&row.customer_name),
                 2 => ui.label(&row.model),
                 3 => ui.label(format!("${:.2}", row.price)),

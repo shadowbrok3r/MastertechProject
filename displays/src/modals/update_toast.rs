@@ -4,8 +4,10 @@ use std::sync::{LazyLock, Mutex};
 
 use eframe::egui::{Frame, Margin, Response, RichText, Sense, Ui, Vec2};
 
+use crate::ui_tools::controls::{ButtonKind, Metrics, TextButton};
+use crate::ui_tools::icons::svg;
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
-use crate::ui_tools::{do_not_disturb, icons, theme};
+use crate::ui_tools::{do_not_disturb, theme};
 
 /// `ToastKind::Custom` discriminant for the update toast.
 pub const UPDATE_TOAST_KIND: u32 = 0x7A5C_0005;
@@ -79,26 +81,37 @@ pub fn toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         return ui.allocate_response(Vec2::ZERO, Sense::hover());
     };
 
+    let m = Metrics::get(ui.ctx());
     let mut choice = None;
     let response = Frame::window(ui.style())
-        .inner_margin(Margin::same(10))
+        .inner_margin(Margin::same(m.window_margin))
         .show(ui, |ui| {
             ui.set_width(TOAST_WIDTH);
-            ui.label(
-                RichText::new(format!("{} MasterTech {version} is ready", icons::DOWNLOAD))
-                    .strong()
-                    .color(theme::accent(ui)),
-            );
-            ui.label("Installing it restarts MasterTech.");
-            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui
-                    .button(format!("{} Update now", icons::REFRESH))
-                    .clicked()
-                {
+                let primary = theme::primary(ui);
+                let (slot, _) = ui.allocate_exact_size(Vec2::splat(m.icon_md), Sense::hover());
+                svg::DOWNLOAD_SIMPLE.paint(ui, slot, m.icon_md, primary);
+                ui.label(
+                    RichText::new(format!("MasterTech {version} is ready"))
+                        .strong()
+                        .color(primary),
+                );
+            });
+            ui.label("Installing it restarts MasterTech.");
+            ui.add_space(m.pad.y);
+            ui.horizontal(|ui| {
+                let now = TextButton::new("Update now")
+                    .kind(ButtonKind::Primary)
+                    .icon(svg::ARROWS_CLOCKWISE)
+                    .show(ui);
+                if now.clicked() {
                     choice = Some(UpdateChoice::Now);
                 }
-                if ui.button("Later").clicked() {
+                let later = TextButton::new("Later")
+                    .kind(ButtonKind::Ghost)
+                    .icon(svg::ALARM)
+                    .show(ui);
+                if later.clicked() {
                     choice = Some(UpdateChoice::Later);
                 }
             });

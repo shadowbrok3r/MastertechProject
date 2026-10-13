@@ -171,6 +171,7 @@ pub struct MastertechContext {
     /// The menu's Update was clicked, so the next finished download installs without a prompt.
     pub update_requested: bool,
     pub update_mode: crate::utilities::update_policy::UpdateMode,
+    pub chrome: crate::utilities::window_prefs::Chrome,
     pub next_update_check: Option<std::time::Instant>,
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     pub get_settings: bool,
@@ -399,6 +400,7 @@ impl MasterTechApp {
             pending_update: None,
             update_requested: false,
             update_mode: crate::utilities::update_policy::load_mode(),
+            chrome: Default::default(),
             next_update_check: None,
             toolbox: FileSystem::new(),
 

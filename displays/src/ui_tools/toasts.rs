@@ -1,9 +1,15 @@
+use eframe::egui::epaint::RectShape;
+use eframe::egui::{
+    Align2, Area, Context, CornerRadius, Direction, Frame, Id, Order, Pos2, Response, Shape,
+    Stroke, StrokeKind, Ui,
+};
+use eframe::egui::{Color32, Margin, Sense, Vec2, WidgetText};
 use std::collections::HashMap;
 use std::sync::Arc;
 use web_time::Duration;
-use eframe::egui::epaint::RectShape;
-use eframe::egui::{Align2, Area, Context, Direction, Frame, Id, Order, Pos2, Response, CornerRadius, Shape, Stroke, Ui, StrokeKind};
-use eframe::egui::{Color32, Margin, RichText, WidgetText};
+
+use super::controls::{self, IconBox, Metrics, Tokens};
+use super::icons::svg::{self, Icon};
 
 pub type ToastContents = dyn Fn(&mut Ui, &mut Toast) -> Response + Send + Sync;
 
@@ -104,6 +110,7 @@ impl Toasts {
         } = *self;
 
         let dt = ctx.input(|i| i.unstable_dt) as f64;
+        let gap = Metrics::get(ctx).gap.x;
 
         let mut toasts: Vec<Toast> = ctx.data_mut(|d| d.get_temp(id).unwrap_or_default());
         toasts.extend(std::mem::take(&mut self.added_toasts));
@@ -117,7 +124,10 @@ impl Toasts {
                     && t.text.text() == toast.text.text()
                     && t.payload == toast.payload
             }) {
-                existing.options.count = existing.options.count.saturating_add(toast.options.count.max(1));
+                existing.options.count = existing
+                    .options
+                    .count
+                    .saturating_add(toast.options.count.max(1));
                 existing.options.ttl_sec = existing.options.ttl_sec.max(toast.options.ttl_sec);
             } else {
                 deduped.push(toast);
@@ -154,16 +164,16 @@ impl Toasts {
 
             match direction {
                 Direction::LeftToRight => {
-                    offset.x += response.rect.width() + 10.0;
+                    offset.x += response.rect.width() + gap;
                 }
                 Direction::RightToLeft => {
-                    offset.x -= response.rect.width() + 10.0;
+                    offset.x -= response.rect.width() + gap;
                 }
                 Direction::TopDown => {
-                    offset.y += response.rect.height() + 10.0;
+                    offset.y += response.rect.height() + gap;
                 }
                 Direction::BottomUp => {
-                    offset.y -= response.rect.height() + 10.0;
+                    offset.y -= response.rect.height() + gap;
                 }
             }
         }
@@ -185,48 +195,35 @@ impl Toasts {
 }
 
 fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
-    let inner_margin = 10.0;
-    let frame = Frame::window(ui.style());
+    let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+    let (icon, tone) = toast.style.icon_and_tone(toast.kind, &t);
+    let frame = Frame::window(ui.style())
+        .inner_margin(Margin::symmetric(m.window_margin, m.gap.x as i8))
+        .stroke(Stroke::NONE);
     let response = frame
-        .inner_margin(inner_margin)
-        .stroke(Stroke::NONE)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let a = |ui: &mut Ui, toast: &mut Toast| {
                     if toast.options.show_icon {
-                        ui.label(match toast.kind {
-                            ToastKind::Warning => toast.style.warning_icon.clone(),
-                            ToastKind::Error => toast.style.error_icon.clone(),
-                            ToastKind::Success => toast.style.success_icon.clone(),
-                            _ => toast.style.info_icon.clone(),
-                        });
+                        let (slot, _) =
+                            ui.allocate_exact_size(Vec2::splat(m.icon_lg), Sense::hover());
+                        icon.paint_duo(ui, slot, m.icon_lg, tone, tone.gamma_multiply(DUO_ALPHA));
                     }
                 };
                 let b = |ui: &mut Ui, toast: &mut Toast| {
                     let resp = ui.label(toast.text.clone());
                     if toast.options.count > 1 {
-                        Frame::new()
-                            .fill(Color32::from_rgb(191, 33, 101))
-                            .corner_radius(CornerRadius::same(8))
-                            .inner_margin(Margin::symmetric(6, 1))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(toast.options.count.to_string())
-                                        .strong()
-                                        .color(Color32::WHITE),
-                                );
-                            });
+                        controls::badge(ui, &toast.options.count.to_string(), t.secondary);
                     }
                     resp
                 };
                 let c = |ui: &mut Ui, toast: &mut Toast| {
-                    if ui.button(toast.style.close_button_text.clone()).clicked() {
+                    if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Dismiss").clicked() {
                         toast.close();
                     }
                 };
 
-                // Draw the contents in the reverse order on right-to-left layouts
-                // to keep the same look.
+                // Draws the contents in reverse order on right-to-left layouts.
                 if ui.layout().prefer_right_to_left() {
                     c(ui, toast);
                     b(ui, toast);
@@ -241,22 +238,21 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         .response;
 
     if toast.options.show_progress {
-        progress_bar(ui, &response, toast);
+        progress_bar(ui, &response, toast, tone);
     }
 
-    // Draw the frame's stroke last
     let frame_shape = Shape::Rect(RectShape::stroke(
         response.rect,
         frame.corner_radius,
-        ui.visuals().window_stroke,
-        StrokeKind::Inside
+        Stroke::new(1.0, t.card_border),
+        StrokeKind::Inside,
     ));
     ui.painter().add(frame_shape);
 
     response
 }
 
-fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast) {
+fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast, tone: Color32) {
     let rounding = CornerRadius {
         nw: 0,
         ne: 0,
@@ -266,11 +262,9 @@ fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast) {
     clip_rect.set_top(clip_rect.bottom() - 2.0);
     clip_rect.set_right(clip_rect.left() + clip_rect.width() * toast.options.progress() as f32);
 
-    ui.painter().with_clip_rect(clip_rect).rect_filled(
-        response.rect,
-        rounding,
-        ui.visuals().text_color(),
-    );
+    ui.painter()
+        .with_clip_rect(clip_rect)
+        .rect_filled(response.rect, rounding, tone);
 }
 
 #[derive(Default, Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
@@ -347,23 +341,37 @@ impl Toast {
     }
 }
 
-#[derive(Clone)]
+/// Opacity of a toast icon's duotone back layer.
+const DUO_ALPHA: f32 = 0.35;
+
+/// The icon each toast kind shows; colours come from the theme when the toast is drawn.
+#[derive(Clone, Copy)]
 pub struct ToastStyle {
-    pub info_icon: WidgetText,
-    pub warning_icon: WidgetText,
-    pub error_icon: WidgetText,
-    pub success_icon: WidgetText,
-    pub close_button_text: WidgetText,
+    pub info_icon: Icon,
+    pub warning_icon: Icon,
+    pub error_icon: Icon,
+    pub success_icon: Icon,
 }
 
 impl Default for ToastStyle {
     fn default() -> Self {
         Self {
-            info_icon: WidgetText::from("ℹ").color(Color32::from_rgb(0, 155, 255)),
-            warning_icon: WidgetText::from("⚠").color(Color32::from_rgb(255, 212, 0)),
-            error_icon: WidgetText::from("❗").color(Color32::from_rgb(255, 32, 0)),
-            success_icon: WidgetText::from("✔").color(Color32::from_rgb(0, 255, 32)),
-            close_button_text: WidgetText::from("🗙"),
+            info_icon: svg::INFO,
+            warning_icon: svg::WARNING,
+            error_icon: svg::WARNING_CIRCLE,
+            success_icon: svg::CHECK_CIRCLE,
+        }
+    }
+}
+
+impl ToastStyle {
+    /// The icon and status colour of a toast of `kind`.
+    fn icon_and_tone(&self, kind: ToastKind, t: &Tokens) -> (Icon, Color32) {
+        match kind {
+            ToastKind::Warning => (self.warning_icon, t.warn),
+            ToastKind::Error => (self.error_icon, t.error),
+            ToastKind::Success => (self.success_icon, t.success),
+            ToastKind::Info | ToastKind::Custom(_) => (self.info_icon, t.info),
         }
     }
 }

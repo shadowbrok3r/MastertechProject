@@ -1,14 +1,51 @@
+use displays::ui_tools::{
+    controls::{self, MenuItem, Metrics, TextArea, Tokens},
+    glass_card,
+    icons::svg::{self, Icon},
+};
 use eframe::egui;
-use egui::{Frame, TextStyle, Ui};
+use egui::{Frame, Ui};
 use egui_extras::{Column, TableBuilder};
 use memmap2::Mmap;
-use minidump::{format::MINIDUMP_STREAM_TYPE, Minidump};
+use minidump::{Minidump, format::MINIDUMP_STREAM_TYPE};
 use num_traits::FromPrimitive;
 
-use crate::tabs::minidump::{stream_vendor, MiniDumpApp};
+use crate::tabs::minidump::{MiniDumpApp, stream_vendor};
 
 pub struct RawDumpUiState {
     pub cur_stream: usize,
+}
+
+/// The icon a stream type is listed with.
+fn stream_icon(stream_type: Option<MINIDUMP_STREAM_TYPE>) -> Icon {
+    use MINIDUMP_STREAM_TYPE::*;
+    match stream_type {
+        Some(SystemInfoStream) => svg::DESKTOP_TOWER,
+        Some(MiscInfoStream) => svg::INFO,
+        Some(ThreadNamesStream | ThreadListStream) => svg::GIT_BRANCH,
+        Some(AssertionInfoStream) => svg::WARNING,
+        Some(BreakpadInfoStream | CrashpadInfoStream) => svg::BUG,
+        Some(ExceptionStream) => svg::WARNING_OCTAGON,
+        Some(ModuleListStream | UnloadedModuleListStream) => svg::PUZZLE_PIECE,
+        Some(MemoryListStream | Memory64ListStream | MemoryInfoListStream) => svg::MEMORY,
+        Some(MozMacosCrashInfoStream) => svg::APP_WINDOW,
+        Some(
+            LinuxCmdLine | LinuxMaps | LinuxCpuInfo | LinuxEnviron | LinuxLsbRelease
+            | LinuxProcStatus,
+        ) => svg::LINUX_LOGO,
+        _ => svg::FILE,
+    }
+}
+
+/// An error line for a stream that failed to read.
+fn stream_error(ui: &mut Ui, e: &impl std::fmt::Display) {
+    let t = Tokens::get(ui.ctx());
+    let m = Metrics::get(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.add(svg::WARNING_CIRCLE.image(m.icon_md).tint(t.error));
+        ui.colored_label(t.error, "Failed to read stream");
+    });
+    ui.label(e.to_string());
 }
 
 impl MiniDumpApp {
@@ -19,8 +56,13 @@ impl MiniDumpApp {
                     self.ui_raw_dump_good(ui, &dump.clone());
                 }
                 Err(e) => {
-                    ui.label("Minidump couldn't be read!");
-                    ui.label(e.to_string());
+                    controls::empty_state(
+                        ui,
+                        svg::FILE_X,
+                        "Minidump couldn't be read!",
+                        &e.to_string(),
+                        &[],
+                    );
                 }
             }
         }
@@ -77,75 +119,83 @@ impl MiniDumpApp {
     }
 
     fn ui_raw_dump_streams(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
-        ui.heading("Streams");
-        ui.separator();
-        ui.selectable_value(&mut self.raw_dump_ui_state.cur_stream, 0, "<summary>");
+        glass_card::card_header(ui, svg::LIST, "Streams", None);
+        controls::menu_body(ui, |ui| {
+            let summary = self.raw_dump_ui_state.cur_stream == 0;
+            if controls::menu_check_item(ui, svg::LIST_BULLETS, "<summary>", summary).clicked() {
+                self.raw_dump_ui_state.cur_stream = 0;
+            }
 
-        for (i, stream) in dump.all_streams().enumerate() {
-            use MINIDUMP_STREAM_TYPE::*;
-            let (supported, label) =
-                if let Some(stream_type) = MINIDUMP_STREAM_TYPE::from_u32(stream.stream_type) {
-                    let supported = matches!(
-                        stream_type,
-                        SystemInfoStream
-                            | MiscInfoStream
-                            | ThreadNamesStream
-                            | ThreadListStream
-                            | AssertionInfoStream
-                            | BreakpadInfoStream
-                            | CrashpadInfoStream
-                            | ExceptionStream
-                            | ModuleListStream
-                            | UnloadedModuleListStream
-                            | MemoryListStream
-                            | Memory64ListStream
-                            | MemoryInfoListStream
-                            | MozMacosCrashInfoStream
-                            | LinuxCmdLine
-                            | LinuxMaps
-                            | LinuxCpuInfo
-                            | LinuxEnviron
-                            | LinuxLsbRelease
-                            | LinuxProcStatus
-                    );
+            for (i, stream) in dump.all_streams().enumerate() {
+                use MINIDUMP_STREAM_TYPE::*;
+                let (supported, label) =
+                    if let Some(stream_type) = MINIDUMP_STREAM_TYPE::from_u32(stream.stream_type) {
+                        let supported = matches!(
+                            stream_type,
+                            SystemInfoStream
+                                | MiscInfoStream
+                                | ThreadNamesStream
+                                | ThreadListStream
+                                | AssertionInfoStream
+                                | BreakpadInfoStream
+                                | CrashpadInfoStream
+                                | ExceptionStream
+                                | ModuleListStream
+                                | UnloadedModuleListStream
+                                | MemoryListStream
+                                | Memory64ListStream
+                                | MemoryInfoListStream
+                                | MozMacosCrashInfoStream
+                                | LinuxCmdLine
+                                | LinuxMaps
+                                | LinuxCpuInfo
+                                | LinuxEnviron
+                                | LinuxLsbRelease
+                                | LinuxProcStatus
+                        );
 
-                    (supported, format!("{stream_type:?}"))
-                } else {
-                    (false, "<unknown>".to_string())
-                };
+                        (supported, format!("{stream_type:?}"))
+                    } else {
+                        (false, "<unknown>".to_string())
+                    };
 
-            ui.add_enabled_ui(supported, |ui| {
-                ui.selectable_value(&mut self.raw_dump_ui_state.cur_stream, i + 1, label);
-            });
-        }
+                let icon = stream_icon(MINIDUMP_STREAM_TYPE::from_u32(stream.stream_type));
+                let selected = self.raw_dump_ui_state.cur_stream == i + 1;
+                if MenuItem::new(&label)
+                    .icon(icon)
+                    .checked(selected)
+                    .enabled(supported)
+                    .show(ui)
+                    .clicked()
+                {
+                    self.raw_dump_ui_state.cur_stream = i + 1;
+                }
+            }
+        });
     }
 
     fn ui_raw_dump_top_level(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
-        ui.heading("Minidump Streams");
-        ui.add_space(20.0);
+        let m = Metrics::get(ui.ctx());
+        glass_card::card_header(ui, svg::STACK, "Minidump Streams", None);
 
-        let row_height = 18.0;
+        let row_height = m.row_h;
         TableBuilder::new(ui)
             .striped(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center).with_cross_align(egui::Align::Center))
+            .cell_layout(
+                egui::Layout::left_to_right(egui::Align::Center)
+                    .with_cross_align(egui::Align::Center),
+            )
             .column(Column::initial(40.0).at_least(40.0))
             .column(Column::initial(80.0).at_least(40.0))
             .column(Column::initial(80.0).at_least(40.0))
             .column(Column::remainder().at_least(60.0))
             .resizable(true)
-            .header(20.0, |mut header| {
-                header.col(|ui| {
-                    ui.heading("Idx");
-                });
-                header.col(|ui| {
-                    ui.heading("Type");
-                });
-                header.col(|ui| {
-                    ui.heading("Vendor");
-                });
-                header.col(|ui| {
-                    ui.heading("Name");
-                });
+            .header(m.row_h, |mut header| {
+                for title in ["Idx", "Type", "Vendor", "Name"] {
+                    header.col(|ui| {
+                        controls::section_label(ui, title);
+                    });
+                }
             })
             .body(|mut body| {
                 for (i, stream) in dump.all_streams().enumerate() {
@@ -198,6 +248,9 @@ impl MiniDumpApp {
                                 (false, "<unknown>".to_string())
                             };
 
+                            let icon =
+                                stream_icon(MINIDUMP_STREAM_TYPE::from_u32(stream.stream_type));
+                            ui.add(icon.image(m.icon_sm).tint(Tokens::get(ui.ctx()).icon));
                             if supported {
                                 if ui.link(label).clicked() {
                                     self.raw_dump_ui_state.cur_stream = i + 1;
@@ -210,90 +263,65 @@ impl MiniDumpApp {
                 }
             });
 
-        ui.add_space(20.0);
-        ui.separator();
-        ui.heading("Minidump Metadata");
-        ui.add_space(10.0);
+        ui.add_space(m.gap.y * 4.0);
+        glass_card::card_header(ui, svg::INFO, "Minidump Metadata", None);
+        ui.add_space(m.gap.y);
         let mut bytes = Vec::new();
         dump.print(&mut bytes).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_misc_info(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpMiscInfo>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
         let mut bytes = Vec::new();
         stream.print(&mut bytes).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_moz_macos_crash_info(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpMacCrashInfo>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
         let mut bytes = Vec::new();
         stream.print(&mut bytes).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_thread_names(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpThreadNames>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
         let mut bytes = Vec::new();
         stream.print(&mut bytes).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_system_info(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpSystemInfo>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
         let mut bytes = Vec::new();
         stream.print(&mut bytes).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_thread_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
@@ -303,8 +331,7 @@ impl MiniDumpApp {
         let system = dump.get_stream::<minidump::MinidumpSystemInfo>();
         let misc = dump.get_stream::<minidump::MinidumpMiscInfo>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -319,18 +346,13 @@ impl MiniDumpApp {
             )
             .unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_assertion_info(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpAssertion>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -338,19 +360,14 @@ impl MiniDumpApp {
             let mut bytes = Vec::new();
             stream.print(&mut bytes).unwrap();
             let text = String::from_utf8(bytes).unwrap();
-            ui.add(
-                egui::TextEdit::multiline(&mut &*text)
-                    .font(TextStyle::Monospace)
-                    .desired_width(f32::INFINITY),
-            );
+            TextArea::new(&mut &*text).mono(true).show(ui);
         });
     }
 
     fn update_raw_dump_crashpad_info(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpCrashpadInfo>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -358,19 +375,14 @@ impl MiniDumpApp {
             let mut bytes = Vec::new();
             stream.print(&mut bytes).unwrap();
             let text = String::from_utf8(bytes).unwrap();
-            ui.add(
-                egui::TextEdit::multiline(&mut &*text)
-                    .font(TextStyle::Monospace)
-                    .desired_width(f32::INFINITY),
-            );
+            TextArea::new(&mut &*text).mono(true).show(ui);
         });
     }
 
     fn update_raw_dump_breakpad_info(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpBreakpadInfo>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -378,11 +390,7 @@ impl MiniDumpApp {
             let mut bytes = Vec::new();
             stream.print(&mut bytes).unwrap();
             let text = String::from_utf8(bytes).unwrap();
-            ui.add(
-                egui::TextEdit::multiline(&mut &*text)
-                    .font(TextStyle::Monospace)
-                    .desired_width(f32::INFINITY),
-            );
+            TextArea::new(&mut &*text).mono(true).show(ui);
         });
     }
 
@@ -391,8 +399,7 @@ impl MiniDumpApp {
         let misc_info = dump.get_stream::<minidump::MinidumpMiscInfo>();
         let stream = dump.get_stream::<minidump::MinidumpException>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -406,19 +413,14 @@ impl MiniDumpApp {
                 )
                 .unwrap();
             let text = String::from_utf8(bytes).unwrap();
-            ui.add(
-                egui::TextEdit::multiline(&mut &*text)
-                    .font(TextStyle::Monospace)
-                    .desired_width(f32::INFINITY),
-            );
+            TextArea::new(&mut &*text).mono(true).show(ui);
         });
     }
 
     fn update_raw_dump_module_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpModuleList>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -426,18 +428,13 @@ impl MiniDumpApp {
         let mut bytes = Vec::new();
         stream.print(&mut bytes).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_unloaded_module_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpUnloadedModuleList>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -445,19 +442,14 @@ impl MiniDumpApp {
         let mut bytes = Vec::new();
         stream.print(&mut bytes).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_memory_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let brief = self.settings.raw_dump_brief;
         let stream = dump.get_stream::<minidump::MinidumpMemoryList>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -465,18 +457,13 @@ impl MiniDumpApp {
         let mut bytes = Vec::new();
         stream.print(&mut bytes, brief).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
     fn update_raw_dump_memory_64_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let brief = self.settings.raw_dump_brief;
         let stream = dump.get_stream::<minidump::MinidumpMemory64List>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -484,18 +471,13 @@ impl MiniDumpApp {
         let mut bytes = Vec::new();
         stream.print(&mut bytes, brief).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        ui.add(
-            egui::TextEdit::multiline(&mut &*text)
-                .font(TextStyle::Monospace)
-                .desired_width(f32::INFINITY),
-        );
+        TextArea::new(&mut &*text).mono(true).show(ui);
     }
 
     fn update_raw_dump_memory_info_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_stream::<minidump::MinidumpMemoryInfoList>();
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -503,19 +485,14 @@ impl MiniDumpApp {
             let mut bytes = Vec::new();
             stream.print(&mut bytes).unwrap();
             let text = String::from_utf8(bytes).unwrap();
-            ui.add(
-                egui::TextEdit::multiline(&mut &*text)
-                    .font(TextStyle::Monospace)
-                    .desired_width(f32::INFINITY),
-            );
+            TextArea::new(&mut &*text).mono(true).show(ui);
         });
     }
 
     fn update_raw_dump_linux_cpu_info(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_raw_stream(MINIDUMP_STREAM_TYPE::LinuxCpuInfo as u32);
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -528,8 +505,7 @@ impl MiniDumpApp {
     fn update_raw_dump_linux_proc_status(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_raw_stream(MINIDUMP_STREAM_TYPE::LinuxProcStatus as u32);
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -542,8 +518,7 @@ impl MiniDumpApp {
     fn update_raw_dump_linux_maps(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_raw_stream(MINIDUMP_STREAM_TYPE::LinuxMaps as u32);
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -556,8 +531,7 @@ impl MiniDumpApp {
     fn update_raw_dump_linux_cmd_line(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_raw_stream(MINIDUMP_STREAM_TYPE::LinuxCmdLine as u32);
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -570,8 +544,7 @@ impl MiniDumpApp {
     fn update_raw_dump_linux_lsb_release(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_raw_stream(MINIDUMP_STREAM_TYPE::LinuxLsbRelease as u32);
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();
@@ -584,8 +557,7 @@ impl MiniDumpApp {
     fn update_raw_dump_linux_environ(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let stream = dump.get_raw_stream(MINIDUMP_STREAM_TYPE::LinuxEnviron as u32);
         if let Err(e) = &stream {
-            ui.label("Failed to read stream");
-            ui.label(e.to_string());
+            stream_error(ui, e);
             return;
         }
         let stream = stream.unwrap();

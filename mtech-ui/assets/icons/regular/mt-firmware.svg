@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" data-glyph="CIRCUITRY">
+<rect x="40" y="72" width="176" height="112" rx="8"/>
+<path d="M40,112a16,16,0,0,1,0,32"/>
+<path d="M80,72V40M128,72V40M176,72V40M80,184V216M128,184V216M176,184V216"/>
+<path d="M134,100L114,128H142L122,156"/>
+</svg>

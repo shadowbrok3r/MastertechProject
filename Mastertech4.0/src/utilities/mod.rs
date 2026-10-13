@@ -7,9 +7,11 @@ pub mod scripts;
 // inside an elevated process is a local privilege-escalation primitive. Its
 // replacement is `remote_exec`, which rides the authenticated admin session.
 
+pub mod machine_settings;
 pub mod network;
 pub mod no_window;
 pub mod update_policy;
+pub mod window_prefs;
 
 pub use crypto::{load_encrypted_user_data, save_encrypted_user_data};
 

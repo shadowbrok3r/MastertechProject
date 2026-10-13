@@ -10,13 +10,16 @@ use std::time::Duration;
 use chrono::{DateTime, FixedOffset, Local};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::ZeroclawGateway;
-use eframe::egui::text::{LayoutJob, TextFormat};
-use eframe::egui::{self, Align, Color32, Id, Layout, RichText, ScrollArea, TextStyle, Ui};
+use eframe::egui::{self, Align, Color32, Id, Layout, RichText, ScrollArea, Ui};
 use web_time::Instant;
 
 use crate::ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle};
+use crate::ui_tools::controls::{
+    self, BarKind, ButtonKind, IconBox, IconLabel, Metrics, Section, SpinnerSize, TextButton,
+};
+use crate::ui_tools::icons::svg::{self, Icon};
 use crate::ui_tools::list_row::{Lead, ListRow};
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::theme;
 use crate::{PlatformSpawner, Spawner};
 use api::{Automation, Item, Outcome, Run, SessionRow};
 
@@ -164,16 +167,29 @@ fn group_by_agent(rows: &[SessionRow]) -> Vec<(&str, Vec<&SessionRow>)> {
 }
 
 /// A group's header: its name, row count and new-message count.
-fn group_header(ui: &Ui, name: &str, count: usize, unread: usize) -> LayoutJob {
-    let font = TextStyle::Body.resolve(ui.style());
-    let mut job = LayoutJob::default();
+fn group_header(name: &str, count: usize, unread: usize) -> String {
     let name = if name.is_empty() { "no agent" } else { name };
-    job.append(name, 0.0, TextFormat::simple(font.clone(), ui.visuals().text_color()));
-    job.append(&format!("  {count}"), 0.0, TextFormat::simple(font.clone(), theme::weak_text(ui)));
     if unread > 0 {
-        job.append(&format!("  \u{00b7} {unread} new"), 0.0, TextFormat::simple(font, theme::accent(ui)));
+        format!("{name}  {count}  \u{00b7} {unread} new")
+    } else {
+        format!("{name}  {count}")
     }
-    job
+}
+
+/// A collapsible list group whose icon takes the accent colour while it holds unread items.
+fn group_section<'a>(
+    ui: &Ui,
+    salt: impl egui::AsIdSalt,
+    icon: Icon,
+    title: &'a str,
+    unread: usize,
+) -> Section<'a> {
+    let section = Section::new(salt, title).icon(icon);
+    if unread > 0 {
+        section.icon_tone(theme::primary(ui))
+    } else {
+        section
+    }
 }
 
 /// Whether any field contains the lowercased `needle`; an empty needle matches everything.
@@ -259,19 +275,16 @@ impl ZeroClawView {
     pub fn list_ui(&mut self, ui: &mut Ui, needle: &str) -> Option<ZeroClawPick> {
         match &self.access {
             Access::Unknown | Access::Loading => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(RichText::new("Connecting to ZeroClaw\u{2026}").color(theme::weak_text(ui)).small());
-                });
+                controls::loading_row(ui, "Connecting to ZeroClaw\u{2026}");
                 return None;
             }
             Access::Denied => {
-                ui.label(RichText::new(DENIED).color(theme::weak_text(ui)).small());
+                IconLabel::new(svg::LOCK, DENIED).tone(theme::weak_text(ui)).small(true).wrap(true).show(ui);
                 return None;
             }
             Access::Failed(why) => {
-                ui.label(RichText::new(format!("{} {why}", icons::STATUS_ERR)).color(theme::error(ui)).small());
-                if ui.button(format!("{} Retry", icons::REFRESH)).clicked() {
+                IconLabel::new(svg::WARNING_CIRCLE, why).tone(theme::error(ui)).small(true).wrap(true).show(ui);
+                if controls::icon_text_button(ui, svg::ARROWS_CLOCKWISE, "Retry").clicked() {
                     self.access = Access::Unknown;
                 }
                 return None;
@@ -290,8 +303,8 @@ impl ZeroClawView {
             .collect();
         if !jobs.is_empty() {
             let unread = jobs.iter().filter(|j| self.job_unread(j)).count();
-            egui::CollapsingHeader::new(group_header(ui, "Automations", jobs.len(), unread))
-                .id_salt("zeroclaw_automations")
+            let title = group_header("Automations", jobs.len(), unread);
+            group_section(ui, "zeroclaw_automations", svg::CLOCK_CLOCKWISE, &title, unread)
                 .default_open(true)
                 .open(searching.then_some(true))
                 .show(ui, |ui| {
@@ -312,8 +325,8 @@ impl ZeroClawView {
         newest_first(&mut rows);
         for (agent, group) in group_by_agent(&rows) {
             let unread = group.iter().filter(|r| self.unread(r)).count();
-            egui::CollapsingHeader::new(group_header(ui, agent, group.len(), unread))
-                .id_salt(("zeroclaw_group", agent))
+            let title = group_header(agent, group.len(), unread);
+            group_section(ui, ("zeroclaw_group", agent), svg::ROBOT, &title, unread)
                 .default_open(false)
                 .open(searching.then_some(true))
                 .show(ui, |ui| {
@@ -326,8 +339,12 @@ impl ZeroClawView {
         }
 
         if jobs.is_empty() && rows.is_empty() {
-            let empty = if searching { "No matches" } else { "No sessions" };
-            ui.label(RichText::new(empty).color(theme::weak_text(ui)).small());
+            let (icon, empty) = if searching {
+                (svg::MAGNIFYING_GLASS, "No matches")
+            } else {
+                (svg::ROBOT, "No sessions")
+            };
+            controls::empty_state(ui, icon, empty, "", &[]);
         }
         picked
     }
@@ -337,18 +354,15 @@ impl ZeroClawView {
         match &self.access {
             Access::Ready(_) => {}
             Access::Denied => {
-                ui.label(RichText::new(DENIED).color(theme::weak_text(ui)));
+                controls::empty_state(ui, svg::LOCK_KEY, DENIED, "", &[]);
                 return;
             }
             Access::Failed(why) => {
-                ui.label(RichText::new(format!("{} {why}", icons::STATUS_ERR)).color(theme::error(ui)));
+                IconLabel::new(svg::WARNING_CIRCLE, why).tone(theme::error(ui)).small(true).wrap(true).show(ui);
                 return;
             }
             Access::Unknown | Access::Loading => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Connecting to ZeroClaw\u{2026}");
-                });
+                controls::loading_state(ui, "Connecting to ZeroClaw\u{2026}");
                 return;
             }
         }
@@ -526,7 +540,7 @@ impl ZeroClawView {
     /// One session row; returns whether an unselected row was clicked.
     fn session_row(&self, ui: &mut Ui, row: &SessionRow) -> bool {
         let selected = self.session.as_deref() == Some(row.id.as_str());
-        let icon = if row.is_automation() { icons::AUTOMATION } else { icons::CHAT };
+        let icon = if row.is_automation() { svg::CLOCK_CLOCKWISE } else { svg::CHAT_TEXT };
         let lead = if self.running.contains(&row.id) { Lead::Spinner(None) } else { Lead::Icon(icon, None) };
         let detail = format!("{} msg \u{00b7} {}", row.messages, local(&row.last_activity));
         let resp = ListRow::new(row.label())
@@ -560,37 +574,47 @@ impl ZeroClawView {
 
     /// Refresh, a spinner while loading, and the last error or notice, laid out right to left.
     fn status_tail(&mut self, ui: &mut Ui) {
-        if ui.button(icons::REFRESH).on_hover_text("Refresh now").clicked() {
+        if controls::icon_button(ui, svg::ARROW_CLOCKWISE, IconBox::Md, false, "Refresh now").clicked() {
             self.last_lists = None;
             self.last_transcript = None;
             self.last_runs = None;
         }
         if self.loading_lists || self.loading_transcript || self.loading_runs {
-            ui.spinner();
+            controls::spinner(ui, SpinnerSize::Sm);
         }
         if let Some(e) = &self.error {
-            ui.add(egui::Label::new(RichText::new(format!("{} {e}", icons::STATUS_ERR)).color(theme::error(ui)).small()).truncate());
+            IconLabel::new(svg::WARNING_CIRCLE, e)
+                .tone(theme::error(ui))
+                .small(true)
+                .truncate(true)
+                .show(ui);
         } else if let Some(n) = &self.notice {
-            ui.add(egui::Label::new(RichText::new(n).color(theme::weak_text(ui)).small()).truncate());
+            IconLabel::new(svg::INFO, n)
+                .tone(theme::weak_text(ui))
+                .small(true)
+                .truncate(true)
+                .show(ui);
         }
     }
 
     fn transcript_ui(&mut self, ui: &mut Ui) {
         let Some(row) = self.session.as_ref().and_then(|id| self.sessions.iter().find(|s| &s.id == id)).cloned() else {
-            ui.label(RichText::new("This session is no longer listed.").color(theme::weak_text(ui)));
+            controls::empty_state(ui, svg::CHAT_TEXT, "This session is no longer listed", "", &[]);
             return;
         };
-        ui.horizontal(|ui| {
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Header, |ui| {
+            let icon = if row.is_automation() { svg::CLOCK_CLOCKWISE } else { svg::CHAT_TEXT };
+            ui.add(icon.image(m.icon_md).tint(theme::accent_secondary(ui)));
             ui.label(RichText::new(row.label()).strong());
             ui.label(RichText::new(format!("\u{00b7} {} \u{00b7} {}", row.agent, row.id)).color(theme::weak_text(ui)));
             if self.running.contains(&row.id) {
-                ui.label(RichText::new("\u{00b7} working").color(theme::accent(ui)));
+                ui.label(RichText::new("\u{00b7} working").color(theme::primary(ui)));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| self.status_tail(ui));
         });
-        ui.separator();
         if self.transcript_for.as_deref() != Some(row.id.as_str()) {
-            ui.spinner();
+            controls::loading_state(ui, "Loading transcript\u{2026}");
             return;
         }
         let style = ChatStyle::from_ui(ui);
@@ -617,16 +641,21 @@ impl ZeroClawView {
 
     fn runs_ui(&mut self, ui: &mut Ui) {
         let Some(job) = self.job.as_ref().and_then(|id| self.jobs.iter().find(|j| &j.id == id)).cloned() else {
-            ui.label(RichText::new("This automation is no longer listed.").color(theme::weak_text(ui)));
+            controls::empty_state(ui, svg::CLOCK_CLOCKWISE, "This automation is no longer listed", "", &[]);
             return;
         };
-        ui.horizontal(|ui| {
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Header, |ui| {
+            ui.add(svg::CLOCK_CLOCKWISE.image(m.icon_md).tint(theme::accent_secondary(ui)));
             ui.label(RichText::new(job.label()).strong());
             ui.label(RichText::new(format!("\u{00b7} {} \u{00b7} {}", job.agent_alias, job.expression)).color(theme::weak_text(ui)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let busy = self.starting.contains(&job.id);
-                let run = ui
-                    .add_enabled(!busy, egui::Button::new(format!("{} Run now", icons::PLAY)))
+                let run = TextButton::new("Run now")
+                    .kind(ButtonKind::Primary)
+                    .icon(svg::PLAY)
+                    .enabled(!busy)
+                    .show(ui)
                     .on_hover_text("Run this automation now; its result also goes to its session");
                 if run.clicked()
                     && let Some(gw) = self.gateway()
@@ -640,18 +669,17 @@ impl ZeroClawView {
                     });
                 }
                 if busy {
-                    ui.spinner();
+                    controls::spinner(ui, SpinnerSize::Sm);
                 }
                 self.status_tail(ui);
             });
         });
-        ui.separator();
         if self.runs_for.as_deref() != Some(job.id.as_str()) {
-            ui.spinner();
+            controls::loading_state(ui, "Loading runs\u{2026}");
             return;
         }
         if self.runs.is_empty() {
-            ui.label(RichText::new("No runs yet").color(theme::weak_text(ui)));
+            controls::empty_state(ui, svg::CLOCK_COUNTER_CLOCKWISE, "No runs yet", "", &[]);
             return;
         }
         let style = ChatStyle::from_ui(ui);
@@ -664,12 +692,12 @@ impl ZeroClawView {
     }
 }
 
-fn outcome_mark(ui: &Ui, outcome: Outcome) -> (&'static str, Color32) {
+fn outcome_mark(ui: &Ui, outcome: Outcome) -> (Icon, Color32) {
     match outcome {
-        Outcome::Ok => (icons::STATUS_ON, theme::success(ui)),
-        Outcome::Degraded => (icons::STATUS_WARN, theme::warn(ui)),
-        Outcome::Failed => (icons::STATUS_ERR, theme::error(ui)),
-        Outcome::Skipped | Outcome::Unknown => (icons::STATUS_OFF, theme::weak_text(ui)),
+        Outcome::Ok => (svg::CHECK_CIRCLE, theme::success(ui)),
+        Outcome::Degraded => (svg::WARNING, theme::warn(ui)),
+        Outcome::Failed => (svg::X_CIRCLE, theme::error(ui)),
+        Outcome::Skipped | Outcome::Unknown => (svg::MINUS_CIRCLE, theme::weak_text(ui)),
     }
 }
 

@@ -6,32 +6,57 @@
 //! front end later: state lives in [`OrderPanel`], async results arrive on
 //! a channel as [`PanelMsg`].
 
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, unbounded};
 use std::collections::HashMap;
 
 use database::orders::checklist::{ChecklistKind, ItemStatus};
 use database::orders::{
-    gate::GateOutcome, persist_qc_failures, persist_qc_report, BackendKind, BuildSpec,
-    ChecklistState, GateDecision, OrderComment, OrderKey, OrderKind, OrderSummary, PhotoCheck,
-    QcBackend, QcOrder, QcReportPayload, SerialHistorySummary, TechIdentity,
+    BackendKind, BuildSpec, ChecklistState, GateDecision, OrderComment, OrderKey, OrderKind,
+    OrderSummary, PhotoCheck, QcBackend, QcOrder, QcReportPayload, SerialHistorySummary,
+    TechIdentity, gate::GateOutcome, persist_qc_failures, persist_qc_report,
 };
 use database::schema::{RecordId, RecordIdExt, RunResult, TICKET_TABLE};
-use eframe::egui::{
-    self, Align, Color32, CollapsingHeader, Frame, Layout, Margin, RichText, ScrollArea, TextEdit,
+use eframe::egui::{self, Align, Frame, Layout, Margin, RichText, ScrollArea};
+use mtech_ui::controls::{
+    self, BarKind, ButtonKind, IconBox, Metrics, Segment, SpinnerSize, TextButton, TextField,
+    Tokens,
 };
-use egui_phosphor::regular as p;
-use stress_runner::RunVerdict;
+use mtech_ui::icons::svg::{self, Icon};
+use mtech_ui::theme;
+use mtech_ui::tokens::composite;
 use stress_kit::telemetry::TelemetrySnapshot;
+use stress_runner::RunVerdict;
 
 use crate::driver_check::{DriverCheckRow, DriverStatus};
-use crate::spec_check::{collect_detected, compare, CheckStatus, SpecCheckReport};
+use crate::spec_check::{CheckStatus, SpecCheckReport, collect_detected, compare};
 
-const GOOD: Color32 = Color32::from_rgb(61, 185, 157);
-const CAUTION: Color32 = Color32::from_rgb(180, 140, 50);
+/// Width of the order lookup field.
+const LOOKUP_W: f32 = 300.0;
+/// Width of the order column in the recent-orders table.
+const ORDER_COL_W: f32 = 96.0;
+/// Width of the status column in the driver table.
+const DRIVER_STATUS_W: f32 = 96.0;
+/// Width of a provisioning dropdown.
+const PICKER_W: f32 = 180.0;
+/// Width of the VRChat asset-tag field.
+const ASSET_TAG_W: f32 = 160.0;
+/// Width of a sign-in secret field.
+const SECRET_W: f32 = 140.0;
+/// Width left for the arrow between the expected and detected spec boxes.
+const DIFF_GUTTER: f32 = 40.0;
+/// Share of the status colour in a detected-spec box.
+const DIFF_WASH: f32 = 0.18;
+/// Checklist answers offered per item.
+const CHECK_CHOICES: [(ItemStatus, Icon, &str); 3] = [
+    (ItemStatus::Pass, svg::CHECK_CIRCLE, "Pass"),
+    (ItemStatus::Fail, svg::X_CIRCLE, "Fail"),
+    (ItemStatus::Na, svg::MINUS_CIRCLE, "N/A"),
+];
 
 /// Date portion of an ISO-8601 timestamp (`2026-06-15T17:54:35Z` → `2026-06-15`).
 fn short_date(iso: Option<&str>) -> String {
-    iso.map(|s| s.split('T').next().unwrap_or(s).to_string()).unwrap_or_default()
+    iso.map(|s| s.split('T').next().unwrap_or(s).to_string())
+        .unwrap_or_default()
 }
 
 /// One-line summary stored on the signed-off worksheet.
@@ -68,16 +93,28 @@ enum AuthRole {
 enum PanelMsg {
     Loaded(Box<LoadedOrder>),
     LoadFailed(String),
-    Auth { role: AuthRole, result: Result<TechIdentity, String> },
+    Auth {
+        role: AuthRole,
+        result: Result<TechIdentity, String>,
+    },
     CommentPosted(Box<Result<OrderComment, String>>),
     CommentsRefreshed(Result<Vec<OrderComment>, String>),
     Advanced(Result<i64, String>),
     Submitted(Result<String, String>),
-    SerialHistory { serial: String, result: Result<SerialHistorySummary, String> },
+    SerialHistory {
+        serial: String,
+        result: Result<SerialHistorySummary, String>,
+    },
     RecentLoaded(Result<Vec<OrderSummary>, String>),
     SerialResolved(Option<OrderSummary>),
-    ProvDone { step: String, result: Result<String, String> },
-    ProcStep { label: String, result: Result<String, String> },
+    ProvDone {
+        step: String,
+        result: Result<String, String>,
+    },
+    ProcStep {
+        label: String,
+        result: Result<String, String>,
+    },
     ProcDone,
     DmiRead(Result<crate::provisioning::dmi::DmiReadResult, String>),
     DriverCheck(Result<Vec<DriverCheckRow>, String>),
@@ -262,7 +299,11 @@ impl OrderPanel {
     pub fn run_context(&self) -> Option<(RecordId, String)> {
         let session = self.session.as_ref()?;
         let service = RecordId::new(TICKET_TABLE, session.order.id.clone());
-        let tech = self.tech.as_ref().map(|t| t.name.clone()).unwrap_or_default();
+        let tech = self
+            .tech
+            .as_ref()
+            .map(|t| t.name.clone())
+            .unwrap_or_default();
         Some((service, tech))
     }
 
@@ -280,12 +321,20 @@ impl OrderPanel {
                 PanelMsg::Loaded(loaded) => {
                     self.busy = false;
                     self.error = None;
-                    let LoadedOrder { order, spec, gate, comments, photos } = *loaded;
+                    let LoadedOrder {
+                        order,
+                        spec,
+                        gate,
+                        comments,
+                        photos,
+                    } = *loaded;
                     let backend = order
                         .key
                         .as_ref()
                         .map(QcBackend::for_key)
-                        .unwrap_or_else(|| QcBackend::for_key(&OrderKey::Prestashop(order.id.clone())));
+                        .unwrap_or_else(|| {
+                            QcBackend::for_key(&OrderKey::Prestashop(order.id.clone()))
+                        });
                     // Build the order-appropriate checklist and overlay any
                     // saved per-machine worksheet for this order.
                     let kind = ChecklistKind::for_order_kind(order.kind);
@@ -307,7 +356,14 @@ impl OrderPanel {
                         .map(|s| !s.applicable)
                         .unwrap_or(false);
                     self.checklist = checklist;
-                    self.session = Some(OrderSession { backend, order, spec, gate, comments, photos });
+                    self.session = Some(OrderSession {
+                        backend,
+                        order,
+                        spec,
+                        gate,
+                        comments,
+                        photos,
+                    });
                     self.spec_report = None;
                     self.spec_pending = true;
                     self.verify_pending = true;
@@ -344,14 +400,22 @@ impl OrderPanel {
                     AuthRole::Tech => {
                         self.auth_busy = false;
                         match result {
-                            Ok(t) => { self.tech = Some(t); self.auth_error = None; self.tech_password.clear(); }
+                            Ok(t) => {
+                                self.tech = Some(t);
+                                self.auth_error = None;
+                                self.tech_password.clear();
+                            }
                             Err(e) => self.auth_error = Some(e),
                         }
                     }
                     AuthRole::Signoff => {
                         self.signoff_busy = false;
                         match result {
-                            Ok(t) => { self.signoff = Some(t); self.signoff_error = None; self.signoff_password.clear(); }
+                            Ok(t) => {
+                                self.signoff = Some(t);
+                                self.signoff_error = None;
+                                self.signoff_password.clear();
+                            }
                             Err(e) => self.signoff_error = Some(e),
                         }
                     }
@@ -401,7 +465,8 @@ impl OrderPanel {
                             self.advance_result = Some((true, format!("Status advanced to {to}.")));
                             if let Some(s) = self.session.as_mut() {
                                 s.order.status.legacy_id = to;
-                                s.order.status.name = database::orders::gate::status_display(to, "");
+                                s.order.status.name =
+                                    database::orders::gate::status_display(to, "");
                                 s.gate = s.backend.status_gate(&s.order);
                             }
                         }
@@ -461,7 +526,9 @@ impl OrderPanel {
 
     fn start_load(&mut self, ctx: &egui::Context) {
         let Some(key) = OrderKey::parse(&self.key_input) else {
-            self.error = Some("Enter a PS order (2…), Everest doc (5…), Shopify order # or XBS- serial.".into());
+            self.error = Some(
+                "Enter a PS order (2…), Everest doc (5…), Shopify order # or XBS- serial.".into(),
+            );
             return;
         };
         self.busy = true;
@@ -476,7 +543,13 @@ impl OrderPanel {
                 let gate = backend.status_gate(&order);
                 let comments = backend.fetch_comments(&order).await.unwrap_or_default();
                 let photos = backend.check_build_photos(&order).await.unwrap_or_default();
-                Ok::<_, anyhow::Error>(LoadedOrder { order, spec, gate, comments, photos })
+                Ok::<_, anyhow::Error>(LoadedOrder {
+                    order,
+                    spec,
+                    gate,
+                    comments,
+                    photos,
+                })
             }
             .await;
             let _ = match result {
@@ -494,7 +567,10 @@ impl OrderPanel {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         tokio::spawn(async move {
-            let result = backend.recent_orders(limit).await.map_err(|e| format!("{e:#}"));
+            let result = backend
+                .recent_orders(limit)
+                .await
+                .map_err(|e| format!("{e:#}"));
             let _ = tx.send(PanelMsg::RecentLoaded(result));
             ctx.request_repaint();
         });
@@ -582,20 +658,28 @@ impl OrderPanel {
 
     /// Installed vs latest BIOS, with a link to the manufacturer page.
     fn ui_bios(&mut self, ui: &mut egui::Ui) {
+        let (t, m) = kit(ui);
+        let weak = theme::weak_text(ui);
         match self.bios_installed.as_deref() {
             Some(v) => {
                 ui.horizontal(|ui| {
+                    svg::MT_FIRMWARE.show_tinted(ui, m.icon_sm, t.icon);
                     ui.label(RichText::new("Installed").strong().small());
                     ui.label(RichText::new(v).monospace().small());
                 });
             }
             None => {
-                ui.label(RichText::new("Installed BIOS version unavailable.").weak().small());
+                controls::IconLabel::new(svg::INFO, "Installed BIOS version unavailable.")
+                    .tone(weak)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
             }
         }
         match self.bios_latest.as_ref() {
             Some(bios) => {
                 ui.horizontal_wrapped(|ui| {
+                    svg::CLOUD_ARROW_DOWN.show_tinted(ui, m.icon_sm, t.icon);
                     ui.label(RichText::new("Latest").strong().small());
                     if let Some(f) = bios.file_name.as_ref() {
                         ui.label(RichText::new(f).monospace().small());
@@ -606,29 +690,33 @@ impl OrderPanel {
                 });
             }
             None => {
-                ui.label(RichText::new("No catalog BIOS entry for this board.").weak().small());
+                controls::IconLabel::new(svg::INFO, "No catalog BIOS entry for this board.")
+                    .tone(weak)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
             }
         }
     }
 
     /// Per-part driver comparison: installed (WMI) vs catalog target + missing list.
     fn ui_driver_check(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let m = Metrics::get(ui.ctx());
         if self.driver_check.is_none() && !self.driver_check_busy {
             self.start_driver_check(ctx);
         }
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    !self.driver_check_busy,
-                    egui::Button::new(format!("{} Re-check drivers", p::ARROW_CLOCKWISE)),
-                )
-                .clicked()
-            {
+            if action(
+                ui,
+                !self.driver_check_busy,
+                svg::ARROW_CLOCKWISE,
+                "Re-check drivers",
+            ) {
                 self.driver_check = None;
                 self.start_driver_check(ctx);
             }
             if self.driver_check_busy {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
                 ui.label(RichText::new("scanning installed drivers…").weak().small());
             }
         });
@@ -636,10 +724,17 @@ impl OrderPanel {
         match self.driver_check.as_ref() {
             None => {}
             Some(Err(e)) => {
-                ui.colored_label(ui.visuals().error_fg_color, e);
+                let tone = theme::error(ui);
+                controls::status_label(ui, svg::X_CIRCLE, e, tone);
             }
             Some(Ok(rows)) if rows.is_empty() => {
-                ui.label(RichText::new("No catalog driver mapping for this board.").weak().small());
+                controls::empty_state(
+                    ui,
+                    svg::FILE_X,
+                    "No catalog driver mapping for this board",
+                    "",
+                    &[],
+                );
             }
             Some(Ok(rows)) => {
                 let missing: Vec<&str> = rows
@@ -653,34 +748,62 @@ impl OrderPanel {
                     .map(|r| r.category.as_str())
                     .collect();
                 if missing.is_empty() && outdated.is_empty() {
-                    ui.colored_label(GOOD, format!("{} All drivers present and current", p::CHECK_CIRCLE));
+                    let ok = theme::success(ui);
+                    controls::status_label(
+                        ui,
+                        svg::CHECK_CIRCLE,
+                        "All drivers present and current",
+                        ok,
+                    );
                 } else {
                     if !missing.is_empty() {
-                        ui.colored_label(
-                            ui.visuals().error_fg_color,
-                            format!("{} Missing: {}", p::X_CIRCLE, missing.join(", ")),
+                        let tone = theme::error(ui);
+                        controls::status_label(
+                            ui,
+                            svg::X_CIRCLE,
+                            &format!("Missing: {}", missing.join(", ")),
+                            tone,
                         );
                     }
                     if !outdated.is_empty() {
-                        ui.colored_label(
-                            CAUTION,
-                            format!("{} Outdated: {}", p::WARNING, outdated.join(", ")),
+                        let tone = theme::warn(ui);
+                        controls::status_label(
+                            ui,
+                            svg::WARNING,
+                            &format!("Outdated: {}", outdated.join(", ")),
+                            tone,
                         );
                     }
                 }
-                ui.add_space(4.0);
+                ui.add_space(m.pad.y);
                 egui_extras::TableBuilder::new(ui)
                     .id_salt("driver_check_table")
                     .striped(true)
-                    .column(egui_extras::Column::initial(120.0).at_least(70.0).clip(true))
+                    .column(
+                        egui_extras::Column::initial(120.0)
+                            .at_least(70.0)
+                            .clip(true),
+                    )
                     .column(egui_extras::Column::remainder().at_least(150.0).clip(true))
-                    .column(egui_extras::Column::initial(150.0).at_least(90.0).clip(true))
-                    .column(egui_extras::Column::exact(70.0))
+                    .column(
+                        egui_extras::Column::initial(150.0)
+                            .at_least(90.0)
+                            .clip(true),
+                    )
+                    .column(egui_extras::Column::exact(DRIVER_STATUS_W))
                     .header(20.0, |mut h| {
-                        h.col(|ui| { ui.strong("Part"); });
-                        h.col(|ui| { ui.strong("Installed"); });
-                        h.col(|ui| { ui.strong("Catalog target"); });
-                        h.col(|ui| { ui.strong("Status"); });
+                        h.col(|ui| {
+                            ui.strong("Part");
+                        });
+                        h.col(|ui| {
+                            ui.strong("Installed");
+                        });
+                        h.col(|ui| {
+                            ui.strong("Catalog target");
+                        });
+                        h.col(|ui| {
+                            ui.strong("Status");
+                        });
                     })
                     .body(|mut body| {
                         for r in rows {
@@ -697,7 +820,10 @@ impl OrderPanel {
                                     ui.label(RichText::new(txt).small());
                                 });
                                 row.col(|ui| {
-                                    let tgt = match (r.target_file.as_deref(), r.target_version.as_deref()) {
+                                    let tgt = match (
+                                        r.target_file.as_deref(),
+                                        r.target_version.as_deref(),
+                                    ) {
                                         (Some(f), Some(v)) => format!("{f}  (v{v})"),
                                         (Some(f), None) => f.to_string(),
                                         _ => "—".to_string(),
@@ -705,13 +831,25 @@ impl OrderPanel {
                                     ui.label(RichText::new(tgt).monospace().small());
                                 });
                                 row.col(|ui| {
-                                    let (c, t) = match r.status {
-                                        DriverStatus::Installed => (GOOD, "installed"),
-                                        DriverStatus::Outdated => (CAUTION, "OUTDATED"),
-                                        DriverStatus::Missing => (ui.visuals().error_fg_color, "MISSING"),
-                                        DriverStatus::NoTarget => (CAUTION, "info"),
+                                    let (icon, c, t) = match r.status {
+                                        DriverStatus::Installed => {
+                                            (svg::CHECK_CIRCLE, theme::success(ui), "installed")
+                                        }
+                                        DriverStatus::Outdated => {
+                                            (svg::WARNING, theme::warn(ui), "OUTDATED")
+                                        }
+                                        DriverStatus::Missing => {
+                                            (svg::X_CIRCLE, theme::error(ui), "MISSING")
+                                        }
+                                        DriverStatus::NoTarget => {
+                                            (svg::INFO, theme::warn(ui), "info")
+                                        }
                                     };
-                                    ui.colored_label(c, RichText::new(t).small());
+                                    controls::IconLabel::new(icon, t)
+                                        .tone(c)
+                                        .small(true)
+                                        .selectable(true)
+                                        .show(ui);
                                 });
                             });
                         }
@@ -723,7 +861,9 @@ impl OrderPanel {
     /// Gather installed drivers (WMI) + catalog targets (SQLite) on a worker thread.
     fn start_driver_check(&mut self, ctx: &egui::Context) {
         let product = {
-            let Some(session) = self.session.as_ref() else { return };
+            let Some(session) = self.session.as_ref() else {
+                return;
+            };
             session
                 .spec
                 .motherboard
@@ -742,8 +882,10 @@ impl OrderPanel {
                 let package = if product.is_empty() {
                     None
                 } else {
-                    crate::provisioning::catalog_query::package_drivers_for_baseboard(&conn, &product)
-                        .map_err(|e| format!("{e:#}"))?
+                    crate::provisioning::catalog_query::package_drivers_for_baseboard(
+                        &conn, &product,
+                    )
+                    .map_err(|e| format!("{e:#}"))?
                 }
                 .unwrap_or_default();
                 let mut gpu_targets = Vec::new();
@@ -757,7 +899,11 @@ impl OrderPanel {
                         });
                     }
                 }
-                Ok(crate::driver_check::build_driver_check(&installed, &package, &gpu_targets))
+                Ok(crate::driver_check::build_driver_check(
+                    &installed,
+                    &package,
+                    &gpu_targets,
+                ))
             })();
             let _ = tx.send(PanelMsg::DriverCheck(result));
             ctx.request_repaint();
@@ -774,7 +920,10 @@ impl OrderPanel {
         };
         if let Some(profile) = identity.id_profile.as_deref() {
             if profile != required {
-                let msg = format!("{} is not authorized for this signature (profile {profile}).", identity.name);
+                let msg = format!(
+                    "{} is not authorized for this signature (profile {profile}).",
+                    identity.name
+                );
                 match role {
                     AuthRole::Marketing => self.marketing_error = Some(msg),
                     AuthRole::Executive => self.executive_error = Some(msg),
@@ -802,8 +951,14 @@ impl OrderPanel {
         match role {
             AuthRole::Tech => (self.tech_email.clone(), self.tech_password.clone()),
             AuthRole::Signoff => (self.signoff_email.clone(), self.signoff_password.clone()),
-            AuthRole::Marketing => (self.marketing_email.clone(), self.marketing_password.clone()),
-            AuthRole::Executive => (self.executive_email.clone(), self.executive_password.clone()),
+            AuthRole::Marketing => (
+                self.marketing_email.clone(),
+                self.marketing_password.clone(),
+            ),
+            AuthRole::Executive => (
+                self.executive_email.clone(),
+                self.executive_password.clone(),
+            ),
         }
     }
 
@@ -826,7 +981,9 @@ impl OrderPanel {
     }
 
     fn start_auth(&mut self, ctx: &egui::Context, role: AuthRole) {
-        let Some(backend) = self.session.as_ref().map(|s| s.backend.clone()) else { return };
+        let Some(backend) = self.session.as_ref().map(|s| s.backend.clone()) else {
+            return;
+        };
         let (email, password) = self.auth_inputs(role);
         // Shopify identity is a roster name match; no PIN verification exists yet.
         let needs_password = backend.backend_kind() == BackendKind::Prestashop;
@@ -853,7 +1010,9 @@ impl OrderPanel {
     }
 
     fn start_post_comment(&mut self, ctx: &egui::Context) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         let Some(tech) = self.tech.clone() else {
             self.comment_error = Some("Sign in before posting comments.".into());
             return;
@@ -879,7 +1038,9 @@ impl OrderPanel {
     }
 
     fn start_refresh_comments(&mut self, ctx: &egui::Context) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         self.comment_busy = true;
         let backend = session.backend.clone();
         let order = session.order.clone();
@@ -896,7 +1057,9 @@ impl OrderPanel {
     }
 
     fn start_advance(&mut self, ctx: &egui::Context, to: i64) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         self.advance_busy = true;
         self.advance_result = None;
         let backend = session.backend.clone();
@@ -916,7 +1079,9 @@ impl OrderPanel {
 
     /// Run SysPrep file cleanup then advance the order to Ready to Ship.
     fn start_sysprep_cleanup(&mut self, ctx: &egui::Context) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         self.prov_busy = true;
         let backend = session.backend.clone();
         let order = session.order.clone();
@@ -935,26 +1100,42 @@ impl OrderPanel {
     }
 
     fn start_serial_history(&mut self, ctx: &egui::Context, serial: String) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         self.serial_busy = Some(serial.clone());
         let backend = session.backend.clone();
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         tokio::spawn(async move {
-            let result = backend.serial_history(&serial).await.map_err(|e| format!("{e:#}"));
+            let result = backend
+                .serial_history(&serial)
+                .await
+                .map_err(|e| format!("{e:#}"));
             let _ = tx.send(PanelMsg::SerialHistory { serial, result });
             ctx.request_repaint();
         });
     }
 
-    fn start_submit(&mut self, ctx: &egui::Context, last_verdict: Option<&RunVerdict>, preset: Option<String>) {
+    fn start_submit(
+        &mut self,
+        ctx: &egui::Context,
+        last_verdict: Option<&RunVerdict>,
+        preset: Option<String>,
+    ) {
         // Snapshot session-derived data, then release the borrow for the
         // mutable re-verify pass below.
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         let order = session.order.clone();
         let backend = session.backend.clone();
         let backend_kind = backend.backend_kind();
-        let order_key = order.key.as_ref().map(|k| k.display().to_string()).unwrap_or_default();
+        let order_key = order
+            .key
+            .as_ref()
+            .map(|k| k.display().to_string())
+            .unwrap_or_default();
         let order_kind = order.kind;
 
         let Some(tech) = self.tech.clone() else {
@@ -962,11 +1143,17 @@ impl OrderPanel {
             return;
         };
         if order_kind == OrderKind::Repair && self.signoff.is_none() {
-            self.submit_result = Some((false, "Repair orders need the second sign-off before submitting.".into()));
+            self.submit_result = Some((
+                false,
+                "Repair orders need the second sign-off before submitting.".into(),
+            ));
             return;
         }
         if self.is_influencer && (self.marketing.is_none() || self.executive.is_none()) {
-            self.submit_result = Some((false, "Influencer build needs both Marketing and Executive signatures.".into()));
+            self.submit_result = Some((
+                false,
+                "Influencer build needs both Marketing and Executive signatures.".into(),
+            ));
             return;
         }
         if !self.checklist.is_complete() {
@@ -981,7 +1168,10 @@ impl OrderPanel {
             self.blocked_keys = stale.clone();
             self.submit_result = Some((
                 false,
-                format!("Changed since the auto-check — re-mark before sign-off: {}", stale.join(", ")),
+                format!(
+                    "Changed since the auto-check — re-mark before sign-off: {}",
+                    stale.join(", ")
+                ),
             ));
             self.save_worksheet();
             return;
@@ -1016,16 +1206,24 @@ impl OrderPanel {
             signoff_tech: self.signoff.as_ref().map(|t| t.name.clone()),
             signoff_employee_id: self.signoff.as_ref().map(|t| t.id_employee.clone()),
             duration_secs: last_verdict.map(|v| v.duration_secs).unwrap_or(0.0),
-            whea_delta: last_verdict.map(|v| v.summary.whea_delta_count as i64).unwrap_or(0),
-            tdr_delta: last_verdict.map(|v| v.summary.tdr_count as i64).unwrap_or(0),
+            whea_delta: last_verdict
+                .map(|v| v.summary.whea_delta_count as i64)
+                .unwrap_or(0),
+            tdr_delta: last_verdict
+                .map(|v| v.summary.tdr_count as i64)
+                .unwrap_or(0),
             stressor_errors: last_verdict
                 .map(|v| {
-                    (v.summary.test_errors.max(v.summary.memory_errors)
-                        + v.summary.disk_io_errors) as i64
+                    (v.summary.test_errors.max(v.summary.memory_errors) + v.summary.disk_io_errors)
+                        as i64
                 })
                 .unwrap_or(0),
-            cpu_max_c: last_verdict.and_then(|v| v.summary.max_temp_c).map(f64::from),
-            gpu_max_c: last_verdict.and_then(|v| v.summary.max_gpu_temp_c).map(f64::from),
+            cpu_max_c: last_verdict
+                .and_then(|v| v.summary.max_temp_c)
+                .map(f64::from),
+            gpu_max_c: last_verdict
+                .and_then(|v| v.summary.max_gpu_temp_c)
+                .map(f64::from),
             spec_check: self.spec_report.as_ref().map(|r| r.summary()),
             run_ref: last_verdict.map(|v| format!("stress_test_run:{}", v.run_id.key_string())),
             checklist: self.checklist.clone(),
@@ -1057,7 +1255,13 @@ impl OrderPanel {
         };
 
         // Persist the signed-off worksheet as the on-machine audit copy.
-        crate::checklist_store::save(&order.id, &machine, &self.checklist, true, &verdict_summary(&payload));
+        crate::checklist_store::save(
+            &order.id,
+            &machine,
+            &self.checklist,
+            true,
+            &verdict_summary(&payload),
+        );
 
         self.submit_busy = true;
         self.submit_result = None;
@@ -1079,8 +1283,12 @@ impl OrderPanel {
                     }
                     Ok(msg)
                 }
-                (Err(db), Ok(())) => Err(format!("Backend push OK but SurrealDB save failed: {db:#}")),
-                (Err(db), Err(push)) => Err(format!("SurrealDB save failed: {db:#}; backend push failed: {push:#}")),
+                (Err(db), Ok(())) => {
+                    Err(format!("Backend push OK but SurrealDB save failed: {db:#}"))
+                }
+                (Err(db), Err(push)) => Err(format!(
+                    "SurrealDB save failed: {db:#}; backend push failed: {push:#}"
+                )),
             };
             let _ = tx.send(PanelMsg::Submitted(result));
             ctx.request_repaint();
@@ -1096,24 +1304,28 @@ impl OrderPanel {
     ) {
         self.drain_messages();
         let ctx = ui.ctx().clone();
+        let m = Metrics::get(ui.ctx());
 
-        // Lookup bar
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(p::MAGNIFYING_GLASS).size(16.0));
-            let response = ui.add(
-                TextEdit::singleline(&mut self.key_input)
-                    .hint_text("PS order (2…) · Everest (5…) · Shopify # · XBS-…")
-                    .desired_width(220.0),
-            );
+        controls::bar(ui, BarKind::Tool, |ui| {
+            let response = TextField::new(&mut self.key_input)
+                .hint("PS order (2…) · Everest (5…) · Shopify # · XBS-…")
+                .icon(svg::MAGNIFYING_GLASS)
+                .width(LOOKUP_W)
+                .show(ui);
             let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if (ui.button("Load order").clicked() || submitted) && !self.busy {
+            let load = TextButton::new("Load order")
+                .icon(svg::ARROW_RIGHT)
+                .kind(ButtonKind::Primary)
+                .show(ui)
+                .clicked();
+            if (load || submitted) && !self.busy {
                 self.start_load(&ctx);
             }
             if self.busy {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
             if self.session.is_some()
-                && ui.button(format!("{} Back to list", p::ARROW_LEFT)).clicked()
+                && controls::icon_text_button(ui, svg::ARROW_LEFT, "Back to list").clicked()
             {
                 self.session = None;
                 self.error = None;
@@ -1121,12 +1333,14 @@ impl OrderPanel {
             }
             if let Some(tech) = self.tech.as_ref() {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.colored_label(GOOD, format!("{} {}", p::USER, tech.name));
+                    let ok = theme::success(ui);
+                    controls::status_label(ui, svg::USER_CHECK, tech.name.as_str(), ok);
                 });
             }
         });
         if let Some(e) = self.error.as_ref() {
-            ui.colored_label(ui.visuals().error_fg_color, e);
+            let tone = theme::error(ui);
+            controls::status_label(ui, svg::WARNING_CIRCLE, e, tone);
         }
 
         if self.session.is_none() {
@@ -1136,48 +1350,56 @@ impl OrderPanel {
             }
             if self.resolve_busy {
                 ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(RichText::new("Detecting order from machine serial…").weak().small());
+                    controls::spinner(ui, SpinnerSize::Sm);
+                    ui.label(
+                        RichText::new("Detecting order from machine serial…")
+                            .weak()
+                            .small(),
+                    );
                 });
             }
             if let Some(s) = self.resolved.clone() {
-                Frame::default()
-                    .fill(GOOD.gamma_multiply(0.12))
-                    .stroke((1.0, GOOD))
-                    .corner_radius(6.0)
-                    .inner_margin(Margin::symmetric(8, 6))
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.colored_label(GOOD, RichText::new(p::DESKTOP).size(14.0));
-                            ui.label(
-                                RichText::new(format!(
-                                    "Detected on this machine: {} {}",
-                                    s.reference,
-                                    if s.customer_name.is_empty() { String::new() } else { format!("({})", s.customer_name) }
-                                ))
-                                .small(),
-                            );
-                            if ui.button("Load detected").clicked() {
-                                self.key_input = s.lookup_input();
-                                self.start_load(&ctx);
-                            }
-                        });
+                let ok = theme::success(ui);
+                controls::callout(ui, ok, None, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        svg::DESKTOP_TOWER.show_tinted(ui, m.icon_md, ok);
+                        ui.label(
+                            RichText::new(format!(
+                                "Detected on this machine: {} {}",
+                                s.reference,
+                                if s.customer_name.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("({})", s.customer_name)
+                                }
+                            ))
+                            .small(),
+                        );
+                        if controls::icon_text_button(ui, svg::DOWNLOAD_SIMPLE, "Load detected")
+                            .clicked()
+                        {
+                            self.key_input = s.lookup_input();
+                            self.start_load(&ctx);
+                        }
                     });
-                ui.add_space(6.0);
+                });
+                ui.add_space(m.gap.y);
             }
             if self.recent.is_none() && !self.recent_busy {
                 self.start_recent(&ctx);
             }
             self.ui_recent_orders(ui, &ctx);
-            ui.add_space(12.0);
-            ui.label(
-                RichText::new(
-                    "Or look up any order above. Loading begins QC: gate check, items + serials, \
+            ui.add_space(m.gap.y * 2.0);
+            let weak = theme::weak_text(ui);
+            controls::IconLabel::new(
+                svg::INFO,
+                "Or look up any order above. Loading begins QC: gate check, items + serials, \
                      spec verification, sign-off, comments, and report submission.",
-                )
-                .weak()
-                .small(),
-            );
+            )
+            .tone(weak)
+            .small(true)
+            .selectable(true)
+            .show(ui);
             return;
         }
 
@@ -1195,10 +1417,11 @@ impl OrderPanel {
             if !product.is_empty() {
                 let path = crate::db::default_sqlite_path();
                 if let Ok(conn) = crate::db::open_or_create(&path) {
-                    self.bios_latest =
-                        crate::provisioning::catalog_query::bios_info_for_baseboard(&conn, &product)
-                            .ok()
-                            .flatten();
+                    self.bios_latest = crate::provisioning::catalog_query::bios_info_for_baseboard(
+                        &conn, &product,
+                    )
+                    .ok()
+                    .flatten();
                 }
             }
         }
@@ -1207,68 +1430,87 @@ impl OrderPanel {
         egui::Panel::right("qc_side_panel")
             .resizable(true)
             .default_size(400.0)
-            .show_inside(ui, |ui| {
-                ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    CollapsingHeader::new(format!("{} Order comments", p::CHAT))
+            .show(ui, |ui| {
+                ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        controls::Section::new(
+                            legacy_salt(svg::CHAT, "Order comments"),
+                            "Order comments",
+                        )
+                        .icon(svg::CHAT)
                         .default_open(true)
                         .show(ui, |ui| self.ui_comments(ui, &ctx));
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-                    CollapsingHeader::new(format!("{} QC report", p::CLIPBOARD_TEXT))
+                        ui.add_space(m.gap.y);
+                        controls::Section::new(
+                            legacy_salt(svg::CLIPBOARD_TEXT, "QC report"),
+                            "QC report",
+                        )
+                        .icon(svg::MT_QC_PASS)
                         .default_open(true)
                         .show(ui, |ui| self.ui_report(ui, &ctx, last_verdict, last_preset));
-                });
+                    });
             });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                // Order info (left) + sign-off card (right).
-                ui.columns(2, |cols| {
-                    self.ui_order_header(&mut cols[0]);
-                    self.ui_sign_off(&mut cols[1], &ctx);
-                });
-                self.ui_gate_banner(ui, &ctx);
-                CollapsingHeader::new(format!("{} Items & serials", p::PACKAGE))
+        egui::CentralPanel::default().show(ui, |ui| {
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    // Order info (left) + sign-off controls::card(right).
+                    ui.columns(2, |cols| {
+                        self.ui_order_header(&mut cols[0]);
+                        self.ui_sign_off(&mut cols[1], &ctx);
+                    });
+                    self.ui_gate_banner(ui, &ctx);
+                    controls::Section::new(
+                        legacy_salt(svg::PACKAGE, "Items & serials"),
+                        "Items & serials",
+                    )
+                    .icon(svg::PACKAGE)
                     .default_open(true)
                     .show(ui, |ui| self.ui_items(ui));
-                CollapsingHeader::new(format!("{} Spec check", p::CPU))
-                    .default_open(true)
-                    .show(ui, |ui| self.ui_spec_check(ui, snapshot));
-                CollapsingHeader::new(format!("{} BIOS", p::CPU))
-                    .default_open(false)
-                    .show(ui, |ui| self.ui_bios(ui));
-                CollapsingHeader::new(format!("{} Driver check", p::DOWNLOAD_SIMPLE))
+                    controls::Section::new(legacy_salt(svg::CPU, "Spec check"), "Spec check")
+                        .icon(svg::CPU)
+                        .default_open(true)
+                        .show(ui, |ui| self.ui_spec_check(ui, snapshot));
+                    controls::Section::new(legacy_salt(svg::CPU, "BIOS"), "BIOS")
+                        .icon(svg::MT_FIRMWARE)
+                        .default_open(false)
+                        .show(ui, |ui| self.ui_bios(ui));
+                    controls::Section::new(
+                        legacy_salt(svg::DOWNLOAD_SIMPLE, "Driver check"),
+                        "Driver check",
+                    )
+                    .icon(svg::DOWNLOAD_SIMPLE)
                     .default_open(false)
                     .show(ui, |ui| self.ui_driver_check(ui, &ctx));
-                CollapsingHeader::new(format!("{} Auto-Provision", p::WRENCH))
+                    controls::Section::new(
+                        legacy_salt(svg::WRENCH, "Auto-Provision"),
+                        "Auto-Provision",
+                    )
+                    .icon(svg::MAGIC_WAND)
                     .default_open(false)
                     .show(ui, |ui| self.ui_provision(ui, &ctx));
-                ui.add_space(24.0);
-            });
+                    ui.add_space(m.gap.y * 4.0);
+                });
         });
     }
 
     /// Recent build-intake orders picker shown before an order is loaded.
     fn ui_recent_orders(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.add_space(10.0);
+        let m = Metrics::get(ui.ctx());
+        ui.add_space(m.gap.x);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} Recent build-intake orders", p::LIST)).strong().size(15.0));
-            if ui
-                .add_enabled(!self.recent_busy, egui::Button::new(format!("{} Refresh", p::ARROW_CLOCKWISE)))
-                .clicked()
-            {
+            controls::heading(ui, svg::LIST, "Recent build-intake orders");
+            if action(ui, !self.recent_busy, svg::ARROW_CLOCKWISE, "Refresh") {
                 self.start_recent(ctx);
             }
-            if ui
-                .add_enabled(!self.recent_busy, egui::Button::new(format!("{} Load +10", p::PLUS)))
-                .clicked()
-            {
+            if action(ui, !self.recent_busy, svg::PLUS, "Load +10") {
                 self.recent_limit += 10;
                 self.start_recent(ctx);
             }
             if self.recent_busy {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
         });
         ui.label(
@@ -1276,56 +1518,95 @@ impl OrderPanel {
                 .weak()
                 .small(),
         );
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
 
         let mut load: Option<String> = None;
         match self.recent.as_ref() {
             None => {
                 if !self.recent_busy {
-                    ui.label(RichText::new("Loading…").weak());
+                    let weak = theme::weak_text(ui);
+                    controls::status_label(ui, svg::HOURGLASS_SIMPLE, "Loading…", weak);
                 }
             }
             Some(Err(e)) => {
-                ui.colored_label(ui.visuals().error_fg_color, e);
+                let tone = theme::error(ui);
+                controls::status_label(ui, svg::X_CIRCLE, e, tone);
             }
             Some(Ok(orders)) if orders.is_empty() => {
-                ui.label(RichText::new("No orders in Order Placed or Ready to Build right now.").weak());
+                controls::empty_state(
+                    ui,
+                    svg::TRAY,
+                    "No orders waiting",
+                    "No orders in Order Placed or Ready to Build right now.",
+                    &[],
+                );
             }
             Some(Ok(orders)) => {
                 egui_extras::TableBuilder::new(ui)
                     .id_salt("recent_orders_table")
                     .striped(true)
-                    .column(egui_extras::Column::exact(72.0))
-                    .column(egui_extras::Column::initial(190.0).at_least(120.0).clip(true))
+                    .column(egui_extras::Column::exact(ORDER_COL_W))
+                    .column(
+                        egui_extras::Column::initial(190.0)
+                            .at_least(120.0)
+                            .clip(true),
+                    )
                     .column(egui_extras::Column::remainder().at_least(120.0).clip(true))
-                    .column(egui_extras::Column::initial(150.0).at_least(90.0).clip(true))
+                    .column(
+                        egui_extras::Column::initial(150.0)
+                            .at_least(90.0)
+                            .clip(true),
+                    )
                     .column(egui_extras::Column::exact(56.0))
                     .column(egui_extras::Column::exact(92.0))
                     .header(20.0, |mut header| {
-                        header.col(|ui| { ui.strong("Order"); });
-                        header.col(|ui| { ui.strong("Status"); });
-                        header.col(|ui| { ui.strong("Customer"); });
-                        header.col(|ui| { ui.strong("Build"); });
-                        header.col(|ui| { ui.strong("Serials"); });
-                        header.col(|ui| { ui.strong("Placed"); });
+                        header.col(|ui| {
+                            ui.strong("Order");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Status");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Customer");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Build");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Serials");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Placed");
+                        });
                     })
                     .body(|mut body| {
                         for order in orders {
-                            body.row(22.0, |mut row| {
+                            body.row(m.row_h, |mut row| {
                                 row.col(|ui| {
-                                    let label =
-                                        if order.reference.is_empty() { &order.id } else { &order.reference };
-                                    if ui
-                                        .add(egui::Button::new(RichText::new(label).monospace()).small())
+                                    let label = if order.reference.is_empty() {
+                                        &order.id
+                                    } else {
+                                        &order.reference
+                                    };
+                                    if TextButton::new(label)
+                                        .kind(ButtonKind::Ghost)
+                                        .mono(true)
+                                        .show(ui)
                                         .on_hover_text("Load this order for QC")
                                         .clicked()
                                     {
                                         load = Some(order.lookup_input());
                                     }
                                 });
-                                row.col(|ui| { ui.label(RichText::new(&order.status.name).small()); });
-                                row.col(|ui| { ui.label(RichText::new(&order.customer_name).small()); });
-                                row.col(|ui| { ui.label(RichText::new(&order.model).small()); });
+                                row.col(|ui| {
+                                    ui.label(RichText::new(&order.status.name).small());
+                                });
+                                row.col(|ui| {
+                                    ui.label(RichText::new(&order.customer_name).small());
+                                });
+                                row.col(|ui| {
+                                    ui.label(RichText::new(&order.model).small());
+                                });
                                 row.col(|ui| {
                                     ui.label(
                                         RichText::new(format!(
@@ -1337,7 +1618,10 @@ impl OrderPanel {
                                     );
                                 });
                                 row.col(|ui| {
-                                    ui.label(RichText::new(short_date(order.created_at.as_deref())).small());
+                                    ui.label(
+                                        RichText::new(short_date(order.created_at.as_deref()))
+                                            .small(),
+                                    );
                                 });
                             });
                         }
@@ -1352,178 +1636,216 @@ impl OrderPanel {
     }
 
     fn ui_order_header(&mut self, ui: &mut egui::Ui) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         let order = &session.order;
         let photos = &session.photos;
+        let (t, m) = kit(ui);
 
-        Frame::default()
-            .fill(ui.visuals().faint_bg_color)
-            .corner_radius(6.0)
-            .inner_margin(Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("Order {}", order.id)).strong().size(16.0));
-                    if !order.reference.is_empty() && order.reference != order.id {
-                        ui.label(RichText::new(format!("({})", order.reference)).weak());
-                    }
-                    ui.label(RichText::new(order.kind.as_str()).monospace().color(CAUTION));
-                    if let Some(backend) = order.backend {
-                        ui.label(RichText::new(backend.as_str()).monospace().weak());
-                    }
-                });
-                ui.horizontal_wrapped(|ui| {
-                    if !order.customer_name.is_empty() {
-                        ui.label(format!("{} {}", p::USER, order.customer_name));
-                    }
-                    if !order.total_paid.is_empty() {
-                        ui.label(format!("Total ${}", order.total_paid));
-                    }
-                    if let Some(doc) = order.everest_doc.as_ref() {
-                        ui.label(format!("Everest {doc}"));
-                    }
-                    if let Some(serial) = order.build_serial.as_ref() {
-                        ui.label(RichText::new(serial).monospace());
-                    }
-                    if let Some(parent) = order.parent_order_id.as_ref() {
-                        ui.label(format!("Parent {parent}"));
-                    }
-                });
-                if let Some(config) = order.config.as_ref() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(format!("Config: {}", config.name)).weak());
-                        if let Some(b) = config.builder_employee.as_ref() {
-                            ui.label(RichText::new(format!("Builder #{b}")).weak().small());
-                        }
-                        if let Some(q) = config.qc_employee.as_ref() {
-                            ui.label(RichText::new(format!("QC #{q}")).weak().small());
-                        }
-                    });
+        controls::card(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                controls::heading(ui, svg::RECEIPT, &format!("Order {}", order.id));
+                if !order.reference.is_empty() && order.reference != order.id {
+                    ui.label(RichText::new(format!("({})", order.reference)).weak());
                 }
-                if let Some(svc) = order.service_info.as_ref() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "Device: {} {} {} (SN {})",
-                                svc.device_mfg, svc.device_name, svc.device_model, svc.device_serial
-                            ))
-                            .weak(),
-                        );
-                    });
+                let kind = theme::warn(ui);
+                controls::badge(ui, order.kind.as_str(), kind);
+                if let Some(backend) = order.backend {
+                    let tone = theme::info(ui);
+                    controls::badge(ui, backend.as_str(), tone);
                 }
-                if let Some(key) = self.oa3_key.as_ref() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("OA3 key").weak().small());
-                        ui.label(RichText::new(key).monospace().small());
-                    });
-                }
-                ui.horizontal(|ui| {
-                    // Build-photo presence check (PS order_image / Shopify build_photos).
-                    if photos.present {
-                        ui.colored_label(GOOD, format!("{} {} build photo(s)", p::CAMERA, photos.count));
-                    } else {
-                        ui.colored_label(
-                            ui.visuals().error_fg_color,
-                            format!("{} No build photo on order — upload before sign-off", p::CAMERA),
-                        );
-                    }
-                });
             });
+            ui.horizontal_wrapped(|ui| {
+                if !order.customer_name.is_empty() {
+                    controls::icon_label(ui, svg::USER, &order.customer_name);
+                }
+                if !order.total_paid.is_empty() {
+                    controls::icon_label(
+                        ui,
+                        svg::CURRENCY_DOLLAR,
+                        &format!("Total ${}", order.total_paid),
+                    );
+                }
+                if let Some(doc) = order.everest_doc.as_ref() {
+                    controls::icon_label(ui, svg::FILE_TEXT, &format!("Everest {doc}"));
+                }
+                if let Some(serial) = order.build_serial.as_ref() {
+                    svg::BARCODE.show_tinted(ui, m.icon_md, t.icon);
+                    ui.label(RichText::new(serial).monospace());
+                }
+                if let Some(parent) = order.parent_order_id.as_ref() {
+                    controls::icon_label(ui, svg::TREE_STRUCTURE, &format!("Parent {parent}"));
+                }
+            });
+            if let Some(config) = order.config.as_ref() {
+                ui.horizontal_wrapped(|ui| {
+                    let weak = theme::weak_text(ui);
+                    controls::status_label(
+                        ui,
+                        svg::SLIDERS,
+                        &format!("Config: {}", config.name),
+                        weak,
+                    );
+                    if let Some(b) = config.builder_employee.as_ref() {
+                        ui.label(RichText::new(format!("Builder #{b}")).weak().small());
+                    }
+                    if let Some(q) = config.qc_employee.as_ref() {
+                        ui.label(RichText::new(format!("QC #{q}")).weak().small());
+                    }
+                });
+            }
+            if let Some(svc) = order.service_info.as_ref() {
+                let weak = theme::weak_text(ui);
+                controls::status_label(
+                    ui,
+                    svg::LAPTOP,
+                    &format!(
+                        "Device: {} {} {} (SN {})",
+                        svc.device_mfg, svc.device_name, svc.device_model, svc.device_serial
+                    ),
+                    weak,
+                );
+            }
+            if let Some(key) = self.oa3_key.as_ref() {
+                ui.horizontal_wrapped(|ui| {
+                    svg::KEY.show_tinted(ui, m.icon_sm, t.icon);
+                    ui.label(RichText::new("OA3 key").weak().small());
+                    ui.label(RichText::new(key).monospace().small());
+                });
+            }
+            // Build-photo presence check (PS order_image / Shopify build_photos).
+            if photos.present {
+                let ok = theme::success(ui);
+                controls::status_label(
+                    ui,
+                    svg::CAMERA,
+                    &format!("{} build photo(s)", photos.count),
+                    ok,
+                );
+            } else {
+                let tone = theme::error(ui);
+                controls::status_label(
+                    ui,
+                    svg::CAMERA,
+                    "No build photo on order — upload before sign-off",
+                    tone,
+                );
+            }
+        });
     }
 
     fn ui_gate_banner(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         let gate = session.gate.clone();
         let backend = session.order.backend;
+        let m = Metrics::get(ui.ctx());
 
         let (color, icon) = match gate.outcome {
-            GateOutcome::GoodToMove { .. } => (GOOD, p::CHECK_CIRCLE),
-            GateOutcome::RefuseToMove => (ui.visuals().error_fg_color, p::X_CIRCLE),
-            GateOutcome::Neutral => (CAUTION, p::WARNING),
+            GateOutcome::GoodToMove { .. } => (theme::success(ui), svg::CHECK_CIRCLE),
+            GateOutcome::RefuseToMove => (theme::error(ui), svg::X_CIRCLE),
+            GateOutcome::Neutral => (theme::warn(ui), svg::WARNING),
         };
 
-        ui.add_space(4.0);
-        Frame::default()
-            .fill(color.gamma_multiply(0.12))
-            .stroke((1.0, color))
-            .corner_radius(6.0)
-            .inner_margin(Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(color, RichText::new(icon).size(18.0));
-                    ui.colored_label(
-                        color,
-                        RichText::new(format!("{} ({})", gate.status_name, gate.status_legacy_id)).strong(),
-                    );
-                    ui.label(RichText::new(&gate.message).small());
-                });
-                if let Some(target) = gate.advance_target() {
-                    ui.horizontal(|ui| {
-                        let label = format!(
-                            "Advance to {} ({target})",
-                            database::orders::gate::status_display(target, "")
-                        );
-                        let can_advance = !self.advance_busy
-                            && backend == Some(database::orders::BackendKind::Prestashop);
-                        if ui.add_enabled(can_advance, egui::Button::new(label)).clicked() {
-                            self.start_advance(ctx, target);
-                        }
-                        if backend == Some(database::orders::BackendKind::Shopify) {
-                            ui.label(RichText::new("Advance flows through the Worker (W7).").weak().small());
-                        }
-                        if self.advance_busy {
-                            ui.spinner();
-                        }
-                    });
-                }
-                if let Some((ok, msg)) = self.advance_result.as_ref() {
-                    let c = if *ok { GOOD } else { ui.visuals().error_fg_color };
-                    ui.colored_label(c, msg);
-                }
+        ui.add_space(m.pad.y);
+        controls::callout(ui, color, None, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                icon.show_tinted(ui, m.icon_lg, color);
+                ui.colored_label(
+                    color,
+                    RichText::new(format!("{} ({})", gate.status_name, gate.status_legacy_id))
+                        .strong(),
+                );
+                ui.label(RichText::new(&gate.message).small());
             });
-        ui.add_space(4.0);
+            if let Some(target) = gate.advance_target() {
+                ui.horizontal(|ui| {
+                    let label = format!(
+                        "Advance to {} ({target})",
+                        database::orders::gate::status_display(target, "")
+                    );
+                    let can_advance = !self.advance_busy
+                        && backend == Some(database::orders::BackendKind::Prestashop);
+                    let advance = TextButton::new(&label)
+                        .icon(svg::ARROW_FAT_LINE_RIGHT)
+                        .kind(ButtonKind::Primary)
+                        .enabled(can_advance)
+                        .show(ui);
+                    if advance.clicked() {
+                        self.start_advance(ctx, target);
+                    }
+                    if backend == Some(database::orders::BackendKind::Shopify) {
+                        ui.label(
+                            RichText::new("Advance flows through the Worker (W7).")
+                                .weak()
+                                .small(),
+                        );
+                    }
+                    if self.advance_busy {
+                        controls::spinner(ui, SpinnerSize::Sm);
+                    }
+                });
+            }
+            if let Some((ok, msg)) = self.advance_result.as_ref() {
+                let (icon, tone) = if *ok {
+                    (svg::CHECK_CIRCLE, theme::success(ui))
+                } else {
+                    (svg::X_CIRCLE, theme::error(ui))
+                };
+                controls::status_label(ui, icon, msg, tone);
+            }
+        });
+        ui.add_space(m.pad.y);
     }
 
     fn ui_items(&mut self, ui: &mut egui::Ui) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         // Clone the rows so the table closures don't hold a borrow of `self`,
         // freeing it for the serial-history lookup + results render below.
         let items = session.order.items.clone();
         let is_shopify = session.order.backend == Some(BackendKind::Shopify);
+        let (t, m) = kit(ui);
         if items.is_empty() {
-            ui.label(RichText::new("No line items on this order.").weak());
+            controls::empty_state(ui, svg::PACKAGE, "No line items on this order", "", &[]);
             return;
         }
 
         let attached = items.iter().filter(|i| i.serial_attached()).count();
-        ui.label(
-            RichText::new(format!("{attached}/{} items have serials attached", items.len()))
-                .small()
-                .weak(),
-        );
+        let weak = theme::weak_text(ui);
+        controls::IconLabel::new(
+            svg::BARCODE,
+            &format!("{attached}/{} items have serials attached", items.len()),
+        )
+        .tone(weak)
+        .small(true)
+        .selectable(true)
+        .show(ui);
 
         let unattached: Vec<_> = items.iter().filter(|i| !i.serial_attached()).collect();
         if !unattached.is_empty() {
-            Frame::default()
-                .fill(CAUTION.gamma_multiply(0.12))
-                .stroke((1.0, CAUTION))
-                .corner_radius(6.0)
-                .inner_margin(Margin::symmetric(8, 6))
-                .show(ui, |ui| {
-                    ui.colored_label(
-                        CAUTION,
-                        RichText::new(format!(
-                            "{} {} item(s) not yet committed (no serial)",
-                            p::WARNING,
-                            unattached.len()
-                        ))
-                        .strong()
-                        .small(),
-                    );
-                    for it in &unattached {
-                        ui.label(RichText::new(format!("• {} ({})", it.name, it.reference)).small());
-                    }
-                });
-            ui.add_space(4.0);
+            let caution = theme::warn(ui);
+            controls::callout(ui, caution, None, |ui| {
+                controls::IconLabel::new(
+                    svg::WARNING,
+                    &format!("{} item(s) not yet committed (no serial)", unattached.len()),
+                )
+                .tone(caution)
+                .small(true)
+                .selectable(true)
+                .show(ui);
+                for it in &unattached {
+                    controls::IconLabel::new(svg::DOT, &format!("{} ({})", it.name, it.reference))
+                        .tone(t.text)
+                        .small(true)
+                        .selectable(true)
+                        .show(ui);
+                }
+            });
+            ui.add_space(m.pad.y);
         }
 
         let mut lookup: Option<Vec<String>> = None;
@@ -1531,25 +1853,43 @@ impl OrderPanel {
             .id_salt("qc_items_table")
             .striped(true)
             .column(egui_extras::Column::exact(22.0))
-            .column(egui_extras::Column::initial(150.0).at_least(80.0).clip(true))
-            .column(egui_extras::Column::initial(130.0).at_least(110.0).clip(true))
+            .column(
+                egui_extras::Column::initial(150.0)
+                    .at_least(80.0)
+                    .clip(true),
+            )
+            .column(
+                egui_extras::Column::initial(130.0)
+                    .at_least(110.0)
+                    .clip(true),
+            )
             .column(egui_extras::Column::exact(34.0))
             .column(egui_extras::Column::remainder().at_least(110.0))
             .header(20.0, |mut header| {
                 header.col(|_| {});
-                header.col(|ui| { ui.strong("Item"); });
-                header.col(|ui| { ui.strong("Ref"); });
-                header.col(|ui| { ui.strong("Qty"); });
-                header.col(|ui| { ui.strong("Serial"); });
+                header.col(|ui| {
+                    ui.strong("Item");
+                });
+                header.col(|ui| {
+                    ui.strong("Ref");
+                });
+                header.col(|ui| {
+                    ui.strong("Qty");
+                });
+                header.col(|ui| {
+                    ui.strong("Serial");
+                });
             })
             .body(|mut body| {
                 for item in &items {
                     body.row(20.0, |mut row| {
                         row.col(|ui| {
                             if item.serial_attached() {
-                                ui.colored_label(GOOD, p::CHECK_CIRCLE);
+                                let ok = theme::success(ui);
+                                svg::CHECK_CIRCLE.show_tinted(ui, m.icon_sm, ok);
                             } else {
-                                ui.colored_label(CAUTION, p::CIRCLE_DASHED);
+                                let caution = theme::warn(ui);
+                                svg::CIRCLE_DASHED.show_tinted(ui, m.icon_sm, caution);
                             }
                         });
                         row.col(|ui| {
@@ -1570,14 +1910,20 @@ impl OrderPanel {
                                 // Lookup button leftmost so it aligns across rows.
                                 // Federated history only exists on the Shopify/XBM side.
                                 if is_shopify
-                                    && ui
-                                        .small_button(p::MAGNIFYING_GLASS)
-                                        .on_hover_text("Serial history (Shopify · Odoo · PrestaShop)")
-                                        .clicked()
+                                    && controls::icon_button(
+                                        ui,
+                                        svg::MAGNIFYING_GLASS,
+                                        IconBox::Sm,
+                                        false,
+                                        "Serial history (Shopify · Odoo · PrestaShop)",
+                                    )
+                                    .clicked()
                                 {
                                     lookup = Some(item.serials.clone());
                                 }
-                                ui.label(RichText::new(item.serials.join(", ")).monospace().small());
+                                ui.label(
+                                    RichText::new(item.serials.join(", ")).monospace().small(),
+                                );
                             });
                         });
                     });
@@ -1599,14 +1945,12 @@ impl OrderPanel {
         if self.serial_history.is_empty() && self.serial_busy.is_none() {
             return;
         }
-        ui.add_space(6.0);
-        ui.separator();
-        ui.label(RichText::new("Serial history").strong().small());
+        let m = Metrics::get(ui.ctx());
+        ui.add_space(m.gap.y);
+        controls::hairline(ui);
+        controls::subheading(ui, svg::CLOCK_COUNTER_CLOCKWISE, "Serial history");
         if let Some(busy) = self.serial_busy.as_ref() {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(RichText::new(format!("looking up {busy}…")).small().weak());
-            });
+            controls::loading_row(ui, &format!("looking up {busy}…"));
         }
         for (serial, result) in &self.serial_history {
             match result {
@@ -1614,7 +1958,12 @@ impl OrderPanel {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new(serial).monospace().small().strong());
                         if !h.found {
-                            ui.colored_label(CAUTION, RichText::new("not found in any system").small());
+                            let caution = theme::warn(ui);
+                            controls::IconLabel::new(svg::QUESTION, "not found in any system")
+                                .tone(caution)
+                                .small(true)
+                                .selectable(true)
+                                .show(ui);
                         }
                         if let Some(order) = h.current_order.as_ref() {
                             ui.label(RichText::new(format!("installed on {order}")).small());
@@ -1624,30 +1973,39 @@ impl OrderPanel {
                         }
                         if h.prestashop_allocations > 0 {
                             ui.label(
-                                RichText::new(format!("PS allocs: {}", h.prestashop_allocations)).small().weak(),
+                                RichText::new(format!("PS allocs: {}", h.prestashop_allocations))
+                                    .small()
+                                    .weak(),
                             );
                         }
                     });
                     for flag in &h.flags {
-                        ui.colored_label(
-                            ui.visuals().error_fg_color,
-                            RichText::new(format!("{} {flag}", p::WARNING)).small(),
-                        );
+                        let tone = theme::error(ui);
+                        controls::IconLabel::new(svg::WARNING, flag)
+                            .tone(tone)
+                            .small(true)
+                            .selectable(true)
+                            .show(ui);
                     }
                 }
                 Err(e) => {
-                    ui.colored_label(
-                        ui.visuals().error_fg_color,
-                        RichText::new(format!("{serial}: {e}")).small(),
-                    );
+                    let tone = theme::error(ui);
+                    controls::IconLabel::new(svg::X_CIRCLE, &format!("{serial}: {e}"))
+                        .tone(tone)
+                        .small(true)
+                        .selectable(true)
+                        .show(ui);
                 }
             }
         }
     }
 
     fn ui_spec_check(&mut self, ui: &mut egui::Ui, snapshot: Option<&TelemetrySnapshot>) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         let spec = session.spec.clone();
+        let (t, m) = kit(ui);
 
         // Auto-run once after load, as soon as telemetry is populated.
         if self.spec_pending && !spec.is_empty() {
@@ -1659,33 +2017,44 @@ impl OrderPanel {
         }
 
         if spec.is_empty() {
-            ui.label(RichText::new("No hardware spec could be derived from this order.").weak());
-        } else {
+            controls::empty_state(
+                ui,
+                svg::CPU,
+                "No hardware spec",
+                "No hardware spec could be derived from this order.",
+                &[],
+            );
+        } else if !spec.model.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                if !spec.model.is_empty() {
-                    ui.label(RichText::new(&spec.model).strong());
-                }
+                svg::DESKTOP_TOWER.show_tinted(ui, m.icon_md, t.icon);
+                ui.label(RichText::new(&spec.model).strong());
             });
         }
 
         ui.horizontal(|ui| {
             let enabled = snapshot.map(|s| s.is_populated()).unwrap_or(false) && !spec.is_empty();
-            if ui
-                .add_enabled(enabled, egui::Button::new(format!("{} Run spec check", p::ARROW_CLOCKWISE)))
-                .clicked()
+            if action(ui, enabled, svg::LIST_CHECKS, "Run spec check")
+                && let Some(snap) = snapshot
             {
-                if let Some(snap) = snapshot {
-                    let hw = collect_detected(snap);
-                    self.spec_report = Some(compare(&spec, &hw));
-                }
+                let hw = collect_detected(snap);
+                self.spec_report = Some(compare(&spec, &hw));
             }
             if let Some(report) = self.spec_report.as_ref() {
                 if report.matched() {
-                    ui.colored_label(GOOD, format!("{} Spec matches detected hardware", p::CHECK_CIRCLE));
+                    let ok = theme::success(ui);
+                    controls::status_label(
+                        ui,
+                        svg::CHECK_CIRCLE,
+                        "Spec matches detected hardware",
+                        ok,
+                    );
                 } else {
-                    ui.colored_label(
-                        ui.visuals().error_fg_color,
-                        format!("{} {} mismatch(es)", p::X_CIRCLE, report.mismatch_count()),
+                    let tone = theme::error(ui);
+                    controls::status_label(
+                        ui,
+                        svg::X_CIRCLE,
+                        &format!("{} mismatch(es)", report.mismatch_count()),
+                        tone,
                     );
                 }
             }
@@ -1694,13 +2063,14 @@ impl OrderPanel {
         let Some(report) = self.spec_report.as_ref() else {
             // Expected-spec preview before the first check.
             if !spec.is_empty() {
-                for (label, value) in [
-                    ("CPU", spec.cpu.as_str()),
-                    ("GPU", spec.gpu.as_str()),
-                    ("RAM", spec.ram.as_str()),
+                for (icon, label, value) in [
+                    (svg::CPU, "CPU", spec.cpu.as_str()),
+                    (svg::GRAPHICS_CARD, "GPU", spec.gpu.as_str()),
+                    (svg::MEMORY, "RAM", spec.ram.as_str()),
                 ] {
                     if !value.is_empty() {
                         ui.horizontal(|ui| {
+                            icon.show_tinted(ui, m.icon_sm, t.icon);
                             ui.label(RichText::new(label).strong().small());
                             ui.label(RichText::new(value).small());
                         });
@@ -1708,7 +2078,12 @@ impl OrderPanel {
                 }
                 for drive in &spec.drives {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("Storage ({})", drive.kind)).strong().small());
+                        svg::HARD_DRIVE.show_tinted(ui, m.icon_sm, t.icon);
+                        ui.label(
+                            RichText::new(format!("Storage ({})", drive.kind))
+                                .strong()
+                                .small(),
+                        );
                         ui.label(RichText::new(&drive.name).small());
                     });
                 }
@@ -1717,152 +2092,222 @@ impl OrderPanel {
         };
 
         // Expected vs detected, colored per row like the merge-modal diff.
+        let faint = ui.visuals().faint_bg_color;
+        let box_margin = Margin::symmetric(m.gap.y as i8, m.pad.y as i8);
         for row in &report.rows {
-            let (status_color, detected_fill) = match row.status {
-                CheckStatus::Match => (GOOD, Color32::from_rgb(30, 60, 55)),
-                CheckStatus::Mismatch => (ui.visuals().error_fg_color, Color32::from_rgb(60, 30, 50)),
-                CheckStatus::NotDetected => (CAUTION, Color32::from_rgb(55, 45, 25)),
-                CheckStatus::NotSpecified => (ui.visuals().weak_text_color(), ui.visuals().faint_bg_color),
+            let (icon, status_color) = match row.status {
+                CheckStatus::Match => (svg::CHECK_CIRCLE, theme::success(ui)),
+                CheckStatus::Mismatch => (svg::X_CIRCLE, theme::error(ui)),
+                CheckStatus::NotDetected => (svg::QUESTION, theme::warn(ui)),
+                CheckStatus::NotSpecified => (svg::MINUS_CIRCLE, theme::weak_text(ui)),
+            };
+            let detected_fill = match row.status {
+                CheckStatus::NotSpecified => faint,
+                _ => composite(status_color.gamma_multiply(DIFF_WASH), t.raised),
             };
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&row.component).strong().small());
-                ui.colored_label(status_color, RichText::new(row.status.label()).small().monospace());
+                controls::IconLabel::new(icon, row.status.label())
+                    .tone(status_color)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
             });
             ui.horizontal(|ui| {
-                let half = (ui.available_width() - 40.0) / 2.0;
-                Frame::default()
-                    .fill(ui.visuals().faint_bg_color)
-                    .corner_radius(4.0)
-                    .inner_margin(Margin::symmetric(6, 4))
+                let half = (ui.available_width() - DIFF_GUTTER) / 2.0;
+                Frame::new()
+                    .fill(faint)
+                    .corner_radius(t.radius_sm)
+                    .inner_margin(box_margin)
                     .show(ui, |ui| {
                         ui.set_min_width(half);
                         ui.set_max_width(half);
-                        let text = if row.expected.is_empty() { "(not on order)" } else { &row.expected };
+                        let text = if row.expected.is_empty() {
+                            "(not on order)"
+                        } else {
+                            &row.expected
+                        };
                         ui.add(egui::Label::new(RichText::new(text).small()).wrap());
                     });
-                ui.label(p::ARROW_RIGHT);
-                Frame::default()
+                svg::ARROW_RIGHT.show_tinted(ui, m.icon_sm, t.icon);
+                Frame::new()
                     .fill(detected_fill)
-                    .corner_radius(4.0)
-                    .inner_margin(Margin::symmetric(6, 4))
+                    .corner_radius(t.radius_sm)
+                    .inner_margin(box_margin)
                     .show(ui, |ui| {
                         ui.set_min_width(half);
                         ui.set_max_width(half);
-                        let text = if row.detected.is_empty() { "(not detected)" } else { &row.detected };
+                        let text = if row.detected.is_empty() {
+                            "(not detected)"
+                        } else {
+                            &row.detected
+                        };
                         ui.add(egui::Label::new(RichText::new(text).small()).wrap());
                     });
             });
-            ui.add_space(4.0);
+            ui.add_space(m.pad.y);
         }
     }
 
     fn ui_provision(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         use crate::provisioning::{self, Company};
-        let Some((order, spec)) = self.session.as_ref().map(|s| (s.order.clone(), s.spec.clone())) else {
+        let Some((order, spec)) = self
+            .session
+            .as_ref()
+            .map(|s| (s.order.clone(), s.spec.clone()))
+        else {
             return;
         };
-        let company = self.prov_company.unwrap_or_else(|| Company::from_order(&order));
+        let company = self
+            .prov_company
+            .unwrap_or_else(|| Company::from_order(&order));
         let manifest = provisioning::load_manifest(company);
-        let sqlite = crate::db::default_sqlite_path().to_string_lossy().to_string();
+        let sqlite = crate::db::default_sqlite_path()
+            .to_string_lossy()
+            .to_string();
+        let m = Metrics::get(ui.ctx());
+        let weak = theme::weak_text(ui);
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Company").small());
-            egui::ComboBox::from_id_salt("prov_company")
-                .selected_text(company.label())
-                .show_ui(ui, |ui| {
-                    for c in Company::ALL {
-                        if ui.selectable_label(company == c, c.label()).clicked() {
-                            self.prov_company = Some(c);
-                        }
+        egui::Grid::new("prov_pickers")
+            .num_columns(2)
+            .spacing([m.gap.x, m.gap.y])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Company").small());
+                ui.horizontal(|ui| {
+                    let options: Vec<(Company, &str)> =
+                        Company::ALL.iter().map(|c| (*c, c.label())).collect();
+                    let mut picked = company;
+                    if controls::dropdown(ui, "prov_company", &mut picked, &options, PICKER_W)
+                        .changed()
+                    {
+                        self.prov_company = Some(picked);
+                    }
+                    if self.prov_busy {
+                        controls::spinner(ui, SpinnerSize::Sm);
                     }
                 });
-            if self.prov_busy {
-                ui.spinner();
-            }
-        });
-        ui.label(RichText::new("OS-config steps run on click; DMI writes need the confirm box.").weak().small());
+                ui.end_row();
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Procedure").small());
-            egui::ComboBox::from_id_salt("proc_kind")
-                .selected_text(self.proc_kind.label())
-                .show_ui(ui, |ui| {
-                    for k in crate::provisioning::procedure::ProcedureKind::ALL {
-                        if ui.selectable_label(self.proc_kind == k, k.label()).clicked() {
-                            self.proc_kind = k;
+                ui.label(RichText::new("Procedure").small());
+                ui.horizontal(|ui| {
+                    let options: Vec<(crate::provisioning::procedure::ProcedureKind, &str)> =
+                        crate::provisioning::procedure::ProcedureKind::ALL
+                            .iter()
+                            .map(|k| (*k, k.label()))
+                            .collect();
+                    controls::dropdown(ui, "proc_kind", &mut self.proc_kind, &options, PICKER_W);
+                    let can_run = !self.proc_running && !self.prov_busy;
+                    let run = TextButton::new("Run full procedure")
+                                .icon(svg::PLAY)
+                                .kind(ButtonKind::Primary)
+.enabled(can_run)
+.show(ui);
+                    if run.clicked() {
+                        let dmi_inputs = self.build_dmi_inputs(&order, &spec, company, &manifest);
+                        if dmi_inputs.is_none()
+                            && company.dmi_manufacturer().is_some()
+                            && !crate::provisioning::dmi::is_threadripper(&spec)
+                        {
+                            self.prov_log.push((
+                                "DMI".into(),
+                                false,
+                                "skipped — tick the confirm box and set the tool path to include DMI".into(),
+                            ));
                         }
+                        let steps = crate::provisioning::procedure::resolve(
+                            self.proc_kind, &manifest, company, &spec, dmi_inputs, &self.prov_asset_tag,
+                        );
+                        self.spawn_procedure(ctx, steps, sqlite.clone());
+                    }
+                    if self.proc_running {
+                        controls::spinner(ui, SpinnerSize::Sm);
                     }
                 });
-            let can_run = !self.proc_running && !self.prov_busy;
-            if ui
-                .add_enabled(can_run, egui::Button::new(format!("{} Run full procedure", p::PLAY)))
-                .clicked()
-            {
-                let dmi_inputs = self.build_dmi_inputs(&order, &spec, company, &manifest);
-                if dmi_inputs.is_none()
-                    && company.dmi_manufacturer().is_some()
-                    && !crate::provisioning::dmi::is_threadripper(&spec)
-                {
-                    self.prov_log.push((
-                        "DMI".into(),
-                        false,
-                        "skipped — tick the confirm box and set the tool path to include DMI".into(),
-                    ));
+                ui.end_row();
+
+                if company == Company::VrChat {
+                    ui.label(RichText::new("Asset tag").small());
+                    TextField::new(&mut self.prov_asset_tag)
+                        .hint("VRChat asset tag")
+                        .icon(svg::TAG)
+                        .width(ASSET_TAG_W)
+                        .show(ui);
+                    ui.end_row();
                 }
-                let steps = crate::provisioning::procedure::resolve(
-                    self.proc_kind, &manifest, company, &spec, dmi_inputs, &self.prov_asset_tag,
-                );
-                self.spawn_procedure(ctx, steps, sqlite.clone());
-            }
-            if self.proc_running {
-                ui.spinner();
-            }
-        });
-        if company == Company::VrChat {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Asset tag").small());
-                ui.add(
-                    TextEdit::singleline(&mut self.prov_asset_tag)
-                        .hint_text("VRChat asset tag")
-                        .desired_width(160.0),
-                );
             });
-        }
-        ui.separator();
+        controls::IconLabel::new(
+            svg::INFO,
+            "OS-config steps run on click; DMI writes need the confirm box.",
+        )
+        .tone(weak)
+        .small(true)
+        .selectable(true)
+        .show(ui);
+        ui.add_space(m.pad.y);
+        controls::hairline(ui);
 
         for step in &manifest.steps {
             match step.kind.as_str() {
                 "core_isolation" => {
-                    if ui.add_enabled(!self.prov_busy, egui::Button::new(format!("{} Enable core isolation", p::LOCK))).clicked() {
-                        self.spawn_prov("Core isolation", ctx, provisioning::osconfig::enable_core_isolation);
+                    if action(
+                        ui,
+                        !self.prov_busy,
+                        svg::SHIELD_CHECK,
+                        "Enable core isolation",
+                    ) {
+                        self.spawn_prov(
+                            "Core isolation",
+                            ctx,
+                            provisioning::osconfig::enable_core_isolation,
+                        );
                     }
                 }
                 "timezone" => {
-                    if ui.add_enabled(!self.prov_busy, egui::Button::new(format!("{} Set timezone (MST)", p::CLOCK))).clicked() {
-                        self.spawn_prov("Timezone", ctx, provisioning::osconfig::set_timezone_mountain);
+                    if action(ui, !self.prov_busy, svg::CLOCK, "Set timezone (MST)") {
+                        self.spawn_prov(
+                            "Timezone",
+                            ctx,
+                            provisioning::osconfig::set_timezone_mountain,
+                        );
                     }
                 }
                 "open_tools" => {
-                    if ui.add_enabled(!self.prov_busy, egui::Button::new(format!("{} Open system tools", p::DESKTOP))).clicked() {
-                        self.spawn_prov("Open tools", ctx, provisioning::osconfig::open_system_tools);
+                    if action(ui, !self.prov_busy, svg::TOOLBOX, "Open system tools") {
+                        self.spawn_prov(
+                            "Open tools",
+                            ctx,
+                            provisioning::osconfig::open_system_tools,
+                        );
                     }
                 }
                 "chipset" => {
-                    if ui.add_enabled(!self.prov_busy, egui::Button::new("Install chipset driver")).clicked() {
+                    if action(
+                        ui,
+                        !self.prov_busy,
+                        svg::CIRCUITRY,
+                        "Install chipset driver",
+                    ) {
                         let path = sqlite.clone();
-                        self.spawn_prov("Chipset driver", ctx, move || provisioning::install_chipset(&path));
+                        self.spawn_prov("Chipset driver", ctx, move || {
+                            provisioning::install_chipset(&path)
+                        });
                     }
                 }
                 "display" => {
-                    if ui.add_enabled(!self.prov_busy, egui::Button::new("Install display driver")).clicked() {
+                    if action(ui, !self.prov_busy, svg::MONITOR, "Install display driver") {
                         let path = sqlite.clone();
-                        self.spawn_prov("Display driver", ctx, move || provisioning::install_display(&path));
+                        self.spawn_prov("Display driver", ctx, move || {
+                            provisioning::install_display(&path)
+                        });
                     }
                 }
                 "dmi" => self.ui_dmi(ui, ctx, &order, &spec, company, &manifest),
                 "branding" => {
-                    ui.label(RichText::new("Branding (.bat) — later phase").weak().small());
+                    controls::IconLabel::new(svg::PAINT_BRUSH, "Branding (.bat) — later phase")
+                        .tone(weak)
+                        .small(true)
+                        .selectable(true)
+                        .show(ui);
                 }
                 _ => {}
             }
@@ -1870,94 +2315,151 @@ impl OrderPanel {
 
         // Conditional software (manifest `when` DSL).
         let applicable: Vec<provisioning::manifest::SoftwareSpec> =
-            provisioning::software::plan(&manifest, &spec).into_iter().cloned().collect();
+            provisioning::software::plan(&manifest, &spec)
+                .into_iter()
+                .cloned()
+                .collect();
         if !applicable.is_empty() {
-            CollapsingHeader::new("Conditional software").id_salt("prov_software").show(ui, |ui| {
-                if ui
-                    .add_enabled(!self.proc_running && !self.prov_busy, egui::Button::new("Install all applicable"))
-                    .clicked()
-                {
-                    let steps = applicable
-                        .iter()
-                        .cloned()
-                        .map(crate::provisioning::procedure::ResolvedStep::Software)
-                        .collect();
-                    self.spawn_procedure(ctx, steps, sqlite.clone());
-                }
-                for s in &applicable {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&s.id).small());
-                        ui.label(RichText::new(format!("when: {}", s.when)).weak().small());
-                        if ui.add_enabled(!self.prov_busy, egui::Button::new("Install")).clicked() {
-                            let spec_c = s.clone();
-                            self.spawn_prov(&format!("Software: {}", s.id), ctx, move || {
-                                provisioning::software::install(&spec_c)
-                            });
-                        }
-                    });
-                }
-            });
+            controls::Section::new("prov_software", "Conditional software")
+                .icon(svg::PACKAGE)
+                .default_open(false)
+                .show(ui, |ui| {
+                    if action(
+                        ui,
+                        !self.proc_running && !self.prov_busy,
+                        svg::DOWNLOAD_SIMPLE,
+                        "Install all applicable",
+                    ) {
+                        let steps = applicable
+                            .iter()
+                            .cloned()
+                            .map(crate::provisioning::procedure::ResolvedStep::Software)
+                            .collect();
+                        self.spawn_procedure(ctx, steps, sqlite.clone());
+                    }
+                    for s in &applicable {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&s.id).small());
+                            ui.label(RichText::new(format!("when: {}", s.when)).weak().small());
+                            if action(ui, !self.prov_busy, svg::DOWNLOAD_SIMPLE, "Install") {
+                                let spec_c = s.clone();
+                                self.spawn_prov(&format!("Software: {}", s.id), ctx, move || {
+                                    provisioning::software::install(&spec_c)
+                                });
+                            }
+                        });
+                    }
+                });
         }
 
         // Vendor-specific + cleanup actions.
-        CollapsingHeader::new("Vendor & cleanup").id_salt("prov_vendor").show(ui, |ui| {
-            if matches!(company, Company::Bimbox) {
-                if ui.add_enabled(!self.prov_busy, egui::Button::new("Remove At-Home Support")).clicked() {
-                    self.spawn_prov("Remove At-Home Support", ctx, provisioning::vendor_steps::remove_at_home_support);
+        controls::Section::new("prov_vendor", "Vendor & cleanup")
+            .icon(svg::BROOM)
+            .default_open(false)
+            .show(ui, |ui| {
+                if matches!(company, Company::Bimbox) {
+                    if action(ui, !self.prov_busy, svg::TRASH, "Remove At-Home Support") {
+                        self.spawn_prov(
+                            "Remove At-Home Support",
+                            ctx,
+                            provisioning::vendor_steps::remove_at_home_support,
+                        );
+                    }
+                    if action(ui, !self.prov_busy, svg::STAR, "Remove Edge favorites") {
+                        self.spawn_prov(
+                            "Remove Edge favorites",
+                            ctx,
+                            provisioning::vendor_steps::remove_edge_favorites,
+                        );
+                    }
                 }
-                if ui.add_enabled(!self.prov_busy, egui::Button::new("Remove Edge favorites")).clicked() {
-                    self.spawn_prov("Remove Edge favorites", ctx, provisioning::vendor_steps::remove_edge_favorites);
+                if matches!(company, Company::VrChat) {
+                    let tag = self.prov_asset_tag.clone();
+                    let can = !self.prov_busy && !tag.trim().is_empty();
+                    if action(ui, can, svg::ROCKET_LAUNCH, "Run VRChat installer") {
+                        self.spawn_prov("VRChat installer", ctx, move || {
+                            provisioning::vendor_steps::install_vrchat_custom(&tag)
+                        });
+                    }
                 }
-            }
-            if matches!(company, Company::VrChat) {
-                let tag = self.prov_asset_tag.clone();
-                let can = !self.prov_busy && !tag.trim().is_empty();
-                if ui.add_enabled(can, egui::Button::new("Run VRChat installer")).clicked() {
-                    self.spawn_prov("VRChat installer", ctx, move || {
-                        provisioning::vendor_steps::install_vrchat_custom(&tag)
-                    });
+                controls::hairline(ui);
+                controls::toggle(
+                    ui,
+                    &mut self.cleanup_confirm,
+                    "I'm ready to clean up this machine",
+                );
+                let can_clean = self.cleanup_confirm && !self.prov_busy;
+                if danger_action(ui, can_clean, svg::TRUCK, "SysPrep cleanup + Ready to Ship") {
+                    self.start_sysprep_cleanup(ctx);
                 }
-            }
-            ui.separator();
-            ui.checkbox(&mut self.cleanup_confirm, "I'm ready to clean up this machine");
-            let can_clean = self.cleanup_confirm && !self.prov_busy;
-            if ui
-                .add_enabled(can_clean, egui::Button::new(format!("{} SysPrep cleanup + Ready to Ship", p::WARNING)))
-                .clicked()
-            {
-                self.start_sysprep_cleanup(ctx);
-            }
-            if ui.add_enabled(can_clean, egui::Button::new(format!("{} SysPrep cleanup (files)", p::WARNING))).clicked() {
-                self.spawn_prov("SysPrep cleanup", ctx, provisioning::cleanup::sysprep_files_only);
-            }
-            if ui.add_enabled(can_clean, egui::Button::new(format!("{} Service cleanup", p::WARNING))).clicked() {
-                self.spawn_prov("Service cleanup", ctx, provisioning::cleanup::service_cleanup);
-            }
-        });
-
-        // System utilities.
-        CollapsingHeader::new("Utilities").id_salt("prov_utils").show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Wi-Fi settings").clicked() {
-                    self.spawn_prov("Wi-Fi settings", ctx, provisioning::osconfig::open_wifi_settings);
+                if danger_action(ui, can_clean, svg::BROOM, "SysPrep cleanup (files)") {
+                    self.spawn_prov(
+                        "SysPrep cleanup",
+                        ctx,
+                        provisioning::cleanup::sysprep_files_only,
+                    );
                 }
-                if ui.button("Install share").clicked() {
-                    self.spawn_prov("Install share", ctx, provisioning::osconfig::open_share_browser);
-                }
-                if ui.button("Windows Update").clicked() {
-                    self.spawn_prov("Windows Update", ctx, provisioning::osconfig::open_windows_update);
-                }
-                if ui.button("Start menu fix").clicked() {
-                    self.spawn_prov("Start menu fix", ctx, provisioning::osconfig::fix_start_menu);
+                if danger_action(ui, can_clean, svg::GEAR_SIX, "Service cleanup") {
+                    self.spawn_prov(
+                        "Service cleanup",
+                        ctx,
+                        provisioning::cleanup::service_cleanup,
+                    );
                 }
             });
-        });
+
+        // System utilities.
+        controls::Section::new("prov_utils", "Utilities")
+            .icon(svg::TOOLBOX)
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if controls::icon_text_button(ui, svg::WIFI_HIGH, "Wi-Fi settings").clicked() {
+                        self.spawn_prov(
+                            "Wi-Fi settings",
+                            ctx,
+                            provisioning::osconfig::open_wifi_settings,
+                        );
+                    }
+                    if controls::icon_text_button(ui, svg::FOLDER_OPEN, "Install share").clicked() {
+                        self.spawn_prov(
+                            "Install share",
+                            ctx,
+                            provisioning::osconfig::open_share_browser,
+                        );
+                    }
+                    if controls::icon_text_button(ui, svg::ARROWS_CLOCKWISE, "Windows Update")
+                        .clicked()
+                    {
+                        self.spawn_prov(
+                            "Windows Update",
+                            ctx,
+                            provisioning::osconfig::open_windows_update,
+                        );
+                    }
+                    if controls::icon_text_button(ui, svg::WRENCH, "Start menu fix").clicked() {
+                        self.spawn_prov(
+                            "Start menu fix",
+                            ctx,
+                            provisioning::osconfig::fix_start_menu,
+                        );
+                    }
+                });
+            });
 
         if !self.prov_log.is_empty() {
-            ui.add_space(4.0);
+            ui.add_space(m.pad.y);
             for (s, ok, msg) in &self.prov_log {
-                let c = if *ok { GOOD } else { ui.visuals().error_fg_color };
-                ui.colored_label(c, RichText::new(format!("{s}: {msg}")).small());
+                let (icon, tone) = if *ok {
+                    (svg::CHECK_CIRCLE, theme::success(ui))
+                } else {
+                    (svg::X_CIRCLE, theme::error(ui))
+                };
+                controls::IconLabel::new(icon, &format!("{s}: {msg}"))
+                    .tone(tone)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
             }
         }
     }
@@ -1975,60 +2477,89 @@ impl OrderPanel {
         let serial = self.board_serial.clone().unwrap_or_default();
         let dctx = dmi::DmiContext::build(order, spec, manifest, "", &serial);
         let cmds = dmi::ami_commands(&dctx);
+        let m = Metrics::get(ui.ctx());
 
-        CollapsingHeader::new("DMI / SMBIOS write").id_salt("prov_dmi").show(ui, |ui| {
-            if dmi::is_threadripper(spec) {
-                ui.colored_label(CAUTION, "Threadripper board — DMI write skipped (tool rejects it).");
-                return;
-            }
-            if company.dmi_manufacturer().is_none() {
-                ui.label(RichText::new("No manufacturer for this company — DMI skipped.").weak().small());
-                return;
-            }
-            ui.label(RichText::new("Will run:").strong().small());
-            ui.add(egui::Label::new(RichText::new(dmi::preview("AMIDEWIN527", &cmds)).monospace().small()));
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Tool path").small());
-                ui.add(
-                    TextEdit::singleline(&mut self.prov_dmi_tool)
-                        .hint_text(r".\Installs\AMIDEWIN_527\AMIDEWIN527")
-                        .desired_width(f32::INFINITY),
+        controls::Section::new("prov_dmi", "DMI / SMBIOS write")
+            .icon(svg::MT_FIRMWARE)
+            .default_open(false)
+            .show(ui, |ui| {
+                if dmi::is_threadripper(spec) {
+                    let caution = theme::warn(ui);
+                    controls::status_label(
+                        ui,
+                        svg::WARNING,
+                        "Threadripper board — DMI write skipped (tool rejects it).",
+                        caution,
+                    );
+                    return;
+                }
+                if company.dmi_manufacturer().is_none() {
+                    let weak = theme::weak_text(ui);
+                    controls::IconLabel::new(
+                        svg::INFO,
+                        "No manufacturer for this company — DMI skipped.",
+                    )
+                    .tone(weak)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
+                    return;
+                }
+                ui.label(RichText::new("Will run:").strong().small());
+                ui.add(egui::Label::new(
+                    RichText::new(dmi::preview("AMIDEWIN527", &cmds))
+                        .monospace()
+                        .small(),
+                ));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Tool path").small());
+                    TextField::new(&mut self.prov_dmi_tool)
+                        .hint(r".\Installs\AMIDEWIN_527\AMIDEWIN527")
+                        .icon(svg::FOLDER)
+                        .mono(true)
+                        .width(ui.available_width())
+                        .show(ui);
+                });
+                controls::toggle(
+                    ui,
+                    &mut self.prov_dmi_confirm,
+                    "I verified this order matches this machine",
                 );
-            });
-            ui.checkbox(&mut self.prov_dmi_confirm, "I verified this order matches this machine");
-            let can = self.prov_dmi_confirm && !self.prov_dmi_tool.trim().is_empty() && !self.prov_busy;
-            if ui.add_enabled(can, egui::Button::new(format!("{} Write DMI", p::WARNING))).clicked() {
-                let tool = std::path::PathBuf::from(self.prov_dmi_tool.clone());
-                let cmds = cmds.clone();
-                self.spawn_prov("DMI write", ctx, move || dmi::run(&tool, &cmds));
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(!self.prov_busy, egui::Button::new(format!("{} Read SMBIOS", p::MAGNIFYING_GLASS)))
-                    .clicked()
-                {
-                    let tx = self.tx.clone();
-                    let ctx2 = ctx.clone();
-                    std::thread::spawn(move || {
-                        let result = dmi::read_smbios().map_err(|e| format!("{e:#}"));
-                        let _ = tx.send(PanelMsg::DmiRead(result));
-                        ctx2.request_repaint();
-                    });
-                }
-                let can_clear =
-                    self.prov_dmi_confirm && !self.prov_dmi_tool.trim().is_empty() && !self.prov_busy;
-                if ui.add_enabled(can_clear, egui::Button::new(format!("{} Clear SMBIOS", p::WARNING))).clicked() {
+                let can = self.prov_dmi_confirm
+                    && !self.prov_dmi_tool.trim().is_empty()
+                    && !self.prov_busy;
+                if danger_action(ui, can, svg::PENCIL_SIMPLE, "Write DMI") {
                     let tool = std::path::PathBuf::from(self.prov_dmi_tool.clone());
-                    let clear = dmi::ami_clear_commands();
-                    self.spawn_prov("DMI clear", ctx, move || dmi::run(&tool, &clear));
+                    let cmds = cmds.clone();
+                    self.spawn_prov("DMI write", ctx, move || dmi::run(&tool, &cmds));
+                }
+                controls::hairline(ui);
+                ui.horizontal(|ui| {
+                    if action(ui, !self.prov_busy, svg::MAGNIFYING_GLASS, "Read SMBIOS") {
+                        let tx = self.tx.clone();
+                        let ctx2 = ctx.clone();
+                        std::thread::spawn(move || {
+                            let result = dmi::read_smbios().map_err(|e| format!("{e:#}"));
+                            let _ = tx.send(PanelMsg::DmiRead(result));
+                            ctx2.request_repaint();
+                        });
+                    }
+                    let can_clear = self.prov_dmi_confirm
+                        && !self.prov_dmi_tool.trim().is_empty()
+                        && !self.prov_busy;
+                    if danger_action(ui, can_clear, svg::ERASER, "Clear SMBIOS") {
+                        let tool = std::path::PathBuf::from(self.prov_dmi_tool.clone());
+                        let clear = dmi::ami_clear_commands();
+                        self.spawn_prov("DMI clear", ctx, move || dmi::run(&tool, &clear));
+                    }
+                });
+                if let Some(r) = self.dmi_read.as_ref() {
+                    ui.add_space(m.pad.y / 2.0);
+                    ui.add(egui::Label::new(
+                        RichText::new(r.summary()).monospace().small(),
+                    ));
                 }
             });
-            if let Some(r) = self.dmi_read.as_ref() {
-                ui.add_space(2.0);
-                ui.add(egui::Label::new(RichText::new(r.summary()).monospace().small()));
-            }
-        });
     }
 
     fn ui_sign_off(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -2042,65 +2573,134 @@ impl OrderPanel {
             .as_ref()
             .map(|s| s.backend.backend_kind() == BackendKind::Shopify)
             .unwrap_or(false);
-        let secret_hint = if is_shopify { "PIN (unused)" } else { "password" };
+        let secret_hint = if is_shopify {
+            "PIN (unused)"
+        } else {
+            "password"
+        };
+        let m = Metrics::get(ui.ctx());
 
-        Frame::default()
-            .fill(ui.visuals().faint_bg_color)
-            .corner_radius(6.0)
-            .inner_margin(Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(format!("{} Sign-off", p::USER)).strong().size(16.0));
-                ui.add_space(4.0);
+        controls::card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            controls::heading(ui, svg::SIGNATURE, "Sign-off");
+            ui.add_space(m.pad.y);
 
-                macro_rules! slot {
-                    ($label:expr, $ident:expr, $email:expr, $pass:expr, $busy:expr, $err:expr, $role:expr, $hint:expr) => {{
-                        ui.label(RichText::new($label).strong().small());
-                        if let Some(t) = $ident.clone() {
-                            ui.horizontal(|ui| {
-                                ui.colored_label(GOOD, format!("{} {} ({})", p::CHECK_CIRCLE, t.name, t.id_employee));
-                                if ui.small_button("Clear").clicked() {
-                                    $ident = None;
-                                }
-                            });
-                        } else {
-                            ui.add(TextEdit::singleline($email).hint_text($hint).desired_width(f32::INFINITY));
-                            ui.horizontal(|ui| {
-                                ui.add(TextEdit::singleline($pass).hint_text(secret_hint).password(true).desired_width(120.0));
-                                if ui.add_enabled(!$busy, egui::Button::new("Sign in")).clicked() {
-                                    self.start_auth(ctx, $role);
-                                }
-                                if $busy {
-                                    ui.spinner();
-                                }
-                            });
-                            if let Some(e) = $err.as_ref() {
-                                ui.colored_label(ui.visuals().error_fg_color, RichText::new(e).small());
+            macro_rules! slot {
+                ($label:expr, $ident:expr, $email:expr, $pass:expr, $busy:expr, $err:expr, $role:expr, $hint:expr) => {{
+                    ui.label(RichText::new($label).strong().small());
+                    if let Some(t) = $ident.clone() {
+                        ui.horizontal(|ui| {
+                            let ok = theme::success(ui);
+                            controls::status_label(
+                                ui,
+                                svg::USER_CHECK,
+                                &format!("{} ({})", t.name, t.id_employee),
+                                ok,
+                            );
+                            if controls::icon_button(ui, svg::SIGN_OUT, IconBox::Sm, false, "Clear")
+                                .clicked()
+                            {
+                                $ident = None;
                             }
+                        });
+                    } else {
+                        TextField::new($email)
+                            .hint($hint)
+                            .icon(svg::USER)
+                            .width(ui.available_width())
+                            .show(ui);
+                        ui.horizontal(|ui| {
+                            TextField::new($pass)
+                                .hint(secret_hint)
+                                .icon(svg::PASSWORD)
+                                .password(true)
+                                .width(SECRET_W)
+                                .show(ui);
+                            let sign_in = TextButton::new("Sign in")
+                                .icon(svg::SIGN_IN)
+                                .kind(ButtonKind::Primary)
+                                .enabled(!$busy)
+                                .show(ui);
+                            if sign_in.clicked() {
+                                self.start_auth(ctx, $role);
+                            }
+                            if $busy {
+                                controls::spinner(ui, SpinnerSize::Sm);
+                            }
+                        });
+                        if let Some(e) = $err.as_ref() {
+                            let tone = theme::error(ui);
+                            controls::IconLabel::new(svg::X_CIRCLE, &e)
+                                .tone(tone)
+                                .small(true)
+                                .selectable(true)
+                                .show(ui);
                         }
-                    }};
-                }
+                    }
+                }};
+            }
 
-                let tech_hint = if is_shopify { "floor staff name" } else { "employee email" };
-                slot!("QC technician", self.tech, &mut self.tech_email, &mut self.tech_password,
-                    self.auth_busy, self.auth_error, AuthRole::Tech, tech_hint);
+            let tech_hint = if is_shopify {
+                "floor staff name"
+            } else {
+                "employee email"
+            };
+            slot!(
+                "QC technician",
+                self.tech,
+                &mut self.tech_email,
+                &mut self.tech_password,
+                self.auth_busy,
+                self.auth_error,
+                AuthRole::Tech,
+                tech_hint
+            );
 
-                if is_repair {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("2nd sign-off (repair)").small().color(CAUTION));
-                    slot!("Repair sign-off", self.signoff, &mut self.signoff_email, &mut self.signoff_password,
-                        self.signoff_busy, self.signoff_error, AuthRole::Signoff, "sign-off email");
-                }
+            if is_repair {
+                ui.add_space(m.gap.y);
+                let caution = theme::warn(ui);
+                controls::IconLabel::new(svg::USERS, "2nd sign-off (repair)")
+                    .tone(caution)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
+                slot!(
+                    "Repair sign-off",
+                    self.signoff,
+                    &mut self.signoff_email,
+                    &mut self.signoff_password,
+                    self.signoff_busy,
+                    self.signoff_error,
+                    AuthRole::Signoff,
+                    "sign-off email"
+                );
+            }
 
-                ui.add_space(6.0);
-                ui.checkbox(&mut self.is_influencer, "Influencer build");
-                if self.is_influencer {
-                    slot!("Marketing", self.marketing, &mut self.marketing_email, &mut self.marketing_password,
-                        self.marketing_busy, self.marketing_error, AuthRole::Marketing, "marketing email");
-                    slot!("Executive", self.executive, &mut self.executive_email, &mut self.executive_password,
-                        self.executive_busy, self.executive_error, AuthRole::Executive, "executive email");
-                }
-            });
+            ui.add_space(m.gap.y);
+            controls::toggle(ui, &mut self.is_influencer, "Influencer build");
+            if self.is_influencer {
+                slot!(
+                    "Marketing",
+                    self.marketing,
+                    &mut self.marketing_email,
+                    &mut self.marketing_password,
+                    self.marketing_busy,
+                    self.marketing_error,
+                    AuthRole::Marketing,
+                    "marketing email"
+                );
+                slot!(
+                    "Executive",
+                    self.executive,
+                    &mut self.executive_email,
+                    &mut self.executive_password,
+                    self.executive_busy,
+                    self.executive_error,
+                    AuthRole::Executive,
+                    "executive email"
+                );
+            }
+        });
     }
 
     fn ui_comments(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -2110,18 +2710,21 @@ impl OrderPanel {
             .map(|s| s.comments.clone())
             .unwrap_or_default();
         let own_employee_id = self.tech.as_ref().map(|t| t.id_employee.clone());
+        let (t, m) = kit(ui);
 
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!self.comment_busy, egui::Button::new(format!("{} Refresh", p::ARROW_CLOCKWISE)))
-                .clicked()
-            {
+            if action(ui, !self.comment_busy, svg::ARROW_CLOCKWISE, "Refresh") {
                 self.start_refresh_comments(ctx);
             }
             if self.comment_busy {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
-            ui.label(RichText::new(format!("{} comment(s)", comments.len())).weak().small());
+            let weak = theme::weak_text(ui);
+            controls::IconLabel::new(svg::CHAT_TEXT, &format!("{} comment(s)", comments.len()))
+                .tone(weak)
+                .small(true)
+                .selectable(true)
+                .show(ui);
         });
 
         ScrollArea::vertical()
@@ -2131,67 +2734,78 @@ impl OrderPanel {
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 for comment in &comments {
-                    let own = own_employee_id.is_some()
-                        && comment.author_employee_id == own_employee_id;
+                    let own =
+                        own_employee_id.is_some() && comment.author_employee_id == own_employee_id;
                     let layout = if own {
                         Layout::top_down(Align::Max)
                     } else {
                         Layout::top_down(Align::Min)
                     };
                     ui.with_layout(layout, |ui| {
-                        let fill = if own {
-                            ui.visuals().widgets.active.bg_fill
-                        } else {
-                            ui.visuals().widgets.active.weak_bg_fill
-                        };
-                        Frame::default()
+                        let fill = if own { t.primary_soft } else { t.field };
+                        Frame::new()
                             .fill(fill)
-                            .corner_radius(6.0)
-                            .inner_margin(Margin::symmetric(8, 6))
+                            .corner_radius(t.radius_md)
+                            .inner_margin(Margin::symmetric(m.gap.x as i8, m.gap.y as i8))
                             .show(ui, |ui| {
                                 ui.set_max_width(ui.available_width() * 0.85);
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(&comment.author).strong().small());
                                     if comment.private {
-                                        ui.label(RichText::new(p::LOCK).small())
+                                        svg::LOCK
+                                            .show_tinted(ui, m.icon_sm, t.icon)
                                             .on_hover_text("Private (staff only)");
                                     }
                                     if !comment.created_at.is_empty() {
                                         ui.label(RichText::new(&comment.created_at).weak().small());
                                     }
                                 });
-                                ui.add(egui::Label::new(RichText::new(&comment.body).small()).wrap());
+                                ui.add(
+                                    egui::Label::new(RichText::new(&comment.body).small()).wrap(),
+                                );
                             });
-                        ui.add_space(4.0);
+                        ui.add_space(m.pad.y);
                     });
                 }
                 if comments.is_empty() {
-                    ui.label(RichText::new("No comments on this order.").weak());
+                    controls::empty_state(
+                        ui,
+                        svg::CHAT_CIRCLE_DOTS,
+                        "No comments on this order",
+                        "",
+                        &[],
+                    );
                 }
             });
 
-        ui.add_space(4.0);
+        ui.add_space(m.pad.y);
         ui.horizontal(|ui| {
-            let width = ui.available_width() - 70.0;
-            ui.add(
-                TextEdit::multiline(&mut self.comment_input)
-                    .hint_text("Private staff note…")
-                    .desired_rows(2)
-                    .desired_width(width),
-            );
-            let can_send = !self.comment_busy && self.tech.is_some() && !self.comment_input.trim().is_empty();
-            if ui
-                .add_enabled(can_send, egui::Button::new(format!("{} Send", p::PAPER_PLANE_TILT)))
-                .clicked()
-            {
+            let send = TextButton::new("Send")
+                .icon(svg::PAPER_PLANE_TILT)
+                .kind(ButtonKind::Primary);
+            let width = ui.available_width() - send.size(ui).x - ui.spacing().item_spacing.x;
+            controls::TextArea::new(&mut self.comment_input)
+                .hint("Private staff note…")
+                .rows(2)
+                .width(width)
+                .show(ui);
+            let can_send =
+                !self.comment_busy && self.tech.is_some() && !self.comment_input.trim().is_empty();
+            if send.enabled(can_send).show(ui).clicked() {
                 self.start_post_comment(ctx);
             }
         });
         if self.tech.is_none() {
-            ui.label(RichText::new("Sign in to post comments.").weak().small());
+            let weak = theme::weak_text(ui);
+            controls::IconLabel::new(svg::LOCK, "Sign in to post comments.")
+                .tone(weak)
+                .small(true)
+                .selectable(true)
+                .show(ui);
         }
         if let Some(e) = self.comment_error.as_ref() {
-            ui.colored_label(ui.visuals().error_fg_color, e);
+            let tone = theme::error(ui);
+            controls::status_label(ui, svg::X_CIRCLE, e, tone);
         }
     }
 
@@ -2202,11 +2816,16 @@ impl OrderPanel {
         last_verdict: Option<&RunVerdict>,
         last_preset: Option<String>,
     ) {
+        let m = Metrics::get(ui.ctx());
         // Auto-verify provable items once after load (SMART/OA3/stress temps).
         if self.verify_pending {
             let probe = crate::checklist_verify::WmiProbe::new();
-            let cpu = last_verdict.and_then(|v| v.summary.max_temp_c).map(f64::from);
-            let gpu = last_verdict.and_then(|v| v.summary.max_gpu_temp_c).map(f64::from);
+            let cpu = last_verdict
+                .and_then(|v| v.summary.max_temp_c)
+                .map(f64::from);
+            let gpu = last_verdict
+                .and_then(|v| v.summary.max_gpu_temp_c)
+                .map(f64::from);
             crate::checklist_verify::apply(&mut self.checklist, &probe, cpu, gpu);
             self.verify_pending = false;
             self.save_worksheet();
@@ -2214,39 +2833,44 @@ impl OrderPanel {
 
         // This order was already signed off on this machine — offer a fresh start.
         if let Some(summary) = self.prior_signoff.clone() {
-            Frame::default()
-                .fill(GOOD.gamma_multiply(0.12))
-                .stroke((1.0, GOOD))
-                .corner_radius(6.0)
-                .inner_margin(Margin::symmetric(8, 6))
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.colored_label(GOOD, format!("{} Already signed off — {summary}", p::CHECK_CIRCLE));
-                    });
-                    if ui.button(format!("{} Start new sign-off", p::ARROW_CLOCKWISE)).clicked() {
-                        if let Some(s) = self.session.as_ref() {
-                            let machine = crate::reporting::machine_id();
-                            crate::checklist_store::clear(&s.order.id, &machine);
-                        }
-                        self.checklist = ChecklistState::from_kind(self.checklist_kind);
-                        self.prior_signoff = None;
-                        self.verify_pending = true;
-                        self.submit_result = None;
+            let ok = theme::success(ui);
+            controls::callout(ui, ok, None, |ui| {
+                controls::status_label(
+                    ui,
+                    svg::SEAL_CHECK,
+                    &format!("Already signed off — {summary}"),
+                    ok,
+                );
+                if controls::icon_text_button(
+                    ui,
+                    svg::ARROW_COUNTER_CLOCKWISE,
+                    "Start new sign-off",
+                )
+                .clicked()
+                {
+                    if let Some(s) = self.session.as_ref() {
+                        let machine = crate::reporting::machine_id();
+                        crate::checklist_store::clear(&s.order.id, &machine);
                     }
-                });
-            ui.add_space(6.0);
+                    self.checklist = ChecklistState::from_kind(self.checklist_kind);
+                    self.prior_signoff = None;
+                    self.verify_pending = true;
+                    self.submit_result = None;
+                }
+            });
+            ui.add_space(m.gap.y);
         }
 
         match last_verdict {
             Some(v) => {
-                let (color, label) = match v.result {
-                    RunResult::Pass => (GOOD, "PASS"),
-                    RunResult::Fail => (ui.visuals().error_fg_color, "FAIL"),
-                    _ => (CAUTION, v.result.as_str()),
+                let (icon, color, label) = match v.result {
+                    RunResult::Pass => (svg::CHECK_CIRCLE, theme::success(ui), "PASS"),
+                    RunResult::Fail => (svg::X_CIRCLE, theme::error(ui), "FAIL"),
+                    _ => (svg::WARNING, theme::warn(ui), v.result.as_str()),
                 };
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new("Last stress run:").strong().small());
-                    ui.colored_label(color, RichText::new(label).strong());
+                    controls::status_label(ui, icon, label, color);
                     ui.label(
                         RichText::new(format!(
                             "{:.0}s · WHEA {} · TDR {} · mem/disk errs {}",
@@ -2261,15 +2885,19 @@ impl OrderPanel {
                 });
             }
             None => {
-                ui.label(
-                    RichText::new("No stress run this session — report will submit as not_run.")
-                        .small()
-                        .color(CAUTION),
-                );
+                let caution = theme::warn(ui);
+                controls::IconLabel::new(
+                    svg::WARNING,
+                    "No stress run this session — report will submit as not_run.",
+                )
+                .tone(caution)
+                .small(true)
+                .selectable(true)
+                .show(ui);
             }
         }
 
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
 
         // Deferred edits so the render loop holds only an immutable borrow.
         enum CkEdit {
@@ -2279,17 +2907,22 @@ impl OrderPanel {
         }
         let mut edits: Vec<CkEdit> = Vec::new();
         let mut air_toggle: Option<bool> = None;
-        let blocked: std::collections::HashSet<String> = self.blocked_keys.iter().cloned().collect();
+        let blocked: std::collections::HashSet<String> =
+            self.blocked_keys.iter().cloned().collect();
 
         let (resolved, total) = self.checklist.open_count();
         ui.horizontal(|ui| {
             let mut air = self.air_cooled;
-            if ui.checkbox(&mut air, "Air-cooled (skip Liquid Cooling)").changed() {
+            if controls::toggle(ui, &mut air, "Air-cooled (skip Liquid Cooling)").changed() {
                 air_toggle = Some(air);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let c = if resolved == total { GOOD } else { CAUTION };
-                ui.colored_label(c, RichText::new(format!("{resolved}/{total}")).small());
+                let c = if resolved == total {
+                    theme::success(ui)
+                } else {
+                    theme::warn(ui)
+                };
+                controls::badge(ui, &format!("{resolved}/{total}"), c);
             });
         });
 
@@ -2298,68 +2931,97 @@ impl OrderPanel {
             let header = format!("§{} {}  ({})", sec.number, sec.title, sec.progress_text());
             let locked = active.map(|a| idx > a).unwrap_or(false);
             if locked {
-                ui.label(RichText::new(format!("{} {header}", p::LOCK)).weak().small());
+                let weak = theme::weak_text(ui);
+                controls::IconLabel::new(svg::LOCK, &header)
+                    .tone(weak)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
                 continue;
             }
-            let mut ch = CollapsingHeader::new(RichText::new(header).strong())
-                .id_salt(format!("ck_sec_{}", sec.number));
-            if active == Some(idx) {
-                ch = ch.open(Some(true));
-            }
-            ch.show(ui, |ui| {
-                if !sec.applicable {
-                    ui.label(RichText::new("Section marked N/A (air-cooled).").weak().small());
-                    return;
-                }
-                if !sec.notes.is_empty() {
-                    ui.label(RichText::new(&sec.notes).weak().small());
-                }
-                for item in &sec.items {
-                    let status = item.status();
-                    ui.horizontal_wrapped(|ui| {
-                        let pass = ui.selectable_label(status == ItemStatus::Pass, RichText::new("Pass").color(GOOD).small());
-                        if pass.clicked() {
-                            edits.push(CkEdit::Status(item.key.clone(), ItemStatus::Pass));
+            let icon = if sec.is_complete() {
+                svg::CHECK_CIRCLE
+            } else {
+                svg::LIST_CHECKS
+            };
+            let force = (active == Some(idx)).then_some(true);
+            controls::Section::new(format!("ck_sec_{}", sec.number), &header)
+                .icon(icon)
+                .default_open(false)
+                .open(force)
+                .show(ui, |ui| {
+                    if !sec.applicable {
+                        let weak = theme::weak_text(ui);
+                        controls::IconLabel::new(
+                            svg::MINUS_CIRCLE,
+                            "Section marked N/A (air-cooled).",
+                        )
+                        .tone(weak)
+                        .small(true)
+                        .selectable(true)
+                        .show(ui);
+                        return;
+                    }
+                    if !sec.notes.is_empty() {
+                        ui.label(RichText::new(&sec.notes).weak().small());
+                    }
+                    for item in &sec.items {
+                        let status = item.status();
+                        ui.horizontal_wrapped(|ui| {
+                            let segments = CHECK_CHOICES.map(|(choice, icon, label)| {
+                                let segment = Segment::new(choice, label).icon(icon);
+                                match choice {
+                                    ItemStatus::Pass => segment.tone(theme::success(ui)),
+                                    ItemStatus::Fail => segment.tone(theme::error(ui)),
+                                    _ => segment,
+                                }
+                            });
+                            let mut picked = status;
+                            if controls::segmented(ui, &mut picked, &segments).changed() {
+                                edits.push(CkEdit::Status(item.key.clone(), picked));
+                            }
+                            let label_color = if blocked.contains(&item.key) {
+                                theme::warn(ui)
+                            } else {
+                                theme::text(ui)
+                            };
+                            ui.label(RichText::new(&item.text).small().color(label_color));
+                            if item.auto_verified() {
+                                let ok = theme::success(ui);
+                                controls::IconLabel::new(svg::SEAL_CHECK, "auto")
+                                    .tone(ok)
+                                    .small(true)
+                                    .selectable(true)
+                                    .show(ui)
+                                    .on_hover_text(&item.evidence);
+                            }
+                        });
+                        if item.show_note() {
+                            let mut note = item.note.clone();
+                            if TextField::new(&mut note)
+                                .hint("note (required for Fail)")
+                                .icon(svg::NOTE_PENCIL)
+                                .width(ui.available_width())
+                                .show(ui)
+                                .changed()
+                            {
+                                edits.push(CkEdit::Note(item.key.clone(), note));
+                            }
                         }
-                        let fail = ui.selectable_label(status == ItemStatus::Fail, RichText::new("Fail").color(ui.visuals().error_fg_color).small());
-                        if fail.clicked() {
-                            edits.push(CkEdit::Status(item.key.clone(), ItemStatus::Fail));
-                        }
-                        let na = ui.selectable_label(status == ItemStatus::Na, RichText::new("N/A").weak().small());
-                        if na.clicked() {
-                            edits.push(CkEdit::Status(item.key.clone(), ItemStatus::Na));
-                        }
-                        let label_color = if blocked.contains(&item.key) {
-                            CAUTION
-                        } else {
-                            ui.visuals().text_color()
-                        };
-                        ui.label(RichText::new(&item.text).small().color(label_color));
-                        if item.auto_verified() {
-                            ui.label(RichText::new(format!("{} auto", p::CHECK_CIRCLE)).color(GOOD).small())
-                                .on_hover_text(&item.evidence);
-                        }
-                    });
-                    if item.show_note() {
-                        let mut note = item.note.clone();
-                        if ui
-                            .add(TextEdit::singleline(&mut note).hint_text("note (required for Fail)").desired_width(f32::INFINITY))
-                            .changed()
-                        {
-                            edits.push(CkEdit::Note(item.key.clone(), note));
+                        if item.captures_value {
+                            let mut value = item.value.clone();
+                            if TextField::new(&mut value)
+                                .hint("recorded value")
+                                .icon(svg::HASH)
+                                .width(ui.available_width())
+                                .show(ui)
+                                .changed()
+                            {
+                                edits.push(CkEdit::Value(item.key.clone(), value));
+                            }
                         }
                     }
-                    if item.captures_value {
-                        let mut value = item.value.clone();
-                        if ui
-                            .add(TextEdit::singleline(&mut value).hint_text("recorded value").desired_width(f32::INFINITY))
-                            .changed()
-                        {
-                            edits.push(CkEdit::Value(item.key.clone(), value));
-                        }
-                    }
-                }
-            });
+                });
         }
 
         let changed = air_toggle.is_some() || !edits.is_empty();
@@ -2378,36 +3040,79 @@ impl OrderPanel {
             self.save_worksheet();
         }
 
-        ui.add_space(6.0);
-        ui.add(
-            TextEdit::multiline(&mut self.report_notes)
-                .hint_text("QC notes…")
-                .desired_rows(2)
-                .desired_width(f32::INFINITY),
-        );
+        ui.add_space(m.gap.y);
+        controls::TextArea::new(&mut self.report_notes)
+            .hint("QC notes…")
+            .rows(2)
+            .show(ui);
 
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
         let complete = self.checklist.is_complete();
         ui.horizontal(|ui| {
             let can_submit = !self.submit_busy && self.tech.is_some() && complete;
-            if ui
-                .add_enabled(can_submit, egui::Button::new(format!("{} Submit QC report", p::CLIPBOARD_TEXT)))
-                .clicked()
-            {
+            let submit = TextButton::new("Submit QC report")
+                .icon(svg::PAPER_PLANE_RIGHT)
+                .kind(ButtonKind::Primary)
+                .prominent(true)
+                .enabled(can_submit)
+                .show(ui);
+            if submit.clicked() {
                 self.start_submit(ctx, last_verdict, last_preset.clone());
             }
             if self.submit_busy {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
         });
+        let weak = theme::weak_text(ui);
         if self.tech.is_none() {
-            ui.label(RichText::new("Sign in to submit.").weak().small());
+            controls::IconLabel::new(svg::LOCK, "Sign in to submit.")
+                .tone(weak)
+                .small(true)
+                .selectable(true)
+                .show(ui);
         } else if !complete {
-            ui.label(RichText::new("Finish every applicable item to submit.").weak().small());
+            controls::IconLabel::new(svg::LIST_CHECKS, "Finish every applicable item to submit.")
+                .tone(weak)
+                .small(true)
+                .selectable(true)
+                .show(ui);
         }
         if let Some((ok, msg)) = self.submit_result.as_ref() {
-            let c = if *ok { GOOD } else { ui.visuals().error_fg_color };
-            ui.colored_label(c, msg);
+            let (icon, tone) = if *ok {
+                (svg::CHECK_CIRCLE, theme::success(ui))
+            } else {
+                (svg::X_CIRCLE, theme::error(ui))
+            };
+            controls::status_label(ui, icon, msg, tone);
         }
     }
+}
+
+/// Neutral icon button that reports a click only while `enabled`.
+fn action(ui: &mut egui::Ui, enabled: bool, icon: Icon, label: &str) -> bool {
+    TextButton::new(label)
+        .icon(icon)
+        .enabled(enabled)
+        .show(ui)
+        .clicked()
+}
+
+/// Danger-tinted icon button that reports a click only while `enabled`.
+fn danger_action(ui: &mut egui::Ui, enabled: bool, icon: Icon, label: &str) -> bool {
+    TextButton::new(label)
+        .icon(icon)
+        .kind(ButtonKind::Danger)
+        .enabled(enabled)
+        .show(ui)
+        .clicked()
+}
+
+/// Tokens and metrics for `ui`'s context.
+fn kit(ui: &egui::Ui) -> (Tokens, Metrics) {
+    (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()))
+}
+
+/// Id salt of a former `CollapsingHeader` labelled `"{glyph} {title}"`.
+fn legacy_salt(icon: Icon, title: &str) -> String {
+    format!("{} {title}", icon.glyph())
 }

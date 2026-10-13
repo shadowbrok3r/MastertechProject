@@ -1,12 +1,25 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
 use database::schema::{ComputerData, CustomerData, DiagnosticEntry, DiagnosticSession, LiveTaskPayload, PluginRegistryEntry, RecordIdExt, TicketPayload, User};
-use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
+use crate::ui_tools::{controls, icons::svg, theme};
+use eframe::egui::{Align, Layout, Response, RichText, Ui};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use egui_extras::Column;
 use std::cmp::Ordering;
+
+/// Trailing inset of a right-aligned cell.
+const CELL_INSET: f32 = 2.0;
+
+/// A label right-aligned in its table cell.
+fn right_cell(ui: &mut Ui, text: impl Into<RichText>) -> Response {
+    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+        ui.add_space(CELL_INSET);
+        ui.label(text.into())
+    })
+    .inner
+}
 
 /// Every logic is defined in `Viewer`
 #[derive(serde::Serialize)]
@@ -194,16 +207,12 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &DatabaseTable, column: usize) {
-        // ui.add_space(5.);
         let _ = match &row {
             DatabaseTable::Task(task_payload) => {
                 let checked = &mut task_payload.completed.clone();
                 let _ = match column {
                     // 0 => ui.label(format!(" {}", task_payload.id.key().to_string())),
-                    1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(task_payload.task_name.trim()))
-                    }).inner,
+                    1 => right_cell(ui, RichText::new(task_payload.task_name.trim())),
                     2 => {
                         let user = self.store_users
                             .iter()
@@ -220,15 +229,15 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                         let split1 = formatted_date.split_once('/').unwrap_or_default();
                         let split2 = split1.1.split_once('/').unwrap_or_default();
                         ui.horizontal(|ui| {
-                            ui.colored_label(Color32::from_rgb(42, 195, 222), format!("{}/", split1.0));
-                            ui.colored_label(Color32::from_rgb(3, 252, 194), format!("{}/", split2.0));
-                            ui.colored_label(Color32::from_rgb(66, 69, 245), split2.1)
+                            ui.colored_label(theme::info(ui), format!("{}/", split1.0));
+                            ui.colored_label(theme::success(ui), format!("{}/", split2.0));
+                            ui.colored_label(theme::secondary(ui), split2.1)
                         }).inner
                     },
                     4 => ui.vertical_centered(|ui| ui.label(task_payload.service_number.clone().unwrap_or_default().trim())).inner,
                     5 => ui.vertical_centered(|ui| ui.label(format!("{}", task_payload.priority.as_str().trim()))).inner,
                     6 => ui.vertical_centered(|ui| ui.label(format!(" {}", task_payload.status.as_str().trim()))).inner,
-                    7 => ui.vertical_centered(|ui| ui.checkbox(checked, "")).inner,
+                    7 => ui.vertical_centered(|ui| controls::toggle(ui, checked, "")).inner,
                     8 => ui.label(task_payload.task_description.trim()),
                     _ => ui.label(""),
                 };
@@ -238,10 +247,10 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     0 => ui.label(format!(" {}", user.get_id().key_string())),
                     1 => ui.label(format!(" {}", user.get_name())),
                     2 => ui.label(format!(" {}", user.get_username())),
-                    3 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| ui.label(format!(" {}", user.get_email()))).response,
+                    3 => right_cell(ui, format!(" {}", user.get_email())),
                     4 => ui.label(format!(" {}", user.get_store().as_str())),
-                    5 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| ui.label(format!(" {}", user.get_employee_id().unwrap_or(0).to_string()))).response,
-                    6 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| ui.label(format!(" {}", user.get_store_id().unwrap_or(String::new())))).response,
+                    5 => right_cell(ui, format!(" {}", user.get_employee_id().unwrap_or(0))),
+                    6 => right_cell(ui, format!(" {}", user.get_store_id().unwrap_or(String::new()))),
                     7 => ui.vertical_centered(|ui| ui.label(format!(" {}", user.get_authorization().as_str()))).response,
                     _ => ui.label(" ")
                 };
@@ -249,82 +258,34 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::Customer(customer) => {
                 let _ = match column {
                     0 => ui.label(format!(" {}", customer.id.key_string())),
-                    1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(customer.name.trim()).underline())
-                    }).inner,
-                    2 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(customer.phone_number.trim()))
-                    }).inner,
-                    3 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(customer.email.trim()))
-                    }).inner,
+                    1 => right_cell(ui, RichText::new(customer.name.trim()).underline()),
+                    2 => right_cell(ui, RichText::new(customer.phone_number.trim())),
+                    3 => right_cell(ui, RichText::new(customer.email.trim())),
                     _ => ui.label(""),
                 };
             },
             DatabaseTable::Computer(computer) => {
                 let _ = match column {
                     0 => ui.label(format!(" {}", computer.id.key_string())),
-                    1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.hostname.trim()).underline())
-                    }).inner,
-                    2 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.device_mfg.clone().unwrap_or_default().trim()))
-                    }).inner,
-                    3 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.device_model.clone().unwrap_or_default().trim()))
-                    }).inner,
-                    4 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.device_name.clone().unwrap_or_default().trim()))
-                    }).inner,
-                    5 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.device_serial.clone().unwrap_or_default().trim()))
-                    }).inner,
-                    6 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.cpu.trim()))
-                    }).inner,
-                    7 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.gpu.trim()))
-                    }).inner,
-                    8 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.ram.trim()))
-                    }).inner,
-                    9 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.operating_system.trim()))
-                    }).inner,
-                    10 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(computer.customer.as_ref().map_or_else(|| "—".to_string(), |id| id.key_string())))
-                    }).inner,
+                    1 => right_cell(ui, RichText::new(computer.hostname.trim()).underline()),
+                    2 => right_cell(ui, RichText::new(computer.device_mfg.clone().unwrap_or_default().trim())),
+                    3 => right_cell(ui, RichText::new(computer.device_model.clone().unwrap_or_default().trim())),
+                    4 => right_cell(ui, RichText::new(computer.device_name.clone().unwrap_or_default().trim())),
+                    5 => right_cell(ui, RichText::new(computer.device_serial.clone().unwrap_or_default().trim())),
+                    6 => right_cell(ui, RichText::new(computer.cpu.trim())),
+                    7 => right_cell(ui, RichText::new(computer.gpu.trim())),
+                    8 => right_cell(ui, RichText::new(computer.ram.trim())),
+                    9 => right_cell(ui, RichText::new(computer.operating_system.trim())),
+                    10 => right_cell(ui, RichText::new(computer.customer.as_ref().map_or_else(|| "—".to_string(), |id| id.key_string()))),
                     _ => ui.label(""),
                 };
             },
             DatabaseTable::Service(ticket) => {
                 let _ = match column {
                     0 => ui.label(format!(" {}", ticket.id.key_string())),
-                    1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(ticket.service_number.trim()).underline())
-                    }).inner,
-                    2 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(ticket.tech.trim()))
-                    }).inner,
-                    3 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
-                        ui.add_space(2.);
-                        ui.label(RichText::new(ticket.salesman.trim()))
-                    }).inner,
+                    1 => right_cell(ui, RichText::new(ticket.service_number.trim()).underline()),
+                    2 => right_cell(ui, RichText::new(ticket.tech.trim())),
+                    3 => right_cell(ui, RichText::new(ticket.salesman.trim())),
                     4 => ui.vertical_centered(|ui| ui.label(ticket.checkin_rep.trim())).inner,
                     5 => ui.vertical_centered(|ui| ui.label(format!("{}", ticket.customer.clone().unwrap_or_default().name.trim()))).inner,
                     6 => ui.vertical_centered(|ui| ui.label(format!(" {}", ticket.computer.clone().unwrap_or_default().device_model.clone().unwrap_or_default().trim()))).inner,
@@ -340,12 +301,12 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     3 => ui.label(s.customer_name.as_deref().unwrap_or("")),
                     4 => ui.label(s.tech.as_deref().unwrap_or("")),
                     5 => {
-                        let color = match s.status.as_str() {
-                            "open" => Color32::from_rgb(42, 195, 222),
-                            "closed" => Color32::from_rgb(100, 200, 100),
-                            _ => Color32::GRAY,
+                        let (icon, color) = match s.status.as_str() {
+                            "open" => (svg::PULSE, theme::info(ui)),
+                            "closed" => (svg::CHECK_CIRCLE, theme::success(ui)),
+                            _ => (svg::CIRCLE_DASHED, theme::weak_text(ui)),
                         };
-                        ui.colored_label(color, &s.status)
+                        controls::IconLabel::new(icon, &s.status).tone(color).show(ui)
                     },
                     6 => ui.label(s.started_at.to_string()),
                     7 => ui.label(s.ended_at.as_ref().map(|d| d.to_string()).unwrap_or_default()),
@@ -365,16 +326,16 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     2 => ui.label(e.timestamp.to_string()),
                     3 => {
                         let cat_str = e.category.as_str();
-                        let color = match cat_str {
-                            "finding" => Color32::from_rgb(255, 200, 50),
-                            "action" => Color32::from_rgb(42, 195, 222),
-                            "resolution" => Color32::from_rgb(100, 200, 100),
-                            "error" => Color32::from_rgb(255, 80, 80),
-                            "security_alert" => Color32::from_rgb(255, 80, 200),
-                            "performance_note" => Color32::from_rgb(200, 150, 255),
-                            _ => Color32::GRAY,
+                        let (icon, color) = match cat_str {
+                            "finding" => (svg::MAGNIFYING_GLASS, theme::warn(ui)),
+                            "action" => (svg::LIGHTNING, theme::info(ui)),
+                            "resolution" => (svg::CHECK_CIRCLE, theme::success(ui)),
+                            "error" => (svg::X_CIRCLE, theme::error(ui)),
+                            "security_alert" => (svg::SHIELD_WARNING, theme::primary(ui)),
+                            "performance_note" => (svg::GAUGE, theme::secondary(ui)),
+                            _ => (svg::NOTE, theme::weak_text(ui)),
                         };
-                        ui.colored_label(color, cat_str)
+                        controls::IconLabel::new(icon, cat_str).tone(color).show(ui)
                     },
                     4 => ui.label(&e.title),
                     5 => {
@@ -555,13 +516,13 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::User(user) => {
                 match column {
                     0 => Some(ui.label(user.get_id().key_string())),
-                    1 => Some(TextEdit::singleline(&mut user.get_name()).show(ui).response.response),
-                    2 => Some(TextEdit::singleline(&mut user.get_username()).show(ui).response.response),
-                    3 => Some(TextEdit::singleline(&mut user.get_email()).show(ui).response.response),
-                    4 => Some(TextEdit::singleline(&mut user.get_store().as_str()).show(ui).response.response),
-                    5 => Some(TextEdit::singleline(&mut user.get_employee_id().unwrap_or(0).to_string()).show(ui).response.response),
-                    6 => Some(TextEdit::singleline(&mut user.get_store_id().unwrap_or(String::new())).show(ui).response.response),
-                    7 => Some(TextEdit::singleline(&mut user.get_authorization().as_str()).show(ui).response.response),
+                    1 => Some(controls::TextField::new(&mut user.get_name()).width(ui.available_width()).show(ui)),
+                    2 => Some(controls::TextField::new(&mut user.get_username()).width(ui.available_width()).show(ui)),
+                    3 => Some(controls::TextField::new(&mut user.get_email()).width(ui.available_width()).show(ui)),
+                    4 => Some(controls::TextField::new(&mut user.get_store().as_str()).width(ui.available_width()).show(ui)),
+                    5 => Some(controls::TextField::new(&mut user.get_employee_id().unwrap_or(0).to_string()).width(ui.available_width()).show(ui)),
+                    6 => Some(controls::TextField::new(&mut user.get_store_id().unwrap_or(String::new())).width(ui.available_width()).show(ui)),
+                    7 => Some(controls::TextField::new(&mut user.get_authorization().as_str()).width(ui.available_width()).show(ui)),
                     _ => None
                 }
                 .into()

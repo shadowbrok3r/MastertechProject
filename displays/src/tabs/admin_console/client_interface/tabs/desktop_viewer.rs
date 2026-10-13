@@ -6,11 +6,11 @@ use crate::remote_viewer::input_focus::RemoteViewFocus;
 use crate::tabs::admin_console::client_interface::clipboard_bridge::CLIPBOARD_MAX_BYTES;
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{
-    self, Color32, ColorImage, Event, PointerButton, Rect, RichText, TextureHandle, TextureOptions,
-    Ui,
+    self, Color32, ColorImage, Event, PointerButton, Rect, TextureHandle, TextureOptions, Ui,
 };
 use web_time::{Instant, SystemTime};
-use crate::ui_tools::theme;
+use crate::ui_tools::controls::{self, SpinnerSize};
+use crate::ui_tools::icons::svg;
 
 /// Inline raster viewer for full remote-desktop control. Decodes JPEG frames
 /// into an egui texture and forwards pointer/keyboard input as normalized
@@ -170,20 +170,17 @@ impl DesktopViewer {
         let got_new = self.poll_frames(ui.ctx());
 
         let Some(texture) = self.texture.clone() else {
+            ui.add_space(24.0);
+            controls::empty_state(
+                ui,
+                svg::MT_REMOTE,
+                "Waiting for desktop frames...",
+                "Start Remote Desktop from the menu to begin streaming.",
+                &[],
+            );
             ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
-                ui.label(
-                    RichText::new("Waiting for desktop frames...")
-                        .color(theme::weak_text(ui))
-                        .size(14.0),
-                );
                 ui.add_space(8.0);
-                ui.label(
-                    RichText::new("Start Remote Desktop from the menu to begin streaming.")
-                        .color(theme::faint_text(ui))
-                        .small(),
-                );
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Md);
             });
             return;
         };

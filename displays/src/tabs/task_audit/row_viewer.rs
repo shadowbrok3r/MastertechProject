@@ -1,6 +1,11 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
-use crate::ui_tools::{icons, theme};
-use eframe::egui::{Color32, ComboBox, Hyperlink, Id, Label, Widget};
+use crate::ui_tools::{
+    controls::{self, ButtonKind, IconBox, IconButton, MenuButton, TextButton},
+    icons::{self, svg},
+    metrics::Metrics,
+    theme,
+};
+use eframe::egui::{Label, ScrollArea, Widget};
 use database::schema::{Store, TaskNotePayload, User, LiveTaskPayload, assignable_users, helper_traits::parse_email_user, prestashop::{OrderState}, prestashop_schema::{Employee, MissedCallOrder, PrestashopPayload}};
 use std::collections::HashMap;
 use database::schema::prestashop::order_write;
@@ -15,7 +20,7 @@ use log::info;
 use super::codec::Codec;
 
 /// In-table edits that must be reflected immediately, emitted from the
-/// row comboboxes and applied to the cached table by the owning view.
+/// row pickers and applied to the cached table by the owning view.
 pub enum RowFieldUpdate {
     Status { order_id: String, new_state: String },
     SalesRep { order_id: String, employee: Employee },
@@ -40,6 +45,9 @@ impl RowFieldUpdate {
         }
     }
 }
+
+/// Tallest a rep picker grows before it scrolls.
+const REP_LIST_MAX_H: f32 = 200.0;
 
 /// A rejected Prestashop write, carrying the value the table must be restored to.
 pub struct WriteFailure {
@@ -121,8 +129,8 @@ impl TaskRowViewer {
     fn show_write_error(&self, ui: &mut eframe::egui::Ui, order_id: &str, column: usize) {
         if let Some((failed_column, message)) = self.write_errors.get(order_id) {
             if *failed_column == column {
-                let color = ui.style().visuals.error_fg_color;
-                ui.label(icons::icon_colored(icons::STATUS_WARN, color))
+                let size = Metrics::get(ui.ctx()).icon_sm;
+                ui.add(svg::WARNING_CIRCLE.image(size).tint(theme::error(ui)))
                     .on_hover_text(format!("Prestashop rejected this change, value reverted:\n{message}"));
             }
         }
@@ -191,22 +199,17 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
         style.interaction.selectable_labels = false;
 
         let _ = match column {
-            0 => { 
-                // ui.colored_label(ui.style().visuals.hyperlink_color, format!(" {}", row.order.id.clone())); 
-                let url = row.order.id.clone();
-                let res = Hyperlink::from_label_and_url(
-                    format!(" {}", url), 
-                    xidax_order_url(&url)
-                )
-                .open_in_new_tab(true)
-                .ui(ui);
-
-                if res.clicked() {
+            0 => {
+                if order_link(ui, &row.order.id).clicked() {
                     log::debug!("Clicked on order: {}", row.order.id);
                 }
             },
             1 => {
-                if ui.button(format!(" {} ⬈", row.customer.name.clone())).clicked() {
+                let open = TextButton::new(&row.customer.name)
+                    .icon(svg::ARROW_SQUARE_OUT)
+                    .kind(ButtonKind::Ghost)
+                    .show(ui);
+                if open.clicked() {
                     log::debug!("Clicked on customer: {}", row.customer.name);
                     self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
@@ -232,26 +235,24 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let split1 = formatted_date.split_once('/').unwrap_or_default();
                 let split2 = split1.1.split_once('/').unwrap_or_default();
                 ui.horizontal(|ui| {
-                    ui.colored_label(Color32::from_rgb(42, 195, 222), format!("{}/", split1.0));
-                    ui.colored_label(ui.style().visuals.error_fg_color, format!("{}/", split2.0));
-                    ui.colored_label(ui.style().visuals.warn_fg_color, split2.1)
+                    ui.colored_label(theme::info(ui), format!("{}/", split1.0));
+                    ui.colored_label(theme::error(ui), format!("{}/", split2.0));
+                    ui.colored_label(theme::warn(ui), split2.1)
                 }).inner;
             },
             3 => {
-                // Status ComboBox
+                // Status picker
                 let current_state = &row.order.current_state;
                 let current_display = OrderState::from_id_str(current_state);
                 let order_id = row.order.id.clone();
                 let previous_state = current_state.clone();
 
-                ui.horizontal(|ui| {
-                    ComboBox::from_id_salt(Id::new(format!("status_{}", order_id)))
-                        .selected_text(current_display)
-                        .width(100.)
-                        .show_ui(ui, |ui| {
+                ui.push_id(format!("status_{}", order_id), |ui| ui.horizontal(|ui| {
+                    MenuButton::new(current_display).icon(svg::TAG)
+                        .show(ui, |ui| {
                             for state in [OrderState::CheckinShelf, OrderState::InRepair, OrderState::DoneShelf] {
                                 let is_current = state.to_id_str() == current_state;
-                                if ui.selectable_label(is_current, state.as_str()).clicked() {
+                                if controls::menu_check_item(ui, None, state.as_str(), is_current).clicked() {
                                     let new_state = state.to_id_str().to_string();
                                     log::info!("Status changed for order: {order_id}, new_state: {new_state}");
                                     self.write_errors.remove(&order_id);
@@ -273,29 +274,26 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                             }
                         });
                     self.show_write_error(ui, &order_id, column);
-                });
+                }));
             },
             4 => {
-                // Sales Rep ComboBox
+                // Sales Rep picker
                 let current_emp = row.sales_rep.clone().unwrap_or_default();
                 let current_emp_id = current_emp.id.clone();
                 let current_name = parse_email_user(&current_emp.email);
                 let order_id = row.order.id.clone();
                 let users = self.users.clone();
                 let my_store = self.my_store;
-                
+
                 // Check if current is the checkin shelf employee (id 1347)
                 let is_checkin_shelf = current_emp_id == "1347";
                 let previous_rep = current_emp.clone();
 
-                ui.horizontal(|ui| {
-                    ComboBox::from_id_salt(Id::new(format!("sales_rep_{}", order_id)))
-                        .selected_text(current_name)
-                        .width(100.)
-                        .height(200.)
-                        .show_ui(ui, |ui| {
-                            // Add CheckinShelf option to put back on checkin shelf
-                            if ui.selectable_label(is_checkin_shelf, "Check-in Shelf").clicked() {
+                ui.push_id(format!("sales_rep_{}", order_id), |ui| ui.horizontal(|ui| {
+                    MenuButton::new(current_name)
+                        .icon(svg::USER)
+                        .show(ui, |ui| {
+                            if controls::menu_check_item(ui, svg::TRAY_ARROW_DOWN, "Check-in Shelf", is_checkin_shelf).clicked() {
                                 log::info!("Sales Rep changed to Check-in Shelf for order: {order_id}");
                                 self.write_errors.remove(&order_id);
                                 let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SalesRep {
@@ -313,11 +311,12 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                     self.write_failure_channel.0.clone(),
                                 );
                             }
-                            ui.separator();
+                            controls::hairline(ui);
+                            ScrollArea::vertical().max_height(REP_LIST_MAX_H).show(ui, |ui| {
                             for user in assignable_users(&users, my_store) {
                                 let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
                                 let is_selected = user_emp_id == current_emp_id;
-                                if ui.selectable_label(is_selected, user.get_username()).clicked() {
+                                if controls::menu_check_item(ui, None, user.get_username(), is_selected).clicked() {
                                     if let Some(emp_id) = user.get_employee_id() {
                                         let emp_id_str = emp_id.to_string();
                                         log::info!("Sales Rep changed for order: {order_id}, new emp_id: {emp_id_str}");
@@ -344,31 +343,29 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                     }
                                 }
                             }
+                            });
                         });
                     self.show_write_error(ui, &order_id, column);
-                });
+                }));
             },
             5 => {
-                // Split Rep ComboBox
+                // Split Rep picker
                 let current_emp = row.split_rep.clone().unwrap_or_default();
                 let current_emp_id = current_emp.id.clone();
                 let current_name = parse_email_user(&current_emp.email);
                 let order_id = row.order.id.clone();
                 let users = self.users.clone();
                 let my_store = self.my_store;
-                
+
                 // Check if current is empty/none
                 let is_none = current_emp_id.is_empty();
                 let previous_split = row.split_rep.clone();
 
-                ui.horizontal(|ui| {
-                    ComboBox::from_id_salt(Id::new(format!("split_rep_{}", order_id)))
-                        .selected_text(current_name)
-                        .width(100.)
-                        .height(200.)
-                        .show_ui(ui, |ui| {
-                            // Add option to clear split rep
-                            if ui.selectable_label(is_none, "None").clicked() {
+                ui.push_id(format!("split_rep_{}", order_id), |ui| ui.horizontal(|ui| {
+                    MenuButton::new(current_name)
+                        .icon(svg::USERS)
+                        .show(ui, |ui| {
+                            if controls::menu_check_item(ui, svg::MINUS_CIRCLE, "None", is_none).clicked() {
                                 log::info!("Split Rep cleared for order: {order_id}");
                                 self.write_errors.remove(&order_id);
                                 let _ = self.field_update_channel.0.try_send(RowFieldUpdate::SplitRep {
@@ -386,11 +383,12 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                     self.write_failure_channel.0.clone(),
                                 );
                             }
-                            ui.separator();
+                            controls::hairline(ui);
+                            ScrollArea::vertical().max_height(REP_LIST_MAX_H).show(ui, |ui| {
                             for user in assignable_users(&users, my_store) {
                                 let user_emp_id = user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
                                 let is_selected = user_emp_id == current_emp_id;
-                                if ui.selectable_label(is_selected, user.get_username()).clicked() {
+                                if controls::menu_check_item(ui, None, user.get_username(), is_selected).clicked() {
                                     if let Some(emp_id) = user.get_employee_id() {
                                         let emp_id_str = emp_id.to_string();
                                         log::info!("Split Rep changed for order: {order_id}, new emp_id: {emp_id_str}");
@@ -417,20 +415,21 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                                     }
                                 }
                             }
+                            });
                         });
                     self.show_write_error(ui, &order_id, column);
-                });
+                }));
             },
             6 => {
                 let call = self.missed_calls.iter().find(|o| o.id == row.order.id).cloned();
                 if let Some(missed_call) = call {
                     let num = missed_call.missing_days.len();
                     let txt = if num == 1 {
-                        format!(" {num} Missed Call")
+                        format!("{num} Missed Call")
                     } else {
-                        format!(" {num} Missed Calls")
+                        format!("{num} Missed Calls")
                     };
-                    ui.colored_label(ui.style().visuals.error_fg_color, txt);
+                    controls::IconLabel::new(svg::PHONE_X, &txt).tone(theme::error(ui)).show(ui);
                 }
             },
             7 => { ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg)); },
@@ -440,15 +439,18 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let order_id = row.order.id.clone();
                 if let Some(task) = self.existing_tasks.get(&order_id).cloned() {
                     let open_task_tx = self.open_task_channel.0.clone();
-                    let color = theme::success(ui);
-                    if ui.button(icons::icon_colored(icons::TASK_EXISTS, color)).on_hover_text("Open Task").clicked() {
+                    let open = IconButton::new(svg::CLIPBOARD_TEXT, IconBox::Md)
+                        .tint(theme::success(ui))
+                        .tip("Open Task")
+                        .show(ui);
+                    if open.clicked() {
                         info!("Opening existing task for order: {order_id}");
                         let _ = open_task_tx.try_send(task);
                     }
                 } else {
                     let row_clone = row.clone();
                     let create_task_tx = self.create_task_channel.0.clone();
-                    if ui.button(icons::icon(icons::TASK_CREATE)).on_hover_text("Create Task").clicked() {
+                    if controls::icon_button(ui, icons::CREATE_TASK, IconBox::Md, false, "Create Task").clicked() {
                         info!("Creating task for order: {}", row.order.id);
                         let _ = create_task_tx.try_send(row_clone);
                     }
@@ -475,7 +477,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             _ => col_config,
         }
     }
-    
+
     fn show_cell_editor(
         &mut self,
         ui: &mut eframe::egui::Ui,
@@ -484,12 +486,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     ) -> Option<eframe::egui::Response> {
         match column {
             0 => {
-                let resp = Hyperlink::from_label_and_url(
-                    format!(" {}", row.order.id.clone()),
-                    xidax_order_url(&row.order.id),
-                )
-                .open_in_new_tab(true)
-                .ui(ui);
+                let resp = order_link(ui, &row.order.id);
 
                 // `resp.is_some()` was always true, so this fired every frame
                 // the cell painted rather than on a click.
@@ -509,10 +506,10 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
         column: usize,
         resp: &eframe::egui::Response,
     ) -> Option<Box<PrestashopPayload>> {
-        // Skip interactive columns: 0 (Hyperlink), 3 (Status ComboBox), 4 (Sales Rep ComboBox), 
-        // 5 (Split Rep ComboBox), 10 (Create Task Button)
+        // Skip interactive columns: 0 (order link), 3 (Status picker), 4 (Sales Rep picker),
+        // 5 (Split Rep picker), 10 (Create Task Button)
         let is_interactive_column = matches!(column, 0 | 3 | 4 | 5 | 10);
-        
+
         if resp.clicked() && !is_interactive_column {
             log::info!("Clicked Col/Row: {column}/{}", row.order.id);
             self.chat_view.messages.clear();
@@ -526,7 +523,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 };
             });
         }
-    
+
         resp
             .clone()
             .on_hover_and_drag_cursor(eframe::egui::CursorIcon::Crosshair)
@@ -596,6 +593,15 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     }
 
     fn new_empty_row(&mut self) -> PrestashopPayload { PrestashopPayload::default() }
+}
+
+/// The order id as a link that opens the order's admin page in a new tab.
+fn order_link(ui: &mut eframe::egui::Ui, order_id: &str) -> eframe::egui::Response {
+    let url = xidax_order_url(order_id);
+    controls::IconLink::new(order_id)
+        .url(&url)
+        .new_tab(true)
+        .show(ui)
 }
 
 /// Writes one order field through the serialized writer, reverting the table row on failure.

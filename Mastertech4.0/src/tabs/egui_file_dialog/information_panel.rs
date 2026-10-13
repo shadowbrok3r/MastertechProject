@@ -1,8 +1,16 @@
 use crate::tabs::egui_file_dialog::{DirectoryEntry, FileDialog, FileSystem, NativeFileSystem};
 use chrono::{DateTime, Local};
-use std::collections::HashMap;
+use displays::ui_tools::{
+    controls::{self, Tokens},
+    glass_card,
+    icons::{
+        self,
+        svg::{self, Icon},
+    },
+};
 use egui::{Direction, Layout, Ui, Vec2};
 use indexmap::{IndexMap, IndexSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -11,6 +19,25 @@ type SupportedPreviewImagesMap =
     HashMap<String, Box<dyn FnMut(&mut Ui, &InfoPanelEntry, &mut IndexSet<String>)>>;
 type SupportedAdditionalMetaFilesMap =
     HashMap<String, Box<dyn FnMut(&mut IndexMap<String, String>, &PathBuf)>>;
+
+/// Opacity of the preview icon's duotone back layer.
+const DUO_ALPHA: f32 = 0.3;
+
+/// A large duotone icon for `item`, a third of the available width.
+fn preview_icon(ui: &mut Ui, item: &DirectoryEntry) {
+    let icon = Icon::from_glyph(item.icon()).unwrap_or_else(|| {
+        if item.is_dir() {
+            svg::FOLDER
+        } else {
+            Icon::from_glyph(icons::file_icon(item.file_name(), false)).unwrap_or(svg::FILE)
+        }
+    });
+    let t = Tokens::get(ui.ctx());
+    let tint = if item.is_dir() { t.tertiary } else { t.icon };
+    let size = (ui.available_width() / 3.0).round();
+    let (slot, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
+    icon.paint_duo(ui, slot, size, tint, tint.gamma_multiply(DUO_ALPHA));
+}
 
 fn format_pixels(pixels: u32) -> String {
     const K: u32 = 1_000;
@@ -126,7 +153,10 @@ impl Default for InformationPanel {
                         egui::ScrollArea::vertical()
                             .max_height(ui.available_height())
                             .show(ui, |ui| {
-                                ui.add(egui::TextEdit::multiline(&mut content).code_editor());
+                                controls::TextArea::new(&mut content)
+                                    .mono(true)
+                                    .tab_indents(true)
+                                    .show(ui);
                             });
                     }
                 }) as Box<dyn FnMut(&mut Ui, &InfoPanelEntry)>,
@@ -242,8 +272,7 @@ impl InformationPanel {
     pub fn ui(&mut self, ui: &mut Ui, file_dialog: &mut FileDialog) {
         const SPACING_MULTIPLIER: f32 = 4.0;
 
-        ui.label("Information");
-        ui.separator();
+        glass_card::card_header(ui, svg::INFO, "Information", None);
 
         // Display metadata in a grid format
         let width = file_dialog.config_mut().right_panel_width.unwrap_or(100.0) / 2.0;
@@ -256,7 +285,7 @@ impl InformationPanel {
             self.display_preview(ui, item);
 
             let spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
-            ui.separator();
+            controls::hairline(ui);
 
             ui.add_space(spacing);
 
@@ -275,8 +304,7 @@ impl InformationPanel {
             Layout::centered_and_justified(Direction::TopDown),
             |ui| {
                 if item.is_dir() {
-                    // show folder icon
-                    ui.label(egui::RichText::from(item.icon()).size(ui.available_width() / 3.0));
+                    preview_icon(ui, item);
                 } else {
                     // Display file content preview based on its extension
                     if let Some(ext) = item.as_path().extension().and_then(|ext| ext.to_str()) {
@@ -297,23 +325,17 @@ impl InformationPanel {
                                 egui::ScrollArea::vertical()
                                     .max_height(ui.available_height())
                                     .show(ui, |ui| {
-                                        ui.add(
-                                            egui::TextEdit::multiline(&mut content).code_editor(),
-                                        );
+                                        controls::TextArea::new(&mut content)
+                                            .mono(true)
+                                            .tab_indents(true)
+                                            .show(ui);
                                     });
                             } else {
-                                // if no preview is available, show icon
-                                ui.label(
-                                    egui::RichText::from(item.icon())
-                                        .size(ui.available_width() / 3.0),
-                                );
+                                preview_icon(ui, item);
                             }
                         }
                     } else {
-                        // if no ext is available, show icon anyway
-                        ui.label(
-                            egui::RichText::from(item.icon()).size(ui.available_width() / 3.0),
-                        );
+                        preview_icon(ui, item);
                     }
                 }
             },
@@ -371,12 +393,12 @@ impl InformationPanel {
                     .min_col_width(width)
                     .max_col_width(width)
                     .show(ui, |ui| {
-                        ui.label("Filename: ");
+                        controls::icon_label(ui, svg::FILE, "Filename");
                         ui.label(item.file_name().to_string());
                         ui.end_row();
 
                         if let Some(size) = item.metadata().size {
-                            ui.label("File Size: ");
+                            controls::icon_label(ui, svg::DATABASE, "File Size");
                             if item.is_file() {
                                 ui.label(format_bytes(size));
                             } else {
@@ -386,14 +408,14 @@ impl InformationPanel {
                         }
 
                         if let Some(date) = item.metadata().created {
-                            ui.label("Created: ");
+                            controls::icon_label(ui, svg::CALENDAR_PLUS, "Created");
                             let created: DateTime<Local> = date.into();
                             ui.label(format!("{}", created.format("%d.%m.%Y, %H:%M:%S")));
                             ui.end_row();
                         }
 
                         if let Some(date) = item.metadata().last_modified {
-                            ui.label("Last Modified: ");
+                            controls::icon_label(ui, svg::CLOCK, "Last Modified");
                             let modified: DateTime<Local> = date.into();
                             ui.label(format!("{}", modified.format("%d.%m.%Y, %H:%M:%S")));
                             ui.end_row();

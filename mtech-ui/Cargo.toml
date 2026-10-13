@@ -23,6 +23,7 @@ regex.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 log.workspace = true
 anyhow.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
@@ -32,3 +33,8 @@ eframe = { workspace = true }
 
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 eframe = { version = "0.36", features = ["serde", "default_fonts"], default-features = false }
+
+[dev-dependencies]
+# Parses and rasterises the icon pack in tests.
+resvg = { version = "0.45", default-features = false }
+egui_extras = { version = "0.36", default-features = false, features = ["svg"] }

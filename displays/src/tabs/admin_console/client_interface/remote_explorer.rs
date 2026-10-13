@@ -11,9 +11,9 @@
 //! - Context menu with download, copy to tools, delete options
 
 use eframe::egui::{
-    self, Align, Align2, CentralPanel, FontId, Frame, Image, ImageSource, Key,
-    KeyboardShortcut, Layout, Margin, Response, RichText, ScrollArea, Sense, Stroke, TextEdit,
-    TextureOptions, Ui, Vec2, CornerRadius, load::Bytes, scroll_area, Widget,
+    self, Align, CentralPanel, Frame, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin,
+    RichText, ScrollArea, Sense, Stroke, TextureOptions, Ui, Vec2, CornerRadius, load::Bytes,
+    scroll_area, Widget,
 };
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
@@ -27,7 +27,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use crate::{Cmd, RemoteDirEntry, PlatformSpawner, Spawner};
-use crate::ui_tools::icons::{self, menu_label};
+use crate::ui_tools::controls::{
+    self, BarKind, IconBox, IconButton, ListItem, MenuButton, Metrics, Role,
+    TextArea, TextButton, TextField,
+};
+use crate::ui_tools::icons::{self, svg};
+use crate::ui_tools::tokens::Tokens;
 use database::schema::file_storage::{self, FileEntry};
 use crate::ui_tools::theme;
 use crate::ui_tools::glass_card;
@@ -41,6 +46,9 @@ const MAX_INFLIGHT_THUMBS: usize = 12;
 /// Hard cap on thumbnail requests per folder so huge folders don't flood
 /// the client.
 const MAX_THUMBS_PER_FOLDER: usize = 1000;
+
+/// Track width of the icon-view thumbnail size slider.
+const THUMB_SLIDER_W: f32 = 120.0;
 
 /// Gap between background `GetDrives` polls while the explorer is on screen.
 const DRIVE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4);
@@ -60,53 +68,6 @@ pub struct FolderShortcut {
     pub name: String,
     pub icon: &'static str,
     pub path: String,
-}
-
-/// Full-width, **left-aligned** selectable row for the explorer's side
-/// panels.
-///
-/// egui's [`Button`] and the deprecated `SelectableLabel` both center
-/// their text inside the allocated rect with no public way to override
-/// horizontal alignment. That makes them wrong for a Windows-style file
-/// pane, where every entry's text needs to start at the left edge so the
-/// eye can scan a vertical column of filenames without tracking past
-/// centered whitespace.
-///
-/// This helper allocates an exact `[width, height]` rect, paints the
-/// hover/selected background from the current style's
-/// `interact_selectable` visuals, and draws the label at
-/// `Align2::LEFT_CENTER` with an 8 px left inset. The returned
-/// [`Response`] behaves like any other clickable widget — supports
-/// `clicked()` / `double_clicked()` / `context_menu(...)` / `on_hover_*`.
-fn sidebar_row(
-    ui: &mut Ui,
-    width: f32,
-    height: f32,
-    selected: bool,
-    label: impl Into<String>,
-) -> Response {
-    let label = label.into();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-
-    let visuals = ui.global_style().interact_selectable(&response, selected);
-
-    // Only paint a background when there's something to indicate — keeps
-    // the resting state of the panel clean.
-    if selected || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
-    }
-
-    let text_pos = rect.left_center() + Vec2::new(8.0, 0.0);
-    ui.painter().text(
-        text_pos,
-        Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(13.0),
-        visuals.text_color(),
-    );
-
-    response
 }
 
 /// Tool entry from My Tools (SurrealDB bucket)
@@ -1067,7 +1028,7 @@ impl RemoteExplorer {
         self.forget_pending_images(ui.ctx());
         let inner_margin = Margin::same(4);
         let stroke = glass_card::card_stroke(ui);
-        let radius = CornerRadius::same(5);
+        let radius = CornerRadius::same(Tokens::get(ui.ctx()).radius_md);
         
         // Poll for My Tools updates
         self.poll_tools_updates();
@@ -1091,7 +1052,7 @@ impl RemoteExplorer {
             eframe::egui::Panel::bottom("RemoteExplorerError")
                 .exact_size(25.)
                 .show(ui, |ui| {
-                    ui.colored_label(ui.style().visuals.error_fg_color, error.clone());
+                    controls::note(ui, svg::WARNING_CIRCLE, error.as_str(), theme::error(ui));
                 });
         }
         
@@ -1120,62 +1081,32 @@ impl RemoteExplorer {
     }
     
     fn display_top_panel(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
-        // Windows File Explorer toolbar layout:
-        //
-        //   [⬆][🏠][⟲]   <path input fills remainder>           [View ▾]
-        //
-        // Navigation is a tight three-button group at the left (no
-        // separator between them — Windows Explorer doesn't either).
-        // The three sidebar/preview toggles used to sit between the nav
-        // buttons and the path bar; they've moved into the right-aligned
-        // **View** menu so the toolbar reads as a single intent (where
-        // to go, what to see) instead of a jumble of selectable_labels.
-        //
-        // Uniform button size: each nav button is a square `NAV_BTN_W ×
-        // NAV_BTN_W`, matching Explorer's chrome.
-        const NAV_BTN_W: f32 = 28.0;
-
+        // Toolbar: Up, Home, Refresh, path field, View menu and click-to-run toggle.
+        let bar_h = Metrics::get(ui.ctx()).bar_h;
         eframe::egui::Panel::top("RemoteExplorerTop")
-            .frame(Frame::default().outer_margin(Margin::symmetric(5, 2)))
-            .exact_size(36.)
+            .frame(Frame::default().outer_margin(Margin::symmetric(4, 0)))
+            .show_separator_line(false)
+            .exact_size(bar_h)
             .show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
+                controls::bar(ui, BarKind::Tool, |ui| {
                     // Up — parent directory.
-                    if ui
-                        .add_sized(
-                            [NAV_BTN_W, NAV_BTN_W],
-                            egui::Button::new(RichText::new(icons::UP).size(16.0)),
-                        )
-                        .on_hover_text("Up to parent folder (Alt+Up)")
+                    if IconButton::new(svg::ARROW_UP, IconBox::Lg)
+                        .tip("Up to parent folder (Alt+Up)")
+                        .show(ui)
                         .clicked()
                     {
                         self.navigate_up(cmd_tx);
                     }
 
                     // Home — back to the remote machine's current dir.
-                    // The BMP house glyph U+2302 (⌂) sounded safe but
-                    // isn't in the loaded proportional font and rendered
-                    // as a missing-glyph box. The supplementary-plane
-                    // 🏠 emoji *is* covered by egui's bundled fallback,
-                    // so we use it directly — same as the original.
-                    if ui
-                        .add_sized(
-                            [NAV_BTN_W, NAV_BTN_W],
-                            egui::Button::new(RichText::new(icons::HOME).size(16.0)),
-                        )
-                        .on_hover_text("Home")
-                        .clicked()
-                    {
+                    if IconButton::new(svg::HOUSE, IconBox::Lg).tip("Home").show(ui).clicked() {
                         self.navigate_to("current".to_string(), cmd_tx);
                     }
 
                     // Refresh.
-                    if ui
-                        .add_sized(
-                            [NAV_BTN_W, NAV_BTN_W],
-                            egui::Button::new(RichText::new(icons::REFRESH).size(16.0)),
-                        )
-                        .on_hover_text("Refresh (F5)")
+                    if IconButton::new(svg::ARROW_CLOCKWISE, IconBox::Lg)
+                        .tip("Refresh (F5)")
+                        .show(ui)
                         .clicked()
                     {
                         self.refresh(cmd_tx);
@@ -1188,11 +1119,11 @@ impl RemoteExplorer {
                     const TOOLBAR_RIGHT_RESERVED: f32 = 200.0;
                     let path_width = (ui.available_width() - TOOLBAR_RIGHT_RESERVED).max(120.0);
                     let pre_modified_path = self.path_input.clone();
-                    let response = ui.add(
-                        TextEdit::singleline(&mut self.path_input)
-                            .desired_width(path_width)
-                            .hint_text("Enter path..."),
-                    );
+                    let response = TextField::new(&mut self.path_input)
+                        .hint("Enter path...")
+                        .icon(svg::FOLDER_OPEN)
+                        .width(path_width)
+                        .show(ui);
                     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                         if self.path_input != pre_modified_path {
                             self.navigate_to(self.path_input.clone(), cmd_tx);
@@ -1201,33 +1132,28 @@ impl RemoteExplorer {
 
                     // View menu and click-to-run toggle, right-aligned.
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.menu_button(RichText::new(menu_label("View")), |ui| {
-                            if ui
-                                .add(
-                                    egui::Button::new(format!("{} List view", icons::LIST))
-                                        .selected(self.view_mode == ExplorerViewMode::List),
-                                )
+                        MenuButton::new("View").icon(svg::EYE).show(ui, |ui| {
+                            let list = self.view_mode == ExplorerViewMode::List;
+                            if controls::menu_check_item(ui, svg::LIST, "List view", list)
                                 .clicked()
                             {
                                 self.view_mode = ExplorerViewMode::List;
                                 ui.close();
                             }
-                            if ui
-                                .add(
-                                    egui::Button::new(format!("{} Icon view", icons::GRID))
-                                        .selected(self.view_mode == ExplorerViewMode::Icons),
-                                )
+                            let grid = self.view_mode == ExplorerViewMode::Icons;
+                            if controls::menu_check_item(ui, svg::SQUARES_FOUR, "Icon view", grid)
                                 .clicked()
                             {
                                 self.view_mode = ExplorerViewMode::Icons;
                                 ui.close();
                             }
-                            if ui
-                                .add(
-                                    egui::Button::new("Auto-load thumbnails")
-                                        .selected(self.auto_load_thumbs),
-                                )
-                                .on_hover_text(
+                            if controls::menu_check_item(
+                                ui,
+                                svg::IMAGE,
+                                "Auto-load thumbnails",
+                                self.auto_load_thumbs,
+                            )
+                            .on_hover_text(
                                     "Stream thumbnails automatically when entering a folder in \
                                      icon view. When off, use the 'Load thumbnails' button.",
                                 )
@@ -1236,12 +1162,13 @@ impl RemoteExplorer {
                                 self.auto_load_thumbs = !self.auto_load_thumbs;
                                 ui.close();
                             }
-                            if ui
-                                .add(
-                                    egui::Button::new("Auto-refresh drives")
-                                        .selected(self.drives_auto_refresh),
-                                )
-                                .on_hover_text(format!(
+                            if controls::menu_check_item(
+                                ui,
+                                svg::ARROW_CLOCKWISE,
+                                "Auto-refresh drives",
+                                self.drives_auto_refresh,
+                            )
+                            .on_hover_text(format!(
                                     "Re-ask the client for its drive list every {}s so plugged-in \
                                      media appears on its own. When off, use the sidebar's \
                                      refresh button.",
@@ -1252,39 +1179,42 @@ impl RemoteExplorer {
                                 self.drives_auto_refresh = !self.drives_auto_refresh;
                                 ui.close();
                             }
-                            ui.separator();
-                            if ui
-                                .add(
-                                    egui::Button::new("Navigation sidebar")
-                                        .selected(self.sidebar_visible),
-                                )
-                                .clicked()
+                            controls::menu_separator(ui);
+                            if controls::menu_check_item(
+                                ui,
+                                svg::SIDEBAR_SIMPLE,
+                                "Navigation sidebar",
+                                self.sidebar_visible,
+                            )
+                            .clicked()
                             {
                                 self.sidebar_visible = !self.sidebar_visible;
                                 ui.close();
                             }
-                            if ui
-                                .add(
-                                    egui::Button::new("My Tools sidebar")
-                                        .selected(self.tools_sidebar_visible),
-                                )
-                                .clicked()
+                            if controls::menu_check_item(
+                                ui,
+                                svg::TOOLBOX,
+                                "My Tools sidebar",
+                                self.tools_sidebar_visible,
+                            )
+                            .clicked()
                             {
                                 self.tools_sidebar_visible = !self.tools_sidebar_visible;
                                 ui.close();
                             }
-                            if ui
-                                .add(
-                                    egui::Button::new("Preview pane")
-                                        .selected(self.preview_visible),
-                                )
-                                .clicked()
+                            if controls::menu_check_item(
+                                ui,
+                                svg::EYE,
+                                "Preview pane",
+                                self.preview_visible,
+                            )
+                            .clicked()
                             {
                                 self.preview_visible = !self.preview_visible;
                                 ui.close();
                             }
                         });
-                        ui.checkbox(&mut self.click_to_execute, "Click to run")
+                        controls::toggle(ui, &mut self.click_to_execute, "Click to run")
                             .on_hover_text(
                                 "When enabled, single-click opens or runs a file on the remote machine.\n\
                                 Context menu Execute / Open is always available.",
@@ -1295,14 +1225,6 @@ impl RemoteExplorer {
     }
     
     fn display_left_sidebar(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>, stroke: Stroke, radius: CornerRadius) {
-        // Sidebar entries (drives and quick-access shortcuts) used to
-        // be plain `selectable_label` calls, which size to their text and
-        // produced a ragged left column. Every entry is now sized to the
-        // sidebar's full width with the same row height so the panel
-        // reads as a uniform list — Windows Explorer's navigation pane
-        // behavior.
-        const ENTRY_H: f32 = 24.0;
-
         let sidebar_frame = Frame::default()
             .fill(glass_card::card_fill(ui))
             .inner_margin(Margin::same(8))
@@ -1323,24 +1245,25 @@ impl RemoteExplorer {
                     let entry_w = ui.available_width();
 
                     // Quick access first — matches Windows File Explorer's
-                    // navigation-pane ordering. ⭐ is BMP (U+2B50) and
-                    // renders in the default proportional font.
-                    ui.label(RichText::new(format!("{} Quick Access", icons::STAR)).strong().color(theme::strong_text(ui)));
-                    ui.add_space(4.);
+                    // navigation-pane ordering.
+                    controls::section_label_icon(ui, svg::STAR, "Quick Access");
+                    ui.add_space(Metrics::get(ui.ctx()).gap.y / 2.0);
 
                     for shortcut in &self.shortcuts {
-                        let label = format!("{} {}", shortcut.icon, shortcut.name);
-                        if sidebar_row(ui, entry_w, ENTRY_H, false, label).clicked() {
+                        let icon = svg::Icon::from_glyph(shortcut.icon).unwrap_or(svg::FOLDER);
+                        if ListItem::new(&shortcut.name)
+                            .icon(icon)
+                            .width(entry_w)
+                            .show(ui)
+                            .clicked()
+                        {
                             navigate_to_path = Some(shortcut.path.clone());
                         }
                     }
 
-                    ui.add_space(12.);
-                    // Plain "Drives" header (no supplementary-plane
-                    // emoji prefix that may fall back to a missing-
-                    // glyph box).
+                    ui.add_space(Metrics::get(ui.ctx()).gap.y * 2.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Drives").strong().color(theme::strong_text(ui)));
+                        controls::section_label_icon(ui, svg::HARD_DRIVES, "Drives");
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let hover = if self.drives_auto_refresh {
                                 format!(
@@ -1350,7 +1273,11 @@ impl RemoteExplorer {
                             } else {
                                 "Refresh drive list (auto-refresh off)".to_string()
                             };
-                            if ui.small_button(icons::REFRESH).on_hover_text(hover).clicked() {
+                            if IconButton::new(svg::ARROW_CLOCKWISE, IconBox::Sm)
+                                .tip(&hover)
+                                .show(ui)
+                                .clicked()
+                            {
                                 refresh_drives = true;
                             }
                         });
@@ -1358,11 +1285,15 @@ impl RemoteExplorer {
                     ui.add_space(4.);
 
                     if self.drives.is_empty() {
-                        ui.label(RichText::new("None reported").weak().italics());
+                        controls::note(ui, svg::INFO, "None reported", theme::weak_text(ui));
                     }
                     for drive in &self.drives {
-                        let label = format!("{} {drive}", icons::HARD_DRIVE);
-                        if sidebar_row(ui, entry_w, ENTRY_H, false, label).clicked() {
+                        if ListItem::new(drive)
+                            .icon(svg::HARD_DRIVE)
+                            .width(entry_w)
+                            .show(ui)
+                            .clicked()
+                        {
                             navigate_to_path = Some(drive.clone());
                         }
                     }
@@ -1399,44 +1330,42 @@ impl RemoteExplorer {
                 // Tools list section (top half when preview is shown)
                 let tools_height = if has_preview { total_height * 0.4 } else { total_height };
                 
-                // Per-tool-row height — kept uniform with the left
-                // sidebar's `ENTRY_H` so both side panels feel like the
-                // same widget family.
-                const TOOL_ENTRY_H: f32 = 24.0;
-
                 ui.allocate_ui_with_layout(
                     Vec2::new(ui.available_width(), tools_height),
                     Layout::top_down(Align::LEFT),
                     |ui| {
                         ui.horizontal(|ui| {
-                            // Plain "My Tools" text — the previous 🧰
-                            // toolbox emoji (U+1F9F0) is in the
-                            // supplementary plane and isn't covered by
-                            // egui's bundled emoji fallback font, so it
-                            // rendered as a missing-glyph box.
-                            ui.label(
-                                RichText::new("My Tools")
-                                    .strong()
-                                    .color(theme::accent_secondary(ui)),
-                            );
+                            controls::section_label_icon(ui, svg::TOOLBOX, "My Tools");
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui.small_button(icons::REFRESH).on_hover_text("Refresh").clicked() {
+                                if IconButton::new(svg::ARROW_CLOCKWISE, IconBox::Sm)
+                                    .tip("Refresh")
+                                    .show(ui)
+                                    .clicked()
+                                {
                                     self.refresh_tools_async();
                                 }
-                                if ui.small_button(icons::PLUS).on_hover_text("Upload file").clicked() {
+                                if IconButton::new(svg::UPLOAD_SIMPLE, IconBox::Sm)
+                                    .tip("Upload file")
+                                    .show(ui)
+                                    .clicked()
+                                {
                                     self.upload_tool_dialog();
                                 }
                             });
                         });
-                        ui.separator();
+                        controls::hairline(ui);
 
                         if self.tools_loading {
-                            ui.spinner();
-                            ui.label("Loading tools...");
+                            controls::loading_state(ui, "Loading tools...");
                         } else if self.my_tools.is_empty() {
-                            ui.label(RichText::new("No tools yet").italics().color(theme::weak_text(ui)));
-                            ui.add_space(10.);
-                            ui.label("Upload scripts and files here to easily transfer them to client machines.");
+                            controls::empty_state(
+                                ui,
+                                svg::TOOLBOX,
+                                "No tools yet",
+                                "Upload scripts and files here to easily transfer them to \
+                                 client machines.",
+                                &[],
+                            );
                         } else {
                             let mut copy_to_client: Option<usize> = None;
                             let mut delete_tool: Option<usize> = None;
@@ -1448,19 +1377,18 @@ impl RemoteExplorer {
                                 let entry_w = ui.available_width();
                                 for (idx, tool) in self.my_tools.iter().enumerate() {
                                     let is_selected = self.selected_tool_idx == Some(idx);
-                                    // 📜 / 📦 are supplementary-plane
-                                    // emoji too — swap to BMP markers so
-                                    // every entry reliably gets an icon
-                                    // (◈ = text doc, ◆ = binary blob).
                                     let icon = if tool.is_text {
-                                        icons::FILE_TEXT
+                                        svg::FILE_TEXT
                                     } else {
-                                        icons::PACKAGE
+                                        svg::PACKAGE
                                     };
-                                    let label = format!("{} {}", icon, tool.name);
-
-                                    let response =
-                                        sidebar_row(ui, entry_w, TOOL_ENTRY_H, is_selected, label);
+                                    let size = format_file_size(tool.size);
+                                    let response = ListItem::new(&tool.name)
+                                        .icon(icon)
+                                        .selected(is_selected)
+                                        .detail(&size)
+                                        .width(entry_w)
+                                        .show(ui);
                                     response.clone().on_hover_text(format!("{} bytes", tool.size));
 
                                     if response.clicked() {
@@ -1473,19 +1401,29 @@ impl RemoteExplorer {
                                     }
 
                                     response.context_menu(|ui| {
-                                        ui.set_min_width(180.0);
+                                        controls::menu_body(ui, |ui| {
+                                            let copy = controls::menu_item(
+                                                ui,
+                                                svg::UPLOAD_SIMPLE,
+                                                "Copy to Client",
+                                            );
+                                            if copy.clicked() {
+                                                copy_to_client = Some(idx);
+                                                ui.close();
+                                            }
 
-                                        if ui.button("Copy to Client").clicked() {
-                                            copy_to_client = Some(idx);
-                                            ui.close();
-                                        }
+                                            controls::menu_separator(ui);
 
-                                        ui.separator();
-
-                                        if ui.button("Delete from My Tools").clicked() {
-                                            delete_tool = Some(idx);
-                                            ui.close();
-                                        }
+                                            let delete = controls::menu_item(
+                                                ui,
+                                                svg::TRASH,
+                                                "Delete from My Tools",
+                                            );
+                                            if delete.clicked() {
+                                                delete_tool = Some(idx);
+                                                ui.close();
+                                            }
+                                        });
                                     });
                                 }
                             });
@@ -1510,7 +1448,7 @@ impl RemoteExplorer {
                 
                 // Preview pane (bottom half)
                 if has_preview {
-                    ui.separator();
+                    controls::hairline(ui);
                     self.display_inline_preview(ui, cmd_tx, total_height * 0.6 - 10.);
                 }
             });
@@ -1524,51 +1462,45 @@ impl RemoteExplorer {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Preview".to_string());
             
-            ui.label(RichText::new(format!("{} {}", icons::FILE, filename)).strong());
-            
+            svg::FILE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::primary(ui));
+            ui.label(RichText::new(filename).strong());
+
             if self.preview.modified {
-                ui.label(RichText::new(icons::STATUS_DOT).color(theme::warn(ui)));
+                svg::DOT.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::warn(ui)).on_hover_text("Unsaved changes");
             }
-            
+
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui.small_button(icons::CLOSE).on_hover_text("Close preview").clicked() {
+                if IconButton::new(svg::X, IconBox::Sm).tip("Close preview").show(ui).clicked() {
                     self.preview_visible = false;
                     self.preview.clear();
                 }
                 
                 // Save button for text content
-                if self.preview.text_content.is_some() && self.preview.modified {
-                    if ui.small_button(format!("{} Save", icons::SAVE)).clicked() {
-                        if let Some(content) = &self.preview.text_content {
-                            let _ = cmd_tx.try_send(Cmd::SaveRemoteFile(
-                                self.preview.path.clone(),
-                                content.clone(),
-                            ));
-                        }
-                    }
+                if self.preview.modified
+                    && let Some(content) = &self.preview.text_content
+                    && controls::icon_text_button(ui, svg::FLOPPY_DISK, "Save").clicked()
+                {
+                    let _ = cmd_tx.try_send(Cmd::SaveRemoteFile(
+                        self.preview.path.clone(),
+                        content.clone(),
+                    ));
                 }
             });
         });
         
-        ui.separator();
-        
+        controls::hairline(ui);
+
         if self.preview.loading {
-            ui.spinner();
-            ui.label("Loading preview...");
+            controls::loading_state(ui, "Loading preview...");
         } else if let Some(error) = &self.preview.error {
-            ui.colored_label(ui.style().visuals.error_fg_color, error.clone());
+            controls::note(ui, svg::WARNING_CIRCLE, error.as_str(), theme::error(ui));
         } else if let Some(content) = &mut self.preview.text_content.clone() {
             // Text preview with editing
             ScrollArea::both()
                 .id_salt("preview_text_scroll")
                 .max_width(max_height - 30.)
                 .show(ui, |ui| {
-                let response = ui.add(
-                    TextEdit::multiline(&mut content.clone())
-                        .font(eframe::egui::TextStyle::Monospace)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(8)
-                );
+                let response = TextArea::new(&mut content.clone()).mono(true).rows(8).show(ui);
                 
                 // Update content if changed
                 if response.changed() {
@@ -1590,31 +1522,27 @@ impl RemoteExplorer {
     
     fn display_file_list(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
         if self.loading {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.);
-                ui.spinner();
-                ui.label("Loading directory contents...");
-            });
+            controls::loading_state(ui, "Loading directory contents...");
             return;
         }
 
         if let Some(path) = &self.scanning_directory {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(format!("Scanning size of {}…", path));
-            });
+            controls::loading_row(ui, &format!("Scanning size of {}…", path));
             ui.add_space(4.);
         }
         
         if self.file_table.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.);
-                ui.label(RichText::new("Empty directory").heading());
-                ui.add_space(10.);
-                if ui.button("Refresh").clicked() {
-                    self.refresh(cmd_tx);
-                }
-            });
+            ui.add_space(24.);
+            let clicked = controls::empty_state(
+                ui,
+                svg::FOLDER_OPEN,
+                "Empty directory",
+                "",
+                &[(Role::Secondary, "Refresh")],
+            );
+            if clicked.is_some() {
+                self.refresh(cmd_tx);
+            }
             return;
         }
 
@@ -1690,11 +1618,8 @@ impl RemoteExplorer {
 
         // Filter bar
         ui.horizontal(|ui| {
-            ui.label("Filter:");
-            egui::TextEdit::singleline(&mut self.file_viewer.filter)
-                .hint_text("Search files...")
-                .desired_width(ui.available_width() - 10.)
-                .show(ui);
+            let width = ui.available_width() - 10.;
+            controls::search_field(ui, &mut self.file_viewer.filter, "Search files...", width);
         });
         ui.add_space(2.);
 
@@ -1703,8 +1628,9 @@ impl RemoteExplorer {
         let mut want_download: Option<Vec<String>> = None;
         ui.horizontal(|ui| {
             if selected_count > 0 {
+                svg::CHECK_SQUARE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::primary(ui));
                 ui.label(RichText::new(format!("{selected_count} selected")).strong());
-                if ui.button(format!("{} Download", icons::DOWNLOAD)).clicked() {
+                if controls::icon_text_button(ui, svg::DOWNLOAD_SIMPLE, "Download").clicked() {
                     let selected = &self.file_viewer.selected_paths;
                     let paths: Vec<String> = self
                         .file_table
@@ -1716,21 +1642,23 @@ impl RemoteExplorer {
                         want_download = Some(paths);
                     }
                 }
-                if ui.button(format!("{} Clear", icons::CLOSE)).clicked() {
+                if controls::icon_text_button(ui, svg::X, "Clear").clicked() {
                     self.file_viewer.selected_paths.clear();
                 }
-                ui.separator();
+                controls::vline(ui, Metrics::get(ui.ctx()).control_h);
             }
 
             if self.view_mode == ExplorerViewMode::Icons {
+                svg::MAGNIFYING_GLASS_PLUS.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
                 ui.label("Size");
-                ui.add(egui::Slider::new(&mut self.thumb_px, 48.0..=256.0).show_value(false));
+                controls::Slider::new(&mut self.thumb_px, 48.0..=256.0)
+                    .width(THUMB_SLIDER_W)
+                    .show(ui);
                 if !self.auto_load_thumbs
-                    && ui
-                        .add_enabled(
-                            !self.manual_stream,
-                            egui::Button::new(format!("{} Load thumbnails", icons::IMAGE)),
-                        )
+                    && TextButton::new("Load thumbnails")
+                        .icon(svg::IMAGE)
+                        .enabled(!self.manual_stream)
+                        .show(ui)
                         .on_hover_text("Stream thumbnails for this folder")
                         .clicked()
                 {
@@ -1948,7 +1876,14 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
                     } else {
                         ui.style().visuals.text_color()
                     };
-                    ui.label(icons::icon_sized(glyph, 14.0).color(color));
+                    match svg::Icon::from_glyph(glyph) {
+                        Some(icon) => {
+                            icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+                        }
+                        None => {
+                            ui.label(icons::icon_sized(glyph, 14.0).color(color));
+                        }
+                    }
                 }
             }
             1 => {
@@ -2119,7 +2054,7 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
             }
             items.push(CustomMenuItem::new("copy_to_tools", "Copy to My Tools").icon(icons::UPLOAD).enabled(has_selection));
         }
-        items.push(CustomMenuItem::new("delete", "Delete").icon(icons::CLOSE).enabled(has_selection));
+        items.push(CustomMenuItem::new("delete", "Delete").icon(svg::TRASH.glyph()).enabled(has_selection));
         items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items
     }
@@ -2251,11 +2186,19 @@ fn icon_placeholder(ui: &mut Ui, name: &str, is_dir: bool, avail: Vec2) {
         theme::weak_text(ui)
     };
     let size = (avail.min_elem() * 0.5).clamp(14.0, 64.0);
-    ui.allocate_ui(avail, |ui| {
-        ui.centered_and_justified(|ui| {
-            ui.label(icons::icon_sized(glyph, size).color(color));
-        });
-    });
+    match svg::Icon::from_glyph(glyph) {
+        Some(icon) => {
+            let (rect, _) = ui.allocate_exact_size(avail, Sense::hover());
+            icon.paint(ui, rect, size, color);
+        }
+        None => {
+            ui.allocate_ui(avail, |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.label(icons::icon_sized(glyph, size).color(color));
+                });
+            });
+        }
+    }
 }
 
 /// Build an egui image widget from cached PNG bytes, keyed by path so

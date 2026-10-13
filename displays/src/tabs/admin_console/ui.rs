@@ -1,7 +1,6 @@
 use eframe::egui::Shadow;
 use eframe::egui::{
-    collapsing_header::CollapsingState, text::LayoutJob, Align, Button, Color32, FontFamily,
-    FontId, Frame, Grid, Layout, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText,
+    collapsing_header::CollapsingState, Align, Color32, Frame, Grid, Layout, Margin, RichText, Sense, Ui, Vec2,
 };
 use database::schema::{ConnectedClient, LiveTaskPayload, RecordIdExt};
 use std::collections::HashMap;
@@ -11,7 +10,11 @@ use super::ClientUiAction;
 use super::ClientLinkHealth;
 use super::SessionLayout;
 use crate::get_database_users;
-use crate::ui_tools::{glass_card, icons, theme};
+use crate::ui_tools::controls::{
+    self, IconBox, IconButton, IconLink, ListItem, Metrics, SpinnerSize,
+};
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::{glass_card, theme};
 use crate::Spawner;
 
 use super::{AdminConsole, RightPanel};
@@ -22,11 +25,6 @@ use super::{AdminConsole, RightPanel};
 /// that is either crashed or unreachable.
 const STALE_THRESHOLD_SECS: i64 = 300;
 
-/// Uniform row height for the buttons inside a client row. All action
-/// buttons and the name button are sized to this so the row is visually
-/// rectangular regardless of glyph metrics.
-const ROW_BTN_H: f32 = 25.0;
-const ROW_BTN_W: f32 = 25.0;
 const ROW_STATUS_W: f32 = 16.0;
 const ROW_ITEM_GAP: f32 = 8.0;
 
@@ -37,14 +35,32 @@ pub const CLIENT_ROW_CONTENT_W: f32 = 368.0;
 /// Always allocated, so opening a session cannot widen the row.
 const ROW_BADGE_W: f32 = 38.0;
 
-/// Everything in the header row except the name button: the focus and connect buttons, the status
-/// dot, the badge slot, and the four gaps between the five items. Any widget added to that row
-/// belongs here too, or the row overflows `CLIENT_ROW_CONTENT_W` and renders wider than its
-/// neighbours.
-const ROW_HEADER_CHROME_W: f32 =
-    ROW_BTN_W * 2.0 + ROW_STATUS_W + ROW_BADGE_W + ROW_ITEM_GAP * 4.0;
-pub const CLIENT_NAME_BTN_W: f32 = CLIENT_ROW_CONTENT_W - ROW_HEADER_CHROME_W;
 const CLIENT_DETAILS_VALUE_W: f32 = CLIENT_ROW_CONTENT_W - 90.0;
+
+/// Side of a client row's square buttons, which is also its header height.
+fn row_btn(ui: &Ui) -> f32 {
+    IconBox::Md.side(&Metrics::get(ui.ctx()))
+}
+
+/// Name-button width: the row minus two buttons, the status slot, the badge slot and four gaps.
+fn client_name_btn_w(btn: f32) -> f32 {
+    CLIENT_ROW_CONTENT_W - (btn * 2.0 + ROW_STATUS_W + ROW_BADGE_W + ROW_ITEM_GAP * 4.0)
+}
+
+/// Paints `icon` in `color` centred in a status slot `height` tall.
+fn status_slot(ui: &mut Ui, icon: Icon, color: Color32, height: f32) {
+    let size = Metrics::get(ui.ctx()).icon_sm;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ROW_STATUS_W, height), Sense::hover());
+    icon.paint(ui, rect, size, color);
+}
+
+/// A small faint sub-heading led by an icon.
+fn section_title(ui: &mut Ui, icon: Icon, text: &str) {
+    ui.horizontal(|ui| {
+        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+        ui.label(RichText::new(text).small().color(theme::weak_text(ui)));
+    });
+}
 
 /// Returns `true` if the client's `last_update` was within [`STALE_THRESHOLD_SECS`].
 fn recently_active(client: &ConnectedClient) -> bool {
@@ -57,7 +73,7 @@ fn recently_active(client: &ConnectedClient) -> bool {
     }
 }
 
-/// Returns `(color, symbol)` for the connection status dot.
+/// Returns `(color, icon)` for the connection status dot.
 ///
 /// Priority:
 /// 1. Active admin session open → success
@@ -67,13 +83,13 @@ fn connection_indicator(
     ui: &Ui,
     is_ws_connected: bool,
     client: &ConnectedClient,
-) -> (Color32, &'static str) {
+) -> (Color32, Icon) {
     if is_ws_connected {
-        (theme::success(ui), icons::STATUS_ON)
+        (theme::success(ui), svg::CHECK_CIRCLE)
     } else if client.connected && recently_active(client) {
-        (theme::warn(ui), icons::STATUS_WARN)
+        (theme::warn(ui), svg::WARNING)
     } else {
-        (theme::weak_text(ui), icons::STATUS_OFF)
+        (theme::weak_text(ui), svg::MINUS_CIRCLE)
     }
 }
 
@@ -89,37 +105,20 @@ pub(crate) fn transport_color(ui: &Ui, kind: super::client_interface::TransportK
     }
 }
 
-/// Compose the friendly-name / connection-string text for a client into a
-/// styled `WidgetText`: the identifying part in the theme's success accent,
-/// the opaque hash suffix in plain body text.
-fn client_name_text(ui: &Ui, client: &ConnectedClient) -> WidgetText {
-    let name_font = FontId::new(13., FontFamily::Proportional);
-    let format = |color: Color32| TextFormat {
-        font_id: name_font.clone(),
-        color,
-        valign: Align::Center,
-        ..Default::default()
-    };
-    let identity = theme::success(ui);
-    let mut job = LayoutJob::default();
-    if let Some(ref friendly_name) = client.friendly_name {
-        job.append(friendly_name, 0.0, format(identity));
-    } else if let Some((host, hash)) = client.connection_string.split_once(':') {
-        job.append(&format!("{host}:"), 0.0, format(identity));
-        job.append(hash, 0.0, format(theme::text(ui)));
-    } else {
-        job.append(&client.connection_string, 0.0, format(identity));
-    }
-    WidgetText::from(job)
+/// The client's friendly name, or its connection string.
+fn client_name(client: &ConnectedClient) -> &str {
+    client
+        .friendly_name
+        .as_deref()
+        .unwrap_or(&client.connection_string)
 }
 
 /// Square icon button for a client row's secondary actions; `tip` names the action.
-fn row_icon_action(ui: &mut Ui, glyph: &str, color: Color32, tip: &str) -> bool {
-    Button::new(RichText::new(glyph).strong().color(color))
-        .fill(ui.style().visuals.window_fill)
-        .min_size(Vec2::new(ROW_BTN_W, ROW_BTN_H))
-        .ui(ui)
-        .on_hover_text(tip)
+fn row_icon_action(ui: &mut Ui, icon: Icon, color: Color32, tip: &str) -> bool {
+    controls::IconButton::new(icon, IconBox::Md)
+        .tint(color)
+        .tip(tip)
+        .show(ui)
         .clicked()
 }
 
@@ -225,29 +224,27 @@ impl AdminConsole {
                     } else {
                         theme::weak_text(ui)
                     };
-                    let (indicator_color, indicator_text) =
+                    let (indicator_color, indicator_icon) =
                         connection_indicator(ui, is_ws_connected, client);
                     let arrow = if collapse.is_open() {
-                        icons::CHEV_OPEN
+                        svg::CARET_DOWN
                     } else {
-                        icons::CHEV_CLOSED
+                        svg::CARET_RIGHT
                     };
+                    let btn = row_btn(ui);
 
                     ui.allocate_ui_with_layout(
-                        Vec2::new(CLIENT_ROW_CONTENT_W, ROW_BTN_H),
+                        Vec2::new(CLIENT_ROW_CONTENT_W, btn),
                         Layout::left_to_right(Align::Center),
                         |ui| {
                             ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
 
-                            // The name button carries the chevron and owns expand/collapse; a
-                            // separate chevron button was a second control for one action.
-                            let name_btn = ui
-                                .add_sized(
-                                    Vec2::new(CLIENT_NAME_BTN_W, ROW_BTN_H),
-                                    Button::new(client_name_text(ui, client))
-                                        .left_text(RichText::new(arrow).strong())
-                                        .fill(ui.style().visuals.window_fill),
-                                )
+                            let name_btn = ListItem::new(client_name(client))
+                                .icon(arrow)
+                                .icon_tone(theme::weak_text(ui))
+                                .tone(theme::success(ui))
+                                .width(client_name_btn_w(btn))
+                                .show(ui)
                                 .on_hover_text(if collapse.is_open() {
                                     "Collapse client details"
                                 } else {
@@ -257,12 +254,7 @@ impl AdminConsole {
                                 collapse.toggle(ui);
                             }
 
-                            ui.add_sized(
-                                Vec2::new(ROW_STATUS_W, ROW_BTN_H),
-                                eframe::egui::Label::new(
-                                    RichText::new(indicator_text).color(indicator_color),
-                                ),
-                            );
+                            status_slot(ui, indicator_icon, indicator_color, btn);
 
                             // Transport badge for the open session's live path,
                             // in a fixed slot that is allocated either way so
@@ -291,7 +283,7 @@ impl AdminConsole {
                                 None => ("", Color32::TRANSPARENT, None),
                             };
                             let badge_slot = ui.add_sized(
-                                Vec2::new(ROW_BADGE_W, ROW_BTN_H),
+                                Vec2::new(ROW_BADGE_W, btn),
                                 eframe::egui::Label::new(
                                     RichText::new(badge).small().strong().color(badge_color),
                                 ),
@@ -300,34 +292,25 @@ impl AdminConsole {
                                 badge_slot.on_hover_text(tip);
                             }
 
-                            let focus_btn = ui
-                                .add_sized(
-                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                    Button::new(RichText::new(icons::FOCUS).strong().color(focus_color))
-                                        .fill(ui.style().visuals.window_fill),
-                                )
-                                .on_hover_text(if is_focused {
+                            let focus_btn = IconButton::new(svg::CROSSHAIR, IconBox::Md)
+                                .selected(is_focused)
+                                .tint(focus_color)
+                                .tip(if is_focused {
                                     "Focused (receives commands)"
                                 } else {
                                     "Set as focused client"
-                                });
+                                })
+                                .show(ui);
                             if focus_btn.clicked() {
                                 let _ = tx.try_send(ClientUiAction::FocusClient(
                                     client.connection_string.clone(),
                                 ));
                             }
 
-                            let connect_btn = ui
-                                .add_sized(
-                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                    Button::new(
-                                        RichText::new(icons::OPEN)
-                                            .strong()
-                                            .color(ui.style().visuals.warn_fg_color),
-                                    )
-                                    .fill(ui.style().visuals.window_fill),
-                                )
-                                .on_hover_text("Open / focus this machine");
+                            let connect_btn = IconButton::new(svg::ARROW_SQUARE_OUT, IconBox::Md)
+                                .tint(theme::primary(ui))
+                                .tip("Open / focus this machine")
+                                .show(ui);
                             if connect_btn.clicked() {
                                 let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
                             }
@@ -337,7 +320,7 @@ impl AdminConsole {
                     // ── Expanded body ─────────────────────────────────────────────
                     if collapse.is_open() {
                         ui.add_space(6.);
-                        ui.separator();
+                        controls::hairline(ui);
                         ui.add_space(4.);
 
                         client_details_grid(
@@ -355,25 +338,19 @@ impl AdminConsole {
                         if let Some(products) = security_inventory {
                             if !products.is_empty() {
                                 ui.add_space(8.);
-                                ui.separator();
+                                controls::hairline(ui);
                                 ui.add_space(4.);
-                                ui.label(
-                                    RichText::new("Security inventory")
-                                        .small()
-                                        .color(theme::weak_text(ui)),
-                                );
+                                section_title(ui, svg::SHIELD_CHECK, "Security inventory");
                                 ui.add_space(2.);
                                 render_security_inventory(ui, products);
                             }
                         }
 
                         ui.add_space(8.);
-                        ui.separator();
+                        controls::hairline(ui);
                         ui.add_space(4.);
 
-                        ui.label(
-                            RichText::new("Actions").small().color(theme::weak_text(ui)),
-                        );
+                        section_title(ui, svg::LIGHTNING, "Actions");
                         ui.add_space(2.);
 
                         let layout = session_layout
@@ -382,10 +359,16 @@ impl AdminConsole {
                             .unwrap_or_default();
                         let (float_icon, float_tip) = match layout {
                             SessionLayout::Floating => {
-                                (icons::DOCK, "Dock: floating (unlocked) — click to dock")
+                                (
+                                    svg::ARROW_SQUARE_IN,
+                                    "Dock: floating (unlocked) — click to dock",
+                                )
                             }
                             SessionLayout::Docked => {
-                                (icons::FLOAT, "Float: docked (locked) — click to float")
+                                (
+                                    svg::PICTURE_IN_PICTURE,
+                                    "Float: docked (locked) — click to float",
+                                )
                             }
                         };
                         let relink_color = if client.customer_locked {
@@ -425,14 +408,14 @@ impl AdminConsole {
                             "Re-link to a different customer\n(used-machine-was-our-customer fix)"
                         };
 
-                        let err_color = ui.style().visuals.error_fg_color;
+                        let err_color = theme::error(ui);
                         let plain = theme::text(ui);
                         ui.scope(|ui| {
                             ui.set_max_width(CLIENT_ROW_CONTENT_W);
                             ui.horizontal_wrapped(|ui| {
                                 if row_icon_action(
                                     ui,
-                                    icons::DISCONNECT,
+                                    svg::LINK_BREAK,
                                     err_color,
                                     "Disconnect this client\n\
                                      (closes the local session and removes it from the list;\n\
@@ -447,18 +430,18 @@ impl AdminConsole {
                                 }
                                 if row_icon_action(
                                     ui,
-                                    icons::EDIT,
+                                    svg::PENCIL,
                                     plain,
                                     "Rename: edit this client's friendly name",
                                 ) {
                                     let _ = tx.try_send(ClientUiAction::RenameClient(client.clone()));
                                 }
-                                if row_icon_action(ui, icons::RELINK, relink_color, relink_tip) {
+                                if row_icon_action(ui, svg::USER_SWITCH, relink_color, relink_tip) {
                                     let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
                                 }
                                 if row_icon_action(
                                     ui,
-                                    icons::LINK_COMPUTER,
+                                    svg::PLUGS_CONNECTED,
                                     plain,
                                     "Link computer: create or repair the computer record for this client",
                                 ) {
@@ -466,20 +449,20 @@ impl AdminConsole {
                                 }
                                 if row_icon_action(
                                     ui,
-                                    icons::REPAIR_LINKS,
+                                    svg::WRENCH,
                                     plain,
                                     "Repair links: cascade-repoint FKs to canonical computer id and fix diagnostic sessions",
                                 ) {
                                     let _ =
                                         tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
                                 }
-                                if row_icon_action(ui, icons::HOME, staff_color, staff_tip) {
+                                if row_icon_action(ui, svg::HOUSE, staff_color, staff_tip) {
                                     let _ = tx.try_send(ClientUiAction::ToggleStaffMachine {
                                         client: client.clone(),
                                         staff,
                                     });
                                 }
-                                if row_icon_action(ui, icons::AUTOPILOT, auto_color, auto_tip) {
+                                if row_icon_action(ui, svg::ROBOT, auto_color, auto_tip) {
                                     let _ = tx.try_send(ClientUiAction::ToggleAutopilotOptOut(
                                         client.clone(),
                                     ));
@@ -524,17 +507,17 @@ impl AdminConsole {
             format!("{model} · {key_tail}")
         };
         let live = age_secs < 90;
-        let arrow = if collapse.is_open() { icons::CHEV_OPEN } else { icons::CHEV_CLOSED };
+        let arrow = if collapse.is_open() { svg::CARET_DOWN } else { svg::CARET_RIGHT };
         let mut view_clicked = false;
 
         ui.allocate_ui_with_layout(
             Vec2::new(CLIENT_ROW_CONTENT_W, 0.0),
             Layout::top_down(Align::Min),
             |ui| {
-                let (dot_color, dot_text) = if live {
-                    (theme::success(ui), icons::STATUS_ON)
+                let (dot_color, dot_icon) = if live {
+                    (theme::success(ui), svg::CHECK_CIRCLE)
                 } else {
-                    (theme::weak_text(ui), icons::STATUS_OFF)
+                    (theme::weak_text(ui), svg::MINUS_CIRCLE)
                 };
                 Frame::default()
                     .fill(glass_card::card_fill(ui))
@@ -549,48 +532,33 @@ impl AdminConsole {
                         ui.set_width(CLIENT_ROW_CONTENT_W);
                         ui.set_max_width(CLIENT_ROW_CONTENT_W);
                         // chevron + status + name + View chrome (mirror client rows).
+                        let btn = row_btn(ui);
                         let name_w = CLIENT_ROW_CONTENT_W
-                            - (ROW_BTN_W * 2.0 + ROW_STATUS_W + ROW_ITEM_GAP * 3.0);
+                            - (btn * 2.0 + ROW_STATUS_W + ROW_ITEM_GAP * 3.0);
                         ui.allocate_ui_with_layout(
-                            Vec2::new(CLIENT_ROW_CONTENT_W, ROW_BTN_H),
+                            Vec2::new(CLIENT_ROW_CONTENT_W, btn),
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
-                                let chevron = ui.add_sized(
-                                    Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                    Button::new(RichText::new(arrow).strong())
-                                        .fill(ui.style().visuals.window_fill),
-                                );
+                                let chevron = IconButton::new(arrow, IconBox::Md)
+                                    .tip("Show or hide details")
+                                    .show(ui);
                                 if chevron.clicked() {
                                     collapse.toggle(ui);
                                 }
-                                ui.add_sized(
-                                    Vec2::new(ROW_STATUS_W, ROW_BTN_H),
-                                    eframe::egui::Label::new(
-                                        RichText::new(dot_text).color(dot_color),
-                                    ),
-                                );
-                                let name_btn = ui
-                                    .add_sized(
-                                        Vec2::new(name_w, ROW_BTN_H),
-                                        Button::new(RichText::new(title).color(theme::success(ui)))
-                                            .fill(ui.style().visuals.window_fill),
-                                    )
+                                status_slot(ui, dot_icon, dot_color, btn);
+                                let name_btn = controls::TextButton::new(&title)
+                                    .ink(theme::success(ui))
+                                    .min_width(name_w)
+                                    .show(ui)
                                     .on_hover_text(serial);
                                 if name_btn.clicked() {
                                     collapse.toggle(ui);
                                 }
-                                let view_btn = ui
-                                    .add_sized(
-                                        Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                        Button::new(
-                                            RichText::new(icons::EYE)
-                                                .strong()
-                                                .color(ui.style().visuals.warn_fg_color),
-                                        )
-                                        .fill(ui.style().visuals.window_fill),
-                                    )
-                                    .on_hover_text("View this booting machine's screen");
+                                let view_btn = IconButton::new(svg::MONITOR_PLAY, IconBox::Md)
+                                    .tint(theme::primary(ui))
+                                    .tip("View this booting machine's screen")
+                                    .show(ui);
                                 if view_btn.clicked() {
                                     view_clicked = true;
                                 }
@@ -599,11 +567,11 @@ impl AdminConsole {
 
                         if collapse.is_open() {
                             ui.add_space(6.);
-                            ui.separator();
+                            controls::hairline(ui);
                             ui.add_space(4.);
                             Grid::new(("preboot_card_grid", serial))
                                 .num_columns(2)
-                                .spacing(Vec2::new(8.0, 3.0))
+                                .spacing(Vec2::new(8.0, 4.0))
                                 .show(ui, |ui| {
                                     let mut row = |k: &str, v: &str, mono: bool| {
                                         let (key, value) = (theme::weak_text(ui), theme::text(ui));
@@ -701,6 +669,7 @@ fn client_details_grid(
                 RichText::new(fname).strong().color(theme::success(ui)),
             );
             if client.customer_locked {
+                svg::LOCK.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::info(ui));
                 ui.label(
                     RichText::new("locked")
                         .small()
@@ -717,24 +686,24 @@ fn client_details_grid(
 
     Grid::new(("client_details_grid", &client.connection_string))
         .num_columns(2)
-        .spacing(eframe::egui::Vec2::new(10., 2.))
+        .spacing(eframe::egui::Vec2::new(8., 2.))
         .show(ui, |ui| {
             row(ui, "Connection", &client.connection_string, value_max_w);
             row(ui, "Last update", formatted_date, value_max_w);
-            row(
-                ui,
-                "Status",
-                if is_ws_connected {
-                    "* connected (active session)"
-                } else if client.connected && recently_active(client) {
-                    "! online — no active admin session"
-                } else if client.connected {
-                    "- stale — DB still connected but no heartbeat for >5 min"
-                } else {
-                    "x disconnected"
-                },
-                value_max_w,
-            );
+            let (status_icon, status_tone, status_text) = if is_ws_connected {
+                (svg::CHECK_CIRCLE, theme::success(ui), "connected (active session)")
+            } else if client.connected && recently_active(client) {
+                (svg::WARNING, theme::warn(ui), "online — no active admin session")
+            } else if client.connected {
+                (
+                    svg::CLOCK_COUNTDOWN,
+                    theme::weak_text(ui),
+                    "stale — DB still connected but no heartbeat for >5 min",
+                )
+            } else {
+                (svg::X_CIRCLE, theme::weak_text(ui), "disconnected")
+            };
+            icon_row(ui, "Status", status_icon, status_tone, status_text, value_max_w);
             row(ui, "Assigned to", assigned_user, value_max_w);
 
             // Direct TCP row — surfaces both what the client
@@ -746,10 +715,12 @@ fn client_details_grid(
             match (client.local_ip.as_deref(), client.tcp_port) {
                 (Some(ip), Some(port)) if !ip.is_empty() => {
                     let endpoint = format!("{ip}:{port}");
-                    let detail = match reachability {
-                        Some(r) if r.reachable => {
-                            format!("{endpoint}  + reachable")
-                        }
+                    let (icon, tone, detail) = match reachability {
+                        Some(r) if r.reachable => (
+                            svg::PLUGS_CONNECTED,
+                            theme::success(ui),
+                            format!("{endpoint}  reachable"),
+                        ),
                         Some(r) => {
                             let err = r
                                 .error
@@ -758,14 +729,29 @@ fn client_details_grid(
                                 .chars()
                                 .take(80)
                                 .collect::<String>();
-                            format!("{endpoint}  x {err} (relay still works)")
+                            (
+                                svg::PLUG,
+                                theme::warn(ui),
+                                format!("{endpoint}  {err} (relay still works)"),
+                            )
                         }
-                        None => format!("{endpoint}  (probing…)"),
+                        None => (
+                            svg::HOURGLASS_SIMPLE,
+                            theme::weak_text(ui),
+                            format!("{endpoint}  (probing…)"),
+                        ),
                     };
-                    row(ui, "Direct TCP", &detail, value_max_w);
+                    icon_row(ui, "Direct TCP", icon, tone, &detail, value_max_w);
                 }
                 _ => {
-                    row(ui, "Direct TCP", "(not advertised — relay only)", value_max_w);
+                    icon_row(
+                        ui,
+                        "Direct TCP",
+                        svg::CLOUD,
+                        theme::weak_text(ui),
+                        "(not advertised — relay only)",
+                        value_max_w,
+                    );
                 }
             }
 
@@ -785,13 +771,12 @@ fn client_details_grid(
                 });
             ui.label(RichText::new("Customer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
-                let text = RichText::new(&cust_label)
-                    .small()
-                    .color(if staff_machine && client.customer.is_none() {
-                        theme::weak_text(ui)
-                    } else {
-                        fk_color(ui, cust_ok, client.customer.is_some())
-                    });
+                let tone = if staff_machine && client.customer.is_none() {
+                    theme::weak_text(ui)
+                } else {
+                    fk_color(ui, cust_ok, client.customer.is_some())
+                };
+                let text = RichText::new(&cust_label).small().color(tone);
                 match client.customer.as_ref() {
                     Some(id) => {
                         let tip = if primary_task.is_some() {
@@ -799,7 +784,12 @@ fn client_details_grid(
                         } else {
                             "Open the full customer record"
                         };
-                        if ui.link(text).on_hover_text(tip).clicked() {
+                        let link = IconLink::new(&cust_label)
+                            .icon(svg::USER)
+                            .tone(tone)
+                            .small(true)
+                            .show(ui);
+                        if link.on_hover_text(tip).clicked() {
                             let _ = tx.try_send(match primary_task {
                                 Some(task) => ClientUiAction::OpenClientTask {
                                     task: task.clone(),
@@ -817,7 +807,7 @@ fn client_details_grid(
                     }
                 }
                 if !cust_ok {
-                    if ui.small_button("Link").clicked() {
+                    if controls::IconLink::new("Link").icon(svg::LINK).small(true).show(ui).clicked() {
                         let _ = tx.try_send(ClientUiAction::LinkCustomer(client.clone()));
                     }
                 }
@@ -831,9 +821,8 @@ fn client_details_grid(
                 .unwrap_or_else(|| "(none)".into());
             ui.label(RichText::new("Computer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
-                let text = RichText::new(&comp_label)
-                    .small()
-                    .color(fk_color(ui, comp_ok, client.computer.is_some()));
+                let tone = fk_color(ui, comp_ok, client.computer.is_some());
+                let text = RichText::new(&comp_label).small().color(tone);
                 match client.computer.as_ref() {
                     Some(id) => {
                         let tip = if primary_task.is_some() {
@@ -841,7 +830,12 @@ fn client_details_grid(
                         } else {
                             "Open the full computer record"
                         };
-                        if ui.link(text).on_hover_text(tip).clicked() {
+                        let link = IconLink::new(&comp_label)
+                            .icon(svg::DESKTOP_TOWER)
+                            .tone(tone)
+                            .small(true)
+                            .show(ui);
+                        if link.on_hover_text(tip).clicked() {
                             let _ = tx.try_send(match primary_task {
                                 Some(task) => ClientUiAction::OpenClientTask {
                                     task: task.clone(),
@@ -859,7 +853,7 @@ fn client_details_grid(
                     }
                 }
                 if !comp_ok {
-                    if ui.small_button("Link").clicked() {
+                    if controls::IconLink::new("Link").icon(svg::LINK).small(true).show(ui).clicked() {
                         let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
                     }
                 }
@@ -871,11 +865,14 @@ fn client_details_grid(
                 ui.set_max_width(value_max_w);
                 match client_tasks {
                     None => {
-                        ui.label(
-                            RichText::new("(looking up…)")
-                                .small()
-                                .color(theme::faint_text(ui)),
-                        );
+                        ui.horizontal(|ui| {
+                            controls::spinner(ui, SpinnerSize::Sm);
+                            ui.label(
+                                RichText::new("(looking up…)")
+                                    .small()
+                                    .color(theme::faint_text(ui)),
+                            );
+                        });
                     }
                     Some([]) => {
                         ui.label(
@@ -885,11 +882,11 @@ fn client_details_grid(
                     Some(tasks) => {
                         ui.vertical(|ui| {
                             for task in tasks.iter().take(5) {
-                                let text = RichText::new(client_task_label(task))
-                                    .small()
-                                    .color(theme::info(ui));
-                                if ui
-                                    .link(text)
+                                let label = client_task_label(task);
+                                if IconLink::new(&label)
+                                    .icon(svg::TICKET)
+                                    .small(true)
+                                    .show(ui)
                                     .on_hover_text("Open the service task modal")
                                     .clicked()
                                 {
@@ -923,6 +920,19 @@ fn row(ui: &mut Ui, key: &str, val: &str, value_max_w: f32) {
     ui.scope(|ui| {
         ui.set_max_width(value_max_w);
         ui.label(RichText::new(val).small());
+    });
+    ui.end_row();
+}
+
+/// A [`row`] whose value is led by `icon` in `tone`.
+fn icon_row(ui: &mut Ui, key: &str, icon: Icon, tone: Color32, val: &str, value_max_w: f32) {
+    ui.label(RichText::new(key).small().color(theme::weak_text(ui)));
+    ui.scope(|ui| {
+        ui.set_max_width(value_max_w);
+        ui.horizontal(|ui| {
+            icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, tone);
+            ui.label(RichText::new(val).small());
+        });
     });
     ui.end_row();
 }
@@ -1031,7 +1041,7 @@ fn render_security_inventory(
 
     Grid::new("client_security_inventory_grid")
         .num_columns(3)
-        .spacing(eframe::egui::Vec2::new(10., 2.))
+        .spacing(eframe::egui::Vec2::new(8., 2.))
         .show(ui, |ui| {
             for product in products {
                 // Column 1: name + version (+ vendor if we have it
@@ -1047,12 +1057,17 @@ fn render_security_inventory(
                 ui.label(RichText::new(label).small());
 
                 // Column 2: status badge.
-                let (color, text) = match product.active {
-                    Some(true) => (theme::success(ui), "* Active"),
-                    Some(false) => (theme::warn(ui), "o Disabled"),
-                    None => (theme::weak_text(ui), "—"),
+                let (color, icon, text) = match product.active {
+                    Some(true) => (theme::success(ui), Some(svg::CHECK_CIRCLE), "Active"),
+                    Some(false) => (theme::warn(ui), Some(svg::MINUS_CIRCLE), "Disabled"),
+                    None => (theme::weak_text(ui), None, "—"),
                 };
-                ui.label(RichText::new(text).small().color(color));
+                ui.horizontal(|ui| {
+                    if let Some(icon) = icon {
+                        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+                    }
+                    ui.label(RichText::new(text).small().color(color));
+                });
 
                 // Column 3: source pill — short and color-coded so
                 // the eye can pick out "is this data trustworthy?"
@@ -1068,9 +1083,151 @@ fn render_security_inventory(
                         (theme::weak_text(ui), "Heuristic")
                     }
                 };
-                ui.label(RichText::new(src_text).small().color(src_color));
+                controls::badge(ui, src_text, src_color);
 
                 ui.end_row();
             }
         });
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use crate::tabs::admin_console::client_interface::{
+        client_log_viewer::ClientLogViewer, event_log_viewer::EventLogViewer,
+        installed_programs_viewer::InstalledProgramsViewer, registry_editor::RegistryEditor,
+        remote_explorer::RemoteExplorer, remote_scripts_viewer::RemoteScriptsViewer,
+        services_viewer::ServicesViewer, startup_apps_viewer::StartupAppsViewer,
+        tabs::mcp_tool_log_viewer::McpToolLogViewer, TransportKind,
+    };
+    use crate::tabs::admin_console::{relink_popup::RelinkClientPopup, rename_popup::RenameClientPopup};
+    use crate::ui_tools::{headless_render::Headless, metrics::Density, theme_config::PresetStyles};
+    use eframe::egui::vec2;
+
+    fn save(h: &mut Headless, name: &str, f: impl FnMut(&mut Ui)) {
+        let dir = std::env::var_os("MTECH_RENDER_DIR").expect("MTECH_RENDER_DIR");
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let (_, img) = h.render(5, f);
+        img.save(dir.join(format!("{name}.png"))).expect("png");
+    }
+
+    #[test]
+    #[ignore = "writes PNG previews"]
+    fn render_admin_console_views() {
+        let client = ConnectedClient {
+            connection_string: "BENCH-PC:abc123def".into(),
+            friendly_name: Some("Bench PC".into()),
+            connected: true,
+            local_ip: Some("10.0.0.5".into()),
+            tcp_port: Some(8000),
+            ..Default::default()
+        };
+        let (cmd_tx, _cmd_rx) = crossbeam::channel::unbounded::<crate::Cmd>();
+        let (action_tx, _action_rx) = crossbeam::channel::unbounded();
+        let (fk_tx, _fk_rx) = crossbeam::channel::unbounded();
+        let (task_tx, _task_rx) = crossbeam::channel::unbounded();
+        let presets = [("studio", PresetStyles::MtechStudio), ("classic", PresetStyles::ShippedClassic)];
+        for (tag, preset) in presets {
+            let mut h = Headless::new(vec2(420.0, 420.0), 1.0);
+            h.theme(preset, Density::Regular);
+            save(&mut h, &format!("{tag}_client_row"), |ui| {
+                AdminConsole::client_header(
+                    ui,
+                    action_tx.clone(),
+                    &client,
+                    HashMap::new(),
+                    Some(client.connection_string.as_str()),
+                    true,
+                    &fk_tx,
+                    &HashMap::new(),
+                    &task_tx,
+                    &HashMap::new(),
+                    None,
+                    None,
+                    Some((TransportKind::Tcp, true)),
+                );
+                client_details_grid(
+                    ui, &action_tx, &client, "2026/10/12 @ 09:00AM", "(none)", true, None, None,
+                    Some(&[][..]),
+                );
+            });
+
+            let mut h = Headless::new(vec2(900.0, 360.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut services = ServicesViewer::new();
+            save(&mut h, &format!("{tag}_services"), |ui| services.display(ui, &cmd_tx));
+
+            let mut h = Headless::new(vec2(1000.0, 360.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut events = EventLogViewer::new();
+            save(&mut h, &format!("{tag}_event_log"), |ui| events.display(ui, &cmd_tx));
+
+            let mut h = Headless::new(vec2(900.0, 360.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut startup = StartupAppsViewer::new();
+            save(&mut h, &format!("{tag}_startup"), |ui| startup.display(ui, &cmd_tx));
+
+            let mut h = Headless::new(vec2(900.0, 420.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut registry = RegistryEditor::new();
+            save(&mut h, &format!("{tag}_registry"), |ui| registry.display(ui, &cmd_tx));
+
+            let mut h = Headless::new(vec2(900.0, 420.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut scripts = RemoteScriptsViewer::new();
+            scripts.set_script_list(vec![(
+                "Cleanup".into(),
+                vec![
+                    crate::RemoteScriptItem {
+                        name: "Clear temp files".into(),
+                        category: "Cleanup".into(),
+                        content: None,
+                    },
+                    crate::RemoteScriptItem {
+                        name: "custom.ps1".into(),
+                        category: "Cleanup".into(),
+                        content: Some("Write-Host hi".into()),
+                    },
+                ],
+            )]);
+            save(&mut h, &format!("{tag}_scripts"), |ui| scripts.display(ui, &cmd_tx));
+
+            let mut h = Headless::new(vec2(1000.0, 300.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut mcp = McpToolLogViewer::new();
+            save(&mut h, &format!("{tag}_mcp_log"), |ui| mcp.display(ui, "BENCH-PC:abc123def"));
+
+            let mut h = Headless::new(vec2(520.0, 300.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut rename = RenameClientPopup::new(&client);
+            save(&mut h, &format!("{tag}_rename"), |ui| {
+                rename.ui(ui.ctx());
+            });
+
+            let mut h = Headless::new(vec2(1000.0, 300.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut log = ClientLogViewer::new();
+            log.set_response("12:00:01 INFO started\n12:00:02 WARN slow disk".into(), 2, 40);
+            save(&mut h, &format!("{tag}_client_log"), |ui| log.display(ui, &cmd_tx));
+
+            let mut h = Headless::new(vec2(900.0, 300.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut programs = InstalledProgramsViewer::new();
+            save(&mut h, &format!("{tag}_programs"), |ui| programs.display(ui, &cmd_tx));
+
+            let mut h = Headless::new(vec2(640.0, 420.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut relink = RelinkClientPopup::new(client.clone());
+            save(&mut h, &format!("{tag}_relink"), |ui| {
+                relink.ui(ui.ctx());
+            });
+
+            let mut h = Headless::new(vec2(1100.0, 420.0), 1.0);
+            h.theme(preset, Density::Regular);
+            let mut explorer = RemoteExplorer::new();
+            explorer.set_drives(vec!["C:\\".into(), "D:\\".into()]);
+            save(&mut h, &format!("{tag}_explorer"), |ui| explorer.display(ui, &cmd_tx));
+        }
+    }
 }
