@@ -398,8 +398,8 @@ mod tests {
 
     #[test]
     fn plain_name_becomes_terms() {
-        let q = TaskQuery::parse("Ross LaRue");
-        assert_eq!(q.terms, vec!["ross", "larue"]);
+        let q = TaskQuery::parse("Robin DeSample");
+        assert_eq!(q.terms, vec!["robin", "desample"]);
         assert!(q.customer_terms.is_empty());
         assert_eq!(q.scope, TaskScope::Any);
         assert!(!q.needs_database());
@@ -407,25 +407,25 @@ mod tests {
 
     #[test]
     fn tasks_for_name_targets_customer() {
-        let q = TaskQuery::parse("Tasks for Ross LaRue");
-        assert_eq!(q.customer_terms, vec!["ross", "larue"]);
+        let q = TaskQuery::parse("Tasks for Robin DeSample");
+        assert_eq!(q.customer_terms, vec!["robin", "desample"]);
         assert!(q.terms.is_empty());
         assert!(q.needs_database());
     }
 
     #[test]
     fn phone_number_parses_to_digits() {
-        let q = TaskQuery::parse("801-510-1399");
-        assert_eq!(q.phone_digits.as_deref(), Some("8015101399"));
-        assert_eq!(q.service_number.as_deref(), Some("8015101399"));
+        let q = TaskQuery::parse("801-555-0199");
+        assert_eq!(q.phone_digits.as_deref(), Some("8015550199"));
+        assert_eq!(q.service_number.as_deref(), Some("8015550199"));
         assert!(q.terms.is_empty());
         assert!(q.needs_database());
     }
 
     #[test]
     fn spaced_and_parenthesized_phone_parses() {
-        let q = TaskQuery::parse("(801) 510 1399");
-        assert_eq!(q.phone_digits.as_deref(), Some("8015101399"));
+        let q = TaskQuery::parse("(801) 555 0199");
+        assert_eq!(q.phone_digits.as_deref(), Some("8015550199"));
     }
 
     #[test]
@@ -443,9 +443,9 @@ mod tests {
 
     #[test]
     fn completed_keyword_sets_scope() {
-        let q = TaskQuery::parse("completed ross");
+        let q = TaskQuery::parse("completed robin");
         assert_eq!(q.scope, TaskScope::Completed);
-        assert_eq!(q.terms, vec!["ross"]);
+        assert_eq!(q.terms, vec!["robin"]);
     }
 
     #[test]
@@ -493,10 +493,10 @@ mod tests {
     #[test]
     fn phone_only_matches_locally_via_service_number() {
         let mut task = LiveTaskPayload::default();
-        task.task_name = "Ross LaRue - 2134740".to_string();
-        task.service_number = Some("2134740".to_string());
+        task.task_name = "Robin DeSample - 2000009".to_string();
+        task.service_number = Some("2000009".to_string());
         // A phone number lives on the customer, so only the DB can answer it.
-        let q = TaskQuery::parse("801-510-1399");
+        let q = TaskQuery::parse("801-555-0199");
         assert!(!q.matches_local(&task, None));
         assert!(q.needs_database());
     }
@@ -527,16 +527,16 @@ mod tests {
     #[test]
     fn literal_mode_still_recognizes_a_phone_number() {
         // Field normalization, not language: both modes answer a phone number.
-        let q = TaskQuery::literal("801-510-1399");
-        assert_eq!(q.phone_digits.as_deref(), Some("8015101399"));
+        let q = TaskQuery::literal("801-555-0199");
+        assert_eq!(q.phone_digits.as_deref(), Some("8015550199"));
         assert!(q.needs_database());
     }
 
     #[test]
     fn literal_and_semantic_agree_on_a_plain_name() {
         assert_eq!(
-            TaskQuery::literal("ross larue").terms,
-            TaskQuery::parse("ross larue").terms
+            TaskQuery::literal("robin desample").terms,
+            TaskQuery::parse("robin desample").terms
         );
     }
 
@@ -554,28 +554,28 @@ mod tests {
     #[test]
     fn local_match_respects_scope_and_terms() {
         let mut task = LiveTaskPayload::default();
-        task.task_name = "Ross LaRue - 2134740".to_string();
-        task.service_number = Some("2134740".to_string());
+        task.task_name = "Robin DeSample - 2000009".to_string();
+        task.service_number = Some("2000009".to_string());
         task.completed = true;
 
-        assert!(TaskQuery::parse("ross larue").matches_local(&task, None));
-        assert!(TaskQuery::parse("completed ross").matches_local(&task, None));
-        assert!(!TaskQuery::parse("open ross").matches_local(&task, None));
-        assert!(TaskQuery::parse("2134740").matches_local(&task, None));
+        assert!(TaskQuery::parse("robin desample").matches_local(&task, None));
+        assert!(TaskQuery::parse("completed robin").matches_local(&task, None));
+        assert!(!TaskQuery::parse("open robin").matches_local(&task, None));
+        assert!(TaskQuery::parse("2000009").matches_local(&task, None));
         assert!(!TaskQuery::parse("9999999").matches_local(&task, None));
     }
 
     #[test]
     fn local_match_finds_customer_via_task_name() {
         let mut task = LiveTaskPayload::default();
-        task.task_name = "Ross LaRue - 2134740".to_string();
-        assert!(TaskQuery::parse("tasks for ross larue").matches_local(&task, None));
+        task.task_name = "Robin DeSample - 2000009".to_string();
+        assert!(TaskQuery::parse("tasks for robin desample").matches_local(&task, None));
     }
 
     #[test]
     fn local_match_filters_by_assignee_name() {
         let mut task = LiveTaskPayload::default();
-        task.task_name = "Ross LaRue - 2134740".to_string();
+        task.task_name = "Robin DeSample - 2000009".to_string();
         assert!(TaskQuery::parse("assigned to logan").matches_local(&task, Some("Logan Lees")));
         assert!(!TaskQuery::parse("assigned to logan").matches_local(&task, Some("Sam Ferg")));
     }

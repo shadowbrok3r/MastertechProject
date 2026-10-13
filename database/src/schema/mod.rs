@@ -392,7 +392,7 @@ impl Default for Node {
 
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct SpecialPartOrder {
-    customer_name: String,              //  "kathleen Hoffmon",
+    customer_name: String,              //  "jane sample",
     customer_phone_number: String,      //  "801-888-8888",
     notes: String,                      //  "These are some notes",
     system_order_number: String,        //  "123456",

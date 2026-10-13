@@ -155,16 +155,16 @@ mod tests {
     fn only_changed_threads_and_new_service_numbers_are_asked_for() {
         let mut meta = SessionMeta::default();
         let mut a = thread("a", "running", "PC-A:1", None);
-        a.service_number = Some("2141021".into());
+        a.service_number = Some("2000003".into());
         a.last_seq = Some(10);
         let b = thread("b", "idle", "PC-B:2", None);
         let (stale, numbers) = meta.wanted(&[&a, &b]);
         assert_eq!(stale.len(), 2);
-        assert_eq!(numbers, vec!["2141021".to_string()]);
+        assert_eq!(numbers, vec!["2000003".to_string()]);
 
         meta.seen_seq.insert("a".into(), 10);
         meta.seen_seq.insert("b".into(), -1);
-        meta.asked_numbers.insert("2141021".into());
+        meta.asked_numbers.insert("2000003".into());
         assert_eq!(meta.wanted(&[&a, &b]), (Vec::new(), Vec::new()));
         a.last_seq = Some(11);
         assert_eq!(meta.wanted(&[&a, &b]).0, vec![a.id.clone()]);
@@ -184,26 +184,26 @@ mod tests {
         assert!(meta.plan(&a).is_none(), "a thread whose plan is gone loses it");
 
         let mut b = thread("b", "idle", "PC-B:2", None);
-        b.service_number = Some("2141021".into());
+        b.service_number = Some("2000003".into());
         meta.tx
             .send(Fetched {
                 threads: vec![b.id.clone()],
-                numbers: vec!["2141021".into()],
-                found: Ok((vec![(b.id.clone(), plan)], vec![("2141021".into(), "Martin Empey".into())])),
+                numbers: vec!["2000003".into()],
+                found: Ok((vec![(b.id.clone(), plan)], vec![("2000003".into(), "Alex Sample".into())])),
             })
             .unwrap();
         meta.receive();
         let extra = meta.extras(&[&b]).remove("b").expect("row extra");
-        assert_eq!(extra.customer.as_deref(), Some("Martin Empey"));
+        assert_eq!(extra.customer.as_deref(), Some("Alex Sample"));
         assert_eq!(extra.plan, Some((1.0, "Plan: 1 of 1 done".to_string())));
 
         meta.seen_seq.insert("a".into(), 3);
-        meta.asked_numbers.insert("2141021".into());
+        meta.asked_numbers.insert("2000003".into());
         meta.in_flight = true;
         meta.tx
             .send(Fetched {
                 threads: vec![a.id.clone()],
-                numbers: vec!["2141021".into()],
+                numbers: vec!["2000003".into()],
                 found: Err("offline".into()),
             })
             .unwrap();

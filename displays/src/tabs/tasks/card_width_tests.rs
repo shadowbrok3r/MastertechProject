@@ -59,7 +59,7 @@ impl Board {
         let mut tasks = vec![
             task("Ann Lee - 1001", Status::Todo, Priority::Normal, &me),
             task(
-                "Christopher Montgomery-Smith - 2154905 - no POST after a BIOS update",
+                "Christopher Montgomery-Smith - 2000001 - no POST after a BIOS update",
                 Status::InRepair,
                 Priority::Express,
                 &long,
@@ -70,7 +70,7 @@ impl Board {
                 Priority::Rfs,
                 &User::default(),
             ),
-            task("Dana Whitfield - 2155144", Status::Qc, Priority::Fire, &me),
+            task("Dana Whitfield - 2000002", Status::Qc, Priority::Fire, &me),
             task("", Status::Complete, Priority::Qc, &long),
         ];
         tasks[3].task_description = "Customer reports the fans ramp and the screen stays black \
@@ -82,7 +82,7 @@ impl Board {
             let ai_task = AiTask {
                 title: title.to_owned(),
                 customer_name: "Dana Whitfield".to_owned(),
-                service_number: "2155144".to_owned(),
+                service_number: "2000002".to_owned(),
                 assignee: assignee.get_id(),
                 requested_by: me.get_id(),
                 status,

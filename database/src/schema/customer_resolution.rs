@@ -50,7 +50,7 @@ impl CustomerSource {
 /// One customer a lookup path arrived at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomerCandidate {
-    /// `customer` record key, e.g. `"201989"`.
+    /// `customer` record key, e.g. `"100001"`.
     pub customer_key: String,
     pub name: String,
     /// Order number this candidate came from; the `friendly_name` suffix.
@@ -373,11 +373,11 @@ mod tests {
     use super::*;
 
     fn order_candidate() -> CustomerCandidate {
-        CustomerCandidate::new("201989", "Seth Grover", "2152279", CustomerSource::ServiceOrder)
+        CustomerCandidate::new("100001", "Chris Sample", "2000004", CustomerSource::ServiceOrder)
     }
 
     fn serial_candidate() -> CustomerCandidate {
-        CustomerCandidate::new("2095832", "ron zuiderweg", "2095832", CustomerSource::Serial)
+        CustomerCandidate::new("2000006", "terry sample", "2000006", CustomerSource::Serial)
     }
 
     #[test]
@@ -389,43 +389,43 @@ mod tests {
             "a resold machine must surface both customers, not pick one silently"
         );
         let chosen = resolution.default_choice().expect("conflict has a default");
-        assert_eq!(chosen.customer_key, "201989");
-        assert_eq!(chosen.order_number, "2152279");
-        assert_eq!(chosen.friendly_name(), "Seth Grover - 2152279");
+        assert_eq!(chosen.customer_key, "100001");
+        assert_eq!(chosen.order_number, "2000004");
+        assert_eq!(chosen.friendly_name(), "Chris Sample - 2000004");
 
         let CustomerResolution::Conflict { from_serial, .. } = &resolution else {
             unreachable!("checked above");
         };
-        assert_eq!(from_serial.customer_key, "2095832");
+        assert_eq!(from_serial.customer_key, "2000006");
     }
 
     #[test]
     fn prestashop_fallback_still_beats_the_serial() {
         let from_order =
-            CustomerCandidate::new("201989", "Seth Grover", "2152279", CustomerSource::PrestashopOrder);
+            CustomerCandidate::new("100001", "Chris Sample", "2000004", CustomerSource::PrestashopOrder);
         let resolution = resolve_customer(Some(from_order), Some(serial_candidate()));
 
         assert!(resolution.is_conflict());
-        assert_eq!(resolution.default_choice().unwrap().customer_key, "201989");
+        assert_eq!(resolution.default_choice().unwrap().customer_key, "100001");
     }
 
     #[test]
     fn agreeing_paths_collapse_to_the_order() {
         let serial =
-            CustomerCandidate::new("201989", "Seth Grover", "2095832", CustomerSource::Serial);
+            CustomerCandidate::new("100001", "Chris Sample", "2000006", CustomerSource::Serial);
         let resolution = resolve_customer(Some(order_candidate()), Some(serial));
 
         assert!(!resolution.is_conflict());
         let chosen = resolution.default_choice().unwrap();
         assert_eq!(chosen.source, CustomerSource::ServiceOrder);
-        assert_eq!(chosen.order_number, "2152279");
+        assert_eq!(chosen.order_number, "2000004");
     }
 
     #[test]
     fn serial_only_still_resolves() {
         let resolution = resolve_customer(None, Some(serial_candidate()));
         assert!(!resolution.is_conflict());
-        assert_eq!(resolution.default_choice().unwrap().customer_key, "2095832");
+        assert_eq!(resolution.default_choice().unwrap().customer_key, "2000006");
 
         assert_eq!(resolve_customer(None, None), CustomerResolution::None);
         assert!(CustomerResolution::None.default_choice().is_none());
@@ -433,22 +433,22 @@ mod tests {
 
     #[test]
     fn keys_match_across_string_and_number_forms() {
-        assert!(customer_keys_match("201989", " 201989 "));
-        assert!(customer_keys_match("0201989", "201989"));
-        assert!(!customer_keys_match("201989", "2095832"));
-        assert!(!customer_keys_match("", "201989"));
+        assert!(customer_keys_match("100001", " 100001 "));
+        assert!(customer_keys_match("0100001", "100001"));
+        assert!(!customer_keys_match("100001", "2000006"));
+        assert!(!customer_keys_match("", "100001"));
     }
 
     #[test]
     fn friendly_name_pairs_the_chosen_customer_with_its_order() {
-        assert_eq!(order_candidate().friendly_name(), "Seth Grover - 2152279");
+        assert_eq!(order_candidate().friendly_name(), "Chris Sample - 2000004");
         assert_eq!(
-            CustomerCandidate::new("201989", "Seth Grover", "", CustomerSource::ServiceOrder)
+            CustomerCandidate::new("100001", "Chris Sample", "", CustomerSource::ServiceOrder)
                 .friendly_name(),
-            "Seth Grover"
+            "Chris Sample"
         );
         assert!(
-            CustomerCandidate::new("201989", "", "2152279", CustomerSource::ServiceOrder)
+            CustomerCandidate::new("100001", "", "2000004", CustomerSource::ServiceOrder)
                 .friendly_name()
                 .is_empty()
         );
@@ -456,17 +456,17 @@ mod tests {
 
     #[test]
     fn record_key_from_json_accepts_every_id_shape() {
-        let obj = serde_json::json!({ "tb": "customer", "id": "201989" });
-        assert_eq!(record_key_from_json(&obj), "201989");
+        let obj = serde_json::json!({ "tb": "customer", "id": "100001" });
+        assert_eq!(record_key_from_json(&obj), "100001");
 
-        let nested = serde_json::json!({ "tb": "customer", "id": { "String": "201989" } });
-        assert_eq!(record_key_from_json(&nested), "201989");
+        let nested = serde_json::json!({ "tb": "customer", "id": { "String": "100001" } });
+        assert_eq!(record_key_from_json(&nested), "100001");
 
-        let numeric = serde_json::json!({ "tb": "customer", "id": { "Number": 201989 } });
-        assert_eq!(record_key_from_json(&numeric), "201989");
+        let numeric = serde_json::json!({ "tb": "customer", "id": { "Number": 100001 } });
+        assert_eq!(record_key_from_json(&numeric), "100001");
 
-        let stringified = serde_json::json!("customer:`201989`");
-        assert_eq!(record_key_from_json(&stringified), "201989");
+        let stringified = serde_json::json!("customer:`100001`");
+        assert_eq!(record_key_from_json(&stringified), "100001");
 
         assert_eq!(record_key_from_json(&serde_json::Value::Null), "");
     }
