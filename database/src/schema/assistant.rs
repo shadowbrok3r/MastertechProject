@@ -3,8 +3,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::{Datetime, RecordId, SurrealValue};
+use super::{Datetime, HistoryAuthor, RecordId, RecordIdExt, SurrealValue, TaskHistory, TaskUpdate};
 use crate::db;
+use surrealdb::{Connection, Surreal};
 
 /// Origin stamped on tasks the assistant creates.
 pub const ASSISTANT_ORIGIN: &str = "ai";
@@ -105,7 +106,8 @@ pub const MARK_ESCALATED_SQL: &str = "UPDATE $id SET escalated_at = time::now()"
 
 /// Completes an assistant task that has no service ticket of its own.
 pub const COMPLETE_ASSISTANT_TASK_SQL: &str = "UPDATE $id SET completed = true, completed_at = time::now(), \
-     status = 'Complete' WHERE service_ticket = NONE AND (assigned_by != NONE OR schedule != NONE) RETURN VALUE id";
+     status = 'Complete' WHERE service_ticket = NONE AND (assigned_by != NONE OR schedule != NONE) \
+     RETURN $before AS before, $after AS after";
 
 /// An active user as the assistant tools see them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SurrealValue)]
@@ -144,6 +146,12 @@ impl Person {
 
     pub fn first_name(&self) -> &str {
         self.name.split_whitespace().next().unwrap_or(&self.name)
+    }
+
+    /// The task_history author for changes made on this person's behalf.
+    pub fn history_author(&self) -> HistoryAuthor {
+        let username = self.email.split('@').next().filter(|u| !u.is_empty()).unwrap_or(&self.name);
+        HistoryAuthor { user: self.id.clone(), username: username.to_string() }
     }
 
     pub async fn load(id: &RecordId) -> anyhow::Result<Option<Self>> {
@@ -346,9 +354,34 @@ pub const REASSIGN_CANDIDATES_SQL: &str = "SELECT id, task_name, status, service
      AND (array::len($ids) = 0 OR id IN $ids) AND (array::len($sns) = 0 OR service_number IN $sns) \
      ORDER BY due_date ASC LIMIT $limit";
 
-/// Moves `$ids` to `$to` while still open and, with `$from`, still theirs; other fields are kept.
+/// Moves `$ids` to `$to` while still open and, with `$from`, still theirs; returns each id and its previous assignee.
 pub const REASSIGN_SQL: &str = "UPDATE task SET assignee = $to WHERE id IN $ids AND completed = false \
-     AND ($from = NONE OR assignee = $from) RETURN VALUE id";
+     AND ($from = NONE OR assignee = $from) RETURN id, $before.assignee AS previous";
+
+/// A task [`REASSIGN_SQL`] moved.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SurrealValue)]
+pub struct ReassignedTask {
+    pub id: RecordId,
+    #[serde(default)]
+    #[surreal(default)]
+    pub previous: Option<RecordId>,
+}
+
+impl ReassignedTask {
+    /// The history row for this move; `None` when the assignee did not change.
+    pub fn history(&self, to: &RecordId, author: &HistoryAuthor) -> Option<TaskHistory> {
+        let old = self.previous.as_ref().map(|p| p.key_string()).unwrap_or_default();
+        let new = to.key_string();
+        (old != new).then(|| {
+            TaskHistory::new(
+                self.id.clone(),
+                author.user.clone(),
+                author.username.clone(),
+                serde_json::json!({ "assignee": { "old": old, "new": new } }),
+            )
+        })
+    }
+}
 
 /// An open task a reassignment selected.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, SurrealValue)]
@@ -441,16 +474,38 @@ pub fn plan_reassign<'a>(
     rows.iter().map(|t| may_take(actor, t).map(|()| t)).collect()
 }
 
-/// Moves `ids` to `to`; returns the ids actually moved.
-pub async fn reassign_tasks(ids: &[RecordId], to: &RecordId, from: Option<&RecordId>) -> anyhow::Result<Vec<RecordId>> {
-    Ok(db()
+/// Moves `ids` to `to`, records one history row per move for `author`, and returns the ids moved.
+pub async fn reassign_tasks(
+    ids: &[RecordId],
+    to: &RecordId,
+    from: Option<&RecordId>,
+    author: &HistoryAuthor,
+) -> anyhow::Result<Vec<RecordId>> {
+    reassign_tasks_on(db().as_ref(), ids, to, from, author).await
+}
+
+/// [`reassign_tasks`] on `db`.
+pub async fn reassign_tasks_on<C: Connection>(
+    db: &Surreal<C>,
+    ids: &[RecordId],
+    to: &RecordId,
+    from: Option<&RecordId>,
+    author: &HistoryAuthor,
+) -> anyhow::Result<Vec<RecordId>> {
+    let moved: Vec<ReassignedTask> = db
         .query(REASSIGN_SQL)
         .bind(("ids", ids.to_vec()))
         .bind(("to", to.clone()))
         .bind(("from", from.cloned()))
         .await?
         .check()?
-        .take(0)?)
+        .take(0)?;
+    for history in moved.iter().filter_map(|task| task.history(to, author)) {
+        if let Err(e) = history.save_on(db).await {
+            log::error!("Error saving task history: {e:?}");
+        }
+    }
+    Ok(moved.into_iter().map(|task| task.id).collect())
 }
 
 /// Writes a notification row.
@@ -488,9 +543,17 @@ pub async fn unsnooze_due() -> anyhow::Result<usize> {
 
 /// Completes an assistant task; false when it is a ticket's own task or not an assistant task.
 pub async fn complete_assistant_task(id: &RecordId) -> anyhow::Result<bool> {
-    let ids: Vec<RecordId> =
-        db().query(COMPLETE_ASSISTANT_TASK_SQL).bind(("id", id.clone())).await?.check()?.take(0)?;
-    Ok(!ids.is_empty())
+    complete_assistant_task_on(db().as_ref(), id, None).await
+}
+
+/// [`complete_assistant_task`] on `db`, recording history for `author` or the signed-in user.
+pub async fn complete_assistant_task_on<C: Connection>(
+    db: &Surreal<C>,
+    id: &RecordId,
+    author: Option<HistoryAuthor>,
+) -> anyhow::Result<bool> {
+    let rows = TaskUpdate::new(COMPLETE_ASSISTANT_TASK_SQL).bind("id", id.clone()).run(db, author).await?;
+    Ok(rows > 0)
 }
 
 /// A ticket brief for staff: what is happening, what was found, what to tell the customer.

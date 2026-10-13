@@ -8,7 +8,7 @@ use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::should_show_connected_client_in_summaries;
 use crate::ui_tools::controls::{
-    self, BarKind, ButtonKind, Dropdown, IconBox, IconButton, MenuButton, MenuItem, Role, Section,
+    self, BarKind, ButtonKind, Dropdown, IconBox, IconButton, MenuButton, MenuItem, Role,
     TextButton, TextField,
 };
 use crate::ui_tools::icons::svg;
@@ -18,7 +18,9 @@ use client_interface::TransportKind;
 use serde::Serialize;
 
 use super::script_editor::ScriptEditor;
-use crate::tabs::admin_console::ui::CLIENT_ROW_CONTENT_W;
+use crate::tabs::admin_console::ui::{client_list, CLIENT_ROW_W};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::tabs::admin_console::ui::client_row_width;
 
 pub mod client_action;
 pub mod client_interface;
@@ -160,6 +162,7 @@ fn is_admin_session_live(session: Option<&WebSocketClient>) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn render_client_row(
     ui: &mut eframe::egui::Ui,
+    row_w: f32,
     client: &ConnectedClient,
     ws_clients: &HashMap<String, WebSocketClient>,
     security_inventory: &HashMap<String, Vec<database::schema::InstalledSecurityProduct>>,
@@ -181,6 +184,7 @@ fn render_client_row(
         .map(|v| v.as_slice());
     AdminConsole::client_header(
         ui,
+        row_w,
         actions_tx.clone(),
         client,
         session_layout.clone(),
@@ -193,6 +197,7 @@ fn render_client_row(
         inventory,
         reachability,
         transport,
+        session.and_then(|s| s.client_version.as_deref()),
     );
 }
 
@@ -1091,9 +1096,7 @@ impl SharedContext {
             .show_collapsible(ui, &mut left_open, |ui |
         {
             ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                // Full panel width so the list's scrollbar sits flush against
-                // the panel edge; rows self-size to CLIENT_ROW_CONTENT_W.
-                ui.set_min_width(CLIENT_ROW_CONTENT_W);
+                ui.set_min_width(CLIENT_ROW_W);
 
                 // Snapshot the per-connection reachability lookup
                 // *before* the mut borrow on `web_console_layout`
@@ -1245,95 +1248,56 @@ impl SharedContext {
                 // Machine list keeps the top 75%; the pre-boot section gets the rest.
                 let list_max_h =
                     if show_preboot { ui.available_height() * 0.75 } else { f32::INFINITY };
-                ScrollArea::vertical()
-                    .auto_shrink([false, true])
-                    .max_height(list_max_h)
-                    .show(ui, |ui| {
-                    ui.set_min_width(CLIENT_ROW_CONTENT_W);
-                    // Fleet-wide lists group under one collapsing header per
-                    // owning store; every other scope is a single flat group.
-                    let groups: Vec<(Option<String>, Vec<usize>)> = if group_by_store {
-                        let mut by_store: std::collections::BTreeMap<String, Vec<usize>> =
-                            std::collections::BTreeMap::new();
-                        for &index in &visible_indices {
-                            let Some(c) = clients.get(index) else { continue };
-                            let store = c
-                                .assigned_user
-                                .as_ref()
-                                .and_then(|u| user_store_map.get(&u.key_string()))
-                                .cloned()
-                                .unwrap_or_else(|| "Unknown store".to_string());
-                            by_store.entry(store).or_default().push(index);
-                        }
-                        let mut groups: Vec<(Option<String>, Vec<usize>)> =
-                            by_store.into_iter().map(|(s, v)| (Some(s), v)).collect();
-                        // Signed-in user's store leads; the rest stay alphabetical.
-                        let my_store = crate::get_current_user_from_auth()
-                            .map(|u| u.get_store().as_str().to_string());
-                        if let Some(my_store) = my_store {
-                            if let Some(pos) = groups
-                                .iter()
-                                .position(|(s, _)| s.as_deref() == Some(my_store.as_str()))
-                            {
-                                let own = groups.remove(pos);
-                                groups.insert(0, own);
-                            }
-                        }
-                        groups
-                    } else {
-                        vec![(None, visible_indices.clone())]
-                    };
+                // Fleet-wide lists group under one collapsing header per
+                // owning store; every other scope is a single flat group.
+                let groups: Vec<(Option<String>, Vec<usize>)> = if group_by_store {
+                    let mut by_store: std::collections::BTreeMap<String, Vec<usize>> =
+                        std::collections::BTreeMap::new();
+                    for &index in &visible_indices {
+                        let Some(c) = clients.get(index) else { continue };
+                        let store = c
+                            .assigned_user
+                            .as_ref()
+                            .and_then(|u| user_store_map.get(&u.key_string()))
+                            .cloned()
+                            .unwrap_or_else(|| "Unknown store".to_string());
+                        by_store.entry(store).or_default().push(index);
+                    }
+                    let mut groups: Vec<(Option<String>, Vec<usize>)> =
+                        by_store.into_iter().map(|(s, v)| (Some(s), v)).collect();
+                    // Signed-in user's store leads; the rest stay alphabetical.
+                    let my_store = crate::get_current_user_from_auth()
+                        .map(|u| u.get_store().as_str().to_string());
+                    if let Some(my_store) = my_store
+                        && let Some(pos) = groups
+                            .iter()
+                            .position(|(s, _)| s.as_deref() == Some(my_store.as_str()))
+                    {
+                        let own = groups.remove(pos);
+                        groups.insert(0, own);
+                    }
+                    groups
+                } else {
+                    vec![(None, visible_indices.clone())]
+                };
 
-                    for (header, indices) in groups {
-                        match header {
-                            Some(store) => {
-                                let title = format!("{store}  ({})", indices.len());
-                                Section::new(("admin_store_group", store.as_str()), &title)
-                                    .icon(svg::STOREFRONT)
-                                    .show(ui, |ui| {
-                                        for &index in &indices {
-                                            if let Some(client) = clients.get(index) {
-                                                render_client_row(
-                                                    ui,
-                                                    client,
-                                                    &ws_client.ws_clients,
-                                                    &ws_client.security_inventory,
-                                                    &ws_client.session_layout,
-                                                    ws_client.focused_client.as_deref(),
-                                                    &ws_client.ui_actions_channel.0,
-                                                    &ws_client.fk_health_tx,
-                                                    &ws_client.fk_health_cache,
-                                                    &ws_client.client_tasks_tx,
-                                                    &ws_client.client_tasks_cache,
-                                                    reachability_snapshot
-                                                        .get(&client.connection_string),
-                                                );
-                                            }
-                                        }
-                                    });
-                            }
-                            None => {
-                                for &index in &indices {
-                                    if let Some(client) = clients.get(index) {
-                                        render_client_row(
-                                            ui,
-                                            client,
-                                            &ws_client.ws_clients,
-                                            &ws_client.security_inventory,
-                                            &ws_client.session_layout,
-                                            ws_client.focused_client.as_deref(),
-                                            &ws_client.ui_actions_channel.0,
-                                            &ws_client.fk_health_tx,
-                                            &ws_client.fk_health_cache,
-                                            &ws_client.client_tasks_tx,
-                                            &ws_client.client_tasks_cache,
-                                            reachability_snapshot
-                                                .get(&client.connection_string),
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                client_list(ui, list_max_h, &groups, |ui, index, row_w| {
+                    if let Some(client) = clients.get(index) {
+                        render_client_row(
+                            ui,
+                            row_w,
+                            client,
+                            &ws_client.ws_clients,
+                            &ws_client.security_inventory,
+                            &ws_client.session_layout,
+                            ws_client.focused_client.as_deref(),
+                            &ws_client.ui_actions_channel.0,
+                            &ws_client.fk_health_tx,
+                            &ws_client.fk_health_cache,
+                            &ws_client.client_tasks_tx,
+                            &ws_client.client_tasks_cache,
+                            reachability_snapshot.get(&client.connection_string),
+                        );
                     }
                 });
 
@@ -1342,18 +1306,26 @@ impl SharedContext {
                     let title = format!("Pre-Boot UEFI ({})", preboot_rows.len());
                     glass_card::card_header(ui, svg::CIRCUITRY, &title, None);
                     let mut view_serial: Option<(String, bool)> = None;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let list = ui.available_rect_before_wrap().x_range();
                     ScrollArea::vertical()
                         .id_salt("preboot_qc_section")
-                        .auto_shrink([true, true])
+                        .auto_shrink([false, true])
                         .show(ui, |ui| {
-                            ui.set_width(CLIENT_ROW_CONTENT_W);
-                            for (serial, friendly, age, kind, direct) in &preboot_rows {
-                                ui.add_space(4.);
-                                #[cfg(not(target_arch = "wasm32"))]
-                                if AdminConsole::preboot_card(ui, serial, friendly, *age, kind, *direct) {
-                                    view_serial = Some((serial.clone(), *direct));
+                            ui.indent("preboot_rows", |ui| {
+                                for (serial, friendly, age, kind, direct) in &preboot_rows {
+                                    ui.add_space(4.);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        let row_w = client_row_width(ui, list);
+                                        if AdminConsole::preboot_card(
+                                            ui, row_w, serial, friendly, *age, kind, *direct,
+                                        ) {
+                                            view_serial = Some((serial.clone(), *direct));
+                                        }
+                                    }
                                 }
-                            }
+                            });
                         });
                     if let Some((s, direct)) = view_serial {
                         ws_client.preboot_serial = s.clone();

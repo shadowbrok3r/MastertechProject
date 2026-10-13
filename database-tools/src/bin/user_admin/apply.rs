@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use database::schema::{RecordId, SurrealValue};
+use database::schema::{RecordId, SYSTEM_AUTHOR, SurrealValue};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::Value;
 
@@ -235,6 +235,15 @@ impl Builder {
         ));
     }
 
+    /// A System task_history row per task in `moved`, reassigned from user `from` to user `to`.
+    fn history(&mut self, moved: &str, from: &str, to: &str) {
+        self.lines.push(format!(
+            "FOR $moved_task IN {moved} {{ CREATE task_history CONTENT {{ task_id: $moved_task.id, user: {to}, \
+             username: '{SYSTEM_AUTHOR}', diff: {{ assignee: {{ old: <string> record::id({from}), \
+             new: <string> record::id({to}) }} }}, from_writer: true }} }};"
+        ));
+    }
+
     fn finish(mut self) -> Statement {
         self.lines.push("COMMIT TRANSACTION;".into());
         Statement {
@@ -283,6 +292,7 @@ impl Statement {
                 b.lines.push(format!(
                     "IF array::len($moved{i}) != array::len({list}) {{ THROW string::concat('{STALE_TASKS}: ', {email}) }};"
                 ));
+                b.history(&format!("$moved{i}"), &id, &to);
             }
             if !matches!(tasks, TaskHandling::Orphan { .. }) {
                 b.lines.push(format!(
@@ -313,8 +323,9 @@ impl Statement {
             let to = b.bind(format!("to{i}"), to.clone());
             let list = b.bind(format!("tasks{i}"), tasks.clone());
             b.lines.push(format!(
-                "UPDATE task SET assignee = $id{i} WHERE id IN {list} AND assignee = {to} AND completed = false;"
+                "LET $back{i} = (UPDATE task SET assignee = $id{i} WHERE id IN {list} AND assignee = {to} AND completed = false RETURN id);"
             ));
+            b.history(&format!("$back{i}"), &to, &format!("$id{i}"));
         }
         b.finish()
     }
@@ -480,7 +491,14 @@ mod tests {
         for var in ["to1", "to_email1", "tasks1"] {
             assert!(stmt.vars.contains_key(var), "{var}");
         }
-        assert!(!stmt.sql.contains("DELETE") && !stmt.sql.contains("CREATE"));
+        assert!(!stmt.sql.contains("DELETE"));
+        assert!(
+            stmt.sql
+                .lines()
+                .filter(|l| l.contains("CREATE"))
+                .all(|l| l.starts_with("FOR $moved_task IN $moved1 { CREATE task_history ")),
+            "only reassigned tasks get rows: their history"
+        );
         assert!(!stmt.sql.contains("email ="), "never writes email");
     }
 
@@ -531,8 +549,9 @@ mod tests {
         assert_eq!(stmt.vars["was_store2"], "SAN".to_string().into_value());
         assert_eq!(stmt.vars["store2"], "ORE".to_string().into_value());
         assert!(stmt.sql.contains(
-            "UPDATE task SET assignee = $id1 WHERE id IN $tasks1 AND assignee = $to1 AND completed = false;"
+            "LET $back1 = (UPDATE task SET assignee = $id1 WHERE id IN $tasks1 AND assignee = $to1 AND completed = false RETURN id);"
         ));
+        assert!(stmt.sql.contains("FOR $moved_task IN $back1 { CREATE task_history "));
         assert!(!stmt.sql.contains("$tasks0"), "orphaned tasks never moved");
         assert!(stmt.sql.contains(REVERT_STALE));
     }
@@ -704,11 +723,50 @@ mod tests {
             ]
         );
 
+        assert_eq!(
+            history(&db).await,
+            vec![
+                ("t1".into(), "System".into(), "jane".into(), "staff1".into()),
+                ("t2".into(), "System".into(), "jane".into(), "staff1".into()),
+            ]
+        );
+
         crate::source::run(&db, Statement::revert(&live_writes()))
             .await
             .expect("revert");
         assert_eq!(state(&db).await, before);
         assert_eq!(assignees(&db).await, tasks_before);
+        assert_eq!(
+            history(&db).await,
+            vec![
+                ("t1".into(), "System".into(), "jane".into(), "staff1".into()),
+                ("t1".into(), "System".into(), "staff1".into(), "jane".into()),
+                ("t2".into(), "System".into(), "jane".into(), "staff1".into()),
+                ("t2".into(), "System".into(), "staff1".into(), "jane".into()),
+            ]
+        );
+    }
+
+    /// Every task_history row as (task, username, old assignee, new assignee), sorted.
+    async fn history(
+        db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    ) -> Vec<(String, String, String, String)> {
+        let rows: Vec<serde_json::Value> = db
+            .query(
+                "SELECT record::id(task_id) AS task, username, diff.assignee.old AS old, \
+                 diff.assignee.new AS new FROM task_history",
+            )
+            .await
+            .expect("history")
+            .take(0)
+            .expect("rows");
+        let text = |row: &serde_json::Value, key: &str| row[key].as_str().unwrap_or_default().to_string();
+        let mut out: Vec<_> = rows
+            .iter()
+            .map(|r| (text(r, "task"), text(r, "username"), text(r, "old"), text(r, "new")))
+            .collect();
+        out.sort();
+        out
     }
 
     #[tokio::test]

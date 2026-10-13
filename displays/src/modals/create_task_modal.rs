@@ -273,7 +273,6 @@ impl DisplayModal for CreateTaskModal {
                             ui, 
                             Some(&mut tur.ticket_data), 
                             Some(&mut tur.computer_data), 
-                            avail_size
                         )
                     },
                     _ => {}

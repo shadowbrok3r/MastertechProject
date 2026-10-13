@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Frame, Layout, Margin, NumExt, ScrollArea, Shadow, Ui};
-use database::{self, db, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
+use database::{self, SurrealValue, schema::{LiveTaskPayload, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::client_cards::ClientCardData};
 use crate::tabs::tasks::ai_task_cards::{AiCardRole, AiTaskCardView};
 use crate::tabs::tasks::task_cards::RecommendationSummary;
@@ -656,22 +656,14 @@ impl TaskLayout {
                                                 }
                                                 other => {
                                                     PlatformSpawner::spawn(async move {
-                                                        match other {
-                                                            TaskActions::MarkComplete => {
-                                                                let _x: Vec<Record> = db().query("UPDATE $records SET completed = true, status = 'Complete'")
-                                                                    .bind(("records", ids.clone()))
-                                                                    .await.unwrap().take(0).unwrap();
-                                                            },
-                                                            TaskActions::MarkIncomplete => {
-                                                                let _x: Vec<Record> = db().query("UPDATE $records SET completed = false, status = 'Todo'")
-                                                                    .bind(("records", ids.clone()))
-                                                                    .await.unwrap().take(0).unwrap();
-                                                            },
-                                                            TaskActions::MarkDueToday => {
-                                                                let _x: Vec<Record> = db().query("UPDATE $ids SET due_date = time::now()")
-                                                                    .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
-                                                            },
-                                                            _ => {}
+                                                        let result = match other {
+                                                            TaskActions::MarkComplete => LiveTaskPayload::update_completed_many(ids, true).await,
+                                                            TaskActions::MarkIncomplete => LiveTaskPayload::update_completed_many(ids, false).await,
+                                                            TaskActions::MarkDueToday => LiveTaskPayload::update_due_now_many(ids).await,
+                                                            _ => Ok(()),
+                                                        };
+                                                        if let Err(e) = result {
+                                                            log::error!("Column action failed: {e:?}");
                                                         }
                                                     });
                                                 }

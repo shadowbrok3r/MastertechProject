@@ -1,17 +1,18 @@
 use eframe::egui::Shadow;
 use eframe::egui::{
-    collapsing_header::CollapsingState, Align, Color32, Frame, Grid, Layout, Margin, RichText, Sense, Ui, Vec2,
+    collapsing_header::CollapsingState, Align, Color32, Frame, Grid, Id, Layout, Margin, Rangef,
+    Rect, RichText, ScrollArea, Sense, Ui, Vec2,
 };
 use database::schema::{ConnectedClient, LiveTaskPayload, RecordIdExt};
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use super::ClientUiAction;
 use super::ClientLinkHealth;
 use super::SessionLayout;
 use crate::get_database_users;
 use crate::ui_tools::controls::{
-    self, IconBox, IconButton, IconLink, ListItem, Metrics, SpinnerSize,
+    self, IconBox, IconButton, IconLink, ListItem, Metrics, Section, SpinnerSize,
 };
 use crate::ui_tools::icons::svg::{self, Icon};
 use crate::ui_tools::{glass_card, theme};
@@ -28,23 +29,128 @@ const STALE_THRESHOLD_SECS: i64 = 300;
 const ROW_STATUS_W: f32 = 16.0;
 const ROW_ITEM_GAP: f32 = 8.0;
 
-/// Fixed inner width for one client row in the side panel (fits 400px panel margins).
-pub const CLIENT_ROW_CONTENT_W: f32 = 368.0;
+/// Outer width of a client row drawn outside the side-panel list.
+pub const CLIENT_ROW_W: f32 = 378.0;
 
 /// Slot for the transport badge, wide enough for the longest tag (`RELAY`).
 /// Always allocated, so opening a session cannot widen the row.
 const ROW_BADGE_W: f32 = 38.0;
 
-const CLIENT_DETAILS_VALUE_W: f32 = CLIENT_ROW_CONTENT_W - 90.0;
+/// Width the details grid's key column and its gap take from a row.
+const DETAILS_KEY_COL_W: f32 = 90.0;
+
+/// Display format shared by the details grid's timestamps.
+const CLIENT_TIME_FORMAT: &str = "%Y/%m/%d @ %I:%M%p";
 
 /// Side of a client row's square buttons, which is also its header height.
 fn row_btn(ui: &Ui) -> f32 {
     IconBox::Md.side(&Metrics::get(ui.ctx()))
 }
 
-/// Name-button width: the row minus two buttons, the status slot, the badge slot and four gaps.
-fn client_name_btn_w(btn: f32) -> f32 {
-    CLIENT_ROW_CONTENT_W - (btn * 2.0 + ROW_STATUS_W + ROW_BADGE_W + ROW_ITEM_GAP * 4.0)
+/// Name-button width: the content minus two buttons, the status slot, the badge slot and four gaps.
+fn client_name_btn_w(content_w: f32, btn: f32) -> f32 {
+    content_w - (btn * 2.0 + ROW_STATUS_W + ROW_BADGE_W + ROW_ITEM_GAP * 4.0)
+}
+
+/// Id of a client row's open state.
+fn client_row_id(ui: &Ui, connection_string: &str) -> Id {
+    ui.make_persistent_id(("admin_client_row", connection_string))
+}
+
+/// Card frame of a client or pre-boot row; painted, not frosted.
+fn row_frame(ui: &Ui) -> Frame {
+    Frame::default()
+        .fill(glass_card::card_fill(ui))
+        .inner_margin(Margin::same(4))
+        .outer_margin(Margin::ZERO)
+        .corner_radius(eframe::egui::CornerRadius::same(
+            ui.visuals().window_corner_radius.nw.max(4),
+        ))
+        .shadow(Shadow::NONE)
+        .stroke(glass_card::card_stroke(ui))
+}
+
+/// Runs `add` with its content width inside a top-down [`row_frame`] `width` wide; returns the card's rect.
+fn row_card(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui, f32)) -> Rect {
+    ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::Min), |ui| {
+        let frame = row_frame(ui);
+        let mut card = glass_card::FixedWidthFrame::begin(ui, frame, width);
+        let content_w = card.content_ui.max_rect().width();
+        add(&mut card.content_ui, content_w);
+        card.end(ui).rect
+    })
+    .inner
+}
+
+/// Outer width of a row at the cursor, ending as far inside `list`'s right edge as it starts inside its left.
+pub(super) fn client_row_width(ui: &Ui, list: Rangef) -> f32 {
+    let avail = ui.available_rect_before_wrap();
+    let right = (list.max - (avail.left() - list.min)).min(avail.right());
+    (right - avail.left()).max(0.0)
+}
+
+/// Scrolling client list with rows indented under optional store sections; `row` draws one client at an outer width.
+pub(super) fn client_list(
+    ui: &mut Ui,
+    max_height: f32,
+    groups: &[(Option<String>, Vec<usize>)],
+    mut row: impl FnMut(&mut Ui, usize, f32),
+) {
+    let list = ui.available_rect_before_wrap().x_range();
+    ScrollArea::vertical()
+        .auto_shrink([false, true])
+        .max_height(max_height)
+        .show(ui, |ui| {
+            let mut rows = |ui: &mut Ui, indices: &[usize]| {
+                for &index in indices {
+                    let width = client_row_width(ui, list);
+                    row(ui, index, width);
+                }
+            };
+            for (store, indices) in groups {
+                match store {
+                    Some(store) => {
+                        let title = format!("{store}  ({})", indices.len());
+                        Section::new(("admin_store_group", store.as_str()), &title)
+                            .icon(svg::STOREFRONT)
+                            .show(ui, |ui| rows(ui, indices));
+                    }
+                    None => {
+                        ui.indent("admin_client_rows", |ui| rows(ui, indices));
+                    }
+                }
+            }
+        });
+}
+
+/// RFC 3339 `raw` in `tz` as [`CLIENT_TIME_FORMAT`], or `raw` when it does not parse.
+fn format_client_time<Tz: TimeZone>(raw: &str, tz: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    DateTime::parse_from_rfc3339(raw)
+        .map(|t| t.with_timezone(tz).format(CLIENT_TIME_FORMAT).to_string())
+        .unwrap_or_else(|_| raw.to_string())
+}
+
+/// [`format_client_time`] in local time.
+fn client_time(raw: &str) -> String {
+    format_client_time(raw, &Local)
+}
+
+/// The details grid's Link button.
+fn link_button() -> IconLink<'static> {
+    IconLink::new("Link").icon(svg::LINK).small(true)
+}
+
+/// A `width`-wide slot holding the Link button when `show`; returns whether it was clicked.
+fn link_slot(ui: &mut Ui, width: f32, show: bool, tip: &str) -> bool {
+    if show {
+        link_button().show(ui).on_hover_text(tip).clicked()
+    } else {
+        ui.allocate_exact_size(Vec2::new(width, 0.0), Sense::hover());
+        false
+    }
 }
 
 /// Paints `icon` in `color` centred in a status slot `height` tall.
@@ -139,8 +245,12 @@ impl AdminConsole {
     /// State persistence: the open/closed state lives in egui memory
     /// keyed by `connection_string`, so the caller doesn't need to thread
     /// any new state through.
+    ///
+    /// `row_w` is the card's outer width; returns the card's rect.
+    #[allow(clippy::too_many_arguments)]
     pub fn client_header(
         ui: &mut Ui,
+        row_w: f32,
         tx: Sender<ClientUiAction>,
         client: &ConnectedClient,
         session_layout: HashMap<String, SessionLayout>,
@@ -162,11 +272,10 @@ impl AdminConsole {
         // Live transport path of the open session `(kind, is_connected)`,
         // or `None` when no session entry exists for this client.
         transport: Option<(super::client_interface::TransportKind, bool)>,
-    ) {
-        let row_id = ui.make_persistent_id((
-            "admin_client_row",
-            client.connection_string.as_str(),
-        ));
+        // MasterTech build the open session reported, or `None` without one.
+        client_version: Option<&str>,
+    ) -> Rect {
+        let row_id = client_row_id(ui, &client.connection_string);
         let mut collapse = CollapsingState::load_with_default_open(ui.ctx(), row_id, false);
         if collapse.is_open() {
             queue_fk_health_check(fk_health_tx, fk_health_cache, client);
@@ -177,18 +286,12 @@ impl AdminConsole {
             .get(&client.connection_string)
             .and_then(|t| t.as_deref());
 
-        // Pre-compute the fields the details grid needs, so the body
-        // closure doesn't need to re-parse on every frame.
-        let parsed_date = DateTime::parse_from_rfc3339(
+        let formatted_date = client_time(
             &client
                 .last_update
-                .clone()
-                .unwrap_or(Utc::now().into())
+                .unwrap_or_else(|| Utc::now().into())
                 .to_string(),
-        )
-        .unwrap_or_default()
-        .with_timezone(&Local);
-        let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
+        );
         let assigned_user_text = if let Some(ref user_id) = client.assigned_user {
             let users = get_database_users();
             users
@@ -200,282 +303,266 @@ impl AdminConsole {
             "(none)".to_string()
         };
 
-        ui.allocate_ui_with_layout(
-            Vec2::new(CLIENT_ROW_CONTENT_W, 0.0),
-            Layout::top_down(Align::Min),
-            |ui| {
-                // Card tone rather than a frost: the list can run to dozens of rows, and one
-                // grab-pass each would cost more than a row-sized blur is worth.
-                Frame::default()
-                .fill(glass_card::card_fill(ui))
-                .inner_margin(Margin::same(4))
-                .outer_margin(Margin::ZERO)
-                .corner_radius(eframe::egui::CornerRadius::same(
-                    ui.visuals().window_corner_radius.nw.max(4),
-                ))
-                .shadow(Shadow::NONE)
-                .stroke(glass_card::card_stroke(ui))
-                .show(ui, |ui| {
-                    ui.set_width(CLIENT_ROW_CONTENT_W);
-                    ui.set_max_width(CLIENT_ROW_CONTENT_W);
-                    let is_focused = focused_client == Some(client.connection_string.as_str());
-                    let focus_color = if is_focused {
-                        theme::success(ui)
-                    } else {
-                        theme::weak_text(ui)
-                    };
-                    let (indicator_color, indicator_icon) =
-                        connection_indicator(ui, is_ws_connected, client);
-                    let arrow = if collapse.is_open() {
-                        svg::CARET_DOWN
-                    } else {
-                        svg::CARET_RIGHT
-                    };
-                    let btn = row_btn(ui);
+        let rect = row_card(ui, row_w, |ui, content_w| {
+            let is_focused = focused_client == Some(client.connection_string.as_str());
+            let focus_color = if is_focused {
+                theme::success(ui)
+            } else {
+                theme::weak_text(ui)
+            };
+            let (indicator_color, indicator_icon) =
+                connection_indicator(ui, is_ws_connected, client);
+            let arrow = if collapse.is_open() {
+                svg::CARET_DOWN
+            } else {
+                svg::CARET_RIGHT
+            };
+            let btn = row_btn(ui);
 
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(CLIENT_ROW_CONTENT_W, btn),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
+            ui.allocate_ui_with_layout(
+                Vec2::new(content_w, btn),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
 
-                            let name_btn = ListItem::new(client_name(client))
-                                .icon(arrow)
-                                .icon_tone(theme::weak_text(ui))
-                                .tone(theme::success(ui))
-                                .width(client_name_btn_w(btn))
-                                .show(ui)
-                                .on_hover_text(if collapse.is_open() {
-                                    "Collapse client details"
-                                } else {
-                                    "Expand client details & secondary actions"
-                                });
-                            if name_btn.clicked() {
-                                collapse.toggle(ui);
-                            }
+                    let name_btn = ListItem::new(client_name(client))
+                        .icon(arrow)
+                        .icon_tone(theme::weak_text(ui))
+                        .tone(theme::success(ui))
+                        .width(client_name_btn_w(content_w, btn))
+                        .show(ui)
+                        .on_hover_text(if collapse.is_open() {
+                            "Collapse client details"
+                        } else {
+                            "Expand client details & secondary actions"
+                        });
+                    if name_btn.clicked() {
+                        collapse.toggle(ui);
+                    }
 
-                            status_slot(ui, indicator_icon, indicator_color, btn);
+                    status_slot(ui, indicator_icon, indicator_color, btn);
 
-                            // Transport badge for the open session's live path,
-                            // in a fixed slot that is allocated either way so
-                            // every row is the same width.
-                            let (badge, badge_color, badge_tip) = match transport {
-                                Some((kind, session_up)) => {
-                                    use super::client_interface::TransportKind;
-                                    let (badge, tip) = match kind {
-                                        TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
-                                        TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
-                                        TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
-                                        TransportKind::Local => ("LOCAL", "This machine, in-process"),
-                                    };
-                                    let color = if session_up {
-                                        transport_color(ui, kind)
-                                    } else {
-                                        theme::weak_text(ui)
-                                    };
-                                    let tip = if session_up {
-                                        tip.to_string()
-                                    } else {
-                                        format!("{tip} — reconnecting")
-                                    };
-                                    (badge, color, Some(tip))
-                                }
-                                None => ("", Color32::TRANSPARENT, None),
+                    // Transport badge for the open session's live path,
+                    // in a fixed slot that is allocated either way so
+                    // every row is the same width.
+                    let (badge, badge_color, badge_tip) = match transport {
+                        Some((kind, session_up)) => {
+                            use super::client_interface::TransportKind;
+                            let (badge, tip) = match kind {
+                                TransportKind::Tcp => ("TCP", "Direct TCP (same network)"),
+                                TransportKind::Relay => ("RELAY", "Relay tunnel via websocket server"),
+                                TransportKind::WebSocket => ("WS", "Legacy WebSocket relay room"),
+                                TransportKind::Local => ("LOCAL", "This machine, in-process"),
                             };
-                            let badge_slot = ui.add_sized(
-                                Vec2::new(ROW_BADGE_W, btn),
-                                eframe::egui::Label::new(
-                                    RichText::new(badge).small().strong().color(badge_color),
-                                ),
-                            );
-                            if let Some(tip) = badge_tip {
-                                badge_slot.on_hover_text(tip);
-                            }
-
-                            let focus_btn = IconButton::new(svg::CROSSHAIR, IconBox::Md)
-                                .selected(is_focused)
-                                .tint(focus_color)
-                                .tip(if is_focused {
-                                    "Focused (receives commands)"
-                                } else {
-                                    "Set as focused client"
-                                })
-                                .show(ui);
-                            if focus_btn.clicked() {
-                                let _ = tx.try_send(ClientUiAction::FocusClient(
-                                    client.connection_string.clone(),
-                                ));
-                            }
-
-                            let connect_btn = IconButton::new(svg::ARROW_SQUARE_OUT, IconBox::Md)
-                                .tint(theme::primary(ui))
-                                .tip("Open / focus this machine")
-                                .show(ui);
-                            if connect_btn.clicked() {
-                                let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
-                            }
-                        },
-                    );
-
-                    // ── Expanded body ─────────────────────────────────────────────
-                    if collapse.is_open() {
-                        ui.add_space(6.);
-                        controls::hairline(ui);
-                        ui.add_space(4.);
-
-                        client_details_grid(
-                            ui,
-                            &tx,
-                            client,
-                            &formatted_date,
-                            &assigned_user_text,
-                            is_ws_connected,
-                            reachability,
-                            fk_health,
-                            client_tasks,
-                        );
-
-                        if let Some(products) = security_inventory {
-                            if !products.is_empty() {
-                                ui.add_space(8.);
-                                controls::hairline(ui);
-                                ui.add_space(4.);
-                                section_title(ui, svg::SHIELD_CHECK, "Security inventory");
-                                ui.add_space(2.);
-                                render_security_inventory(ui, products);
-                            }
+                            let color = if session_up {
+                                transport_color(ui, kind)
+                            } else {
+                                theme::weak_text(ui)
+                            };
+                            let tip = if session_up {
+                                tip.to_string()
+                            } else {
+                                format!("{tip} — reconnecting")
+                            };
+                            (badge, color, Some(tip))
                         }
+                        None => ("", Color32::TRANSPARENT, None),
+                    };
+                    let badge_slot = ui.add_sized(
+                        Vec2::new(ROW_BADGE_W, btn),
+                        eframe::egui::Label::new(
+                            RichText::new(badge).small().strong().color(badge_color),
+                        ),
+                    );
+                    if let Some(tip) = badge_tip {
+                        badge_slot.on_hover_text(tip);
+                    }
 
-                        ui.add_space(8.);
-                        controls::hairline(ui);
-                        ui.add_space(4.);
-
-                        section_title(ui, svg::LIGHTNING, "Actions");
-                        ui.add_space(2.);
-
-                        let layout = session_layout
-                            .get(client.connection_string.as_str())
-                            .copied()
-                            .unwrap_or_default();
-                        let (float_icon, float_tip) = match layout {
-                            SessionLayout::Floating => {
-                                (
-                                    svg::ARROW_SQUARE_IN,
-                                    "Dock: floating (unlocked) — click to dock",
-                                )
-                            }
-                            SessionLayout::Docked => {
-                                (
-                                    svg::PICTURE_IN_PICTURE,
-                                    "Float: docked (locked) — click to float",
-                                )
-                            }
-                        };
-                        let relink_color = if client.customer_locked {
-                            theme::info(ui)
+                    let focus_btn = IconButton::new(svg::CROSSHAIR, IconBox::Md)
+                        .selected(is_focused)
+                        .tint(focus_color)
+                        .tip(if is_focused {
+                            "Focused (receives commands)"
                         } else {
-                            theme::weak_text(ui)
-                        };
-                        let (auto_color, auto_tip) = if client.autopilot_opt_out {
-                            (
-                                theme::weak_text(ui),
-                                "Autopilot off: excluded from unattended agent sweeps.\nClick to allow sweeps again.",
-                            )
-                        } else {
-                            (
-                                theme::info(ui),
-                                "Autopilot on: eligible for unattended agent sweeps.\nClick to exclude this client.",
-                            )
-                        };
-                        let staff = fk_health.map(|h| h.staff_machine).unwrap_or(false);
-                        let (staff_color, staff_tip) = if staff {
-                            (
-                                theme::info(ui),
-                                "Staff machine: owns no customer and is excluded from
+                            "Set as focused client"
+                        })
+                        .show(ui);
+                    if focus_btn.clicked() {
+                        let _ = tx.try_send(ClientUiAction::FocusClient(
+                            client.connection_string.clone(),
+                        ));
+                    }
+
+                    let connect_btn = IconButton::new(svg::ARROW_SQUARE_OUT, IconBox::Md)
+                        .tint(theme::primary(ui))
+                        .tip("Open / focus this machine")
+                        .show(ui);
+                    if connect_btn.clicked() {
+                        let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
+                    }
+                },
+            );
+
+            // ── Expanded body ─────────────────────────────────────────────
+            if collapse.is_open() {
+                ui.add_space(6.);
+                controls::hairline(ui);
+                ui.add_space(4.);
+
+                client_details_grid(
+                    ui,
+                    content_w,
+                    &tx,
+                    client,
+                    &formatted_date,
+                    &assigned_user_text,
+                    is_ws_connected,
+                    reachability,
+                    fk_health,
+                    client_tasks,
+                    client_version,
+                );
+
+                if let Some(products) = security_inventory
+                    && !products.is_empty()
+                {
+                    ui.add_space(8.);
+                    controls::hairline(ui);
+                    ui.add_space(4.);
+                    section_title(ui, svg::SHIELD_CHECK, "Security inventory");
+                    ui.add_space(2.);
+                    render_security_inventory(ui, products);
+                }
+
+                ui.add_space(8.);
+                controls::hairline(ui);
+                ui.add_space(4.);
+
+                section_title(ui, svg::LIGHTNING, "Actions");
+                ui.add_space(2.);
+
+                let layout = session_layout
+                    .get(client.connection_string.as_str())
+                    .copied()
+                    .unwrap_or_default();
+                let (float_icon, float_tip) = match layout {
+                    SessionLayout::Floating => {
+                        (
+                            svg::ARROW_SQUARE_IN,
+                            "Dock: floating (unlocked) — click to dock",
+                        )
+                    }
+                    SessionLayout::Docked => {
+                        (
+                            svg::PICTURE_IN_PICTURE,
+                            "Float: docked (locked) — click to float",
+                        )
+                    }
+                };
+                let relink_color = if client.customer_locked {
+                    theme::info(ui)
+                } else {
+                    theme::weak_text(ui)
+                };
+                let (auto_color, auto_tip) = if client.autopilot_opt_out {
+                    (
+                        theme::weak_text(ui),
+                        "Autopilot off: excluded from unattended agent sweeps.\nClick to allow sweeps again.",
+                    )
+                } else {
+                    (
+                        theme::info(ui),
+                        "Autopilot on: eligible for unattended agent sweeps.\nClick to exclude this client.",
+                    )
+                };
+                let staff = fk_health.map(|h| h.staff_machine).unwrap_or(false);
+                let (staff_color, staff_tip) = if staff {
+                    (
+                        theme::info(ui),
+                        "Staff machine: owns no customer and is excluded from
                                  outcome reporting. Click to treat it as a customer machine.",
-                            )
-                        } else {
-                            (
-                                theme::weak_text(ui),
-                                "Customer machine. Click to mark it a staff machine:
+                    )
+                } else {
+                    (
+                        theme::weak_text(ui),
+                        "Customer machine. Click to mark it a staff machine:
                                  clears its customer link, keeps future service orders
                                  from adopting it, and drops it from outcome reporting.",
-                            )
-                        };
-                        let relink_tip = if client.customer_locked {
-                            "Re-link customer: locked (manually re-linked).\nClick to change linkage."
-                        } else {
-                            "Re-link to a different customer\n(used-machine-was-our-customer fix)"
-                        };
+                    )
+                };
+                let relink_tip = if client.customer_locked {
+                    "Re-link customer: locked (manually re-linked).\nClick to change linkage."
+                } else {
+                    "Re-link to a different customer\n(used-machine-was-our-customer fix)"
+                };
 
-                        let err_color = theme::error(ui);
-                        let plain = theme::text(ui);
-                        ui.scope(|ui| {
-                            ui.set_max_width(CLIENT_ROW_CONTENT_W);
-                            ui.horizontal_wrapped(|ui| {
-                                if row_icon_action(
-                                    ui,
-                                    svg::LINK_BREAK,
-                                    err_color,
-                                    "Disconnect this client\n\
-                                     (closes the local session and removes it from the list;\n\
-                                     the connected_client record stays in the database)",
-                                ) {
-                                    let _ = tx.try_send(ClientUiAction::DisconnectClient(client.clone()));
-                                }
-                                if row_icon_action(ui, float_icon, plain, float_tip) {
-                                    let _ = tx.try_send(ClientUiAction::ToggleClientFloat(
-                                        client.connection_string.clone(),
-                                    ));
-                                }
-                                if row_icon_action(
-                                    ui,
-                                    svg::PENCIL,
-                                    plain,
-                                    "Rename: edit this client's friendly name",
-                                ) {
-                                    let _ = tx.try_send(ClientUiAction::RenameClient(client.clone()));
-                                }
-                                if row_icon_action(ui, svg::USER_SWITCH, relink_color, relink_tip) {
-                                    let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
-                                }
-                                if row_icon_action(
-                                    ui,
-                                    svg::PLUGS_CONNECTED,
-                                    plain,
-                                    "Link computer: create or repair the computer record for this client",
-                                ) {
-                                    let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
-                                }
-                                if row_icon_action(
-                                    ui,
-                                    svg::WRENCH,
-                                    plain,
-                                    "Repair links: cascade-repoint FKs to canonical computer id and fix diagnostic sessions",
-                                ) {
-                                    let _ =
-                                        tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
-                                }
-                                if row_icon_action(ui, svg::HOUSE, staff_color, staff_tip) {
-                                    let _ = tx.try_send(ClientUiAction::ToggleStaffMachine {
-                                        client: client.clone(),
-                                        staff,
-                                    });
-                                }
-                                if row_icon_action(ui, svg::ROBOT, auto_color, auto_tip) {
-                                    let _ = tx.try_send(ClientUiAction::ToggleAutopilotOptOut(
-                                        client.clone(),
-                                    ));
-                                }
+                let err_color = theme::error(ui);
+                let plain = theme::text(ui);
+                ui.scope(|ui| {
+                    ui.set_max_width(content_w);
+                    ui.horizontal_wrapped(|ui| {
+                        if row_icon_action(
+                            ui,
+                            svg::LINK_BREAK,
+                            err_color,
+                            "Disconnect this client\n\
+                             (closes the local session and removes it from the list;\n\
+                             the connected_client record stays in the database)",
+                        ) {
+                            let _ = tx.try_send(ClientUiAction::DisconnectClient(client.clone()));
+                        }
+                        if row_icon_action(ui, float_icon, plain, float_tip) {
+                            let _ = tx.try_send(ClientUiAction::ToggleClientFloat(
+                                client.connection_string.clone(),
+                            ));
+                        }
+                        if row_icon_action(
+                            ui,
+                            svg::PENCIL,
+                            plain,
+                            "Rename: edit this client's friendly name",
+                        ) {
+                            let _ = tx.try_send(ClientUiAction::RenameClient(client.clone()));
+                        }
+                        if row_icon_action(ui, svg::USER_SWITCH, relink_color, relink_tip) {
+                            let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
+                        }
+                        if row_icon_action(
+                            ui,
+                            svg::PLUGS_CONNECTED,
+                            plain,
+                            "Link computer: create or repair the computer record for this client",
+                        ) {
+                            let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
+                        }
+                        if row_icon_action(
+                            ui,
+                            svg::WRENCH,
+                            plain,
+                            "Repair links: cascade-repoint FKs to canonical computer id and fix diagnostic sessions",
+                        ) {
+                            let _ =
+                                tx.try_send(ClientUiAction::RepairAssociations(client.clone()));
+                        }
+                        if row_icon_action(ui, svg::HOUSE, staff_color, staff_tip) {
+                            let _ = tx.try_send(ClientUiAction::ToggleStaffMachine {
+                                client: client.clone(),
+                                staff,
                             });
-                        });
-                    }
+                        }
+                        if row_icon_action(ui, svg::ROBOT, auto_color, auto_tip) {
+                            let _ = tx.try_send(ClientUiAction::ToggleAutopilotOptOut(
+                                client.clone(),
+                            ));
+                        }
+                    });
                 });
-            },
-        );
+            }
+        });
 
         // Persist the open/closed flip we may have made via `toggle()`.
         collapse.store(ui.ctx());
+        rect
     }
 
     /// Render one pre-boot UEFI box in the same collapsible card style as the
@@ -485,6 +572,7 @@ impl AdminConsole {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn preboot_card(
         ui: &mut Ui,
+        row_w: f32,
         serial: &str,
         friendly: &str,
         age_secs: i64,
@@ -510,98 +598,81 @@ impl AdminConsole {
         let arrow = if collapse.is_open() { svg::CARET_DOWN } else { svg::CARET_RIGHT };
         let mut view_clicked = false;
 
-        ui.allocate_ui_with_layout(
-            Vec2::new(CLIENT_ROW_CONTENT_W, 0.0),
-            Layout::top_down(Align::Min),
-            |ui| {
-                let (dot_color, dot_icon) = if live {
-                    (theme::success(ui), svg::CHECK_CIRCLE)
-                } else {
-                    (theme::weak_text(ui), svg::MINUS_CIRCLE)
-                };
-                Frame::default()
-                    .fill(glass_card::card_fill(ui))
-                    .inner_margin(Margin::same(4))
-                    .outer_margin(Margin::ZERO)
-                    .corner_radius(eframe::egui::CornerRadius::same(
-                        ui.visuals().window_corner_radius.nw.max(4),
-                    ))
-                    .shadow(Shadow::NONE)
-                    .stroke(glass_card::card_stroke(ui))
-                    .show(ui, |ui| {
-                        ui.set_width(CLIENT_ROW_CONTENT_W);
-                        ui.set_max_width(CLIENT_ROW_CONTENT_W);
-                        // chevron + status + name + View chrome (mirror client rows).
-                        let btn = row_btn(ui);
-                        let name_w = CLIENT_ROW_CONTENT_W
-                            - (btn * 2.0 + ROW_STATUS_W + ROW_ITEM_GAP * 3.0);
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(CLIENT_ROW_CONTENT_W, btn),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
-                                let chevron = IconButton::new(arrow, IconBox::Md)
-                                    .tip("Show or hide details")
-                                    .show(ui);
-                                if chevron.clicked() {
-                                    collapse.toggle(ui);
-                                }
-                                status_slot(ui, dot_icon, dot_color, btn);
-                                let name_btn = controls::TextButton::new(&title)
-                                    .ink(theme::success(ui))
-                                    .min_width(name_w)
-                                    .show(ui)
-                                    .on_hover_text(serial);
-                                if name_btn.clicked() {
-                                    collapse.toggle(ui);
-                                }
-                                let view_btn = IconButton::new(svg::MONITOR_PLAY, IconBox::Md)
-                                    .tint(theme::primary(ui))
-                                    .tip("View this booting machine's screen")
-                                    .show(ui);
-                                if view_btn.clicked() {
-                                    view_clicked = true;
-                                }
-                            },
-                        );
+        row_card(ui, row_w, |ui, content_w| {
+            let (dot_color, dot_icon) = if live {
+                (theme::success(ui), svg::CHECK_CIRCLE)
+            } else {
+                (theme::weak_text(ui), svg::MINUS_CIRCLE)
+            };
+            // chevron + status + name + View chrome (mirror client rows).
+            let btn = row_btn(ui);
+            let name_w = content_w
+                - (btn * 2.0 + ROW_STATUS_W + ROW_ITEM_GAP * 3.0);
+            ui.allocate_ui_with_layout(
+                Vec2::new(content_w, btn),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = ROW_ITEM_GAP;
+                    let chevron = IconButton::new(arrow, IconBox::Md)
+                        .tip("Show or hide details")
+                        .show(ui);
+                    if chevron.clicked() {
+                        collapse.toggle(ui);
+                    }
+                    status_slot(ui, dot_icon, dot_color, btn);
+                    let name_btn = controls::TextButton::new(&title)
+                        .ink(theme::success(ui))
+                        .min_width(name_w)
+                        .show(ui)
+                        .on_hover_text(serial);
+                    if name_btn.clicked() {
+                        collapse.toggle(ui);
+                    }
+                    let view_btn = IconButton::new(svg::MONITOR_PLAY, IconBox::Md)
+                        .tint(theme::primary(ui))
+                        .tip("View this booting machine's screen")
+                        .show(ui);
+                    if view_btn.clicked() {
+                        view_clicked = true;
+                    }
+                },
+            );
 
-                        if collapse.is_open() {
-                            ui.add_space(6.);
-                            controls::hairline(ui);
-                            ui.add_space(4.);
-                            Grid::new(("preboot_card_grid", serial))
-                                .num_columns(2)
-                                .spacing(Vec2::new(8.0, 4.0))
-                                .show(ui, |ui| {
-                                    let mut row = |k: &str, v: &str, mono: bool| {
-                                        let (key, value) = (theme::weak_text(ui), theme::text(ui));
-                                        ui.label(RichText::new(k).small().color(key));
-                                        let mut t = RichText::new(v).color(value);
-                                        if mono {
-                                            t = t.monospace();
-                                        }
-                                        ui.add(
-                                            eframe::egui::Label::new(t).wrap(),
-                                        );
-                                        ui.end_row();
-                                    };
-                                    row("OA3 key", serial, true);
-                                    row("Kind", kind, false);
-                                    row("Transport", if direct { "direct TCP" } else { "relay" }, false);
-                                    if !friendly.is_empty() {
-                                        row("Product", friendly, false);
-                                    }
-                                    let seen = if age_secs == i64::MAX {
-                                        "no heartbeat".to_string()
-                                    } else {
-                                        format!("{age_secs}s ago")
-                                    };
-                                    row("Last seen", &seen, false);
-                                });
+            if collapse.is_open() {
+                ui.add_space(6.);
+                controls::hairline(ui);
+                ui.add_space(4.);
+                Grid::new(("preboot_card_grid", serial))
+                    .num_columns(2)
+                    .spacing(Vec2::new(8.0, 4.0))
+                    .show(ui, |ui| {
+                        let mut row = |k: &str, v: &str, mono: bool| {
+                            let (key, value) = (theme::weak_text(ui), theme::text(ui));
+                            ui.label(RichText::new(k).small().color(key));
+                            let mut t = RichText::new(v).color(value);
+                            if mono {
+                                t = t.monospace();
+                            }
+                            ui.add(
+                                eframe::egui::Label::new(t).wrap(),
+                            );
+                            ui.end_row();
+                        };
+                        row("OA3 key", serial, true);
+                        row("Kind", kind, false);
+                        row("Transport", if direct { "direct TCP" } else { "relay" }, false);
+                        if !friendly.is_empty() {
+                            row("Product", friendly, false);
                         }
+                        let seen = if age_secs == i64::MAX {
+                            "no heartbeat".to_string()
+                        } else {
+                            format!("{age_secs}s ago")
+                        };
+                        row("Last seen", &seen, false);
                     });
-            },
-        );
+            }
+        });
 
         collapse.store(ui.ctx());
         view_clicked
@@ -650,8 +721,10 @@ impl AdminConsole {
 /// previously a hover popup; it's now the contents of the row's
 /// collapsing body so admins can leave details pinned open while they
 /// work, copy values out of it, etc.
+#[allow(clippy::too_many_arguments)]
 fn client_details_grid(
     ui: &mut Ui,
+    content_w: f32,
     tx: &Sender<ClientUiAction>,
     client: &ConnectedClient,
     formatted_date: &str,
@@ -660,9 +733,10 @@ fn client_details_grid(
     reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
     fk_health: Option<ClientLinkHealth>,
     client_tasks: Option<&[LiveTaskPayload]>,
+    client_version: Option<&str>,
 ) {
-    let value_max_w = CLIENT_DETAILS_VALUE_W;
-    ui.set_max_width(CLIENT_ROW_CONTENT_W);
+    let value_max_w = content_w - DETAILS_KEY_COL_W;
+    ui.set_max_width(content_w);
     if let Some(fname) = client.friendly_name.as_deref() {
         ui.horizontal(|ui| {
             ui.label(
@@ -690,6 +764,15 @@ fn client_details_grid(
         .show(ui, |ui| {
             row(ui, "Connection", &client.connection_string, value_max_w);
             row(ui, "Last update", formatted_date, value_max_w);
+            let (version_text, version_tip) = match client_version {
+                Some(v) => (format!("v{v}"), "MasterTech build reported by the open session"),
+                None if is_ws_connected => {
+                    ("—".to_string(), "The open session has not reported a build")
+                }
+                None => ("—".to_string(), "Reported once an admin session to this client is open"),
+            };
+            icon_row(ui, "Version", svg::TAG, theme::weak_text(ui), &version_text, value_max_w)
+                .on_hover_text(version_tip);
             let (status_icon, status_tone, status_text) = if is_ws_connected {
                 (svg::CHECK_CIRCLE, theme::success(ui), "connected (active session)")
             } else if client.connected && recently_active(client) {
@@ -769,8 +852,15 @@ fn client_details_grid(
                 .unwrap_or_else(|| {
                     if staff_machine { "(staff machine)".into() } else { "(none)".into() }
                 });
+            // Leading Link column, present on both rows when either needs it.
+            let link_slot_w = (!cust_ok || !comp_ok).then(|| link_button().width(ui));
             ui.label(RichText::new("Customer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
+                if link_slot_w
+                    .is_some_and(|w| link_slot(ui, w, !cust_ok, "Link this client to a customer"))
+                {
+                    let _ = tx.try_send(ClientUiAction::LinkCustomer(client.clone()));
+                }
                 let tone = if staff_machine && client.customer.is_none() {
                     theme::weak_text(ui)
                 } else {
@@ -806,11 +896,6 @@ fn client_details_grid(
                         ui.label(text);
                     }
                 }
-                if !cust_ok {
-                    if controls::IconLink::new("Link").icon(svg::LINK).small(true).show(ui).clicked() {
-                        let _ = tx.try_send(ClientUiAction::LinkCustomer(client.clone()));
-                    }
-                }
             });
             ui.end_row();
 
@@ -821,6 +906,11 @@ fn client_details_grid(
                 .unwrap_or_else(|| "(none)".into());
             ui.label(RichText::new("Computer").small().color(theme::weak_text(ui)));
             ui.horizontal(|ui| {
+                if link_slot_w.is_some_and(|w| {
+                    link_slot(ui, w, !comp_ok, "Create or repair this client's computer record")
+                }) {
+                    let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
+                }
                 let tone = fk_color(ui, comp_ok, client.computer.is_some());
                 let text = RichText::new(&comp_label).small().color(tone);
                 match client.computer.as_ref() {
@@ -850,11 +940,6 @@ fn client_details_grid(
                     }
                     None => {
                         ui.label(text);
-                    }
-                }
-                if !comp_ok {
-                    if controls::IconLink::new("Link").icon(svg::LINK).small(true).show(ui).clicked() {
-                        let _ = tx.try_send(ClientUiAction::LinkComputer(client.clone()));
                     }
                 }
             });
@@ -910,7 +995,7 @@ fn client_details_grid(
             ui.end_row();
 
             if let Some(created) = client.created_at.as_ref() {
-                row(ui, "Created", &created.to_string(), value_max_w);
+                row(ui, "Created", &client_time(&created.to_string()), value_max_w);
             }
         });
 }
@@ -924,17 +1009,28 @@ fn row(ui: &mut Ui, key: &str, val: &str, value_max_w: f32) {
     ui.end_row();
 }
 
-/// A [`row`] whose value is led by `icon` in `tone`.
-fn icon_row(ui: &mut Ui, key: &str, icon: Icon, tone: Color32, val: &str, value_max_w: f32) {
+/// A [`row`] whose value is led by `icon` in `tone`; returns the value label's response.
+fn icon_row(
+    ui: &mut Ui,
+    key: &str,
+    icon: Icon,
+    tone: Color32,
+    val: &str,
+    value_max_w: f32,
+) -> eframe::egui::Response {
     ui.label(RichText::new(key).small().color(theme::weak_text(ui)));
-    ui.scope(|ui| {
-        ui.set_max_width(value_max_w);
-        ui.horizontal(|ui| {
-            icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, tone);
-            ui.label(RichText::new(val).small());
-        });
-    });
+    let value = ui
+        .scope(|ui| {
+            ui.set_max_width(value_max_w);
+            ui.horizontal(|ui| {
+                icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, tone);
+                ui.label(RichText::new(val).small())
+            })
+            .inner
+        })
+        .inner;
     ui.end_row();
+    value
 }
 
 fn fk_color(ui: &Ui, exists: bool, has_fk: bool) -> Color32 {
@@ -1091,6 +1187,182 @@ fn render_security_inventory(
 }
 
 #[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    use crate::tabs::admin_console::client_interface::TransportKind;
+    use crate::ui_tools::{headless_render::Headless, metrics::Density, theme_config::PresetStyles};
+    use chrono::FixedOffset;
+    use database::schema::{Datetime, RecordId};
+    use eframe::egui::{vec2, Panel};
+
+    const CREATED: &str = "2026-10-07T19:45:04.302330730Z";
+
+    /// Clients plus the channels and caches their rows read.
+    pub(crate) struct Fixture {
+        clients: Vec<ConnectedClient>,
+        tx: Sender<ClientUiAction>,
+        fk_tx: Sender<(String, ClientLinkHealth)>,
+        task_tx: Sender<(String, Option<Vec<LiveTaskPayload>>)>,
+        fk_cache: HashMap<String, ClientLinkHealth>,
+        task_cache: HashMap<String, Option<Vec<LiveTaskPayload>>>,
+    }
+
+    impl Fixture {
+        /// `count` linked clients whose link and task lookups are already cached.
+        pub(crate) fn new(count: usize) -> Self {
+            let created = DateTime::parse_from_rfc3339(CREATED).expect("valid time");
+            let clients: Vec<ConnectedClient> = (0..count)
+                .map(|i| ConnectedClient {
+                    connection_string: format!("BENCH-{i:02}:abc123def"),
+                    friendly_name: Some(format!("Bench PC {i}")),
+                    connected: true,
+                    local_ip: Some("10.0.0.5".into()),
+                    tcp_port: Some(8000),
+                    customer: Some(RecordId::new("customer", "riv_4412")),
+                    computer: Some(RecordId::new("computer", "bench_pc")),
+                    created_at: Some(Datetime::from(created.with_timezone(&Utc))),
+                    ..Default::default()
+                })
+                .collect();
+            let fk_cache = clients
+                .iter()
+                .map(|c| (c.connection_string.clone(), ClientLinkHealth::default()))
+                .collect();
+            let task_cache = clients
+                .iter()
+                .map(|c| (c.connection_string.clone(), Some(Vec::new())))
+                .collect();
+            Self {
+                clients,
+                tx: crossbeam::channel::unbounded().0,
+                fk_tx: crossbeam::channel::unbounded().0,
+                task_tx: crossbeam::channel::unbounded().0,
+                fk_cache,
+                task_cache,
+            }
+        }
+    }
+
+    /// Side panel `width` wide listing `groups` with client 0 expanded; returns the panel and row rects.
+    pub(crate) fn side_panel(
+        ui: &mut Ui,
+        width: f32,
+        fx: &Fixture,
+        groups: &[(Option<String>, Vec<usize>)],
+    ) -> (Rect, Vec<Rect>) {
+        let frame = Frame::default()
+            .fill(glass_card::recessed_fill(ui))
+            .inner_margin(Margin::same(1))
+            .outer_margin(Margin::same(1))
+            .stroke(glass_card::card_stroke(ui))
+            .corner_radius(eframe::egui::CornerRadius::same(
+                ui.visuals().window_corner_radius.nw.max(2),
+            ));
+        let mut rows = Vec::new();
+        let panel = Panel::left("admin_client_list_test")
+            .frame(frame)
+            .show_separator_line(false)
+            .exact_size(width)
+            .show(ui, |ui| {
+                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                    client_list(ui, f32::INFINITY, groups, |ui, index, row_w| {
+                        let client = &fx.clients[index];
+                        let first = index == 0;
+                        if first {
+                            let id = client_row_id(ui, &client.connection_string);
+                            let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
+                            state.set_open(true);
+                            state.store(ui.ctx());
+                        }
+                        rows.push(AdminConsole::client_header(
+                            ui,
+                            row_w,
+                            fx.tx.clone(),
+                            client,
+                            HashMap::new(),
+                            None,
+                            first,
+                            &fx.fk_tx,
+                            &fx.fk_cache,
+                            &fx.task_tx,
+                            &fx.task_cache,
+                            None,
+                            None,
+                            first.then_some((TransportKind::Tcp, true)),
+                            first.then_some("5.0.0+8d4bec94"),
+                        ));
+                    });
+                });
+            });
+        (panel.response.rect, rows)
+    }
+
+    /// Each row's `(left, right)` gap to the panel edge, whether the rows overflow the panel, and the indent.
+    fn gutters(width: f32, count: usize, grouped: bool) -> (Vec<(f32, f32)>, bool, f32) {
+        let mut h = Headless::new(vec2(width + 100.0, 900.0), 1.0);
+        h.theme(PresetStyles::MtechStudio, Density::Regular);
+        let fixture = Fixture::new(count);
+        let indices: Vec<usize> = (0..count).collect();
+        let groups = if grouped {
+            let (riv, ltn) = indices.split_at(count / 2);
+            vec![(Some("LTN".to_string()), ltn.to_vec()), (Some("RIV".to_string()), riv.to_vec())]
+        } else {
+            vec![(None, indices)]
+        };
+        let mut drawn = (Rect::NOTHING, Vec::new());
+        for _ in 0..3 {
+            drawn = h.frame_root(Vec::new(), |ui| side_panel(ui, width, &fixture, &groups)).0;
+        }
+        let (panel, rows) = drawn;
+        assert_eq!(rows.len(), count);
+        let overflows = rows.iter().any(|r| r.bottom() > panel.bottom());
+        let gaps = rows
+            .iter()
+            .map(|r| (r.left() - panel.left(), panel.right() - r.right()))
+            .collect();
+        (gaps, overflows, h.ctx.global_style().spacing.indent)
+    }
+
+    #[test]
+    fn client_rows_keep_equal_gutters_at_any_width_with_or_without_a_scrollbar() {
+        for width in [400.0, 500.0] {
+            for grouped in [true, false] {
+                for (count, scrolls) in [(2, false), (30, true)] {
+                    let (gaps, overflows, indent) = gutters(width, count, grouped);
+                    assert_eq!(overflows, scrolls, "width {width}, grouped {grouped}, {count} rows");
+                    for (left, right) in gaps {
+                        assert!(
+                            (left - right).abs() <= 0.5,
+                            "width {width}, grouped {grouped}, {count} rows: left {left} right {right}"
+                        );
+                        assert!(left >= indent, "width {width}: left gutter {left}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn client_times_use_the_last_update_format() {
+        assert_eq!(format_client_time(CREATED, &Utc), "2026/10/07 @ 07:45PM");
+        let mountain = FixedOffset::west_opt(6 * 3600).expect("valid offset");
+        assert_eq!(
+            format_client_time("2026-10-13T18:01:00Z", &mountain),
+            "2026/10/13 @ 12:01PM"
+        );
+        assert_eq!(client_time(CREATED), format_client_time(CREATED, &Local));
+        assert_eq!(client_time("not a time"), "not a time");
+
+        let stored = Datetime::from(
+            DateTime::parse_from_rfc3339(CREATED)
+                .expect("valid time")
+                .with_timezone(&Utc),
+        );
+        assert_eq!(client_time(&stored.to_string()), client_time(CREATED));
+    }
+}
+
+#[cfg(test)]
 mod render_tests {
     use super::*;
     use crate::tabs::admin_console::client_interface::{
@@ -1103,6 +1375,7 @@ mod render_tests {
     use crate::tabs::admin_console::{relink_popup::RelinkClientPopup, rename_popup::RenameClientPopup};
     use crate::ui_tools::{headless_render::Headless, metrics::Density, theme_config::PresetStyles};
     use eframe::egui::vec2;
+    use super::tests::{side_panel, Fixture};
 
     fn save(h: &mut Headless, name: &str, f: impl FnMut(&mut Ui)) {
         let dir = std::env::var_os("MTECH_RENDER_DIR").expect("MTECH_RENDER_DIR");
@@ -1134,6 +1407,7 @@ mod render_tests {
             save(&mut h, &format!("{tag}_client_row"), |ui| {
                 AdminConsole::client_header(
                     ui,
+                    CLIENT_ROW_W,
                     action_tx.clone(),
                     &client,
                     HashMap::new(),
@@ -1146,12 +1420,31 @@ mod render_tests {
                     None,
                     None,
                     Some((TransportKind::Tcp, true)),
+                    None,
                 );
+                let content_w = CLIENT_ROW_W - row_frame(ui).total_margin().sum().x;
                 client_details_grid(
-                    ui, &action_tx, &client, "2026/10/12 @ 09:00AM", "(none)", true, None, None,
-                    Some(&[][..]),
+                    ui, content_w, &action_tx, &client, "2026/10/12 @ 09:00AM", "(none)", true,
+                    None, None, Some(&[][..]), Some("5.0.0+8d4bec94"),
                 );
             });
+
+            for (width, count) in [(400.0, 3), (500.0, 3), (400.0, 12)] {
+                let mut h = Headless::new(vec2(width, 640.0), 1.0);
+                h.theme(preset, Density::Regular);
+                let fixture = Fixture::new(count);
+                let groups = [
+                    (Some("RIV".to_string()), (0..count - 1).collect()),
+                    (Some("LTN".to_string()), vec![count - 1]),
+                ];
+                let mut prims = Vec::new();
+                for _ in 0..5 {
+                    prims = h.frame_root(Vec::new(), |ui| side_panel(ui, width, &fixture, &groups)).1;
+                }
+                let dir = std::env::var_os("MTECH_RENDER_DIR").expect("MTECH_RENDER_DIR");
+                let name = format!("{tag}_client_list_{width}_{count}.png");
+                h.image(&prims).save(std::path::PathBuf::from(dir).join(name)).expect("png");
+            }
 
             let mut h = Headless::new(vec2(900.0, 360.0), 1.0);
             h.theme(preset, Density::Regular);

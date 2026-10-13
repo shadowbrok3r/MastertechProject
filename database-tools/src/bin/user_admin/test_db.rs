@@ -6,6 +6,7 @@ use surrealdb::engine::local::{Db, Mem};
 
 const USER_SCHEMA: &str = include_str!("../../../../database/schema/user.surql");
 const TASK_SCHEMA: &str = include_str!("../../../../database/schema/task.surql");
+const TASK_HISTORY_SCHEMA: &str = include_str!("../../../../database/schema/task_history.surql");
 const AUDIT_LOG_SCHEMA: &str = include_str!("../../../../database/schema/audit_log.surql");
 const NOTIFICATION_SCHEMA: &str = include_str!("../../../../database/schema/notification.surql");
 const USER_ACCESS_LEGACY: &str = include_str!("../../../../database/access/user_legacy.surql");
@@ -31,7 +32,7 @@ pub async fn apply_legacy_access(db: &Surreal<Db>) {
         .expect("legacy access statement");
 }
 
-/// Root session on a fresh database with user.surql and task.surql applied.
+/// Root session on a fresh database with user.surql, task.surql and task_history.surql applied.
 pub async fn schema_db() -> Surreal<Db> {
     let db = Surreal::new::<Mem>(()).await.expect("in-memory SurrealDB");
     db.use_ns("test").use_db("test").await.expect("use ns/db");
@@ -39,6 +40,7 @@ pub async fn schema_db() -> Surreal<Db> {
     for (name, sql) in [
         ("user", overwrite(USER_SCHEMA)),
         ("task", overwrite(TASK_SCHEMA)),
+        ("task_history", overwrite(TASK_HISTORY_SCHEMA)),
     ] {
         db.query(sql)
             .await

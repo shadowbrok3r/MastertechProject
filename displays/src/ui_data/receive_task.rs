@@ -1,5 +1,18 @@
-use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, LiveTaskPayload, RecordIdExt, Status, Store, TaskHistory, TaskNotePayload}};
+use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, LiveTaskPayload, RecordIdExt, Status, Store, TaskNotePayload}};
 use crate::{app_state::SharedContext, get_current_user_from_auth, PlatformSpawner, Spawner};
+
+/// Local state a received live task update changes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LiveUpdateEffects {
+    pub description_edited: bool,
+}
+
+/// Effects of applying `new` over the cached `old` copy of a task.
+pub(crate) fn live_update_effects(old: Option<&LiveTaskPayload>, new: &LiveTaskPayload) -> LiveUpdateEffects {
+    LiveUpdateEffects {
+        description_edited: old.is_some_and(|old| old.task_description != new.task_description),
+    }
+}
 
 impl SharedContext {
     pub fn receive_task(&mut self) {
@@ -179,45 +192,17 @@ impl SharedContext {
                         self.tasks.push(new_task.1.clone().into());
                     }
                     
-                    // Create TaskHistory record if there were changes
-                    if let Some(old_task) = existing_task {
-                        let new_task_payload: LiveTaskPayload = new_task.1.clone().into();
-                        if old_task.has_changes_from(&new_task_payload) {
-                            let diff_json = old_task.diff_to_json(&new_task_payload);
-
-                            // The card's description indicator reads this map; the
-                            // scoped startup query only covers edits made before login.
-                            if diff_json.get("task_description").is_some() {
-                                let editor = get_current_user_from_auth()
-                                    .map(|u| u.get_username().to_string())
-                                    .unwrap_or_else(|| "System".to_string());
-                                self.description_changes.insert(
-                                    new_task_payload.id.clone(),
-                                    (chrono::Utc::now(), editor),
-                                );
-                            }
-
-                            // Get current user for history record
-                            let (user_id, username) = if let Some(user) = get_current_user_from_auth() {
-                                (user.get_id(), user.get_username().to_string())
-                            } else {
-                                (new_task_payload.assignee.clone(), "System".to_string())
-                            };
-                            
-                            let history = TaskHistory::new(
-                                new_task_payload.id.clone(),
-                                user_id,
-                                username,
-                                diff_json,
-                            );
-                            
-                            // Save history record asynchronously
-                            PlatformSpawner::spawn(async move {
-                                if let Err(e) = history.save().await {
-                                    log::error!("Error saving task history: {:?}", e);
-                                }
-                            });
-                        }
+                    // Feeds the card's description-edit indicator for edits after login.
+                    let new_task_payload = new_task.1.clone();
+                    let effects = live_update_effects(existing_task.as_ref(), &new_task_payload);
+                    if effects.description_edited {
+                        let editor = get_current_user_from_auth()
+                            .map(|u| u.get_username().to_string())
+                            .unwrap_or_else(|| "System".to_string());
+                        self.description_changes.insert(
+                            new_task_payload.id.clone(),
+                            (chrono::Utc::now(), editor),
+                        );
                     }
                 }
                 Err(e) => {
@@ -225,5 +210,46 @@ impl SharedContext {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use database::schema::RecordId;
+
+    #[test]
+    fn a_received_status_and_assignee_change_records_nothing() {
+        let old = LiveTaskPayload {
+            status: Status::CustomStatus("follow up".into()),
+            ..Default::default()
+        };
+        let new = LiveTaskPayload {
+            status: Status::CustomStatus("REPO".into()),
+            assignee: RecordId::new("user", "someone_else"),
+            ..old.clone()
+        };
+        assert_eq!(live_update_effects(Some(&old), &new), LiveUpdateEffects::default());
+    }
+
+    #[test]
+    fn a_received_description_edit_only_flags_the_indicator() {
+        let old = LiveTaskPayload::default();
+        let new = LiveTaskPayload {
+            task_description: "move all data".into(),
+            ..old.clone()
+        };
+        assert_eq!(
+            live_update_effects(Some(&old), &new),
+            LiveUpdateEffects { description_edited: true }
+        );
+    }
+
+    #[test]
+    fn an_uncached_task_has_no_effects() {
+        assert_eq!(
+            live_update_effects(None, &LiveTaskPayload::default()),
+            LiveUpdateEffects::default()
+        );
     }
 }

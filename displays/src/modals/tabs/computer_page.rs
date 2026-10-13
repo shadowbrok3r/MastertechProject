@@ -1,6 +1,7 @@
-use eframe::egui::{Grid, ScrollArea, Ui, Vec2, Vec2b};
+use eframe::egui::{Grid, Ui};
 use database::schema::{random_record_id, ComputerData, RecordIdExt, TicketData, COMPUTER_TABLE};
 
+use super::page_scroll;
 use crate::{
     ui_tools::{
         controls::{
@@ -88,16 +89,14 @@ pub fn display_computer_page(
     ui: &mut Ui,
     service_ticket: Option<&mut TicketData>,
     computer: Option<&mut ComputerData>,
-    avail_size: Vec2
 ) {
-    display_computer_page_with_search(ui, service_ticket, computer, avail_size, None, None);
+    display_computer_page_with_search(ui, service_ticket, computer, None, None);
 }
 
 pub fn display_computer_page_with_search(
     ui: &mut Ui,
     service_ticket: Option<&mut TicketData>,
     computer: Option<&mut ComputerData>,
-    avail_size: Vec2,
     search_data: Option<ComputerSearchData>,
     mut service_history_open: Option<&mut bool>,
 ) {
@@ -111,14 +110,8 @@ pub fn display_computer_page_with_search(
 
     let t = Tokens::get(ui.ctx());
     let m = Metrics::get(ui.ctx());
-    let col_w = avail_size.x / 2.14;
 
-    ScrollArea::vertical()
-        .max_height(f32::INFINITY)
-        .max_width(avail_size.x)
-        .auto_shrink(Vec2b::new(false, false))
-        .show(ui, |ui|
-    {
+    page_scroll(ui, "task_computer_page", |ui| {
         ui.vertical_centered(|ui| {
             // Computer search/selection section (if search data is provided)
             if let Some(search) = search_data {
@@ -128,7 +121,7 @@ pub fn display_computer_page_with_search(
                         .map(|c| computer_label(c))
                         .collect();
 
-                    glass_card::group(ui, |ui| {
+                    glass_card::row_card(ui, |ui| {
                         glass_card::card_header(ui, icons::p::DESKTOP_TOWER, "Customer's Computers", None);
 
                         let current = labels.iter().position(|l| *l == *search.search_query);
@@ -228,8 +221,9 @@ pub fn display_computer_page_with_search(
                     delete_computer_button(ui, computer);
                 }
             });
-            glass_card::group(ui, |ui| {
+            glass_card::row_card(ui, |ui| {
                 glass_card::card_header(ui, icons::p::CPU, "Hardware", None);
+                let col_w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
                 Grid::new(format!("{} grid", computer.cpu))
                 .max_col_width(col_w)
                 .min_col_width(col_w)
@@ -240,6 +234,7 @@ pub fn display_computer_page_with_search(
                         if TextButton::new(&computer.id.key_string())
                             .kind(ButtonKind::Ghost)
                             .icon(svg::CLOCK_COUNTER_CLOCKWISE)
+                            .max_width(col_w)
                             .show(ui)
                             .on_hover_text("View all services for this computer")
                             .clicked()
@@ -320,9 +315,9 @@ pub fn display_computer_page_with_search(
 
             ui.add_space(2.0 * m.gap.y);
 
-            glass_card::group(ui, |ui| {
+            glass_card::row_card(ui, |ui| {
                 glass_card::card_header(ui, icons::p::HARD_DRIVES, "Drives", None);
-                let drive_w = avail_size.x / 3.2 - 2.0;
+                let drive_w = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
                 Grid::new("group1").max_col_width(drive_w).min_col_width(drive_w).striped(true)
                 .show(ui, |ui| {
                     ui.colored_label(t.text_dim, "Letter");

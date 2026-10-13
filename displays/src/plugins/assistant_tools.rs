@@ -503,7 +503,9 @@ impl PluginToolProvider {
             );
         }
         let ids: Vec<RecordId> = moving.iter().map(|t| t.id.clone()).collect();
-        let moved = reassign_tasks(&ids, &to.id, filter.from.as_ref()).await.map_err(internal)?;
+        let moved = reassign_tasks(&ids, &to.id, filter.from.as_ref(), &actor.history_author())
+            .await
+            .map_err(internal)?;
         let tasks: Vec<Value> = moving
             .iter()
             .filter(|t| moved.contains(&t.id))
