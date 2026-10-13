@@ -202,8 +202,7 @@ pub struct ConnectedClient {
     #[serde(default)]
     #[surreal(default)]
     pub autopilot_opt_out: bool,
-    /// MasterTech build (`<semver>+<hash>`) the client last checked in with.
-    /// Absent on rows written by older builds.
+    /// MasterTech build (`<semver>+<hash>`) the client last checked in with; NONE on older builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_version: Option<String>,
 }
