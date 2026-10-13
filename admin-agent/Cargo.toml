@@ -1,6 +1,6 @@
 [package]
 name = "admin-agent"
-version = "4.8.12"
+version = "5.0.0"
 edition = "2024"
 
 [dependencies]
