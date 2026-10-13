@@ -10,3 +10,5 @@ DEFINE FIELD `diff`     ON task_history TYPE object                            P
 DEFINE FIELD task_id    ON task_history TYPE record<task>                      PERMISSIONS FULL;
 DEFINE FIELD user       ON task_history TYPE record<user> DEFAULT $auth.id     PERMISSIONS FULL;
 DEFINE FIELD username   ON task_history TYPE string DEFAULT $auth.username     PERMISSIONS FULL;
+
+DEFINE INDEX task_history_task ON task_history FIELDS task_id, created_at;

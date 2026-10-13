@@ -219,6 +219,37 @@ fn client_name(client: &ConnectedClient) -> &str {
         .unwrap_or(&client.connection_string)
 }
 
+/// Version cell text and tooltip: the row's recorded build, else the open session's, else "—".
+fn version_cell(
+    recorded: Option<&str>,
+    session: Option<&str>,
+    is_ws_connected: bool,
+) -> (String, String) {
+    match (recorded, session) {
+        (Some(rec), Some(live)) if rec != live => (
+            format!("v{rec}"),
+            format!("Recorded at the client's last check-in; the open session reports v{live}"),
+        ),
+        (Some(rec), _) => (
+            format!("v{rec}"),
+            "MasterTech build recorded at the client's last check-in".to_string(),
+        ),
+        (None, Some(live)) => (
+            format!("v{live}"),
+            "MasterTech build reported by the open session".to_string(),
+        ),
+        (None, None) if is_ws_connected => (
+            "—".to_string(),
+            "The open session has not reported a build".to_string(),
+        ),
+        (None, None) => (
+            "—".to_string(),
+            "Not recorded by the client's build; reported once an admin session is open"
+                .to_string(),
+        ),
+    }
+}
+
 /// Square icon button for a client row's secondary actions; `tip` names the action.
 fn row_icon_action(ui: &mut Ui, icon: Icon, color: Color32, tip: &str) -> bool {
     controls::IconButton::new(icon, IconBox::Md)
@@ -764,13 +795,8 @@ fn client_details_grid(
         .show(ui, |ui| {
             row(ui, "Connection", &client.connection_string, value_max_w);
             row(ui, "Last update", formatted_date, value_max_w);
-            let (version_text, version_tip) = match client_version {
-                Some(v) => (format!("v{v}"), "MasterTech build reported by the open session"),
-                None if is_ws_connected => {
-                    ("—".to_string(), "The open session has not reported a build")
-                }
-                None => ("—".to_string(), "Reported once an admin session to this client is open"),
-            };
+            let (version_text, version_tip) =
+                version_cell(client.client_version.as_deref(), client_version, is_ws_connected);
             icon_row(ui, "Version", svg::TAG, theme::weak_text(ui), &version_text, value_max_w)
                 .on_hover_text(version_tip);
             let (status_icon, status_tone, status_text) = if is_ws_connected {
@@ -1359,6 +1385,36 @@ pub(super) mod tests {
                 .with_timezone(&Utc),
         );
         assert_eq!(client_time(&stored.to_string()), client_time(CREATED));
+    }
+
+    #[test]
+    fn version_cell_prefers_the_recorded_build() {
+        let (text, tip) = version_cell(Some("5.0.1+aaaa"), Some("5.0.1+aaaa"), true);
+        assert_eq!(text, "v5.0.1+aaaa");
+        assert!(tip.contains("last check-in"));
+
+        let (text, tip) = version_cell(Some("5.0.1+aaaa"), None, false);
+        assert_eq!(text, "v5.0.1+aaaa");
+        assert!(tip.contains("last check-in"));
+
+        let (text, tip) = version_cell(Some("5.0.0+bbbb"), Some("5.0.1+aaaa"), true);
+        assert_eq!(text, "v5.0.0+bbbb");
+        assert!(tip.contains("v5.0.1+aaaa"));
+    }
+
+    #[test]
+    fn version_cell_falls_back_to_the_session_then_a_dash() {
+        let (text, tip) = version_cell(None, Some("5.0.0+bbbb"), true);
+        assert_eq!(text, "v5.0.0+bbbb");
+        assert!(tip.contains("open session"));
+
+        let (text, tip) = version_cell(None, None, true);
+        assert_eq!(text, "—");
+        assert!(tip.contains("has not reported"));
+
+        let (text, tip) = version_cell(None, None, false);
+        assert_eq!(text, "—");
+        assert!(tip.contains("Not recorded"));
     }
 }
 
