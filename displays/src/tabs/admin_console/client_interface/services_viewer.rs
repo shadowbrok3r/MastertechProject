@@ -1,7 +1,5 @@
-use eframe::egui::{
-    self, KeyboardShortcut, RichText, ScrollArea, TextEdit, Ui,
-    Widget, scroll_area,
-};
+use crate::ui_tools::metrics::Metrics;
+use eframe::egui::{self, KeyboardShortcut, RichText, ScrollArea, Ui, Widget, scroll_area};
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
     viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext, CustomActionContext, CustomActionEditor},
@@ -10,7 +8,8 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, ServiceActionType, WindowsService};
-use crate::ui_tools::icons;
+use crate::ui_tools::controls::{self, BarKind, Role};
+use crate::ui_tools::icons::{self, svg};
 use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 5;
@@ -174,13 +173,21 @@ impl ServicesViewer {
 
         // Confirmation dialog
         if let Some((msg, pending_action)) = self.confirm_action.clone() {
-            egui::Window::new("Confirm Action")
+            controls::icon_window(ui.ctx(), svg::WARNING, "Confirm Action")
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
-                    ui.label(&msg);
                     ui.horizontal(|ui| {
-                        if ui.button("Yes").clicked() {
+                        svg::WARNING.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::warn(ui));
+                        ui.label(&msg);
+                    });
+                    ui.add_space(8.);
+                    controls::bar(ui, BarKind::Footer, |ui| {
+                        let clicked = controls::dialog_buttons(
+                            ui,
+                            &[(Role::Danger, "Yes"), (Role::Cancel, "Cancel")],
+                        );
+                        if clicked == Some(0) {
                             match &pending_action {
                                 ServiceViewerAction::Stop(name) => {
                                     let _ = cmd_tx.try_send(Cmd::ControlService {
@@ -198,48 +205,50 @@ impl ServicesViewer {
                             }
                             self.confirm_action = None;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if clicked == Some(1) {
                             self.confirm_action = None;
                         }
                     });
                 });
         }
 
-        // Toolbar
-        ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+        controls::bar(ui, BarKind::Tool, |ui| {
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                 self.loading = true;
                 self.table.clear();
                 self.entries.clear();
                 let _ = cmd_tx.try_send(Cmd::ListServices);
             }
 
-            ui.label("Filter:");
-            TextEdit::singleline(&mut self.viewer.filter)
-                .hint_text("Search services...")
-                .desired_width(200.)
-                .show(ui);
+            controls::search_field(ui, &mut self.viewer.filter, "Search services...", 200.);
 
-            ui.checkbox(&mut self.viewer.running_only, "Running only");
+            controls::toggle(ui, &mut self.viewer.running_only, "Running only");
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { theme::success(ui) } else { theme::error(ui) };
-                ui.colored_label(color, msg);
+                let (icon, color) = if *success {
+                    (svg::CHECK_CIRCLE, theme::success(ui))
+                } else {
+                    (svg::WARNING_CIRCLE, theme::error(ui))
+                };
+                controls::note(ui, icon, msg.as_str(), color);
             }
         });
 
         ui.add_space(4.);
 
         if self.loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading services...");
-            });
+            controls::loading_state(ui, "Loading services...");
             return;
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No services loaded. Click Refresh to fetch.").italics().color(theme::weak_text(ui)));
+            controls::empty_state(
+                ui,
+                svg::GEAR_SIX,
+                "No services loaded",
+                "Click Refresh to fetch.",
+                &[],
+            );
             return;
         }
 
@@ -296,14 +305,17 @@ impl RowViewer<WindowsService> for ServiceRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.status.as_str() {
-                    "Running" => (icons::PLAY, theme::success(ui)),
-                    "Stopped" => (icons::STOP, theme::error(ui)),
-                    "Paused" => (icons::PAUSE, theme::warn(ui)),
-                    "StartPending" => (icons::STATUS_WAIT, theme::warn(ui)),
-                    "StopPending" => (icons::STATUS_WAIT, theme::warn(ui)),
-                    _ => (icons::STATUS_DOT, theme::weak_text(ui)),
+                    "Running" => (svg::PLAY, theme::success(ui)),
+                    "Stopped" => (svg::STOP, theme::error(ui)),
+                    "Paused" => (svg::PAUSE, theme::warn(ui)),
+                    "StartPending" => (svg::HOURGLASS_SIMPLE, theme::warn(ui)),
+                    "StopPending" => (svg::HOURGLASS_SIMPLE, theme::warn(ui)),
+                    _ => (svg::DOT, theme::weak_text(ui)),
                 };
-                ui.label(RichText::new(format!("{} {}", icon, row.status)).color(color));
+                ui.horizontal(|ui| {
+                    icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+                    ui.label(RichText::new(&row.status).color(color));
+                });
             }
             1 => {
                 ui.label(RichText::new(&row.name).color(theme::text(ui)));
@@ -404,8 +416,8 @@ impl RowViewer<WindowsService> for ServiceRowViewer {
         items.push(CustomMenuItem::new("start", "Start").icon(icons::PLAY).enabled(has_selection && is_stopped));
         items.push(CustomMenuItem::new("stop", "Stop").icon(icons::STOP).enabled(has_selection && is_running));
         items.push(CustomMenuItem::new("restart", "Restart").icon(icons::REFRESH).enabled(has_selection && is_running));
-        items.push(CustomMenuItem::new("set_auto", "Set Automatic").icon("A").enabled(has_selection));
-        items.push(CustomMenuItem::new("set_manual", "Set Manual").icon("M").enabled(has_selection));
+        items.push(CustomMenuItem::new("set_auto", "Set Automatic").icon(svg::PLAY_CIRCLE.glyph()).enabled(has_selection));
+        items.push(CustomMenuItem::new("set_manual", "Set Manual").icon(svg::HAND.glyph()).enabled(has_selection));
         items.push(CustomMenuItem::new("set_disabled", "Set Disabled").icon(icons::STATUS_OFF).enabled(has_selection));
         items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items

@@ -17,11 +17,16 @@ use std::collections::VecDeque;
 
 use eframe::egui::{self, Color32, RichText};
 use egui_plot::{Line, Plot, PlotPoints};
+use mtech_ui::controls::{self, Icon, Metrics, Tokens};
+use mtech_ui::icons::svg;
+use mtech_ui::theme;
 use stress_kit::telemetry::TelemetrySnapshot;
 use web_time::Instant;
 
 const HISTORY_SECS: f64 = 120.0;
 const MAX_SAMPLES: usize = 2048;
+/// Height of one chart's plot area.
+const PLOT_H: f32 = 130.0;
 
 #[derive(Default)]
 pub struct ChartBoard {
@@ -105,110 +110,123 @@ impl ChartBoard {
     /// Render the chart grid directly on `ui`. The caller supplies any
     /// scroll area (the stress panel wraps temps + charts in one).
     pub fn show(&mut self, ui: &mut egui::Ui) {
-            ui.add_space(4.0);
-            ui.columns(2, |cols| {
-                self.avg_cpu_pct.show(
-                    &mut cols[0],
-                    "avg_cpu",
-                    "Avg CPU %",
-                    "%",
-                    Color32::from_rgb(120, 200, 255),
-                    Some((0.0, 100.0)),
-                );
-                self.peak_cpu_pct.show(
-                    &mut cols[1],
-                    "peak_cpu",
-                    "Peak CPU %",
-                    "%",
-                    Color32::from_rgb(220, 100, 100),
-                    Some((0.0, 100.0)),
-                );
-            });
-            ui.add_space(6.0);
-            ui.columns(2, |cols| {
-                self.cpu_temp_c.show(
-                    &mut cols[0],
-                    "cpu_temp",
-                    "CPU temp",
-                    "°C",
-                    Color32::from_rgb(230, 140, 90),
-                    Some((20.0, 100.0)),
-                );
-                self.gpu_temp_c.show(
-                    &mut cols[1],
-                    "gpu_temp",
-                    "GPU temp",
-                    "°C",
-                    Color32::from_rgb(230, 180, 90),
-                    Some((20.0, 100.0)),
-                );
-            });
-            ui.add_space(6.0);
-            ui.columns(2, |cols| {
-                self.avg_freq_mhz.show(
-                    &mut cols[0],
-                    "avg_mhz",
-                    "Avg core clock",
-                    "MHz",
-                    Color32::from_rgb(170, 230, 140),
-                    None,
-                );
-                self.ram_used_pct.show(
-                    &mut cols[1],
-                    "ram_pct",
-                    "RAM used",
-                    "%",
-                    Color32::from_rgb(220, 170, 90),
-                    Some((0.0, 100.0)),
-                );
-            });
-            ui.add_space(6.0);
-            ui.columns(2, |cols| {
-                self.page_file_used_pct.show(
-                    &mut cols[0],
-                    "pf_pct",
-                    "Page file used",
-                    "%",
-                    Color32::from_rgb(200, 120, 220),
-                    Some((0.0, 100.0)),
-                );
-                self.top_disk_mb_s.show(
-                    &mut cols[1],
-                    "top_disk",
-                    "Top disk throughput",
-                    "MB/s",
-                    Color32::from_rgb(140, 200, 200),
-                    None,
-                );
-            });
-            ui.add_space(6.0);
-            ui.columns(2, |cols| {
-                self.top_net_mbps.show(
-                    &mut cols[0],
-                    "top_net",
-                    "Top adapter throughput",
-                    "Mbps",
-                    Color32::from_rgb(200, 200, 130),
-                    None,
-                );
-                self.process_count.show(
-                    &mut cols[1],
-                    "proc_count",
-                    "Tracked processes",
-                    "count",
-                    Color32::from_rgb(180, 180, 220),
-                    None,
-                );
-            });
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(
-                    "Raw samples, linear segments — no spline interpolation. \
-                     History capped at 120 s; older points are dropped.",
-                )
-                .small()
-                .weak(),
+        let m = Metrics::get(ui.ctx());
+        ui.add_space(m.pad.y);
+        ui.columns(2, |cols| {
+            self.avg_cpu_pct.show(
+                &mut cols[0],
+                "avg_cpu",
+                svg::CPU,
+                "Avg CPU %",
+                "%",
+                Color32::from_rgb(120, 200, 255),
+                Some((0.0, 100.0)),
             );
+            self.peak_cpu_pct.show(
+                &mut cols[1],
+                "peak_cpu",
+                svg::CHART_LINE_UP,
+                "Peak CPU %",
+                "%",
+                Color32::from_rgb(220, 100, 100),
+                Some((0.0, 100.0)),
+            );
+        });
+        ui.add_space(m.gap.y);
+        ui.columns(2, |cols| {
+            self.cpu_temp_c.show(
+                &mut cols[0],
+                "cpu_temp",
+                svg::THERMOMETER,
+                "CPU temp",
+                "°C",
+                Color32::from_rgb(230, 140, 90),
+                Some((20.0, 100.0)),
+            );
+            self.gpu_temp_c.show(
+                &mut cols[1],
+                "gpu_temp",
+                svg::GRAPHICS_CARD,
+                "GPU temp",
+                "°C",
+                Color32::from_rgb(230, 180, 90),
+                Some((20.0, 100.0)),
+            );
+        });
+        ui.add_space(m.gap.y);
+        ui.columns(2, |cols| {
+            self.avg_freq_mhz.show(
+                &mut cols[0],
+                "avg_mhz",
+                svg::SPEEDOMETER,
+                "Avg core clock",
+                "MHz",
+                Color32::from_rgb(170, 230, 140),
+                None,
+            );
+            self.ram_used_pct.show(
+                &mut cols[1],
+                "ram_pct",
+                svg::MEMORY,
+                "RAM used",
+                "%",
+                Color32::from_rgb(220, 170, 90),
+                Some((0.0, 100.0)),
+            );
+        });
+        ui.add_space(m.gap.y);
+        ui.columns(2, |cols| {
+            self.page_file_used_pct.show(
+                &mut cols[0],
+                "pf_pct",
+                svg::SWAP,
+                "Page file used",
+                "%",
+                Color32::from_rgb(200, 120, 220),
+                Some((0.0, 100.0)),
+            );
+            self.top_disk_mb_s.show(
+                &mut cols[1],
+                "top_disk",
+                svg::HARD_DRIVE,
+                "Top disk throughput",
+                "MB/s",
+                Color32::from_rgb(140, 200, 200),
+                None,
+            );
+        });
+        ui.add_space(m.gap.y);
+        ui.columns(2, |cols| {
+            self.top_net_mbps.show(
+                &mut cols[0],
+                "top_net",
+                svg::NETWORK,
+                "Top adapter throughput",
+                "Mbps",
+                Color32::from_rgb(200, 200, 130),
+                None,
+            );
+            self.process_count.show(
+                &mut cols[1],
+                "proc_count",
+                svg::LIST_BULLETS,
+                "Tracked processes",
+                "count",
+                Color32::from_rgb(180, 180, 220),
+                None,
+            );
+        });
+        ui.add_space(m.gap.y);
+        let weak = theme::weak_text(ui);
+        controls::IconLabel::new(
+            svg::INFO,
+            "Raw samples, linear segments — no spline interpolation. \
+                 History capped at 120 s; older points are dropped.",
+        )
+        .tone(weak)
+        .small(true)
+        .selectable(true)
+        .show(ui);
     }
 }
 
@@ -236,42 +254,35 @@ impl LineChart {
         self.samples.push_back((t, y));
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn show(
         &self,
         ui: &mut egui::Ui,
         id: &str,
+        icon: Icon,
         title: &str,
         unit: &str,
         color: Color32,
         y_range: Option<(f64, f64)>,
     ) {
+        let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
         ui.vertical(|ui| {
-            let latest = self
-                .samples
-                .back()
-                .map(|(_, y)| *y)
-                .unwrap_or(0.0);
+            let latest = self.samples.back().map(|(_, y)| *y).unwrap_or(0.0);
             ui.horizontal(|ui| {
+                icon.show_tinted(ui, m.icon_sm, t.icon);
                 ui.label(RichText::new(title).strong());
-                ui.with_layout(
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        ui.colored_label(
-                            color,
-                            RichText::new(format!("{latest:.1} {unit}")).monospace(),
-                        );
-                    },
-                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.colored_label(
+                        color,
+                        RichText::new(format!("{latest:.1} {unit}")).monospace(),
+                    );
+                });
             });
 
-            let points: PlotPoints = self
-                .samples
-                .iter()
-                .map(|(t, y)| [*t, *y])
-                .collect();
+            let points: PlotPoints = self.samples.iter().map(|(t, y)| [*t, *y]).collect();
 
             let mut plot = Plot::new(id)
-                .height(130.0)
+                .height(PLOT_H)
                 .allow_drag(false)
                 .allow_zoom(false)
                 .allow_scroll(false)

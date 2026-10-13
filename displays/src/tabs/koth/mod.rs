@@ -1,6 +1,9 @@
 use database::schema::{helper_traits::EmployeeHelper, prestashop::{generate_orders_report, get_order_payments, Employee, Order, OrderPayment, OrderState, PayPeriod, OrderType}, Store, User};
-use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, Ui, Widget, scroll_area};
+use eframe::egui::{CentralPanel, Color32, Frame, Ui, Widget, scroll_area};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
+use crate::ui_tools::controls::{self, BarKind, IconLabel, Metrics};
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::{glass_card, theme};
 use egui_data_table::{DataTable, Renderer};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{HashMap, HashSet};
@@ -45,7 +48,7 @@ pub struct Koth {
     all_viewer: AllEmployeesRowViewer,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq)]
 enum KothSelection {
     #[default]
     Me,
@@ -53,7 +56,7 @@ enum KothSelection {
 }
 
 impl KothSelection {
-    fn as_str(&self) -> &str {
+    fn as_str(&self) -> &'static str {
         match self {
             KothSelection::Me => "Me",
             KothSelection::AllEmployees => "All Employees",
@@ -95,21 +98,26 @@ impl Default for Koth {
     }
 }
 
+/// A summary figure: an icon and the text, both in `color`.
+fn stat(ui: &mut Ui, icon: Icon, text: &str, color: Color32) {
+    IconLabel::new(icon, text).tone(color).show(ui);
+}
+
 impl Koth {
     pub fn ui(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
         eframe::egui::Panel::top("KothTopPanel")
+        .frame(Frame::NONE)
+        .exact_size(m.bar_h)
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            controls::bar(ui, BarKind::Tool, |ui| {
                 // Search box should drive the active table's viewer
                 let filter_ref = match self.koth_selection {
                     KothSelection::Me => &mut self.koth_viewer.filter,
                     KothSelection::AllEmployees => &mut self.all_viewer.filter,
                 };
 
-                TextEdit::singleline(filter_ref)
-                    .desired_width(150.)
-                    .hint_text(" Search")
-                    .ui(ui);
+                controls::search_field(ui, filter_ref, "Search", 180.);
 
                 let all_employees = match self.koth_selection {
                     KothSelection::Me => false,
@@ -118,99 +126,36 @@ impl Koth {
 
                 if !all_employees {
                     // generate_orders_report
-                    ComboBox::new("Koth OrderState", "")
-                    .selected_text(self.order_state.as_str())
-                    .show_ui(ui, |ui| {
-                        let selected = &mut self.order_state;
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::AcceptedByOdoo,
-                            OrderState::AcceptedByOdoo.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::Shipped,
-                            OrderState::Shipped.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::DeliveredToStore,
-                            OrderState::DeliveredToStore.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::DoneShelf,
-                            OrderState::DoneShelf.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::OrderPlaced,
-                            OrderState::OrderPlaced.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::PrePulled,
-                            OrderState::PrePulled.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::ReadyToBuild,
-                            OrderState::ReadyToBuild.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::QcAndBurnin,
-                            OrderState::QcAndBurnin.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::ShipToStore,
-                            OrderState::ShipToStore.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            OrderState::Returned,
-                            OrderState::Returned.as_str()
-                        );
-                    });
+                    let states = [
+                        OrderState::AcceptedByOdoo,
+                        OrderState::Shipped,
+                        OrderState::DeliveredToStore,
+                        OrderState::DoneShelf,
+                        OrderState::OrderPlaced,
+                        OrderState::PrePulled,
+                        OrderState::ReadyToBuild,
+                        OrderState::QcAndBurnin,
+                        OrderState::ShipToStore,
+                        OrderState::Returned,
+                    ];
+                    let options: Vec<(OrderState, &str)> =
+                        states.iter().map(|s| (s.clone(), s.as_str())).collect();
+                    controls::dropdown(ui, "Koth OrderState", &mut self.order_state, &options, 160.);
                 }
 
-                ui.label("Pay Period -> ");
-                ui.add_space(5.);
-                ComboBox::new("Koth PayPeriod", "")
-                    .selected_text(self.pay_period.as_str())
-                    .show_ui(ui, |ui| {
-                        let selected = &mut self.pay_period;
-                        ui.selectable_value(
-                            selected, 
-                            PayPeriod::Current,
-                            PayPeriod::Current.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            PayPeriod::Last,
-                            PayPeriod::Last.as_str()
-                        );
-                    });
+                controls::icon_label(ui, svg::CALENDAR_DOTS, "Pay Period");
+                let periods = [PayPeriod::Current, PayPeriod::Last];
+                let options: Vec<(PayPeriod, &str)> =
+                    periods.iter().map(|p| (p.clone(), p.as_str())).collect();
+                controls::dropdown(ui, "Koth PayPeriod", &mut self.pay_period, &options, 120.);
 
-                ComboBox::new("Koth Selection", "")
-                    .selected_text(self.koth_selection.as_str())
-                    .show_ui(ui, |ui| {
-                        let selected = &mut self.koth_selection;
-                        ui.selectable_value(
-                            selected, 
-                            KothSelection::Me,
-                            KothSelection::Me.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            KothSelection::AllEmployees,
-                            KothSelection::AllEmployees.as_str()
-                        );
-                    });
+                let selections = [KothSelection::Me, KothSelection::AllEmployees]
+                    .map(|s| (s, s.as_str()));
+                controls::dropdown(ui, "Koth Selection", &mut self.koth_selection, &selections, 140.);
 
                 if !all_employees {
-                    if Button::new(format!("Pull Orders in '{}'", self.order_state.as_str())).ui(ui).clicked() {
+                    let pull_label = format!("Pull Orders in '{}'", self.order_state.as_str());
+                    if controls::icon_text_button(ui, svg::DOWNLOAD_SIMPLE, &pull_label).clicked() {
                         self.pulling_all_orders = false;
                         self.total = 0.0;
                         self.total_w_tax = 0.0;
@@ -248,7 +193,7 @@ impl Koth {
                     }
                 }
 
-                if Button::new("Pull ALL orders").ui(ui).clicked() {
+                if controls::icon_text_button(ui, svg::CLOUD_ARROW_DOWN, "Pull ALL orders").clicked() {
                     self.pulling_all_orders = true;
                     self.total = 0.0;
                     self.total_w_tax = 0.0;
@@ -379,27 +324,26 @@ impl Koth {
                     
                     // Count my actual orders, not entries in the map
                     let total_orders = self.orders.get(&my_emp_id).map(|v| v.len()).unwrap_or(0);
-                    ui[0].label(format!("Sales: {total_sales} / Orders: {total_orders}"));
-                    ui[1].label(format!("Laptops: {total_laptops} / Desktops: {total_desktops}"));
+                    let (text, error, warn) = (theme::text(&ui[0]), theme::error(&ui[0]), theme::warn(&ui[0]));
+                    stat(&mut ui[0], svg::CHART_BAR, &format!("Sales: {total_sales} / Orders: {total_orders}"), text);
+                    stat(&mut ui[1], svg::LAPTOP, &format!("Laptops: {total_laptops} / Desktops: {total_desktops}"), text);
                     ui[2].label("");
                     ui[3].label("");
-                    ui[4].colored_label(ui[4].style().visuals.error_fg_color, format!("Finance ratio: {ar_financing_ratio:.2}%"));
-                    ui[5].colored_label(ui[5].style().visuals.error_fg_color, format!("WTY's: {} out of {total_sales} sales", {
-                        // recompute warranties
-                        my_orders.iter().filter(|order| {
-                            order.associations.order_rows.iter().any(|o| o.product_reference.to_lowercase().starts_with("wty/") && !o.product_price.starts_with("0.0"))
-                        }).count()
-                    }));
-                    ui[6].colored_label(ui[6].style().visuals.warn_fg_color, format!("Total W/Tax: $ {:.2}", self.total_w_tax));
-                    ui[7].colored_label(ui[7].style().visuals.warn_fg_color, format!("REVENUE: $ {:.2}", self.total));
-                    ui[8].label(format!("Spiffs: $ {:.2}", self.total_spiffs));
+                    stat(&mut ui[4], svg::CREDIT_CARD, &format!("Finance ratio: {ar_financing_ratio:.2}%"), error);
+                    let warranties = my_orders.iter().filter(|order| {
+                        order.associations.order_rows.iter().any(|o| o.product_reference.to_lowercase().starts_with("wty/") && !o.product_price.starts_with("0.0"))
+                    }).count();
+                    stat(&mut ui[5], svg::SHIELD_CHECK, &format!("WTY's: {warranties} out of {total_sales} sales"), error);
+                    stat(&mut ui[6], svg::RECEIPT, &format!("Total W/Tax: $ {:.2}", self.total_w_tax), warn);
+                    stat(&mut ui[7], svg::CURRENCY_DOLLAR, &format!("REVENUE: $ {:.2}", self.total), warn);
+                    stat(&mut ui[8], svg::COINS, &format!("Spiffs: $ {:.2}", self.total_spiffs), text);
                 });
             });
         }
 
         CentralPanel::default()
         .show(ui, |ui| {
-            ui.group(|ui| {
+            glass_card::group(ui, |ui| {
                 match self.koth_selection {
                     KothSelection::Me => {
                         // Keep the date column label in sync with selection

@@ -10,17 +10,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use eframe::egui;
-use egui_phosphor::regular as p;
+use mtech_ui::controls::{self, BarKind, ButtonKind, Metrics, ModalWidth, Role, TextButton};
+use mtech_ui::icons::svg;
 use mtech_ui::stress_dashboard::{
     DashboardAction, LaneView, StageProgress, StageVerdictView, StressDashboard, StressLive,
     VerdictView,
 };
+use mtech_ui::theme;
 use stress_kit::telemetry::{TelemetrySnapshot, ThermalReading};
+use stress_runner::RecordId;
 use stress_runner::{
     RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, Stressor, TelemetryAgent,
     TestTool,
 };
-use stress_runner::RecordId;
 
 use crate::charts::ChartBoard;
 
@@ -211,7 +213,11 @@ impl StressPanel {
                 self.stage_verdicts.clear();
                 self.concurrent_lanes.clear();
             }
-            RunUpdate::StageStarted { index, label, stage_count } => {
+            RunUpdate::StageStarted {
+                index,
+                label,
+                stage_count,
+            } => {
                 let elapsed = self.latest.as_ref().map_or(0.0, |m| m.elapsed_secs);
                 self.scenario_state = ScenarioState {
                     current_stage_index: index,
@@ -371,7 +377,9 @@ impl StressPanel {
         };
         let mut spec = RunSpec::single_stresskit(computer, stressor, None);
         spec.plan = plan;
-        spec.tool = TestTool::StressKit { stressor: cfg.stressor.to_db() };
+        spec.tool = TestTool::StressKit {
+            stressor: cfg.stressor.to_db(),
+        };
         spec.preset_label = Some(format!("qc-app:single:{}", cfg.stressor.label()));
         self.apply_order_context(&mut spec);
         self.last_preset = spec.preset_label.clone();
@@ -446,7 +454,10 @@ impl StressPanel {
             .collect();
         // Seed off Combined so the run's target_kind is System (whole-system).
         let mut spec = RunSpec::single_stresskit(computer, Stressor::Combined, None);
-        spec.plan = RunPlan::Concurrent { lanes, duration_secs: duration };
+        spec.plan = RunPlan::Concurrent {
+            lanes,
+            duration_secs: duration,
+        };
         spec.tool = TestTool::StressKitScenario {
             name: Some("qc-app:concurrent".to_string()),
         };
@@ -547,9 +558,12 @@ impl StressPanel {
         telemetry: Arc<TelemetryAgent>,
         computer: RecordId,
     ) {
-        if let Err(err) =
-            self.start_certification_by_name(&cfg.preset_name, cfg.duration_multiplier, telemetry, computer)
-        {
+        if let Err(err) = self.start_certification_by_name(
+            &cfg.preset_name,
+            cfg.duration_multiplier,
+            telemetry,
+            computer,
+        ) {
             self.cert_error = Some(err);
         }
     }
@@ -572,7 +586,13 @@ impl StressPanel {
         let snapshot = telemetry.snapshot();
         let mut spec = if snapshot.memory.total_mb > 0 {
             let gpu_vram_mb = snapshot.gpus.iter().filter_map(|g| g.memory_total_mb).max();
-            stress_runner::cert_spec(&preset, computer, snapshot.memory.total_mb, gpu_vram_mb, mult)
+            stress_runner::cert_spec(
+                &preset,
+                computer,
+                snapshot.memory.total_mb,
+                gpu_vram_mb,
+                mult,
+            )
         } else {
             stress_runner::cert_spec_detected(&preset, computer, mult)
         };
@@ -601,7 +621,10 @@ impl StressPanel {
             let ok = if url.is_empty() {
                 false
             } else {
-                match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
+                match reqwest::Client::builder()
+                    .timeout(Duration::from_secs(3))
+                    .build()
+                {
                     Ok(c) => c.get(&url).send().await.is_ok(),
                     Err(_) => false,
                 }
@@ -633,8 +656,12 @@ impl StressPanel {
         match cfg.mode {
             PanelMode::Single => self.start_single(&cfg.single, telemetry, computer),
             PanelMode::Scenario => self.start_scenario(&cfg.scenario, telemetry, computer),
-            PanelMode::QcBenchmark => self.start_qc_benchmark(&cfg.qc_benchmark, telemetry, computer),
-            PanelMode::Certification => self.start_certification(&cfg.certification, telemetry, computer),
+            PanelMode::QcBenchmark => {
+                self.start_qc_benchmark(&cfg.qc_benchmark, telemetry, computer)
+            }
+            PanelMode::Certification => {
+                self.start_certification(&cfg.certification, telemetry, computer)
+            }
             PanelMode::Concurrent => self.start_concurrent(&cfg.concurrent, telemetry, computer),
         }
     }
@@ -666,26 +693,22 @@ impl StressPanel {
             return;
         }
         let ctx = ui.ctx().clone();
-        let mut decision: Option<u8> = None;
-        egui::Window::new("Not connected")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(&ctx, |ui| {
+        let outcome = controls::modal(
+            &ctx,
+            egui::Id::new("stress_conn_gate"),
+            svg::WIFI_SLASH,
+            "Not connected",
+            ModalWidth::Regular,
+            &[
+                (Role::Primary, "Connect to Wi-Fi"),
+                (Role::Secondary, "Continue offline (save to disk)"),
+                (Role::Cancel, "Cancel"),
+            ],
+            |ui| {
                 ui.label("The orchestrator/database is unreachable. Results can't be uploaded right now.");
-                ui.horizontal(|ui| {
-                    if ui.button("Connect to Wi-Fi").clicked() {
-                        decision = Some(0);
-                    }
-                    if ui.button("Continue offline (save to disk)").clicked() {
-                        decision = Some(1);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        decision = Some(2);
-                    }
-                });
-            });
-        match decision {
+            },
+        );
+        match outcome.clicked {
             Some(0) => {
                 let _ = crate::provisioning::osconfig::open_wifi_settings();
                 self.conn_prompt = false;
@@ -717,7 +740,10 @@ impl StressPanel {
             peak_usage_pct: 0.0,
             peak_temp_c: verdict.summary.max_temp_c,
             passed: Some(matches!(verdict.result, stress_runner::RunResult::Pass)),
-            notes: Some(format!("offline-queued; mode={}", verdict.failure_mode_label())),
+            notes: Some(format!(
+                "offline-queued; mode={}",
+                verdict.failure_mode_label()
+            )),
         };
         let mut report = crate::telemetry::QcReport::new(
             crate::reporting::machine_id(),
@@ -753,15 +779,16 @@ impl StressPanel {
     ) {
         let running = self.is_running();
 
-        egui::Panel::top("stress_panel_top").show_inside(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(!running, |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(format!("{}  Combined Torture", p::CPU))
-                                .fill(egui::Color32::from_rgb(150, 70, 160)),
-                        )
+        egui::Panel::top("stress_panel_top")
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                let m = Metrics::get(ui.ctx());
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    if TextButton::new("Combined Torture")
+                        .icon(svg::FIRE)
+                        .kind(ButtonKind::Primary)
+                        .enabled(!running)
+                        .show(ui)
                         .on_hover_text("Run CPU + RAM + GPU stressors at the same time")
                         .clicked()
                     {
@@ -769,23 +796,29 @@ impl StressPanel {
                         cfg.single.stressor = StressorChoice::Combined;
                         self.start_requested = true;
                     }
+                    controls::vline(ui, m.control_h);
+                    if controls::icon_text_button(ui, svg::GAUGE, "Hardware Monitor").clicked() {
+                        *open_hw_monitor = true;
+                    }
+                    if controls::pill(ui, svg::CHART_LINE, "Telemetry", self.temps_open)
+                        .on_hover_text("Show device temperatures and live charts")
+                        .clicked()
+                    {
+                        self.temps_open = !self.temps_open;
+                    }
+                    if let Some(id) = &self.last_run_id {
+                        let weak = theme::weak_text(ui);
+                        controls::IconLabel::new(
+                            svg::HASH,
+                            &format!("run: {}", id.key_string_pretty()),
+                        )
+                        .tone(weak)
+                        .small(true)
+                        .selectable(true)
+                        .show(ui);
+                    }
                 });
-                ui.separator();
-                if ui.button("Hardware Monitor").clicked() {
-                    *open_hw_monitor = true;
-                }
-                ui.toggle_value(&mut self.temps_open, "Telemetry");
-                if let Some(id) = &self.last_run_id {
-                    ui.label(
-                        egui::RichText::new(format!("run: {}", id.key_string_pretty()))
-                            .weak()
-                            .small()
-                            .monospace(),
-                    );
-                }
             });
-            ui.add_space(4.0);
-        });
 
         egui::Panel::right("stress_panel_side")
             .resizable(true)
@@ -794,17 +827,14 @@ impl StressPanel {
                 self.ui_side_panel(ui);
             });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let live = self.build_live();
             let charts = &mut self.charts;
-            let action = self.dashboard.show(
-                ui,
-                cfg,
-                &live,
-                running,
-                self.cert_error.as_deref(),
-                |ui| charts.show(ui),
-            );
+            let action =
+                self.dashboard
+                    .show(ui, cfg, &live, running, self.cert_error.as_deref(), |ui| {
+                        charts.show(ui)
+                    });
             match action {
                 DashboardAction::Start => self.start_requested = true,
                 DashboardAction::Stop => self.stop(),
@@ -832,16 +862,19 @@ impl StressPanel {
     /// Collapsible right panel: live device temps + telemetry charts, stacked
     /// in one scroll area.
     fn ui_side_panel(&mut self, ui: &mut egui::Ui) {
+        let m = Metrics::get(ui.ctx());
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new("Temperatures").strong());
-            ui.separator();
+            ui.add_space(m.pad.y);
+            controls::subheading(ui, svg::THERMOMETER, "Temperatures");
+            controls::hairline(ui);
             if self.latest_thermals.is_empty() && self.latest_gpu_temps.is_empty() {
-                ui.add_space(2.0);
-                ui.colored_label(
-                    egui::Color32::GRAY,
-                    "No sensors yet. CPU/board temps need a kernel-mode sensor backend and an \
+                controls::empty_state(
+                    ui,
+                    svg::THERMOMETER_COLD,
+                    "No sensors yet",
+                    "CPU/board temps need a kernel-mode sensor backend and an \
                      elevated run. NVMe/SATA need no driver. See the Logs tab.",
+                    &[],
                 );
             } else {
                 for t in &self.latest_thermals {
@@ -851,9 +884,9 @@ impl StressPanel {
                     Self::temp_row(ui, name, *t);
                 }
             }
-            ui.add_space(10.0);
-            ui.label(egui::RichText::new("Live charts").strong());
-            ui.separator();
+            ui.add_space(m.gap.x);
+            controls::subheading(ui, svg::CHART_LINE, "Live charts");
+            controls::hairline(ui);
             self.charts.show(ui);
         });
     }
@@ -863,8 +896,9 @@ impl StressPanel {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(label).small());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let tone = theme::temp_level(ui, temp_c);
                 ui.colored_label(
-                    crate::hw_monitor::temp_color(temp_c),
+                    tone,
                     egui::RichText::new(format!("{temp_c:.1} °C")).monospace(),
                 );
             });

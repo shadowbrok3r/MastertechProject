@@ -1,8 +1,9 @@
 use crate::mcp_tool_log::{self, McpToolCallLog, McpToolCallStatus};
-use crate::ui_tools::framed_controls::FramedSelectable;
-use crate::ui_tools::icons;
+use crate::ui_tools::controls::{self, BarKind, IconBox, IconButton, Metrics, SpinnerSize, TextButton};
+use crate::ui_tools::glass_card;
+use crate::ui_tools::icons::svg;
 use crate::{PlatformSpawner, Spawner};
-use eframe::egui::{Align, Button, Color32, Layout, RichText, ScrollArea, TextEdit, Ui, Widget};
+use eframe::egui::{Align, Color32, Layout, RichText, ScrollArea, Ui};
 use egui_json_tree::{
     render::{DefaultRender, RenderContext},
     DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
@@ -75,23 +76,20 @@ impl McpToolLogViewer {
             .count();
 
         // ── Row 1: controls (Show completed / Auto-scroll / Filter / Clear) ──
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("MCP Tool Calls").strong());
-            ui.separator();
+        controls::bar(ui, BarKind::Tool, |ui| {
+            let rule_h = Metrics::get(ui.ctx()).control_h;
+            controls::subheading(ui, svg::PLUGS, "MCP Tool Calls");
+            controls::vline(ui, rule_h);
             ui.label(format!("{} total", entries.len()));
             if pending > 0 {
-                ui.colored_label(
-                    theme::warn(ui),
-                    format!("{} {pending} in flight", icons::STATUS_WAIT),
-                );
+                controls::note(ui, svg::HOURGLASS_SIMPLE, &format!("{pending} in flight"), theme::warn(ui));
             }
-            ui.separator();
-            ui.checkbox(&mut self.show_completed, "Show completed");
-            ui.checkbox(&mut self.auto_scroll, "Auto-scroll");
-            ui.separator();
-            ui.label("Filter:");
-            ui.add(TextEdit::singleline(&mut self.filter).desired_width(160.0));
-            if ui.button("Clear completed").clicked() {
+            controls::vline(ui, rule_h);
+            controls::toggle(ui, &mut self.show_completed, "Show completed");
+            controls::toggle(ui, &mut self.auto_scroll, "Auto-scroll");
+            controls::vline(ui, rule_h);
+            controls::search_field(ui, &mut self.filter, "Filter", 160.0);
+            if controls::icon_text_button(ui, svg::ERASER, "Clear completed").clicked() {
                 mcp_tool_log::clear(connection_string);
             }
         });
@@ -127,8 +125,10 @@ impl McpToolLogViewer {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let label = format!("Copy {} entry/entries", filtered.len());
                 let copy_enabled = !filtered.is_empty();
-                if ui
-                    .add_enabled(copy_enabled, eframe::egui::Button::new(label))
+                if TextButton::new(&label)
+                    .icon(svg::COPY)
+                    .enabled(copy_enabled)
+                    .show(ui)
                     .on_hover_text(
                         "Copy the currently-visible MCP tool calls to the clipboard as plain text.",
                     )
@@ -143,19 +143,16 @@ impl McpToolLogViewer {
                     // operator has a way back to the log without an
                     // X-button hunt.
                     let home_active = self.active_tab.is_none();
-                    let home_label = format!("{} Tool Calls", icons::CLIPBOARD);
-                    if ui
-                        .framed_selectable_label(home_active, home_label)
+                    if controls::pill(ui, svg::CLIPBOARD, "Tool Calls", home_active)
                         .on_hover_text("Back to the MCP tool calls log")
                         .clicked()
                     {
                         breadcrumb_click = Some(None);
                     }
                     for (i, tab) in self.breadcrumb.iter().enumerate() {
-                        ui.label(icons::CARET_RIGHT);
+                        svg::CARET_RIGHT.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::faint_text(ui));
                         let is_active = self.active_tab == Some(i);
-                        if ui
-                            .framed_selectable_label(is_active, &tab.short_label)
+                        if controls::pill(ui, svg::DATABASE, &tab.short_label, is_active)
                             .on_hover_text(&tab.id)
                             .clicked()
                         {
@@ -164,9 +161,9 @@ impl McpToolLogViewer {
                     }
                     if !self.breadcrumb.is_empty() {
                         ui.add_space(6.0);
-                        if ui
-                            .small_button(icons::CLOSE)
-                            .on_hover_text("Clear breadcrumb trail")
+                        if IconButton::new(svg::X, IconBox::Sm)
+                            .tip("Clear breadcrumb trail")
+                            .show(ui)
                             .clicked()
                         {
                             breadcrumb_clear = true;
@@ -182,7 +179,7 @@ impl McpToolLogViewer {
         if let Some(target) = breadcrumb_click {
             self.active_tab = target;
         }
-        ui.separator();
+        controls::hairline(ui);
 
         // ── Main area: either the log entries OR a record view ──
         match self.active_tab {
@@ -202,21 +199,13 @@ impl McpToolLogViewer {
 
     fn display_log_entries(&mut self, ui: &mut Ui, filtered: &[McpToolCallLog]) {
         if filtered.is_empty() {
-            ui.add_space(20.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("No MCP tool calls to show.")
-                        .color(theme::weak_text(ui))
-                        .small(),
-                );
-                ui.label(
-                    RichText::new(
-                        "Calls proxied through this client's Web Console session will appear here.",
-                    )
-                    .color(theme::faint_text(ui))
-                    .small(),
-                );
-            });
+            controls::empty_state(
+                ui,
+                svg::PLUGS,
+                "No MCP tool calls to show.",
+                "Calls proxied through this client's Web Console session will appear here.",
+                &[],
+            );
             return;
         }
 
@@ -249,20 +238,18 @@ impl McpToolLogViewer {
 
         let view = {
             let Ok(g) = self.record_cache.lock() else {
-                ui.colored_label(theme::error(ui), "record cache poisoned");
+                controls::note(ui, svg::WARNING_OCTAGON, "record cache poisoned", theme::error(ui));
                 return;
             };
             g.get(id).cloned()
         };
 
         ui.horizontal(|ui| {
+            svg::DATABASE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::info(ui));
             ui.label(RichText::new("Record:").color(theme::text(ui)));
             ui.label(RichText::new(id).monospace());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .small_button(format!("{} Refetch", icons::REFRESH))
-                    .clicked()
-                {
+                if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refetch").clicked() {
                     if let Ok(mut g) = self.record_cache.lock() {
                         g.remove(id);
                     }
@@ -270,7 +257,7 @@ impl McpToolLogViewer {
                 }
             });
         });
-        ui.separator();
+        controls::hairline(ui);
 
         let mut clicks_to_open: Vec<String> = Vec::new();
         ScrollArea::vertical()
@@ -278,19 +265,13 @@ impl McpToolLogViewer {
             .id_salt(format!("mcp-record-scroll-{id}"))
             .show(ui, |ui| match view {
                 Some(RecordView::Loading) | None => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.colored_label(
-                            theme::warn(ui),
-                            "Loading record from SurrealDB…",
-                        );
-                    });
+                    controls::loading_state(ui, "Loading record from SurrealDB…");
                 }
                 Some(RecordView::Loaded(value)) => {
                     json_tree(ui, &format!("record-{id}"), &value, &mut clicks_to_open);
                 }
                 Some(RecordView::Error(e)) => {
-                    ui.colored_label(theme::error(ui), format!("Fetch failed: {e}"));
+                    controls::note(ui, svg::WARNING_CIRCLE, &format!("Fetch failed: {e}"), theme::error(ui));
                 }
             });
         for next_id in clicks_to_open {
@@ -303,20 +284,16 @@ impl McpToolLogViewer {
         let (icon, color) = status_glyph(ui, &entry.status);
         let record_ids = extract_record_ids_from_entry(entry);
 
-        ui.group(|ui| {
+        glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.colored_label(color, icon);
+                icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
                 let header = format!(
                     "{}::{}",
                     short_id(&entry.plugin_id),
                     entry.tool_name
                 );
-                
-                let toggle = Button::selectable(
-                    is_expanded, 
-                    RichText::new(header).monospace())
-                    .frame_when_inactive(true)
-                    .ui(ui);
+                let caret = if is_expanded { svg::CARET_DOWN } else { svg::CARET_RIGHT };
+                let toggle = controls::pill(ui, caret, &header, is_expanded);
 
                 if toggle.clicked() {
                     if is_expanded {
@@ -330,8 +307,7 @@ impl McpToolLogViewer {
                 // in this entry's args + result shows up as a clickable
                 // chip next to the tool name.
                 for rid in &record_ids {
-                    if ui
-                        .small_button(short_id(rid))
+                    if controls::pill(ui, svg::DATABASE, &short_id(rid), false)
                         .on_hover_text(format!("Open record: {rid}"))
                         .clicked()
                     {
@@ -371,12 +347,11 @@ impl McpToolLogViewer {
             // Expanded: full args + result via egui_json_tree, rendered
             // inline (no inner scroll) so the parent scroll area handles
             // overflow.
-            ui.separator();
-            ui.label(
-                RichText::new("Arguments")
-                    .color(theme::text(ui))
-                    .small(),
-            );
+            controls::hairline(ui);
+            ui.horizontal(|ui| {
+                svg::BRACKETS_CURLY.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                ui.label(RichText::new("Arguments").color(theme::text(ui)).small());
+            });
             if let Some(args) = parse_json(&entry.args_json) {
                 json_tree(ui, &format!("args-{}", entry.request_id), &args, clicks);
             } else {
@@ -384,15 +359,14 @@ impl McpToolLogViewer {
             }
 
             ui.add_space(4.0);
-            ui.label(
-                RichText::new("Result")
-                    .color(theme::text(ui))
-                    .small(),
-            );
+            ui.horizontal(|ui| {
+                svg::TRAY_ARROW_DOWN.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                ui.label(RichText::new("Result").color(theme::text(ui)).small());
+            });
             match (&entry.status, entry.result_json.as_deref()) {
                 (McpToolCallStatus::Pending, _) => {
                     ui.horizontal(|ui| {
-                        ui.spinner();
+                        controls::spinner(ui, SpinnerSize::Sm);
                         ui.colored_label(
                             theme::warn(ui),
                             "Awaiting response from remote client…",
@@ -407,7 +381,7 @@ impl McpToolLogViewer {
                     }
                 }
                 (_, None) => {
-                    ui.colored_label(theme::weak_text(ui), "(no result body)");
+                    controls::note(ui, svg::MINUS_CIRCLE, "(no result body)", theme::weak_text(ui));
                 }
             }
         });
@@ -501,9 +475,10 @@ fn json_tree(ui: &mut Ui, id_salt: &str, value: &JsonValue, clicks: &mut Vec<Str
                             let canonical = canonical_record_id(&raw);
                             ui.horizontal(|ui| {
                                 base.render_default(ui);
-                                if ui
-                                    .small_button(icons::CARET_RIGHT)
-                                    .on_hover_text(format!("Open record: {canonical}"))
+                                let tip = format!("Open record: {canonical}");
+                                if IconButton::new(svg::ARROW_SQUARE_OUT, IconBox::Sm)
+                                    .tip(&tip)
+                                    .show(ui)
                                     .clicked()
                                 {
                                     clicks_inner.borrow_mut().push(canonical.clone());
@@ -708,11 +683,11 @@ fn parse_json(s: &str) -> Option<JsonValue> {
     serde_json::from_str(s).ok()
 }
 
-fn status_glyph(ui: &Ui, status: &McpToolCallStatus) -> (&'static str, Color32) {
+fn status_glyph(ui: &Ui, status: &McpToolCallStatus) -> (svg::Icon, Color32) {
     match status {
-        McpToolCallStatus::Pending => (icons::STATUS_WAIT, theme::warn(ui)),
-        McpToolCallStatus::Success => (icons::STATUS_ON, theme::success(ui)),
-        McpToolCallStatus::Error => (icons::STATUS_ERR, theme::error(ui)),
+        McpToolCallStatus::Pending => (svg::HOURGLASS_SIMPLE, theme::warn(ui)),
+        McpToolCallStatus::Success => (svg::CHECK_CIRCLE, theme::success(ui)),
+        McpToolCallStatus::Error => (svg::X_CIRCLE, theme::error(ui)),
     }
 }
 

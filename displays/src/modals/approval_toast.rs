@@ -6,8 +6,10 @@ use std::sync::{LazyLock, Mutex};
 use database::schema::{RecordId, RecordIdExt};
 use eframe::egui::{Align, Frame, Layout, Margin, Response, RichText, Sense, Ui, Vec2};
 
+use crate::ui_tools::controls::{self, IconBox, IconButton, IconLabel, Metrics};
+use crate::ui_tools::icons::svg;
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
-use crate::ui_tools::{do_not_disturb, icons, theme};
+use crate::ui_tools::{do_not_disturb, theme};
 
 /// `ToastKind::Custom` discriminant for approval toasts.
 pub const APPROVAL_TOAST_KIND: u32 = 0x7A5C_0003;
@@ -23,11 +25,11 @@ pub enum NoticeKind {
 }
 
 impl NoticeKind {
-    fn heading(self) -> (&'static str, &'static str) {
+    fn heading(self) -> (svg::Icon, &'static str) {
         match self {
-            Self::Tool => (icons::LOCK, "Approval waiting"),
-            Self::Question => (icons::CHAT, "Agent question"),
-            Self::Sql => (icons::LOCK, "SurrealQL approval waiting"),
+            Self::Tool => (svg::LOCK, "Approval waiting"),
+            Self::Question => (svg::CHAT, "Agent question"),
+            Self::Sql => (svg::DATABASE, "SurrealQL approval waiting"),
         }
     }
 }
@@ -128,28 +130,37 @@ pub fn toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         return ui.allocate_response(Vec2::ZERO, Sense::hover());
     };
 
-    let (glyph, title) = notice.kind.heading();
+    let (icon, title) = notice.kind.heading();
+    let m = Metrics::get(ui.ctx());
     let mut review = false;
     let mut dismiss = false;
     let response = Frame::window(ui.style())
-        .inner_margin(Margin::same(10))
+        .inner_margin(Margin::same(m.window_margin))
         .show(ui, |ui| {
             ui.set_width(TOAST_WIDTH);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{glyph} {title}")).strong().color(theme::warn(ui)));
+                let warn = theme::warn(ui);
+                let (slot, _) = ui.allocate_exact_size(Vec2::splat(m.icon_md), Sense::hover());
+                icon.paint(ui, slot, m.icon_md, warn);
+                ui.label(RichText::new(title).strong().color(warn));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    dismiss = ui.small_button(icons::CLOSE).on_hover_text("Dismiss").clicked();
+                    dismiss = IconButton::new(svg::X, IconBox::Sm).tip("Dismiss").show(ui).clicked();
                 });
             });
             ui.label(&notice.summary);
             if let Some(machine) = &notice.machine {
-                ui.label(RichText::new(machine).small().color(theme::weak_text(ui)));
+                IconLabel::new(svg::DESKTOP, machine)
+                    .small(true)
+                    .tone(theme::weak_text(ui))
+                    .show(ui);
             }
             if notice.unowned {
-                ui.label(RichText::new(format!("{} No technician on this session", icons::USER)).small());
+                IconLabel::new(svg::USER, "No technician on this session")
+                    .small(true)
+                    .show(ui);
             }
-            ui.add_space(4.0);
-            review = ui.button(format!("{} Review", icons::EYE)).clicked();
+            ui.add_space(m.pad.y);
+            review = controls::icon_text_button(ui, svg::EYE, "Review").clicked();
         })
         .response;
 

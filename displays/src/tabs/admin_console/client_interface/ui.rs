@@ -1,7 +1,9 @@
-use eframe::egui::{Align, Id, Layout, ProgressBar, RichText, Ui};
+use crate::ui_tools::controls::IconLabel;
+use eframe::egui::{Align, Frame, Id, Layout, Margin, RichText, Ui};
 use crate::Cmd;
-use crate::ui_tools::icons::{self, menu_label};
-use crate::ui_tools::theme;
+use crate::ui_tools::controls::{self, BarKind, ButtonKind, MenuButton, Metrics, TextButton};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::{glass_card, theme};
 use crate::EGUI_INPUT_TAG;
 use bincode::config::standard;
 use ewebsock::WsMessage;
@@ -44,6 +46,12 @@ pub enum WsDisplayState {
     CrashDumps,
 }
 
+/// Whether a stream slider finished an adjustment this frame.
+#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+fn slider_settled(r: &eframe::egui::Response) -> bool {
+    r.drag_stopped() || r.clicked() || (r.changed() && !r.is_pointer_button_down_on())
+}
+
 impl WsDisplayState {
     /// Pages that only mean something against a remote machine: two frame streams
     /// and an interactive remote shell.
@@ -71,6 +79,10 @@ pub fn send_desktop_input_on(
         Err(e) => log::warn!(target: "remote_desktop", "encode input failed: {e}"),
     }
 }
+
+/// Track width of the remote-desktop stream sliders.
+#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+const SLIDER_W: f32 = 96.0;
 
 impl WebSocketClient {
     pub fn send_desktop_input(&mut self, ev: crate::remote_desktop::DesktopInputEvent) {
@@ -116,16 +128,16 @@ impl WebSocketClient {
         // The currently-active page is shown as a small badge after the
         // menus so the operator can see what they're looking at without
         // having to remember which tab they last clicked.
+        let bar_h = Metrics::get(ui.ctx()).bar_h;
         eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}{}", self.id_prefix(), self.client.client_hash)))
-        .exact_size(38.)
+        .exact_size(bar_h)
+        .frame(Frame::side_top_panel(ui.style()).inner_margin(Margin::ZERO))
+        .show_separator_line(false)
         .show(ui, |ui| {
-            ui.add_space(4.);
-            ui.horizontal(|ui| {
-                let btn_color = ui.style().visuals.error_fg_color;
-                // Read-only surfaces take the calm accent; OS-level actions plain text, since the
-                // destructive ones in that menu already carry the error color.
+            controls::bar(ui, BarKind::Tool, |ui| {
+                let rule_h = Metrics::get(ui.ctx()).control_h;
+                let btn_color = theme::primary(ui);
                 let sys_color = theme::success(ui);
-                let os_btn_color = theme::text(ui);
 
                 // Home shortcut doubling as the machine identity — the only place this session
                 // names its machine, so the Home page no longer repeats it.
@@ -134,12 +146,9 @@ impl WebSocketClient {
                     .friendly_name
                     .clone()
                     .unwrap_or_else(|| self.client.connection_string.clone());
-                if ui
-                    .button(
-                        RichText::new(format!("{} {machine_label}", icons::HOME))
-                            .color(btn_color)
-                            .strong(),
-                    )
+                if TextButton::new(&machine_label)
+                    .icon(svg::HOUSE)
+                    .show(ui)
                     .on_hover_text(format!("Home — {}", self.client.connection_string))
                     .clicked()
                 {
@@ -150,12 +159,7 @@ impl WebSocketClient {
                     }
                 }
                 if self.client.boot_environment.is_preboot() {
-                    ui.label(
-                        RichText::new(format!("{} WinPE", icons::POWER))
-                            .small()
-                            .strong()
-                            .color(theme::accent(ui)),
-                    )
+                    controls::badge(ui, "WinPE", theme::primary(ui))
                     .on_hover_text(
                         "This client booted into WinPE. Its key is the offline Windows \
                          install's; live readings come from the PE session.",
@@ -168,13 +172,13 @@ impl WebSocketClient {
                 // needs to be able to toggle from this menu, not just
                 // open. The Stop variant only appears when the relevant
                 // stream is already running.
-                ui.menu_button(RichText::new(menu_label("View")).color(btn_color).strong(), |ui| {
-                    if ui.button(format!("{} My Tools", icons::WRENCH)).clicked() {
+                MenuButton::new("View").icon(svg::LAYOUT).tint(btn_color).show(ui, |ui| {
+                    if controls::menu_item(ui, svg::TOOLBOX, "My Tools").clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
                         let _ = self.toolbox.request_contents("/");
                         ui.close();
                     }
-                    if ui.button(format!("{} Explorer", icons::FOLDER)).clicked() {
+                    if controls::menu_item(ui, svg::FOLDER_OPEN, "Explorer").clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
                         self.notifications = 0;
                         if !self.interactive {
@@ -193,18 +197,19 @@ impl WebSocketClient {
                     }
                     let show_remote_only = !self.local_only;
                     let notifs = if matches!(self.state, WsDisplayState::Shell) {
-                        format!("{} Shell", icons::TERMINAL)
+                        "Shell".to_string()
                     } else if self.notifications > 0 {
-                        format!("{} Shell  ({})", icons::TERMINAL, self.notifications)
+                        format!("Shell  ({})", self.notifications)
                     } else {
-                        format!("{} Shell", icons::TERMINAL)
+                        "Shell".to_string()
                     };
-                    if show_remote_only && ui.button(notifs).clicked() {
+                    if show_remote_only
+                        && controls::menu_item(ui, svg::TERMINAL, &notifs).clicked()
+                    {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                         ui.close();
                     }
-                    if ui
-                        .button(format!("{} Fleet Intel", icons::DIAGNOSTICS))
+                    if controls::menu_item(ui, svg::MICROSCOPE, "Fleet Intel")
                         .on_hover_text(
                             "Crash-signature intelligence (dump analysis + prior verdicts across the fleet) and driver snapshots/drift/blocklist for this client",
                         )
@@ -213,8 +218,7 @@ impl WebSocketClient {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::FleetIntel);
                         ui.close();
                     }
-                    if ui
-                        .button(format!("{} Crash Dumps", icons::CRITICAL))
+                    if controls::menu_item(ui, svg::BUG_BEETLE, "Crash Dumps")
                         .on_hover_text(
                             "Every crash recorded for THIS machine: minidumps, live-kernel reports, and GPU (Aftermath) dumps with their signatures, fleet prevalence, and verdicts",
                         )
@@ -224,8 +228,7 @@ impl WebSocketClient {
                         ui.close();
                     }
                     if show_remote_only
-                        && ui
-                        .button(format!("{} Download crash dumps", icons::DOWNLOAD))
+                        && controls::menu_item(ui, svg::FILE_ARCHIVE, "Download crash dumps")
                         .on_hover_text(
                             "Zip and download this client's kernel dumps (MEMORY.DMP, Minidump, LiveKernelReports, WER), app crash dumps, WER crash and hang reports, and UE/GPU crash folders (last 30 days) in one archive, with an app crash summary and a manifest",
                         )
@@ -234,22 +237,15 @@ impl WebSocketClient {
                         self.remote_explorer.start_crash_dump_download(&self.send_cmd_tx);
                         ui.close();
                     }
-                    ui.separator();
+                    controls::menu_separator(ui);
                     // Live data feed toggle. Home's charts depend on this feed.
                     if self.live_stats_active {
-                        if ui
-                            .button(
-                                RichText::new(format!("{} Stop live data", icons::STOP))
-                                    .color(ui.style().visuals.error_fg_color),
-                            )
-                            .clicked()
-                        {
+                        if controls::menu_item(ui, svg::STOP, "Stop live data").clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                             self.live_stats_active = false;
                             ui.close();
                         }
-                    } else if ui
-                        .button(format!("{} Start live data", icons::PLAY))
+                    } else if controls::menu_item(ui, svg::PULSE, "Start live data")
                         .on_hover_text("Resume the live telemetry feed that drives the Home page charts.")
                         .clicked()
                     {
@@ -259,26 +255,26 @@ impl WebSocketClient {
                     }
                     if show_remote_only {
                     if self.egui_viewer_active {
-                        if ui.button(RichText::new(format!("{} Stop Viewer", icons::STOP)).color(ui.style().visuals.error_fg_color)).clicked() {
+                        if controls::menu_item(ui, svg::STOP, "Stop Viewer").clicked() {
                             self.egui_viewer_active = false;
                             let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: false });
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                             ui.close();
                         }
-                    } else if ui.button(format!("{} Start Viewer", icons::PLAY)).clicked() {
+                    } else if controls::menu_item(ui, svg::APP_WINDOW, "Start Viewer").clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
                         self.egui_viewer_active = true;
                         let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: true });
                         ui.close();
                     }
                     if self.desktop_streaming {
-                        if ui.button(RichText::new(format!("{} Stop Remote Desktop", icons::STOP)).color(ui.style().visuals.error_fg_color)).clicked() {
+                        if controls::menu_item(ui, svg::STOP, "Stop Remote Desktop").clicked() {
                             self.desktop_streaming = false;
                             let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStop);
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Home);
                             ui.close();
                         }
-                    } else if ui.button(format!("{} Remote Desktop", icons::DESKTOP)).clicked() {
+                    } else if controls::menu_item(ui, svg::MT_REMOTE, "Remote Desktop").clicked() {
                         self.desktop_streaming = true;
                         let _ = self.send_cmd_tx.try_send(Cmd::DesktopListMonitors);
                         let _ = self.send_cmd_tx.try_send(Cmd::DesktopStreamStart {
@@ -294,26 +290,23 @@ impl WebSocketClient {
                         ui.close();
                     }
                     if self.interactive {
-                        ui.separator();
-                        if ui.button(RichText::new("Quit interactive shell").color(ui.style().visuals.error_fg_color)).clicked() {
+                        controls::menu_separator(ui);
+                        let quit = controls::menu_item(ui, svg::SIGN_OUT, "Quit interactive shell");
+                        if quit.clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                             ui.close();
                         }
                     }
                     }
-                    ui.separator();
+                    controls::menu_separator(ui);
                     let pending = crate::mcp_tool_log::pending_count(&self.client.connection_string);
                     let label = if pending > 0 {
                         format!("MCP Tool Log  ({pending} running)")
                     } else {
                         "MCP Tool Log".to_string()
                     };
-                    let text = if pending > 0 {
-                        RichText::new(label).color(theme::warn(ui))
-                    } else {
-                        RichText::new(label)
-                    };
-                    if ui.button(text).clicked() {
+                    let icon = if pending > 0 { svg::HOURGLASS_SIMPLE } else { svg::PLUGS };
+                    if controls::menu_item(ui, icon, &label).clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::McpToolLog);
                         ui.close();
                     }
@@ -323,10 +316,10 @@ impl WebSocketClient {
                 // Read-only system surfaces: every entry kicks off the
                 // initial list-fetch if it hasn't been loaded yet,
                 // matching the old per-button behavior.
-                ui.menu_button(
-                    RichText::new(menu_label("Inspect")).color(sys_color).strong(),
+                MenuButton::new("Inspect").icon(svg::MICROSCOPE).tint(sys_color).show(
+                    ui,
                     |ui| {
-                        if ui.button("Event Log").clicked() {
+                        if controls::menu_item(ui, svg::LIST_BULLETS, "Event Log").clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::EventLog);
                             if self.event_log_viewer.entries.is_empty() {
                                 let _ = self.send_cmd_tx.try_send(Cmd::ReadEventLog {
@@ -338,7 +331,7 @@ impl WebSocketClient {
                             }
                             ui.close();
                         }
-                        if ui.button("Client Log").clicked() {
+                        if controls::menu_item(ui, svg::SCROLL, "Client Log").clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::ClientLog);
                             if self.client_log_viewer.text.is_empty() {
                                 let cmd = self.client_log_viewer.fetch_cmd();
@@ -348,7 +341,7 @@ impl WebSocketClient {
                             }
                             ui.close();
                         }
-                        if ui.button("Services").clicked() {
+                        if controls::menu_item(ui, svg::GEAR_SIX, "Services").clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Services);
                             if self.services_viewer.entries.is_empty() {
                                 let _ = self.send_cmd_tx.try_send(Cmd::ListServices);
@@ -356,7 +349,8 @@ impl WebSocketClient {
                             }
                             ui.close();
                         }
-                        if ui.button("Task Scheduler").clicked() {
+                        let tasks = controls::menu_item(ui, svg::CALENDAR_CHECK, "Task Scheduler");
+                        if tasks.clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::TaskScheduler);
                             if self.task_scheduler_viewer.entries.is_empty() {
                                 let _ = self.send_cmd_tx.try_send(Cmd::ListScheduledTasks { folder: None });
@@ -364,11 +358,11 @@ impl WebSocketClient {
                             }
                             ui.close();
                         }
-                        if ui.button("Registry").clicked() {
+                        if controls::menu_item(ui, svg::TREE_STRUCTURE, "Registry").clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Registry);
                             ui.close();
                         }
-                        if ui.button("Startup Apps").clicked() {
+                        if controls::menu_item(ui, svg::ROCKET_LAUNCH, "Startup Apps").clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::StartupApps);
                             if self.startup_apps_viewer.entries.is_empty() {
                                 let _ = self.send_cmd_tx.try_send(Cmd::ListStartupApps);
@@ -376,7 +370,7 @@ impl WebSocketClient {
                             }
                             ui.close();
                         }
-                        if ui.button("Scripts").clicked() {
+                        if controls::menu_item(ui, svg::CODE, "Scripts").clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Scripts);
                             if !(self.remote_scripts_viewer.loading || self.remote_scripts_viewer.running) {
                                 self.remote_scripts_viewer.loading = true;
@@ -384,7 +378,7 @@ impl WebSocketClient {
                             }
                             ui.close();
                         }
-                        if ui.button("Installed Programs").clicked() {
+                        if controls::menu_item(ui, svg::PACKAGE, "Installed Programs").clicked() {
                             // Slice 3: opens the registry-walk
                             // viewer. Lazy-load on first open
                             // (matches the other Inspect entries).
@@ -409,17 +403,19 @@ impl WebSocketClient {
                         sys_color
                     };
                     if !self.local_only {
-                    ui.menu_button(
-                        RichText::new(menu_label("Transfer")).color(transfer_color).strong(),
+                    let transfer = MenuButton::new("Transfer")
+                        .icon(svg::ARROWS_LEFT_RIGHT)
+                        .tint(transfer_color);
+                    transfer.show(
+                        ui,
                         |ui| {
                             #[cfg(not(target_arch = "wasm32"))]
                             #[cfg(not(any(target_os = "ios", target_os = "android")))]
                             {
-                                if ui
-                                    .add_enabled(
-                                        !transfer_busy,
-                                        eframe::egui::Button::new("Send File…"),
-                                    )
+                                if controls::MenuItem::new("Send File…")
+                                    .icon(svg::PAPER_PLANE_TILT)
+                                    .enabled(!transfer_busy)
+                                    .show(ui)
                                     .on_disabled_hover_text("A transfer is already in flight")
                                     .clicked()
                                 {
@@ -433,11 +429,12 @@ impl WebSocketClient {
                                     }
                                     ui.close();
                                 }
-                                if ui
-                                    .button(
-                                        RichText::new("Deploy MasterTech Update…")
-                                            .color(theme::info(ui)),
-                                    )
+                                let deploy = controls::menu_item(
+                                    ui,
+                                    svg::ROCKET_LAUNCH,
+                                    "Deploy MasterTech Update…",
+                                );
+                                if deploy
                                     .on_hover_text(
                                         "Push a new MasterTech.exe to this remote client.\nIt will replace itself and relaunch automatically.",
                                     )
@@ -470,34 +467,33 @@ impl WebSocketClient {
                 // most disruptive so the destructive ones don't sit at
                 // the top of the menu.
                 if !self.local_only {
-                ui.menu_button(
-                    RichText::new(menu_label("Power")).color(os_btn_color).strong(),
+                MenuButton::new("Power").icon(svg::POWER).show(
+                    ui,
                     |ui| {
-                        if ui.button(RichText::new("Lock workstation").color(os_btn_color)).clicked() {
+                        if controls::menu_item(ui, svg::LOCK, "Lock workstation").clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::LockWorkstation);
                             ui.close();
                         }
-                        if ui.button(RichText::new("Log off user").color(os_btn_color)).clicked() {
+                        if controls::menu_item(ui, svg::SIGN_OUT, "Log off user").clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::LogOffUser);
                             ui.close();
                         }
-                        ui.separator();
-                        if ui.button(RichText::new("Reboot").color(os_btn_color)).clicked() {
+                        controls::menu_separator(ui);
+                        if controls::menu_item(ui, svg::ARROW_CLOCKWISE, "Reboot").clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem {
                                 persist_mastertech: true,
                                 terminal_mode: false,
                             });
                             ui.close();
                         }
-                        if ui
-                            .button(RichText::new("Switch to Terminal Mode").color(os_btn_color))
+                        if controls::menu_item(ui, svg::TERMINAL_WINDOW, "Switch to Terminal Mode")
                             .clicked()
                         {
                             let _ = self.send_cmd_tx.try_send(Cmd::LaunchTerminalMode);
                             ui.close();
                         }
-                        ui.separator();
-                        if ui.button(RichText::new("Shutdown").color(theme::error(ui))).clicked() {
+                        controls::menu_separator(ui);
+                        if controls::menu_item(ui, svg::POWER, "Shutdown").clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::ShutdownSystem);
                             ui.close();
                         }
@@ -509,7 +505,7 @@ impl WebSocketClient {
                 // Disable/re-enable Memory Integrity + the driver blocklist.
                 self.driver_protections_toolbar(ui);
 
-                ui.separator();
+                controls::vline(ui, rule_h);
 
                 // Show which sub-page is currently active. Operators
                 // arriving back at the window after switching tabs lose
@@ -538,7 +534,7 @@ impl WebSocketClient {
                 // );
 
                 if self.persistent_shell_mode {
-                    ui.colored_label(theme::warn(ui), "Persistent Shell");
+                    controls::note(ui, svg::TERMINAL, "Persistent Shell", theme::warn(ui));
                 }
 
                 // Home's sub-tabs belong on this row, not on a second row inside the page body.
@@ -548,33 +544,32 @@ impl WebSocketClient {
 
                 // ── Right-aligned status indicator ───────────────────
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let (status_color, status_text, status_tooltip) = if !self.client.connected {
-                        (theme::error(ui), icons::STATUS_ERR, "Disconnected")
+                    let (status_color, status_icon, status_tooltip) = if !self.client.connected {
+                        (theme::error(ui), svg::X_CIRCLE, "Disconnected")
                     } else if let Some(last_activity) = &self.client.last_update {
                         let now = chrono::Utc::now();
                         let activity_time = last_activity.to_utc();
                         let elapsed_secs = (now - activity_time).num_seconds();
                         if elapsed_secs < 30 {
-                            (theme::success(ui), icons::STATUS_ON, "Active")
+                            (theme::success(ui), svg::CHECK_CIRCLE, "Active")
                         } else if elapsed_secs < 120 {
-                            (theme::warn(ui), icons::STATUS_WARN, "Stale")
+                            (theme::warn(ui), svg::WARNING, "Stale")
                         } else {
-                            (theme::error(ui), icons::STATUS_WAIT, "Inactive")
+                            (theme::error(ui), svg::HOURGLASS_SIMPLE, "Inactive")
                         }
                     } else if self.is_connected {
                         (
                             theme::success(ui),
-                            icons::STATUS_IDLE,
+                            svg::CIRCLE,
                             "Connected (awaiting activity)",
                         )
                     } else {
-                        (ui.style().visuals.error_fg_color, icons::STATUS_ERR, "Disconnected")
+                        (theme::error(ui), svg::X_CIRCLE, "Disconnected")
                     };
 
-                    ui.colored_label(status_color, status_text)
-                        .on_hover_text(status_tooltip);
+                    status_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, status_color).on_hover_text(status_tooltip);
 
-                    ui.separator();
+                    controls::vline(ui, rule_h);
 
                     // ── Transport badge: which path carries this session ──
                     let kind = self.transport.kind();
@@ -594,10 +589,9 @@ impl WebSocketClient {
                     } else {
                         format!("{badge_tip} — {}", self.connection_status)
                     };
-                    ui.colored_label(badge_color, RichText::new(badge).small().strong())
-                        .on_hover_text(badge_hover);
+                    controls::badge(ui, badge, badge_color).on_hover_text(badge_hover);
 
-                    ui.separator();
+                    controls::vline(ui, rule_h);
 
                     // ── Client build badge: MasterTech version the agent reported ──
                     // Shown in full, hash included: the release number sits still between builds,
@@ -608,7 +602,7 @@ impl WebSocketClient {
                         let (ver_color, ver_text, ver_hover) = if self.cmd_protocol_mismatch {
                             (
                                 theme::warn(ui),
-                                format!("{} v{ver}", icons::STATUS_WARN),
+                                format!("v{ver}"),
                                 format!(
                                     "Client MasterTech build v{ver} — out of date against this \
                                      console's v{admin_ver} (Cmd protocol mismatch). \
@@ -643,18 +637,18 @@ impl WebSocketClient {
                         };
                         ui.colored_label(ver_color, RichText::new(ver_text).small().monospace())
                             .on_hover_text(ver_hover);
-                        ui.separator();
+                        if self.cmd_protocol_mismatch {
+                            svg::WARNING.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, ver_color);
+                        }
+                        controls::vline(ui, rule_h);
                     }
 
                     // The one place this session's connection string is printed, and the fastest way
                     // to get it into an MCP call or a ticket.
-                    if ui
-                        .button(
-                            RichText::new(self.client.connection_string.as_str())
-                                .small()
-                                .monospace()
-                                .color(theme::weak_text(ui)),
-                        )
+                    if TextButton::new(self.client.connection_string.as_str())
+                        .icon(svg::COPY)
+                        .kind(ButtonKind::Ghost)
+                        .show(ui)
                         .on_hover_text("Connection string (host:client hash) — click to copy")
                         .clicked()
                     {
@@ -667,25 +661,25 @@ impl WebSocketClient {
                     if !self.local_only
                         && let Some((ref name, sent, total)) = self.file_transfer_progress
                     {
-                        ui.separator();
+                        controls::vline(ui, rule_h);
                         let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
                         let frac = if total > 0 {
                             (sent as f32 / total as f32).clamp(0.0, 1.0)
                         } else {
                             0.0
                         };
-                        ui.add(
-                            ProgressBar::new(frac)
-                                .desired_width(80.0)
-                                .desired_height(6.0),
-                        )
-                        .on_hover_text(format!("Sending {name} — chunk {sent} of {total}"));
-                        ui.colored_label(theme::warn(ui), RichText::new(short).small());
+                        controls::meter(ui, frac, 80.0, theme::warn(ui))
+                            .on_hover_text(format!("Sending {name} — chunk {sent} of {total}"));
+                        IconLabel::new(svg::UPLOAD_SIMPLE, &short)
+                            .tone(theme::warn(ui))
+                            .small(true)
+                            .wrap(true)
+                            .show(ui);
                     }
 
                     // Live stress progress rides this row so it stays visible on every view, not
                     // just Home's inventory.
-                    ui.separator();
+                    controls::vline(ui, rule_h);
                     self.home_page.active_run_strip(ui);
                 });
             });
@@ -700,9 +694,9 @@ impl WebSocketClient {
             WsDisplayState::Home => self.show_home(ui),
             WsDisplayState::Explorer => {
                 let cmd_tx = self.send_cmd_tx.clone();
-                ui.group(|ui| self.remote_explorer.display(ui, &cmd_tx)).inner
+                glass_card::group(ui, |ui| self.remote_explorer.display(ui, &cmd_tx)).inner
             },
-            WsDisplayState::ToolBox => ui.group(|ui| self.toolbox.display(ui)).inner,
+            WsDisplayState::ToolBox => glass_card::group(ui, |ui| self.toolbox.display(ui)).inner,
             WsDisplayState::Shell => self.show_shell(ui),
             WsDisplayState::Terminal => {
                 #[cfg(feature="tokio")]
@@ -723,7 +717,8 @@ impl WebSocketClient {
                                 transport,
                                 ..
                             } = self;
-                            ui.checkbox(
+                            controls::toggle(
+                                ui,
                                 egui_remote_popout,
                                 "Open remote UI in separate window",
                             );
@@ -772,13 +767,8 @@ impl WebSocketClient {
                                     Some(mcp_sess),
                                 );
                             } else {
-                                ui.label(
-                                    RichText::new(
-                                        "Remote UI is in a separate window. Close that window or uncheck above to embed here.",
-                                    )
-                                    .color(theme::weak_text(ui))
-                                    .small(),
-                                );
+                                IconLabel::new(svg::PICTURE_IN_PICTURE, "Remote UI is in a separate window. Close that window or \
+                                         switch off the toggle above to embed here.").tone(theme::weak_text(ui)).small(true).wrap(true).show(ui);
                             }
                         }
                         #[cfg(target_arch = "wasm32")]
@@ -786,20 +776,17 @@ impl WebSocketClient {
                             self.egui_viewer.ui(ui, |_| {}, None);
                         }
                     } else {
+                        ui.add_space(24.0);
+                        controls::empty_state(
+                            ui,
+                            svg::MT_REMOTE,
+                            "Connecting to remote viewer...",
+                            "Waiting for terminal or egui frame data from the remote instance.",
+                            &[],
+                        );
                         ui.vertical_centered(|ui| {
-                            ui.add_space(40.0);
-                            ui.label(
-                                RichText::new("Connecting to remote viewer...")
-                                    .color(theme::weak_text(ui))
-                                    .size(14.0),
-                            );
                             ui.add_space(8.0);
-                            ui.label(
-                                RichText::new("Waiting for terminal or egui frame data from the remote instance.")
-                                    .color(theme::faint_text(ui))
-                                    .small(),
-                            );
-                            ui.spinner();
+                            controls::spinner(ui, controls::SpinnerSize::Md);
                         });
                     }
                 }
@@ -849,7 +836,13 @@ impl WebSocketClient {
                 }
                 #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
                 {
-                    ui.label("Fleet Intel requires the native tokio build.");
+                    controls::empty_state(
+                        ui,
+                        svg::MICROSCOPE,
+                        "Fleet Intel unavailable",
+                        "Fleet Intel requires the native tokio build.",
+                        &[],
+                    );
                 }
             },
             WsDisplayState::CrashDumps => {
@@ -860,7 +853,13 @@ impl WebSocketClient {
                 }
                 #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
                 {
-                    ui.label("Crash Dumps requires the native tokio build.");
+                    controls::empty_state(
+                        ui,
+                        svg::BUG_BEETLE,
+                        "Crash Dumps unavailable",
+                        "Crash Dumps requires the native tokio build.",
+                        &[],
+                    );
                 }
             },
             WsDisplayState::RemoteDesktop => {
@@ -881,10 +880,11 @@ impl WebSocketClient {
                     let latency = self.desktop_viewer.last_latency_ms;
                     let bytes = self.desktop_viewer.last_frame_bytes;
 
+                    let star = format!("{} ", crate::ui_tools::icons::STAR);
                     let label = |m: &crate::remote_desktop::DesktopMonitorInfo| {
                         format!(
                             "{}{} ({}x{})",
-                            if m.is_primary { "★ " } else { "" },
+                            if m.is_primary { star.as_str() } else { "" },
                             m.name,
                             m.width,
                             m.height
@@ -892,58 +892,59 @@ impl WebSocketClient {
                     };
 
                     ui.horizontal_wrapped(|ui| {
+                        let rule_h = Metrics::get(ui.ctx()).control_h;
                         if !monitors.is_empty() {
-                            let selected = monitors
+                            let names: Vec<String> = monitors.iter().map(label).collect();
+                            let options: Vec<_> = monitors
                                 .iter()
-                                .find(|m| m.id == monitor)
-                                .map(|m| label(m))
-                                .unwrap_or_else(|| "Primary".to_string());
-                            eframe::egui::ComboBox::from_id_salt("remote_desktop_monitor")
-                                .selected_text(selected)
-                                .show_ui(ui, |ui| {
-                                    for m in &monitors {
-                                        if ui
-                                            .selectable_label(monitor == m.id, label(m))
-                                            .clicked()
-                                        {
-                                            monitor = m.id;
-                                            restart = true;
-                                        }
-                                    }
-                                });
+                                .zip(&names)
+                                .map(|(m, name)| (m.id, name.as_str()))
+                                .collect();
+                            svg::MONITOR.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                            let id = "remote_desktop_monitor";
+                            if controls::dropdown(ui, id, &mut monitor, &options, 220.0).changed() {
+                                restart = true;
+                            }
                         }
-                        if ui
-                            .add(eframe::egui::Slider::new(&mut fps, 1..=30).text("fps"))
-                            .drag_stopped()
-                        {
+                        let fps_slider = controls::Slider::new(&mut fps, 1..=30)
+                            .width(SLIDER_W)
+                            .value("fps")
+                            .show(ui);
+                        if slider_settled(&fps_slider) {
                             restart = true;
                         }
-                        if ui
-                            .add(eframe::egui::Slider::new(&mut quality, 20..=90).text("quality"))
-                            .drag_stopped()
-                        {
+                        let quality_slider = controls::Slider::new(&mut quality, 20..=90)
+                            .width(SLIDER_W)
+                            .value("q")
+                            .show(ui)
+                            .on_hover_text("JPEG quality");
+                        if slider_settled(&quality_slider) {
                             restart = true;
                         }
-                        if ui
-                            .add(eframe::egui::Slider::new(&mut scale, 0.25..=1.0).text("scale"))
-                            .drag_stopped()
-                        {
+                        let scale_slider = controls::Slider::new(&mut scale, 0.25..=1.0)
+                            .width(SLIDER_W)
+                            .step(0.05)
+                            .value("x")
+                            .show(ui)
+                            .on_hover_text("Frame scale");
+                        if slider_settled(&scale_slider) {
                             restart = true;
                         }
                         if streaming {
-                            if ui.button(format!("{} Stop", icons::STOP)).clicked() {
+                            if controls::icon_text_button(ui, svg::STOP, "Stop").clicked() {
                                 streaming = false;
                                 stop = true;
                             }
-                        } else if ui.button(format!("{} Start", icons::PLAY)).clicked() {
+                        } else if controls::icon_text_button(ui, svg::PLAY, "Start").clicked() {
                             streaming = true;
                             restart = true;
                         }
-                        if ui.button(format!("{} Pop out", icons::POPOUT)).clicked() {
+                        let pop = controls::icon_text_button(ui, svg::ARROW_SQUARE_OUT, "Pop out");
+                        if pop.clicked() {
                             popout = true;
                         }
-                        if ui
-                            .checkbox(&mut clipboard_sync, format!("{} Clipboard", icons::CLIPBOARD))
+                        svg::CLIPBOARD.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                        if controls::toggle(ui, &mut clipboard_sync, "Clipboard")
                             .on_hover_text(
                                 "Mirror the clipboard both ways while streaming. Copy here and \
                                  paste there, or the reverse.",
@@ -952,15 +953,11 @@ impl WebSocketClient {
                         {
                             clipboard_changed = true;
                         }
-                        ui.separator();
-                        ui.label(
-                            RichText::new(format!(
+                        controls::vline(ui, rule_h);
+                        IconLabel::new(svg::GAUGE, &format!(
                                 "{frames} frames | {latency} ms | {} KB/frame",
                                 bytes / 1024
-                            ))
-                            .small()
-                            .color(theme::success(ui)),
-                        );
+                            )).tone(theme::success(ui)).small(true).wrap(true).show(ui);
                     });
 
                     self.desktop_monitor = monitor;
@@ -985,19 +982,18 @@ impl WebSocketClient {
                         self.set_clipboard_sync(self.clipboard_sync);
                     }
 
-                    ui.separator();
+                    controls::hairline(ui);
                     if self.desktop_popout {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(30.0);
-                            ui.label(
-                                RichText::new("Remote desktop is popped out to its own window.")
-                                    .color(theme::weak_text(ui)),
-                            );
-                            ui.add_space(8.0);
-                            if ui.button("Return to tab").clicked() {
-                                self.desktop_popout = false;
-                            }
-                        });
+                        let back = controls::empty_state(
+                            ui,
+                            svg::PICTURE_IN_PICTURE,
+                            "Remote desktop is popped out to its own window.",
+                            "",
+                            &[(controls::Role::Secondary, "Return to tab")],
+                        );
+                        if back.is_some() {
+                            self.desktop_popout = false;
+                        }
                     } else {
                         self.desktop_viewer.clipboard_sync = self.clipboard_sync;
                         let Self { desktop_viewer, transport, .. } = self;
@@ -1021,24 +1017,20 @@ impl WebSocketClient {
         let frames = self.desktop_viewer.frames_shown;
         let latency = self.desktop_viewer.last_latency_ms;
 
-        ui.horizontal(|ui| {
+        controls::bar(ui, BarKind::Tool, |ui| {
             let (icon, label) = if fullscreen {
-                (icons::FULLSCREEN_EXIT, "Exit Full Screen")
+                (svg::CORNERS_IN, "Exit Full Screen")
             } else {
-                (icons::FULLSCREEN_ENTER, "Full Screen")
+                (svg::CORNERS_OUT, "Full Screen")
             };
-            if ui.button(format!("{icon} {label}")).clicked() {
+            if controls::icon_text_button(ui, icon, label).clicked() {
                 toggle_fullscreen = true;
             }
-            if ui.button("Return to tab").clicked() {
+            if controls::icon_text_button(ui, svg::ARROW_SQUARE_IN, "Return to tab").clicked() {
                 return_to_tab = true;
             }
-            ui.separator();
-            ui.label(
-                RichText::new(format!("{frames} frames | {latency} ms"))
-                    .small()
-                    .color(theme::success(ui)),
-            );
+            controls::vline(ui, Metrics::get(ui.ctx()).control_h);
+            IconLabel::new(svg::GAUGE, &format!("{frames} frames | {latency} ms")).tone(theme::success(ui)).small(true).wrap(true).show(ui);
         });
 
         if toggle_fullscreen {
@@ -1049,7 +1041,6 @@ impl WebSocketClient {
             self.desktop_popout = false;
         }
 
-        ui.separator();
         self.desktop_viewer.clipboard_sync = self.clipboard_sync;
         let Self { desktop_viewer, transport, .. } = self;
         desktop_viewer.ui(ui, |ev| {

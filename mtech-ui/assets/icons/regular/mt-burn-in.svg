@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" data-glyph="GAUGE">
+<defs><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"><rect width="256" height="256" fill="#ffffff" stroke="none"/><path d="M184,120c-24,18-36,42-36,68a36,36,0,0,0,72,0c0-26-12-50-36-68Z" fill="#000000" stroke="#000000" stroke-width="48"/></mask></defs>
+<g mask="url(#cut)">
+<path d="M24,176V160a96,96,0,0,1,192,0v16Z"/>
+<path d="M120,64V88M52,92L69,109M104,176L136,120"/>
+</g>
+<path d="M184,120c-24,18-36,42-36,68a36,36,0,0,0,72,0c0-26-12-50-36-68Z"/>
+<path d="M168,208c0-16,16-28,16-28s16,12,16,28a16,16,0,0,1-32,0Z"/>
+</svg>

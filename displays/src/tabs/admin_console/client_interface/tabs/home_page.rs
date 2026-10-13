@@ -23,15 +23,18 @@
 //!      this client's computer id every ~1 s. Catches runs started
 //!      outside this admin session and gives canonical truth.
 
-use crate::ui_tools::framed_controls::FramedSelectable;
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{
+    self, BarKind, IconBox, IconButton, IconLabel, MenuButton, MenuItem, Metrics, ProgressBar,
+    Role, Section, SpinnerSize,
+};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use crate::Cmd;
 use crate::{PlatformSpawner, Spawner};
 use database::schema::{HardwareComponent, HardwareKind, RecordId, RecordIdExt, SystemInformation};
 use database::db;
 use eframe::egui::{
-    collapsing_header::CollapsingState, Align, Button, Id, Label, Layout, ProgressBar, RichText,
-    ScrollArea, Ui, Vec2, Window,
+    collapsing_header::CollapsingState, Align, Id, Label, Layout, RichText, ScrollArea, Ui, Vec2,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -529,7 +532,7 @@ impl WebSocketClient {
         let actions = self
             .home_page
             .render_inventory(ui, &self.client.connection_string);
-        ui.separator();
+        controls::hairline(ui);
 
         // Process click-throughs collected during the inventory render.
         // Click on a past-run row / id pill → switch to McpToolLog and
@@ -708,16 +711,10 @@ impl HomePage {
     pub fn sub_tab_toggles(&mut self, ui: &mut Ui) {
         let overview = self.sub_tab == HomeSubTab::Overview;
         let processes = self.sub_tab == HomeSubTab::Processes;
-        if ui
-            .framed_selectable_label(overview, format!("{} Overview", icons::CHART))
-            .clicked()
-        {
+        if controls::pill(ui, svg::CHART_LINE, "Overview", overview).clicked() {
             self.sub_tab = HomeSubTab::Overview;
         }
-        if ui
-            .framed_selectable_label(processes, format!("{} Processes", icons::LIST))
-            .clicked()
-        {
+        if controls::pill(ui, svg::LIST_BULLETS, "Processes", processes).clicked() {
             self.sub_tab = HomeSubTab::Processes;
         }
     }
@@ -732,7 +729,7 @@ impl HomePage {
         let Some(run) = runs.first() else { return };
         let elapsed = run.started_at.elapsed().as_secs_f64();
         let planned = run.duration_planned_secs.map(|s| s as f64);
-        ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
+        svg::MT_STRESS.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::warn(ui));
         ui.label(
             RichText::new(&run.tool_label)
                 .small()
@@ -742,12 +739,7 @@ impl HomePage {
         match planned {
             Some(p) if p > 0.0 => {
                 let frac = (elapsed / p).clamp(0.0, 1.0) as f32;
-                ui.add(
-                    ProgressBar::new(frac)
-                        .desired_width(70.0)
-                        .desired_height(5.0),
-                )
-                .on_hover_text(format!(
+                controls::meter(ui, frac, 70.0, theme::warn(ui)).on_hover_text(format!(
                     "{} elapsed of {}",
                     fmt_secs(elapsed),
                     fmt_secs(p)
@@ -760,7 +752,7 @@ impl HomePage {
                 );
             }
             _ => {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
                 ui.label(
                     RichText::new(fmt_secs(elapsed))
                         .small()
@@ -1252,29 +1244,17 @@ impl HomePage {
         } else {
             theme::weak_text(ui)
         };
-        ui.menu_button(
-            RichText::new(format!("{} {}", icons::LOCK, icons::menu_label("Protections")))
-                .color(menu_color)
-                .strong(),
+        MenuButton::new("Protections").icon(svg::SHIELD_CHECK).tint(menu_color).show(
+            ui,
             |ui| {
                 if !is_root {
-                    ui.label(
-                        RichText::new(format!("{} Root authorization required", icons::LOCK))
-                            .color(theme::warn(ui))
-                            .small(),
-                    );
+                    IconLabel::new(svg::LOCK, "Root authorization required").tone(theme::warn(ui)).small(true).wrap(true).show(ui);
                 }
-                if ui
-                    .add_enabled(
-                        !busy && is_root,
-                        Button::new(
-                            RichText::new(format!(
-                                "{} Disable Memory Integrity",
-                                icons::STATUS_WARN
-                            ))
-                            .color(theme::warn(ui)),
-                        ),
-                    )
+                if MenuItem::new("Disable Memory Integrity")
+                    .icon(svg::SHIELD_SLASH)
+                    .danger(true)
+                    .enabled(!busy && is_root)
+                    .show(ui)
                     .on_hover_text(
                         "Turns OFF Memory Integrity (HVCI) and the Vulnerable Driver Blocklist. \
                          Only the legacy WinRing0 sensor backend needs this — a signed backend \
@@ -1288,14 +1268,10 @@ impl HomePage {
                     self.driver_protections_pending = Some(false);
                     ui.close();
                 }
-                if ui
-                    .add_enabled(
-                        !busy && is_root,
-                        Button::new(
-                            RichText::new(format!("{} Re-enable protections", icons::CHECK))
-                                .color(theme::success(ui)),
-                        ),
-                    )
+                if MenuItem::new("Re-enable protections")
+                    .icon(svg::SHIELD_CHECK)
+                    .enabled(!busy && is_root)
+                    .show(ui)
                     .on_hover_text(
                         "Turns Memory Integrity (HVCI) and the Vulnerable Driver Blocklist back \
                          ON. Requires a reboot.",
@@ -1309,14 +1285,14 @@ impl HomePage {
         );
 
         if busy {
-            ui.spinner();
+            controls::spinner(ui, SpinnerSize::Sm);
         }
 
         if let Some(status) = self.driver_protections_status.as_ref() {
-            let color = if status.ok {
-                theme::success(ui)
+            let (icon, color) = if status.ok {
+                (svg::CHECK_CIRCLE, theme::success(ui))
             } else {
-                theme::error(ui)
+                (svg::WARNING_CIRCLE, theme::error(ui))
             };
             // Width capped to a fraction of the row.
             let cell = Vec2::new(
@@ -1325,6 +1301,7 @@ impl HomePage {
                 ui.spacing().interact_size.y,
             );
             ui.allocate_ui_with_layout(cell, Layout::left_to_right(Align::Center), |ui| {
+                icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
                 ui.add(
                     Label::new(RichText::new(status.terse.as_str()).color(color).small())
                         .truncate(),
@@ -1343,31 +1320,20 @@ impl HomePage {
         let enable = self.driver_protections_pending?;
         let mut confirmed = None;
 
-        Window::new(format!("{} Confirm driver protections", icons::STATUS_WARN))
+        controls::icon_window(ui.ctx(), svg::SHIELD_WARNING, "Confirm driver protections")
             .id(Id::new(("driver_protections_confirm", conn)))
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 ui.set_max_width(460.0);
                 if enable {
-                    ui.label(
-                        RichText::new("Re-enable Windows driver protections on this machine?")
-                            .color(theme::strong_text(ui))
-                            .strong(),
-                    );
+                    IconLabel::new(svg::SHIELD_CHECK, "Re-enable Windows driver protections on this machine?").tone(theme::strong_text(ui)).strong(true).wrap(true).show(ui);
                     ui.label(
                         "Sets Memory Integrity (HVCI) and the Vulnerable Driver Blocklist back to \
                          Enabled. Protection is only active again after the machine reboots.",
                     );
                 } else {
-                    ui.label(
-                        RichText::new(format!(
-                            "{} This disables Memory Integrity and the Vulnerable Driver Blocklist",
-                            icons::STATUS_WARN
-                        ))
-                        .color(theme::warn(ui))
-                        .strong(),
-                    );
+                    IconLabel::new(svg::SHIELD_WARNING, "This disables Memory Integrity and the Vulnerable Driver Blocklist").tone(theme::warn(ui)).strong(true).wrap(true).show(ui);
                     ui.label(
                         "It lowers this machine's security posture so the legacy WinRing0 sensor \
                          backend can load. This is a fallback: only do it when the client's \
@@ -1393,17 +1359,16 @@ impl HomePage {
                 );
                 ui.add_space(6.0);
 
-                ui.horizontal(|ui| {
-                    let (label, color) = if enable {
-                        ("Re-enable protections", theme::success(ui))
+                controls::bar(ui, BarKind::Footer, |ui| {
+                    let action = if enable {
+                        (Role::Primary, "Re-enable protections")
                     } else {
-                        ("Disable protections", theme::error(ui))
+                        (Role::Danger, "Disable protections")
                     };
-                    if ui.button(RichText::new(label).color(color).strong()).clicked() {
-                        confirmed = Some(enable);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.driver_protections_pending = None;
+                    match controls::dialog_buttons(ui, &[action, (Role::Cancel, "Cancel")]) {
+                        Some(0) => confirmed = Some(enable),
+                        Some(_) => self.driver_protections_pending = None,
+                        None => {}
                     }
                 });
             });
@@ -1429,42 +1394,32 @@ impl HomePage {
 
         ui.add_space(6.0);
 
-        let state =
-            CollapsingState::load_with_default_open(ui.ctx(), Id::new(("home-inventory", scope)), true);
-        // `openness`, not `is_open`: egui draws the body for any openness above zero, so this is the
-        // exact test for "no card is on screen to carry the live bars" and it skips the animation.
-        let body_hidden = state.openness(ui.ctx()) <= 0.0;
-        state
-            .show_header(ui, |ui| {
-                ui.label(
-                    RichText::new("Hardware inventory")
-                        .color(theme::accent(ui))
-                        .strong(),
-                );
-                ui.label(
-                    RichText::new(format!("({} component(s))", cards.len()))
-                        .color(theme::weak_text(ui))
-                        .small(),
-                );
-                ui.separator();
-                if active.is_empty() {
-                    ui.colored_label(theme::weak_text(ui), icons::STATUS_IDLE);
-                    ui.colored_label(theme::weak_text(ui), "no stress runs in progress");
+        let accent = theme::primary(ui);
+        let components = format!("({} component(s))", cards.len());
+        let runs = format!("{} stress run(s) in progress", active.len());
+        let idle = active.is_empty();
+        let shown = Section::new("home-inventory", "Hardware inventory")
+            .id(Id::new(("home-inventory", scope)))
+            .icon(svg::CIRCUITRY)
+            .icon_tone(accent)
+            .title_tone(accent)
+            .suffix(&components, None)
+            .trailing(|ui| {
+                controls::vline(ui, Metrics::get(ui.ctx()).control_h);
+                if idle {
+                    IconLabel::new(svg::CIRCLE, "no stress runs in progress")
+                        .tone(theme::weak_text(ui))
+                        .show(ui);
                 } else {
-                    ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
-                    ui.colored_label(
-                        theme::warn(ui),
-                        format!("{} stress run(s) in progress", active.len()),
-                    );
+                    IconLabel::new(svg::MT_STRESS, &runs)
+                        .tone(theme::warn(ui))
+                        .show(ui);
                 }
             })
-            .body(|ui| {
+            .show(ui, |ui| {
                 if cards.is_empty() {
                     ui.add_space(4.0);
-                    ui.colored_label(
-                        theme::weak_text(ui),
-                        "No hardware_component history yet for this machine. Run any stress test to populate.",
-                    );
+                    controls::note(ui, svg::INFO, "No hardware_component history yet for this machine. Run any stress test to populate.", theme::weak_text(ui));
                 } else {
                     let card_cols = if ui.available_width() < 760.0 { 1 } else { 2 };
                     ui.columns(card_cols, |cols| {
@@ -1494,11 +1449,7 @@ impl HomePage {
                     .collect();
                 if !unlinked.is_empty() {
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Active runs not yet linked to a component")
-                            .color(theme::weak_text(ui))
-                            .small(),
-                    );
+                    IconLabel::new(svg::LINK_BREAK, "Active runs not yet linked to a component").tone(theme::weak_text(ui)).small(true).wrap(true).show(ui);
                     for run in unlinked {
                         render_active_run_card(ui, run, &mut actions);
                     }
@@ -1507,7 +1458,7 @@ impl HomePage {
 
         // Collapsing the section hides the cards that normally carry the live bars, so re-render
         // them here. Never both: expanded, the per-component cards own this.
-        if body_hidden {
+        if shown.is_none() {
             for run in &active {
                 render_inline_active_run(ui, run);
             }
@@ -1522,15 +1473,15 @@ fn render_component_card(
     active: &[&ActiveRun],
     actions: &mut HomeActions,
 ) {
-    let kind_glyph = match card.kind.as_str() {
-        "cpu" => icons::CHART,           // CPU/compute → bar chart icon
-        "gpu" => icons::MONITOR,         // GPU → monitor icon
-        "ram_module" | "ram_kit" => icons::PACKAGE,
-        "ssd" | "hdd" => icons::HARD_DRIVE,
-        "motherboard" => icons::GRID,
-        "psu" => icons::POWER,
-        "cooler" => icons::WRENCH,
-        _ => icons::PACKAGE,
+    let kind_icon = match card.kind.as_str() {
+        "cpu" => svg::CPU,
+        "gpu" => svg::GRAPHICS_CARD,
+        "ram_module" | "ram_kit" => svg::MEMORY,
+        "ssd" | "hdd" => svg::HARD_DRIVE,
+        "motherboard" => svg::CIRCUITRY,
+        "psu" => svg::PLUG,
+        "cooler" => svg::FAN,
+        _ => svg::PACKAGE,
     };
     glass_card::group(ui, |ui| {
         // Hand-rolled instead of `show_header(..).body(..)`: that pair paints the body immediately
@@ -1542,8 +1493,11 @@ fn render_component_card(
         );
         let header = ui
             .horizontal(|ui| {
-                state.show_toggle_button(ui, eframe::egui::collapsing_header::paint_default_icon);
-                ui.colored_label(theme::accent(ui), kind_glyph);
+                let caret = if state.is_open() { svg::CARET_DOWN } else { svg::CARET_RIGHT };
+                if IconButton::new(caret, IconBox::Sm).show(ui).clicked() {
+                    state.toggle(ui);
+                }
+                kind_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::primary(ui));
                 ui.label(
                     RichText::new(&card.display_name)
                         .strong()
@@ -1562,7 +1516,7 @@ fn render_component_card(
                             .color(theme::weak_text(ui)),
                     );
                     if !active.is_empty() {
-                        ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
+                        svg::MT_STRESS.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::warn(ui));
                     }
                 });
             })
@@ -1578,7 +1532,7 @@ fn render_component_card(
         // Failed rows get an extra "Re-run" button for quick retry.
         state.show_body_indented(&header, ui, |ui| {
             if card.recent_runs.is_empty() {
-                ui.colored_label(theme::weak_text(ui), "no run history yet");
+                controls::note(ui, svg::CLOCK_COUNTER_CLOCKWISE, "no run history yet", theme::weak_text(ui));
             } else {
                 for past in &card.recent_runs {
                     render_past_run_row(ui, past, actions);
@@ -1602,7 +1556,7 @@ fn render_inline_active_run(ui: &mut Ui, run: &ActiveRun) {
         _ => (None, "in progress".to_string()),
     };
     ui.horizontal(|ui| {
-        ui.colored_label(theme::warn(ui), icons::STATUS_WAIT);
+        svg::MT_STRESS.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::warn(ui));
         ui.label(
             RichText::new(&run.tool_label)
                 .strong()
@@ -1637,7 +1591,7 @@ fn render_inline_active_run(ui: &mut Ui, run: &ActiveRun) {
                     .color(theme::weak_text(ui)),
             );
             if !name.is_empty() {
-                ui.label(icons::CARET_RIGHT);
+                svg::CARET_RIGHT.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
                 ui.label(
                     RichText::new(name)
                         .small()
@@ -1647,40 +1601,29 @@ fn render_inline_active_run(ui: &mut Ui, run: &ActiveRun) {
             }
         });
     }
-    if let Some(frac) = progress {
-        ui.add(
-            ProgressBar::new(frac)
-                .desired_width(ui.available_width().max(120.0))
-                .desired_height(6.0),
-        );
-    } else {
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.colored_label(theme::weak_text(ui), "no planned timeout");
-        });
-    }
+    match progress {
+        Some(frac) => ProgressBar::new(frac).thin(true).tone(theme::warn(ui)).show(ui),
+        None => ProgressBar::indeterminate()
+            .text("no planned timeout")
+            .tone(theme::warn(ui))
+            .show(ui),
+    };
 }
 
 fn render_past_run_row(ui: &mut Ui, run: &PastRun, actions: &mut HomeActions) {
     let (icon, color) = match run.result.as_str() {
-        "pass" => (icons::STATUS_ON, theme::success(ui)),
-        "fail" => (icons::STATUS_ERR, theme::error(ui)),
-        "aborted" => (icons::STATUS_OFF, theme::warn(ui)),
-        "in_progress" => (icons::STATUS_WAIT, theme::warn(ui)),
-        _ => (icons::STATUS_IDLE, theme::weak_text(ui)),
+        "pass" => (svg::CHECK_CIRCLE, theme::success(ui)),
+        "fail" => (svg::X_CIRCLE, theme::error(ui)),
+        "aborted" => (svg::MINUS_CIRCLE, theme::warn(ui)),
+        "in_progress" => (svg::HOURGLASS_SIMPLE, theme::warn(ui)),
+        _ => (svg::CIRCLE, theme::weak_text(ui)),
     };
     let failed = run.result == "fail" || run.result == "aborted";
     ui.horizontal(|ui| {
-        ui.colored_label(color, icon);
+        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
         // Whole-row selectable label opens this run in the MCP Tool
         // Log breadcrumb (same pattern as RecordID chips there).
-        let row = ui.selectable_label(
-            false,
-            RichText::new(&run.tool_label)
-                .small()
-                .monospace()
-                .color(theme::strong_text(ui)),
-        );
+        let row = controls::pill(ui, None, &run.tool_label, false);
         if row
             .on_hover_text(format!("Open {} in the MCP Tool Log breadcrumb", run.run_id))
             .clicked()
@@ -1691,8 +1634,7 @@ fn render_past_run_row(ui: &mut Ui, run: &PastRun, actions: &mut HomeActions) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // Retry only makes sense on a completed failed/aborted run.
             if failed
-                && ui
-                    .small_button(format!("{} Re-run", icons::REFRESH))
+                && controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Re-run")
                     .on_hover_text(format!("Open the Scripts tab to re-run '{}'", run.tool_label))
                     .clicked()
             {
@@ -1725,7 +1667,7 @@ fn render_active_run_card(ui: &mut Ui, run: &ActiveRun, actions: &mut HomeAction
 
     glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.colored_label(accent, icons::STATUS_WAIT);
+            svg::MT_STRESS.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, accent);
             ui.label(
                 RichText::new(&run.tool_label)
                     .strong()
@@ -1738,14 +1680,8 @@ fn render_active_run_card(ui: &mut Ui, run: &ActiveRun, actions: &mut HomeAction
                         .color(theme::weak_text(ui)),
                 );
                 if !run.run_id.is_empty() {
-                    let pill = ui
-                        .selectable_label(
-                            false,
-                            RichText::new(format!("id={}", short(&run.run_id, 16)))
-                                .small()
-                                .monospace()
-                                .color(theme::weak_text(ui)),
-                        );
+                    let id_label = format!("id={}", short(&run.run_id, 16));
+                    let pill = controls::pill(ui, svg::DATABASE, &id_label, false);
                     if pill
                         .on_hover_text(format!("Open {} in the MCP Tool Log breadcrumb", run.run_id))
                         .clicked()
@@ -1761,7 +1697,7 @@ fn render_active_run_card(ui: &mut Ui, run: &ActiveRun, actions: &mut HomeAction
                     .color(theme::weak_text(ui))
                     .small(),
             );
-            ui.separator();
+            controls::vline(ui, ui.spacing().interact_size.y);
             ui.label(
                 RichText::new(remaining_label)
                     .color(accent)
@@ -1769,19 +1705,13 @@ fn render_active_run_card(ui: &mut Ui, run: &ActiveRun, actions: &mut HomeAction
                     .strong(),
             );
         });
-        if let Some(frac) = progress {
-            ui.add(
-                ProgressBar::new(frac)
-                    .desired_width(ui.available_width().max(120.0))
-                    .desired_height(8.0),
-            );
-        } else {
-            // Unbounded run → indeterminate-style bar via spinner + label.
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.colored_label(theme::weak_text(ui), "in progress (no planned timeout)");
-            });
-        }
+        match progress {
+            Some(frac) => ProgressBar::new(frac).percentage(true).tone(accent).show(ui),
+            None => ProgressBar::indeterminate()
+                .text("in progress (no planned timeout)")
+                .tone(accent)
+                .show(ui),
+        };
         // Stop the layout from auto-shrinking when many runs stack.
         ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
     });

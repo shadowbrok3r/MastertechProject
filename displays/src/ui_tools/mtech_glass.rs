@@ -36,7 +36,11 @@ const WINDOW_RADIUS: u8 = 8;
 
 /// Lifts a color toward white in gamma space.
 pub(super) fn lift(color: Color32, t: f32) -> Color32 {
-    let ch = |v: u8| (v as f32 + (255.0 - v as f32) * t).round().clamp(0.0, 255.0) as u8;
+    let ch = |v: u8| {
+        (v as f32 + (255.0 - v as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
     Color32::from_rgb(ch(color.r()), ch(color.g()), ch(color.b()))
 }
 
@@ -107,13 +111,24 @@ pub fn glassify(style: &eframe::egui::Style) -> eframe::egui::Style {
     let v = &mut out.visuals;
     let base = v.panel_fill;
 
-    let fallback = [v.selection.bg_fill, v.hyperlink_color, v.selection.stroke.color]
-        .into_iter()
-        .map(tint_of)
-        .max_by_key(|c| chroma(*c))
-        .unwrap_or(VIOLET);
+    let fallback = [
+        v.selection.bg_fill,
+        v.hyperlink_color,
+        v.selection.stroke.color,
+    ]
+    .into_iter()
+    .map(tint_of)
+    .max_by_key(|c| chroma(*c))
+    .unwrap_or(VIOLET);
 
-    glassify_state(&mut v.widgets.noninteractive, base, fallback, 0.055, 0.035, 0.26);
+    glassify_state(
+        &mut v.widgets.noninteractive,
+        base,
+        fallback,
+        0.055,
+        0.035,
+        0.26,
+    );
     glassify_state(&mut v.widgets.inactive, base, fallback, 0.11, 0.07, 0.42);
     glassify_state(&mut v.widgets.hovered, base, fallback, 0.19, 0.14, 0.72);
     glassify_state(&mut v.widgets.active, base, fallback, 0.24, 0.17, 0.90);
@@ -167,19 +182,22 @@ pub(super) fn edge(tint: Color32, opacity: f32) -> Color32 {
     lift(tint, EDGE_LIFT).gamma_multiply(opacity)
 }
 
+/// Opacity of the resting control pane, shared by text fields.
+const FIELD_FILL: f32 = 0.11;
+
 fn glass_widget(
     tint: Color32,
     fill: f32,
-    weak_fill: f32,
     edge_opacity: f32,
     edge_width: f32,
     fg: Color32,
     fg_width: f32,
 ) -> WidgetVisuals {
+    // One opaque fill per state.
+    let fill = pane_over(tint, fill, BG_PANEL);
     WidgetVisuals {
-        // Opaque composite: slider handles and checkbox interiors must occlude the rail/stripes.
-        bg_fill: pane_over(tint, fill, BG_PANEL),
-        weak_bg_fill: pane(tint, weak_fill),
+        bg_fill: fill,
+        weak_bg_fill: fill,
         bg_stroke: Stroke::new(edge_width, edge(tint, edge_opacity)),
         corner_radius: CornerRadius::same(WIDGET_RADIUS),
         fg_stroke: Stroke::new(fg_width, fg),
@@ -201,6 +219,23 @@ pub fn glass_style() -> egui::Style {
     }
 }
 
+/// MTech Glass as saved before its fills were unified: translucent weak fills, no field colour.
+pub fn legacy_glass_style() -> egui::Style {
+    let mut style = glass_style();
+    let w = &mut style.visuals.widgets;
+    for (state, tint, weak_fill) in [
+        (&mut w.noninteractive, VIOLET, 0.035),
+        (&mut w.inactive, VIOLET, 0.07),
+        (&mut w.hovered, VIOLET, 0.14),
+        (&mut w.active, MAGENTA, 0.17),
+        (&mut w.open, VIOLET, 0.11),
+    ] {
+        state.weak_bg_fill = pane(tint, weak_fill);
+    }
+    style.visuals.text_edit_bg_color = None;
+    style
+}
+
 fn glass_selection() -> Selection {
     Selection {
         bg_fill: pane(VIOLET, 0.32),
@@ -214,16 +249,17 @@ fn glass_visuals() -> Visuals {
         // None so text follows per-state fg_stroke (brightens on hover/press).
         override_text_color: None,
         widgets: Widgets {
-            noninteractive: glass_widget(VIOLET, 0.055, 0.035, 0.26, 1.0, TEXT, 1.0),
-            inactive: glass_widget(VIOLET, 0.11, 0.07, 0.42, 1.0, TEXT, 1.0),
-            hovered: glass_widget(VIOLET, 0.19, 0.14, 0.72, 1.2, lift(TEXT, 0.5), 1.5),
-            active: glass_widget(MAGENTA, 0.24, 0.17, 0.90, 1.2, Color32::WHITE, 2.0),
-            open: glass_widget(VIOLET, 0.15, 0.11, 0.58, 1.0, TEXT, 1.0),
+            noninteractive: glass_widget(VIOLET, 0.055, 0.26, 1.0, TEXT, 1.0),
+            inactive: glass_widget(VIOLET, FIELD_FILL, 0.42, 1.0, TEXT, 1.0),
+            hovered: glass_widget(VIOLET, 0.19, 0.72, 1.2, lift(TEXT, 0.5), 1.5),
+            active: glass_widget(MAGENTA, 0.24, 0.90, 1.2, Color32::WHITE, 2.0),
+            open: glass_widget(VIOLET, 0.15, 0.58, 1.0, TEXT, 1.0),
         },
         selection: glass_selection(),
         hyperlink_color: VIOLET_BRIGHT,
         faint_bg_color: pane(VIOLET, 0.05),
         extreme_bg_color: pane(VIOLET, 0.10),
+        text_edit_bg_color: Some(pane_over(VIOLET, FIELD_FILL, BG_PANEL)),
         code_bg_color: pane(BG_CODE, 0.90),
         warn_fg_color: CYAN,
         error_fg_color: ERROR_PINK,
@@ -270,9 +306,18 @@ pub(super) fn glass_text_styles() -> std::collections::BTreeMap<egui::TextStyle,
     [
         (egui::TextStyle::Small, egui::FontId::new(9.0, Proportional)),
         (egui::TextStyle::Body, egui::FontId::new(13.0, Proportional)),
-        (egui::TextStyle::Monospace, egui::FontId::new(13.0, Monospace)),
-        (egui::TextStyle::Button, egui::FontId::new(13.0, Proportional)),
-        (egui::TextStyle::Heading, egui::FontId::new(18.0, Proportional)),
+        (
+            egui::TextStyle::Monospace,
+            egui::FontId::new(13.0, Monospace),
+        ),
+        (
+            egui::TextStyle::Button,
+            egui::FontId::new(13.0, Proportional),
+        ),
+        (
+            egui::TextStyle::Heading,
+            egui::FontId::new(18.0, Proportional),
+        ),
     ]
     .into()
 }
@@ -456,5 +501,25 @@ mod tests {
         let [fr, fg_, fb, _] = hovered.weak_bg_fill.to_srgba_unmultiplied();
         let [sr, sg, sb, _] = hovered.bg_stroke.color.to_srgba_unmultiplied();
         assert!(sr >= fr && sg >= fg_ && sb >= fb);
+    }
+
+    #[test]
+    fn each_state_paints_one_opaque_tinted_fill() {
+        let v = glass_style().visuals;
+        let w = &v.widgets;
+        for state in [
+            &w.noninteractive,
+            &w.inactive,
+            &w.hovered,
+            &w.active,
+            &w.open,
+        ] {
+            assert_eq!(state.bg_fill, state.weak_bg_fill);
+            assert_eq!(state.bg_fill.a(), 255);
+        }
+        for state in [&w.noninteractive, &w.inactive, &w.hovered, &w.open] {
+            assert!(state.bg_fill.b() > state.bg_fill.r(), "violet tint lost");
+        }
+        assert_eq!(v.text_edit_bg_color, Some(w.inactive.bg_fill));
     }
 }

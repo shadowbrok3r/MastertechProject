@@ -4,11 +4,24 @@ use std::sync::Mutex;
 
 use database::schema::task_schedule::{TaskSchedule, local_label};
 use database::schema::{AiProfile, RecordId, RecordIdExt, User};
-use eframe::egui::{Button, ComboBox, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{RichText, ScrollArea, Ui};
 use once_cell::sync::Lazy;
 
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{
+    self, ButtonKind, IconLabel, Metrics, SpinnerSize, TextArea, TextButton, TextField, Tokens,
+};
+use crate::ui_tools::glass_card;
+use crate::ui_tools::icons::svg;
 use crate::{PlatformSpawner, Spawner};
+
+/// Width of the editor's fields.
+const FIELD_W: f32 = 330.0;
+/// Widest the editor card grows.
+const CARD_W: f32 = 360.0;
+/// Width of the Answers dropdown.
+const DETAIL_W: f32 = 120.0;
+/// Longest assistant name.
+const NAME_CHARS: usize = 40;
 
 /// Editor state shared with the async loads and saves.
 #[derive(Default)]
@@ -59,10 +72,14 @@ fn save(profile: AiProfile) {
         with_editor(|ed| {
             ed.busy = false;
             ed.status = Some(match result {
-                Ok(_) => (true, "Saved. New AI sessions use it right away.".to_string()),
-                Err(e) if e.to_string().contains("no such field exists") => {
-                    (false, "Not saved: AI profiles are not enabled on the server yet.".to_string())
-                }
+                Ok(_) => (
+                    true,
+                    "Saved. New AI sessions use it right away.".to_string(),
+                ),
+                Err(e) if e.to_string().contains("no such field exists") => (
+                    false,
+                    "Not saved: AI profiles are not enabled on the server yet.".to_string(),
+                ),
                 Err(e) => (false, format!("Not saved: {e}")),
             });
         });
@@ -88,7 +105,12 @@ pub fn ai_profile_section(ui: &mut Ui, user: &User) {
     let user_id = user.get_id();
     let Ok(mut ed) = EDITOR.lock() else { return };
     if ed.loaded_for.as_ref() != Some(&user_id) {
-        *ed = Editor { loaded_for: Some(user_id.clone()), busy: true, morning_brief: true, ..Default::default() };
+        *ed = Editor {
+            loaded_for: Some(user_id.clone()),
+            busy: true,
+            morning_brief: true,
+            ..Default::default()
+        };
         load(user_id.clone());
     }
     ScrollArea::vertical()
@@ -99,49 +121,56 @@ pub fn ai_profile_section(ui: &mut Ui, user: &User) {
 }
 
 fn editor_ui(ui: &mut Ui, ed: &mut Editor, user_id: &RecordId) {
-    ui.heading(RichText::new(format!("{} AI Assistant", icons::ROBOT)).strong());
-    ui.add_space(6.0);
-    ui.group(|ui| {
-        ui.set_max_width(360.0);
-        ui.label(RichText::new("Name").small().weak());
-        TextEdit::singleline(&mut ed.name).hint_text(" e.g. Jarvis").desired_width(330.0).char_limit(40).show(ui);
-        ui.add_space(4.0);
-        ui.label(RichText::new("Personality").small().weak());
-        TextEdit::multiline(&mut ed.personality)
-            .hint_text(" e.g. dry humor, straight to the point")
-            .desired_rows(2)
-            .desired_width(330.0)
+    let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+    glass_card::group(ui, |ui| {
+        ui.set_max_width(CARD_W);
+        glass_card::card_header(ui, svg::ROBOT, "AI assistant", None);
+        controls::section_label(ui, "Name");
+        TextField::new(&mut ed.name)
+            .hint("e.g. Jarvis")
+            .icon(svg::IDENTIFICATION_BADGE)
+            .width(FIELD_W)
+            .show(ui);
+        if ed.name.chars().count() > NAME_CHARS {
+            ed.name = ed.name.chars().take(NAME_CHARS).collect();
+        }
+        ui.add_space(m.gap.y);
+        controls::section_label(ui, "Personality");
+        TextArea::new(&mut ed.personality)
+            .hint("e.g. dry humor, straight to the point")
+            .rows(2)
+            .width(FIELD_W)
             .char_limit(300)
             .show(ui);
-        ui.add_space(4.0);
+        ui.add_space(m.gap.y);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Answers").small().weak());
-            let shown = match ed.detail.as_str() {
-                "brief" => "Brief",
-                "detailed" => "Detailed",
-                _ => "Normal",
-            };
-            ComboBox::from_id_salt("ai_profile_detail").selected_text(shown).show_ui(ui, |ui| {
-                ui.selectable_value(&mut ed.detail, String::new(), "Normal");
-                ui.selectable_value(&mut ed.detail, "brief".to_string(), "Brief");
-                ui.selectable_value(&mut ed.detail, "detailed".to_string(), "Detailed");
-            });
+            controls::icon_label(ui, svg::TEXT_AA, "Answers");
+            let options = [
+                (String::new(), "Normal"),
+                ("brief".to_string(), "Brief"),
+                ("detailed".to_string(), "Detailed"),
+            ];
+            controls::dropdown(ui, "ai_profile_detail", &mut ed.detail, &options, DETAIL_W);
         });
-        ui.add_space(4.0);
-        ui.label(RichText::new("About me").small().weak());
-        TextEdit::multiline(&mut ed.about)
-            .hint_text(" role, experience, what it should know about you")
-            .desired_rows(3)
-            .desired_width(330.0)
+        ui.add_space(m.gap.y);
+        controls::section_label(ui, "About me");
+        TextArea::new(&mut ed.about)
+            .hint("role, experience, what it should know about you")
+            .rows(3)
+            .width(FIELD_W)
             .char_limit(500)
             .show(ui);
-        ui.add_space(4.0);
-        ui.checkbox(&mut ed.morning_brief, "Morning brief at store open");
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
+        controls::toggle(ui, &mut ed.morning_brief, "Morning brief at store open");
+        ui.add_space(m.gap.y);
         ui.horizontal(|ui| {
-            let save_btn =
-                Button::new(format!("{}  Save Assistant", icons::SAVE)).min_size(eframe::egui::vec2(160.0, 18.0));
-            if ui.add_enabled(!ed.busy, save_btn).clicked() {
+            let save_button = TextButton::new("Save assistant")
+                .icon(svg::FLOPPY_DISK)
+                .kind(ButtonKind::Primary)
+                .prominent(true)
+                .enabled(!ed.busy)
+                .show(ui);
+            if save_button.clicked() {
                 let profile = AiProfile {
                     assistant_name: opt(&ed.name),
                     personality: opt(&ed.personality),
@@ -154,32 +183,54 @@ fn editor_ui(ui: &mut Ui, ed: &mut Editor, user_id: &RecordId) {
                 save(profile);
             }
             if ed.busy {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
         });
         if let Some((ok, msg)) = &ed.status {
-            let color = if *ok { theme::success(ui) } else { theme::error(ui) };
-            ui.label(RichText::new(msg).small().color(color));
+            let (icon, color) = if *ok {
+                (svg::CHECK_CIRCLE, t.success)
+            } else {
+                (svg::WARNING_CIRCLE, t.error)
+            };
+            IconLabel::new(icon, msg)
+                .tone(color)
+                .small(true)
+                .wrap(true)
+                .show(ui);
         }
     });
 
-    ui.add_space(10.0);
-    ui.label(RichText::new(format!("{} My schedules", icons::SCHEDULE)).strong());
+    ui.add_space(m.gap.y);
+    controls::subheading(ui, svg::CALENDAR_CHECK, "My schedules");
     if ed.schedules.is_empty() {
-        ui.label(
-            RichText::new("None. Ask the AI, e.g. \"remind me every Monday at 10 to count thermal paste\".")
-                .small()
-                .weak(),
+        controls::empty_state(
+            ui,
+            svg::CALENDAR_BLANK,
+            "No schedules",
+            "Ask the AI, e.g. \"remind me every Monday at 10 to count thermal paste\".",
+            &[],
         );
         return;
     }
     let mut cancel_id = None;
     for s in &ed.schedules {
         ui.horizontal_wrapped(|ui| {
-            let next = s.next_run.map(|t| local_label(t.into_inner())).unwrap_or_default();
-            ui.label(RichText::new(&s.title).strong());
-            ui.label(RichText::new(format!("{} · next {next}", s.describe())).small().weak());
-            if ui.small_button(format!("{} Cancel", icons::TRASH)).on_hover_text(s.id.key_string()).clicked() {
+            let next = s
+                .next_run
+                .map(|t| local_label(t.into_inner()))
+                .unwrap_or_default();
+            controls::icon_label(ui, svg::CLOCK_CLOCKWISE, &s.title);
+            ui.label(
+                RichText::new(format!("{} · next {next}", s.describe()))
+                    .small()
+                    .weak(),
+            );
+            let cancel = TextButton::new("Cancel")
+                .icon(svg::TRASH)
+                .kind(ButtonKind::Ghost)
+                .show(ui)
+                .on_hover_text(s.id.key_string());
+            if cancel.clicked() {
                 cancel_id = Some(s.id.clone());
             }
         });

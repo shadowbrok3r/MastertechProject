@@ -1,6 +1,11 @@
+use crate::ui_tools::controls::IconLabel;
 use egui_data_table::{viewer::{TableColumnConfig, RowCodec}, RowViewer};
-use eframe::egui::{RichText, Hyperlink, OpenUrl, TextEdit, Widget};
+use eframe::egui::{RichText, Hyperlink, OpenUrl, Widget};
 use crossbeam::channel::Sender;
+
+use crate::ui_tools::controls::TextField;
+use crate::ui_tools::icons::svg::{self};
+use crate::ui_tools::theme;
 
 use super::data::SalesTableData;
 use super::codec::Codec;
@@ -60,19 +65,20 @@ impl RowViewer<SalesTableData> for SalesRowViewer {
                 RichText::new(row.order_id.clone())
                     .underline()
                     .strong()
-                    .color(ui.style().visuals.error_fg_color),
+                    .color(theme::error(ui)),
                 xidax_order_url(&row.order_id),
             )
             .open_in_new_tab(true)
             .ui(ui),
-            1 => ui.label(&row.date),
-            2 => ui.label(&row.order_state),
+            1 => IconLabel::new(svg::CALENDAR_BLANK, &row.date).icon_tone(theme::faint_text(ui)).show(ui),
+            2 => IconLabel::new(svg::PACKAGE, &row.order_state).icon_tone(theme::faint_text(ui)).show(ui),
             3 => ui.label(&row.product),
-            4 => ui.label(&row.payment),
-            5 => ui.label(&row.warranty),
+            4 => IconLabel::new(svg::CREDIT_CARD, &row.payment).icon_tone(theme::faint_text(ui)).show(ui),
+            5 => IconLabel::new(svg::SHIELD_CHECK, &row.warranty).icon_tone(theme::faint_text(ui)).show(ui),
             6 => ui.label(format!("$ {:.2}", row.spiffs)),
             7 => ui.label(format!("$ {:.2}", row.total_paid)),
             8 => ui.label(format!("$ {:.2}", row.total_without_tax)),
+            9 if !row.notes.is_empty() => IconLabel::new(svg::NOTE, &row.notes).icon_tone(theme::faint_text(ui)).show(ui),
             9 => ui.label(&row.notes),
             _ => ui.label("")
         };
@@ -84,17 +90,18 @@ impl RowViewer<SalesTableData> for SalesRowViewer {
                 RichText::new(row.order_id.clone())
                     .underline()
                     .strong()
-                    .color(ui.style().visuals.error_fg_color),
+                    .color(theme::error(ui)),
                 xidax_order_url(&row.order_id),
             )
             .open_in_new_tab(true)
             .ui(ui)),
             9 => {
                 let mut text = row.notes.clone();
-                let resp = TextEdit::singleline(&mut text)
-                    .desired_width(220.)
-                    .hint_text(" Add notes…")
-                    .ui(ui);
+                let resp = TextField::new(&mut text)
+                    .icon(svg::NOTE_PENCIL)
+                    .hint("Add notes…")
+                    .width(220.)
+                    .show(ui);
                 if resp.changed() {
                     row.notes = text.clone();
                     if let Some(tx) = &self.note_update_tx { let _ = tx.try_send((row.order_id.clone(), text)); }
@@ -152,3 +159,4 @@ impl RowViewer<SalesTableData> for SalesRowViewer {
 
     fn allow_row_insertions(&mut self) -> bool { true }
 }
+

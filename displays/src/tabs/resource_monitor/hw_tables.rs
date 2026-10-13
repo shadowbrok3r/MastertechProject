@@ -1,21 +1,24 @@
 use std::collections::HashMap;
 
-use eframe::egui::{self, RichText, Ui, vec2};
+use eframe::egui::{self, Grid, RichText, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 use stress_kit::telemetry::{
     CpuTempCoverage, CpuTempSource, DiskRateSample, GpuSample, MemorySample, NetworkRateSample,
     ProcessSample, TelemetrySnapshot, VoltageReading, WheaStatus, expected_rail_labels,
 };
 
-use super::widgets::{
-    self, Absent, Gauge, Meter, Ramp, Reading, StatTile, Status, StatusPill, GAUGE_SIZE,
-    METER_SIZE, PILL_SIZE, TILE_SIZE,
-};
 use super::sysinfo_convert::fmt_bytes;
+use super::widgets::{
+    self, Absent, GAUGE_SIZE, Gauge, METER_SIZE, Meter, PILL_SIZE, Ramp, Reading, StatTile, Status,
+    StatusPill, TILE_SIZE,
+};
 use super::{ABSENT, TelemetrySource};
-use crate::ui_tools::{glass_card, icons, theme};
-
-const ROW_HEIGHT: f32 = 18.0;
+use crate::ui_tools::controls::{self, Metrics};
+use crate::ui_tools::icons::{
+    self, IconRef,
+    svg::{self},
+};
+use crate::ui_tools::{fonts, glass_card, metrics::type_scale, theme};
 
 // Categorical slots in the validated order; 1 (red) and 5 (green) stay with status.
 const SERIES_DISK: usize = 0;
@@ -80,11 +83,13 @@ pub fn page_file_measured(m: &MemorySample) -> bool {
 // ── Layout helpers ──────────────────────────────────────────────────────────
 
 /// Titled dashboard panel: a themed glass card that frosts its own backdrop.
-pub fn panel<R>(ui: &mut Ui, glyph: &str, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
-    glass_card::titled_card(ui, glyph, title, None, |ui| {
-        ui.add_space(2.0);
-        add(ui)
-    })
+pub fn panel<'a, R>(
+    ui: &mut Ui,
+    icon: impl Into<IconRef<'a>>,
+    title: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    glass_card::titled_card(ui, icon, title, None, add)
 }
 
 /// Small muted line under a widget group.
@@ -228,7 +233,14 @@ fn whea_status_parts(snapshot: &TelemetrySnapshot) -> (Status, String) {
 pub fn show_whea_pill(ui: &mut Ui, snapshot: &TelemetrySnapshot) {
     let (status, label) = whea_status_parts(snapshot);
     let size = pill_size(ui, &label);
-    widgets::status_pill(ui, size, &StatusPill { status, label: &label });
+    widgets::status_pill(
+        ui,
+        size,
+        &StatusPill {
+            status,
+            label: &label,
+        },
+    );
     match snapshot.whea_counters() {
         Some(w) => caption(
             ui,
@@ -285,8 +297,8 @@ pub fn show_memory_panel(ui: &mut Ui, m: &MemorySample, source: TelemetrySource)
     }
 
     ui.horizontal(|ui| {
+        svg::STACK.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::faint_text(ui));
         ui.label(RichText::new("vmmem").small());
-        ui.add_space(6.0);
         match (m.vmmem_mb, source) {
             (Some(mb), _) => {
                 ui.label(
@@ -317,7 +329,13 @@ pub fn show_memory_panel(ui: &mut Ui, m: &MemorySample, source: TelemetrySource)
 /// Per-disk throughput meters, scaled to the busiest device in the tick.
 pub fn show_disk_meters(ui: &mut Ui, disks: &[DiskRateSample], source: TelemetrySource) {
     if disks.is_empty() {
-        empty_state(ui, "No disks reported in the latest snapshot.");
+        controls::empty_state(
+            ui,
+            svg::HARD_DRIVE,
+            "No disks reported in the latest snapshot",
+            "",
+            &[],
+        );
         return;
     }
 
@@ -370,9 +388,15 @@ pub fn show_disk_meters(ui: &mut Ui, disks: &[DiskRateSample], source: Telemetry
     }
 
     if !any_capacity {
-        caption(ui, "No volume reported a capacity, so no usage could be shown.");
+        caption(
+            ui,
+            "No volume reported a capacity, so no usage could be shown.",
+        );
     } else if !rates_measured {
-        caption(ui, "Bars show capacity used; the payload carried no I/O counters.");
+        caption(
+            ui,
+            "Bars show capacity used; the payload carried no I/O counters.",
+        );
     } else {
         caption(ui, "Bars show capacity used.");
     }
@@ -381,7 +405,7 @@ pub fn show_disk_meters(ui: &mut Ui, disks: &[DiskRateSample], source: Telemetry
 /// Per-adapter meters; wire-payload volume is labelled cumulative, not a rate.
 pub fn show_network_meters(ui: &mut Ui, nets: &[NetworkRateSample], source: TelemetrySource) {
     if nets.is_empty() {
-        empty_state(ui, "No network interfaces reported.");
+        controls::empty_state(ui, svg::NETWORK, "No network interfaces reported", "", &[]);
         return;
     }
 
@@ -408,7 +432,10 @@ pub fn show_network_meters(ui: &mut Ui, nets: &[NetworkRateSample], source: Tele
         );
     }
     if rates {
-        caption(ui, &format!("Bars scaled to the busiest adapter, {peak:.2} Mbps."));
+        caption(
+            ui,
+            &format!("Bars scaled to the busiest adapter, {peak:.2} Mbps."),
+        );
     } else {
         caption(
             ui,
@@ -512,16 +539,29 @@ pub fn show_rail_meters(
 /// Per-GPU load and VRAM meters with an honest temperature pill.
 pub fn show_gpu_panel(ui: &mut Ui, gpus: &[GpuSample]) {
     if gpus.is_empty() {
-        empty_state(ui, "No GPU visible to NVML, WDDM, or sysinfo.");
+        controls::empty_state(
+            ui,
+            svg::GRAPHICS_CARD,
+            "No GPU visible to NVML, WDDM, or sysinfo",
+            "",
+            &[],
+        );
         return;
     }
 
     for g in gpus {
-        ui.label(
-            RichText::new(format!("{} · {}", g.vendor, g.name))
-                .small()
-                .strong(),
-        );
+        ui.horizontal(|ui| {
+            svg::GRAPHICS_CARD.show_tinted(
+                ui,
+                Metrics::get(ui.ctx()).icon_sm,
+                theme::accent_secondary(ui),
+            );
+            ui.label(
+                RichText::new(format!("{} · {}", g.vendor, g.name))
+                    .small()
+                    .strong(),
+            );
+        });
 
         let temp = gpu_temp_c(g);
         let temp_label = match temp {
@@ -590,14 +630,14 @@ pub fn show_gpu_panel(ui: &mut Ui, gpus: &[GpuSample]) {
                 },
             );
         }
-        ui.add_space(4.0);
+        ui.add_space(Metrics::get(ui.ctx()).pad.y);
     }
 }
 
 /// Per-core load meters with each core's own die reading where one exists.
 pub fn show_core_meters(ui: &mut Ui, snapshot: &TelemetrySnapshot, columns: usize) {
     if snapshot.cores.is_empty() {
-        empty_state(ui, "No cores in the latest snapshot.");
+        controls::empty_state(ui, svg::CPU, "No cores in the latest snapshot", "", &[]);
         return;
     }
 
@@ -653,6 +693,7 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
 
     // Whole-CPU package/Tctl reading, once above the per-core rows.
     ui.horizontal(|ui| {
+        svg::THERMOMETER.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::faint_text(ui));
         ui.label(RichText::new("Package").strong());
         match snapshot.cpu_package_reading() {
             Some(r) => {
@@ -676,7 +717,7 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
     });
 
     if visible.is_empty() {
-        empty_state(ui, "No cores match the filter.");
+        controls::empty_state(ui, svg::FUNNEL, "No cores match the filter", "", &[]);
         return;
     }
 
@@ -685,9 +726,15 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
     let has_per_core =
         snapshot.has_per_core_cpu_temps() || visible.iter().any(|c| c.temp_c.is_some());
     if !has_per_core {
-        ui.colored_label(theme::weak_text(ui), per_core_absence_reason(snapshot));
+        controls::note(
+            ui,
+            svg::INFO,
+            &per_core_absence_reason(snapshot),
+            theme::weak_text(ui),
+        );
     }
 
+    let row_h = Metrics::get(ui.ctx()).row_h;
     let mut table = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
@@ -701,7 +748,7 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
         table = table.column(Column::auto().at_least(80.0));
     }
     table
-        .header(20.0, |mut h| {
+        .header(row_h, |mut h| {
             h.col(|ui| header_label(ui, "#"));
             h.col(|ui| header_label(ui, "Name"));
             h.col(|ui| header_label(ui, "Brand"));
@@ -713,12 +760,9 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
         })
         .body(|mut body| {
             for c in visible {
-                body.row(ROW_HEIGHT, |mut r| {
+                body.row(row_h, |mut r| {
                     r.col(|ui| {
-                        ui.colored_label(
-                            ui.style().visuals.warn_fg_color,
-                            format!("{}", c.index),
-                        );
+                        ui.colored_label(theme::warn(ui), format!("{}", c.index));
                     });
                     r.col(|ui| {
                         ui.label(&c.name);
@@ -772,15 +816,19 @@ fn per_core_absence_reason(snapshot: &TelemetrySnapshot) -> &'static str {
 /// Board rails; `3VCC (chip)` is the sensor chip's supply, not the +3.3V PSU rail.
 pub fn show_voltages(ui: &mut egui::Ui, voltages: &[VoltageReading]) {
     if voltages.is_empty() {
-        empty_state(
+        controls::empty_state(
             ui,
-            "No board rails in this snapshot. Locally they need a kernel-mode sensor backend to \
-             reach the SuperIO chip; remote client telemetry does not carry rails yet.",
+            svg::LIGHTNING,
+            "No board rails in this snapshot",
+            "Locally they need a kernel-mode sensor backend to reach the SuperIO chip; remote \
+             client telemetry does not carry rails yet.",
+            &[],
         );
         return;
     }
 
     let any_uncalibrated = voltages.iter().any(|v| !v.calibrated);
+    let row_h = Metrics::get(ui.ctx()).row_h;
 
     TableBuilder::new(ui)
         .striped(true)
@@ -789,7 +837,7 @@ pub fn show_voltages(ui: &mut egui::Ui, voltages: &[VoltageReading]) {
         .column(Column::auto().at_least(90.0).at_most(140.0))
         .column(Column::auto().at_least(80.0))
         .column(Column::initial(260.0).at_least(160.0))
-        .header(20.0, |mut h| {
+        .header(row_h, |mut h| {
             h.col(|ui| header_label(ui, "Rail"));
             h.col(|ui| header_label(ui, "Volts"));
             h.col(|ui| header_label(ui, "Scaling"));
@@ -797,7 +845,7 @@ pub fn show_voltages(ui: &mut egui::Ui, voltages: &[VoltageReading]) {
         .body(|mut body| {
             for v in voltages {
                 let chip_supply = v.label.eq_ignore_ascii_case("3VCC (chip)");
-                body.row(ROW_HEIGHT, |mut r| {
+                body.row(row_h, |mut r| {
                     r.col(|ui| {
                         let resp = ui.label(&v.label);
                         if chip_supply {
@@ -812,12 +860,27 @@ pub fn show_voltages(ui: &mut egui::Ui, voltages: &[VoltageReading]) {
                     });
                     r.col(|ui| {
                         if v.calibrated {
-                            ui.colored_label(theme::success(ui), "calibrated divider");
+                            controls::note(
+                                ui,
+                                svg::CHECK_CIRCLE,
+                                "calibrated divider",
+                                theme::success(ui),
+                            );
                         } else {
-                            ui.colored_label(theme::warn(ui), "nominal divider — uncalibrated");
+                            controls::note(
+                                ui,
+                                svg::WARNING,
+                                "nominal divider — uncalibrated",
+                                theme::warn(ui),
+                            );
                         }
                         if chip_supply {
-                            ui.colored_label(theme::info(ui), "sensor chip supply, not +3.3V PSU");
+                            controls::note(
+                                ui,
+                                svg::INFO,
+                                "sensor chip supply, not +3.3V PSU",
+                                theme::info(ui),
+                            );
                         }
                     });
                 });
@@ -825,11 +888,13 @@ pub fn show_voltages(ui: &mut egui::Ui, voltages: &[VoltageReading]) {
         });
 
     if any_uncalibrated {
-        ui.add_space(4.0);
-        ui.colored_label(
-            theme::weak_text(ui),
+        ui.add_space(Metrics::get(ui.ctx()).pad.y);
+        controls::note(
+            ui,
+            svg::INFO,
             "Uncalibrated rails assume a nominal divider, so the absolute value can be off; \
              compare against the rail's own trend, not the nominal spec.",
+            theme::weak_text(ui),
         );
     }
 }
@@ -842,10 +907,17 @@ pub fn show_disks(ui: &mut egui::Ui, disks: &[DiskRateSample], filter: &str) {
         .collect();
 
     if visible.is_empty() {
-        empty_state(ui, "No disks reported in the latest snapshot.");
+        controls::empty_state(
+            ui,
+            svg::HARD_DRIVE,
+            "No disks reported in the latest snapshot",
+            "",
+            &[],
+        );
         return;
     }
 
+    let row_h = Metrics::get(ui.ctx()).row_h;
     TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
@@ -853,14 +925,14 @@ pub fn show_disks(ui: &mut egui::Ui, disks: &[DiskRateSample], filter: &str) {
         .column(Column::initial(220.0).at_least(120.0))
         .column(Column::auto().at_least(110.0))
         .column(Column::auto().at_least(110.0))
-        .header(20.0, |mut h| {
+        .header(row_h, |mut h| {
             h.col(|ui| header_label(ui, "Name"));
             h.col(|ui| header_label(ui, "Read MB/s"));
             h.col(|ui| header_label(ui, "Write MB/s"));
         })
         .body(|mut body| {
             for d in visible {
-                body.row(ROW_HEIGHT, |mut r| {
+                body.row(row_h, |mut r| {
                     r.col(|ui| {
                         ui.label(&d.name);
                     });
@@ -883,10 +955,11 @@ pub fn show_networks(ui: &mut egui::Ui, nets: &[NetworkRateSample], filter: &str
         .collect();
 
     if visible.is_empty() {
-        empty_state(ui, "No network interfaces reported.");
+        controls::empty_state(ui, svg::NETWORK, "No network interfaces reported", "", &[]);
         return;
     }
 
+    let row_h = Metrics::get(ui.ctx()).row_h;
     TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
@@ -894,14 +967,14 @@ pub fn show_networks(ui: &mut egui::Ui, nets: &[NetworkRateSample], filter: &str
         .column(Column::initial(240.0).at_least(140.0))
         .column(Column::auto().at_least(110.0))
         .column(Column::auto().at_least(110.0))
-        .header(20.0, |mut h| {
+        .header(row_h, |mut h| {
             h.col(|ui| header_label(ui, "Interface"));
             h.col(|ui| header_label(ui, "Rx"));
             h.col(|ui| header_label(ui, "Tx"));
         })
         .body(|mut body| {
             for n in visible {
-                body.row(ROW_HEIGHT, |mut r| {
+                body.row(row_h, |mut r| {
                     r.col(|ui| {
                         ui.label(&n.name);
                     });
@@ -918,41 +991,53 @@ pub fn show_networks(ui: &mut egui::Ui, nets: &[NetworkRateSample], filter: &str
 
 /// WHEA counters behind the read status that separates clean from unmeasured.
 pub fn show_whea(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot) {
-    ui.add_space(8.0);
+    let m = Metrics::get(ui.ctx());
+    ui.add_space(m.gap.y);
     ui.vertical(|ui| {
-        ui.label(
-            RichText::new("Windows Hardware Error Architecture")
-                .strong()
-                .size(15.0),
-        );
-        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            svg::SHIELD_WARNING.show_tinted(
+                ui,
+                Metrics::get(ui.ctx()).icon_sm,
+                theme::accent_secondary(ui),
+            );
+            ui.label(
+                RichText::new("Windows Hardware Error Architecture")
+                    .font(fonts::semibold(type_scale::HEADING))
+                    .color(theme::strong_text(ui)),
+            );
+        });
+        ui.add_space(m.gap.y);
         show_whea_pill(ui, snapshot);
-        ui.add_space(8.0);
+        ui.add_space(m.gap.y);
         let counters = snapshot.whea_counters();
-        for (label, value) in [
-            (
-                "New since program start:",
-                counters.map(|w| w.delta_since_program_start),
-            ),
-            ("Corrected:", counters.map(|w| w.corrected_delta)),
-            ("Fatal / uncorrected:", counters.map(|w| w.fatal_delta)),
-            (
-                "Total retained (spans reboots):",
-                counters.map(|w| w.total_retained),
-            ),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label).strong());
-                match value {
-                    Some(v) => {
-                        ui.label(RichText::new(v.to_string()).monospace());
+        Grid::new("whea_counters")
+            .num_columns(2)
+            .spacing([16.0, 4.0])
+            .show(ui, |ui| {
+                for (label, value) in [
+                    (
+                        "New since program start:",
+                        counters.map(|w| w.delta_since_program_start),
+                    ),
+                    ("Corrected:", counters.map(|w| w.corrected_delta)),
+                    ("Fatal / uncorrected:", counters.map(|w| w.fatal_delta)),
+                    (
+                        "Total retained (spans reboots):",
+                        counters.map(|w| w.total_retained),
+                    ),
+                ] {
+                    ui.label(RichText::new(label).strong());
+                    match value {
+                        Some(v) => {
+                            ui.label(RichText::new(v.to_string()).monospace());
+                        }
+                        None => {
+                            ui.colored_label(theme::weak_text(ui), ABSENT);
+                        }
                     }
-                    None => {
-                        ui.colored_label(theme::weak_text(ui), ABSENT);
-                    }
+                    ui.end_row();
                 }
             });
-        }
     });
 }
 
@@ -964,10 +1049,17 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
         .collect();
 
     if visible.is_empty() {
-        empty_state(ui, "No processes in the latest snapshot.");
+        controls::empty_state(
+            ui,
+            svg::LIST_BULLETS,
+            "No processes in the latest snapshot",
+            "",
+            &[],
+        );
         return;
     }
 
+    let row_h = Metrics::get(ui.ctx()).row_h;
     TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
@@ -977,7 +1069,7 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
         .column(Column::auto().at_least(90.0))
         .column(Column::auto().at_least(90.0))
         .column(Column::auto().at_least(80.0))
-        .header(20.0, |mut h| {
+        .header(row_h, |mut h| {
             h.col(|ui| header_label(ui, "PID"));
             h.col(|ui| header_label(ui, "Name"));
             h.col(|ui| header_label(ui, "CPU %"));
@@ -986,7 +1078,7 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
         })
         .body(|mut body| {
             for p in visible {
-                body.row(ROW_HEIGHT, |mut r| {
+                body.row(row_h, |mut r| {
                     r.col(|ui| {
                         ui.label(format!("{}", p.pid));
                     });
@@ -1017,10 +1109,17 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
 
 pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
     if gpus.is_empty() {
-        empty_state(ui, "No GPU visible to NVML, WDDM, or sysinfo.");
+        controls::empty_state(
+            ui,
+            svg::GRAPHICS_CARD,
+            "No GPU visible to NVML, WDDM, or sysinfo",
+            "",
+            &[],
+        );
         return;
     }
 
+    let row_h = Metrics::get(ui.ctx()).row_h;
     TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
@@ -1031,7 +1130,7 @@ pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
         .column(Column::auto().at_least(150.0))
         .column(Column::auto().at_least(80.0))
         .column(Column::auto().at_least(120.0))
-        .header(20.0, |mut h| {
+        .header(row_h, |mut h| {
             h.col(|ui| header_label(ui, "#"));
             h.col(|ui| header_label(ui, "Vendor"));
             h.col(|ui| header_label(ui, "Name / label"));
@@ -1041,7 +1140,7 @@ pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
         })
         .body(|mut body| {
             for g in gpus {
-                body.row(ROW_HEIGHT, |mut r| {
+                body.row(row_h, |mut r| {
                     r.col(|ui| {
                         ui.label(format!("{}", g.index));
                     });
@@ -1099,11 +1198,6 @@ fn temp_color(ui: &Ui, temp_c: Option<f32>) -> egui::Color32 {
 
 fn header_label(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).strong());
-}
-
-fn empty_state(ui: &mut egui::Ui, msg: &str) {
-    ui.add_space(12.0);
-    ui.colored_label(theme::weak_text(ui), msg);
 }
 
 pub fn fmt_captured_at(ms: u64) -> String {

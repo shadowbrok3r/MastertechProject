@@ -1282,11 +1282,26 @@ pub fn reinstall_custom_fonts(ctx: &Context) {
 }
 
 fn setup_custom_fonts(ctx: &Context) {
-    ctx.set_fonts(font_definitions());
+    ctx.set_fonts(font_definitions_scaled(mtech_ui::fonts::text_scale(ctx)));
 }
 
 /// The app's font stack. Exposed so callers can assert glyph coverage without a context.
 pub fn font_definitions() -> FontDefinitions {
+    font_definitions_scaled(mtech_ui::fonts::TextScale::Normal)
+}
+
+/// The app's font stack with its UI faces scaled to `scale`.
+pub fn font_definitions_scaled(scale: mtech_ui::fonts::TextScale) -> FontDefinitions {
+    let mut fonts = unscaled_font_definitions();
+    mtech_ui::fonts::apply_text_scale(&mut fonts, scale);
+    fonts
+}
+
+/// UbuntuMonoNerdFont without its BMP Private Use Area cmap entries.
+static UBUNTU_MONO_NERD: std::sync::OnceLock<std::borrow::Cow<'static, [u8]>> =
+    std::sync::OnceLock::new();
+
+fn unscaled_font_definitions() -> FontDefinitions {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
@@ -1306,7 +1321,10 @@ pub fn font_definitions() -> FontDefinitions {
     fonts.font_data.insert(
         "UbuntuMonoNerdFont".to_owned(),
         std::sync::Arc::new(
-            FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/UbuntuMonoNerdFont-Regular.ttf"))
+            FontData::from_static(mtech_ui::fonts::without_private_use(
+                &UBUNTU_MONO_NERD,
+                include_bytes!("../../MtechServer2.0/assets/fonts/UbuntuMonoNerdFont-Regular.ttf"),
+            ))
         ),
     ); 
 
@@ -1358,6 +1376,7 @@ pub fn font_definitions() -> FontDefinitions {
         .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
 
     crate::ui_tools::icons::install_fonts(&mut fonts);
+    mtech_ui::fonts::install(&mut fonts);
 
     fonts
 }
@@ -1375,5 +1394,46 @@ pub fn default_dock_session() -> DockSession {
         default_dock_session_wasm()
     } else {
         default_dock_session_native()
+    }
+}
+
+#[cfg(test)]
+mod font_stack_tests {
+    use super::*;
+    use crate::ui_tools::icons::p;
+    use eframe::egui::FontId;
+    use eframe::epaint::text::{Fonts, TextOptions};
+    use mtech_ui::fonts::{MEDIUM, SEMIBOLD, TextScale};
+
+    #[test]
+    fn phosphor_glyphs_win_in_every_ui_family() {
+        let mut defs = font_definitions();
+        defs.families
+            .insert(FontFamily::Name("phosphor-only".into()), vec!["phosphor".into()]);
+        let mut fonts = Fonts::new(TextOptions::default(), defs);
+        let mut view = fonts.with_pixels_per_point(1.0);
+        let only = FontId::new(14.0, FontFamily::Name("phosphor-only".into()));
+        for icon in [p::GEAR, p::CPU, p::FOLDER, p::PLAY, p::MAGNIFYING_GLASS] {
+            let ch = icon.chars().next().expect("icon is one char");
+            let phosphor = view.glyph_width(&only, ch);
+            for family in [
+                FontFamily::Proportional,
+                FontFamily::Monospace,
+                FontFamily::Name(MEDIUM.into()),
+                FontFamily::Name(SEMIBOLD.into()),
+            ] {
+                let width = view.glyph_width(&FontId::new(14.0, family.clone()), ch);
+                assert_eq!(width, phosphor, "U+{:04X} in {family:?} is not Phosphor's", ch as u32);
+            }
+        }
+    }
+
+    #[test]
+    fn text_scale_skips_the_terminal_face() {
+        let fonts = font_definitions_scaled(TextScale::Large);
+        let large = TextScale::Large.factor();
+        assert_eq!(fonts.font_data["CascadiaMono"].tweak.scale, 1.0);
+        assert_eq!(fonts.font_data[mtech_ui::fonts::INTER].tweak.scale, large);
+        assert_eq!(fonts.font_data["UbuntuMonoNerdFont"].tweak.scale, large);
     }
 }

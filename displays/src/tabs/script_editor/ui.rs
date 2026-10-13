@@ -1,5 +1,11 @@
-use eframe::egui::{Button, CentralPanel, Color32, FontId, Frame, Id, Layout, Margin, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Align, CentralPanel, Frame, Id, Label, Layout, Margin, RichText, ScrollArea, Ui};
 use crate::{file_viewer::{ColorTheme, FileViewer, Syntax}, get_current_user_from_auth};
+use crate::ui_tools::controls::{
+    self, BarKind, ButtonKind, Metrics, ModalWidth, Role, SpinnerSize, TextArea, TextButton,
+    TextField,
+};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::theme;
 use log::info;
 
 use super::ScriptEditor;
@@ -12,33 +18,27 @@ impl ScriptEditor {
             ui.ctx().request_repaint();
         }
 
+        let m = Metrics::get(ui.ctx());
         eframe::egui::Panel::top("Script editor top panel")
-            .exact_size(40.)
-            .frame(
-                Frame::default()
-                .fill(ui.style().visuals.extreme_bg_color)
-                .stroke(Stroke::new(1.0_f32, Color32::from_additive_luminance(150)))
-                .outer_margin(Margin::symmetric(0, 2))
-            )
+            .exact_size(m.bar_h)
+            .frame(Frame::NONE.fill(ui.style().visuals.extreme_bg_color))
             .show(ui, |ui|
         {
-            ui.add_space(2.);
-            ui.horizontal_top(|ui| {
-                ui.with_layout(Layout::left_to_right(eframe::egui::Align::Center), |ui| {
-                    ui.add_space(10.);
-                    ui.label(RichText::new("Script name: ").heading().font(FontId::monospace(12.)));
-                    TextEdit::singleline(&mut self.script_name)
-                        .desired_width(300.)
-                        .show(ui);
-                });
+            controls::bar(ui, BarKind::Tool, |ui| {
+                ui.add(svg::TERMINAL_WINDOW.image(m.icon_md).tint(theme::primary(ui)));
+                ui.label("Script name");
+                TextField::new(&mut self.script_name)
+                    .icon(svg::FILE_CODE)
+                    .hint("script.ps1")
+                    .mono(true)
+                    .width(300.)
+                    .show(ui);
 
-                ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                    ui.add_space(10.);
-                    let button_size = Vec2::new(50.0, 10.0);
-
-                    if Button::new("💾 Save Script")
-                        .min_size(button_size)
-                        .ui(ui)
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if TextButton::new("Save Script")
+                        .kind(ButtonKind::Primary)
+                        .icon(svg::FLOPPY_DISK)
+                        .show(ui)
                         .clicked()
                     {
                         if !self.script_name.is_empty() && !self.code.is_empty() {
@@ -53,38 +53,24 @@ impl ScriptEditor {
                         }
                     }
 
-                    ui.add_space(5.);
-
-                    if Button::new("➕ New Script")
-                        .min_size(button_size)
-                        .ui(ui)
-                        .clicked()
-                    {
+                    if controls::icon_text_button(ui, svg::FILE_PLUS, "New Script").clicked() {
                         self.code.clear();
                         self.script_name.clear();
                     }
 
-                    ui.add_space(5.);
-
                     if self.ai_generating {
-                        ui.add(Spinner::new().size(16.0));
+                        controls::spinner(ui, SpinnerSize::Sm);
                         ui.label("Generating...");
-                    } else if Button::new("AI Generate")
-                        .min_size(button_size)
-                        .ui(ui)
-                        .clicked()
-                    {
+                    } else if controls::icon_text_button(ui, svg::SPARKLE, "AI Generate").clicked() {
                         self.show_ai_popup = true;
                     }
 
-                    ui.add_space(5.);
-
-                    let txt = match self.open_file_browser {
-                        false => "<- Show File Browser",
-                        true => "Hide File Browser ->",
+                    let (browser_icon, browser_label) = match self.open_file_browser {
+                        false => (svg::SIDEBAR_SIMPLE, "Show File Browser"),
+                        true => (svg::SIDEBAR, "Hide File Browser"),
                     };
 
-                    if ui.button(txt).clicked() {
+                    if controls::icon_text_button(ui, browser_icon, browser_label).clicked() {
                         self.open_file_browser = !self.open_file_browser;
                     }
                 });
@@ -93,36 +79,33 @@ impl ScriptEditor {
 
         // AI generation modal
         if self.show_ai_popup {
-            eframe::egui::Modal::new(Id::new("AI Script Generator"))
-                .show(ui.ctx(), |ui| {
-                    ui.set_min_width(500.0);
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new("AI Script Generator").heading());
-                        ui.add_space(8.);
-                        ui.label("Describe the script you want to generate:");
-                        ui.add_space(4.);
+            let outcome = controls::modal(
+                ui.ctx(),
+                Id::new("AI Script Generator"),
+                svg::SPARKLE,
+                "AI Script Generator",
+                ModalWidth::Regular,
+                &[(Role::Primary, "Generate"), (Role::Cancel, "Cancel")],
+                |ui| {
+                    ui.label("Describe the script you want to generate:");
+                    ui.add_space(m.pad.y);
 
-                        ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                            TextEdit::multiline(&mut self.ai_prompt)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(6)
-                                .hint_text("e.g. 'Write a script that cleans temp files older than 30 days and logs the results'")
-                                .show(ui);
-                        });
-
-                        ui.add_space(8.);
-                        ui.horizontal(|ui| {
-                            let can_generate = !self.ai_prompt.trim().is_empty();
-                            if ui.add_enabled(can_generate, Button::new("Generate")).clicked() {
-                                self.generate_script_from_prompt();
-                                self.show_ai_popup = false;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                self.show_ai_popup = false;
-                            }
-                        });
+                    ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                        TextArea::new(&mut self.ai_prompt)
+                            .rows(6)
+                            .hint("e.g. 'Write a script that cleans temp files older than 30 days and logs the results'")
+                            .show(ui);
                     });
-                });
+                },
+            );
+            let can_generate = !self.ai_prompt.trim().is_empty();
+            if outcome.clicked == Some(0) && can_generate {
+                self.generate_script_from_prompt();
+                self.show_ai_popup = false;
+            }
+            if outcome.should_close {
+                self.show_ai_popup = false;
+            }
         }
 
         let mut file_browser_open = self.open_file_browser;
@@ -135,10 +118,8 @@ impl ScriptEditor {
         )
         .show_collapsible(ui, &mut file_browser_open, |ui| {
             ui.vertical_centered_justified(|ui| {
-                ui.add_space(10.);
-                ui.label(RichText::new("Toolbox").heading());
-                ui.separator();
-                ui.add_space(5.);
+                controls::panel_header(ui, svg::TOOLBOX, "Toolbox", |_| {});
+                ui.add_space(m.pad.y);
 
                 self.filesystem.display(ui);
 
@@ -161,16 +142,21 @@ impl ScriptEditor {
                 }
 
                 if self.open_notification_modal {
-                    eframe::egui::Modal::new(Id::new("Upload Script"))
-                    .show(ui.ctx(), |ui| {
-                        ui.with_layout(Layout::left_to_right(eframe::egui::Align::Min), |ui| {
-                            ui.colored_label(Color32::LIGHT_RED, &self.notification_text);
-                            ui.add_space(10.);
-                            if ui.button("❌").clicked() {
-                                self.open_notification_modal = false;
-                            }
-                        });
-                    });
+                    let outcome = controls::modal(
+                        ui.ctx(),
+                        Id::new("Upload Script"),
+                        svg::WARNING_CIRCLE,
+                        "Upload Script",
+                        ModalWidth::Narrow,
+                        &[(Role::Cancel, "Close")],
+                        |ui| {
+                            let color = theme::error(ui);
+                            ui.add(Label::new(RichText::new(&self.notification_text).color(color)).wrap());
+                        },
+                    );
+                    if outcome.should_close {
+                        self.open_notification_modal = false;
+                    }
                 }
             });
         });

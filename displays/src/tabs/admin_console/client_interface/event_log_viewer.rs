@@ -1,7 +1,5 @@
-use eframe::egui::{
-    self, ComboBox, KeyboardShortcut, RichText, ScrollArea, Sense,
-    TextEdit, Ui, Widget, scroll_area,
-};
+use crate::ui_tools::metrics::Metrics;
+use eframe::egui::{self, KeyboardShortcut, RichText, ScrollArea, Sense, Ui, Widget, scroll_area};
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
     viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext},
@@ -10,7 +8,8 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, EventLogEntry};
-use crate::ui_tools::icons;
+use crate::ui_tools::controls::{self, BarKind, Role, TextButton};
+use crate::ui_tools::icons::svg;
 use crate::ui_tools::theme;
 
 const NUM_COLUMNS: usize = 5;
@@ -176,36 +175,31 @@ impl EventLogViewer {
             }
         }
 
-        // Toolbar
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Log:").strong());
+        controls::bar(ui, BarKind::Tool, |ui| {
+            let weak = theme::weak_text(ui);
+            svg::BOOK_OPEN.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, weak);
+            ui.label(RichText::new("Log").small().color(weak));
             let prev_log = self.selected_log.clone();
-            ComboBox::from_id_salt("event_log_name")
-                .selected_text(&self.selected_log)
-                .show_ui(ui, |ui| {
-                    for log in &["System", "Application", "Security", "Setup"] {
-                        ui.selectable_value(&mut self.selected_log, log.to_string(), *log);
-                    }
-                });
+            let logs: Vec<(String, &str)> = ["System", "Application", "Security", "Setup"]
+                .into_iter()
+                .map(|log| (log.to_string(), log))
+                .collect();
+            controls::dropdown(ui, "event_log_name", &mut self.selected_log, &logs, 120.);
 
-            ui.label("Level:");
-            ComboBox::from_id_salt("event_log_level")
-                .selected_text(&self.level_filter)
-                .show_ui(ui, |ui| {
-                    for level in &["All", "Critical", "Error", "Warning", "Information"] {
-                        ui.selectable_value(&mut self.level_filter, level.to_string(), *level);
-                    }
-                });
+            svg::FUNNEL_SIMPLE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, weak);
+            ui.label(RichText::new("Level").small().color(weak));
+            let levels: Vec<(String, &str)> = ["All", "Critical", "Error", "Warning", "Information"]
+                .into_iter()
+                .map(|level| (level.to_string(), level))
+                .collect();
+            controls::dropdown(ui, "event_log_level", &mut self.level_filter, &levels, 120.);
 
-            ui.label("Max:");
-            let mut max_str = self.max_entries.to_string();
-            if TextEdit::singleline(&mut max_str).desired_width(50.).show(ui).response.changed() {
-                if let Ok(v) = max_str.parse::<u32>() {
-                    self.max_entries = v.clamp(10, 5000);
-                }
-            }
+            svg::LIST_NUMBERS.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, weak);
+            ui.label(RichText::new("Max").small().color(weak));
+            controls::value_field(ui, &mut self.max_entries, 10..=5000, "", 64.);
 
-            if ui.button("Refresh").clicked() || prev_log != self.selected_log {
+            let refresh = controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh");
+            if refresh.clicked() || prev_log != self.selected_log {
                 self.loading = true;
                 self.table.clear();
                 self.entries.clear();
@@ -217,17 +211,13 @@ impl EventLogViewer {
                 });
             }
 
-            ui.label("Filter:");
-            TextEdit::singleline(&mut self.viewer.filter)
-                .hint_text("Search events...")
-                .desired_width(150.)
-                .show(ui);
+            controls::search_field(ui, &mut self.viewer.filter, "Search events...", 180.);
 
-            if ui
-                .add_enabled(
-                    !self.entries.is_empty(),
-                    egui::Button::new(format!("{} Copy", icons::COPY)),
-                )
+            let copy = TextButton::new("Copy")
+                .icon(svg::COPY)
+                .enabled(!self.entries.is_empty())
+                .show(ui);
+            if copy
                 .on_hover_text("Copy the matching events as tab-separated text")
                 .clicked()
             {
@@ -238,21 +228,24 @@ impl EventLogViewer {
         ui.add_space(4.);
 
         if self.loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading event log...");
-            });
+            controls::loading_state(ui, "Loading event log...");
             return;
         }
 
         if self.entries.is_empty() {
-            ui.label(RichText::new("No events loaded. Click Refresh to fetch events.").italics().color(theme::weak_text(ui)));
+            controls::empty_state(
+                ui,
+                svg::LIST_MAGNIFYING_GLASS,
+                "No events loaded",
+                "Click Refresh to fetch events.",
+                &[],
+            );
             return;
         }
 
         // Detail modal
         if let Some(detail) = self.detail_message.clone() {
-            egui::Window::new("Event Detail")
+            controls::icon_window(ui.ctx(), svg::INFO, "Event Detail")
                 .collapsible(false)
                 .resizable(true)
                 .default_width(500.)
@@ -260,9 +253,11 @@ impl EventLogViewer {
                     ScrollArea::vertical().max_height(400.).show(ui, |ui| {
                         ui.label(&detail);
                     });
-                    if ui.button("Close").clicked() {
-                        self.detail_message = None;
-                    }
+                    controls::bar(ui, BarKind::Footer, |ui| {
+                        if controls::dialog_buttons(ui, &[(Role::Cancel, "Close")]).is_some() {
+                            self.detail_message = None;
+                        }
+                    });
                 });
         }
 
@@ -317,14 +312,19 @@ impl RowViewer<EventLogEntry> for EventLogRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.level.as_str() {
-                    "Critical" => (icons::CRITICAL, theme::status_style(ui, theme::Status::Critical).color),
-                    "Error" => (icons::STATUS_ERR, theme::error(ui)),
-                    "Warning" => (icons::STATUS_WARN, theme::warn(ui)),
-                    "Information" => (icons::INFO, theme::info(ui)),
-                    "Verbose" => (icons::CLIPBOARD, theme::weak_text(ui)),
-                    _ => (icons::STATUS_DOT, theme::weak_text(ui)),
+                    "Critical" => {
+                        (svg::SKULL, theme::status_style(ui, theme::Status::Critical).color)
+                    }
+                    "Error" => (svg::X_CIRCLE, theme::error(ui)),
+                    "Warning" => (svg::WARNING, theme::warn(ui)),
+                    "Information" => (svg::INFO, theme::info(ui)),
+                    "Verbose" => (svg::CLIPBOARD, theme::weak_text(ui)),
+                    _ => (svg::DOT, theme::weak_text(ui)),
                 };
-                ui.label(RichText::new(format!("{} {}", icon, row.level)).color(color));
+                ui.horizontal(|ui| {
+                    icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+                    ui.label(RichText::new(&row.level).color(color));
+                });
             }
             1 => {
                 let display = format_event_time(&row.time);

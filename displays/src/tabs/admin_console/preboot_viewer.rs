@@ -5,6 +5,7 @@
 //! the relay for the latest frame, renders it with the shared [`RataguiBackend`]
 //! (identical to the OS-client terminal viewer), and POSTs captured input back.
 
+use crate::ui_tools::metrics::Metrics;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -14,7 +15,8 @@ use eframe::egui::{RichText, Ui};
 use crate::remote_viewer::preboot::{from_preboot, terminal_event_to_preboot};
 use crate::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
 use crate::{PlatformSpawner, Spawner};
-use crate::ui_tools::theme;
+use crate::ui_tools::controls::{self, SpinnerSize};
+use crate::ui_tools::{icons::svg, theme};
 
 /// One connected pre-boot box as reported by the relay's session list.
 pub struct PreBootAgent {
@@ -75,25 +77,33 @@ impl PreBootRoster {
 
         let mut selected = None;
         if self.agents.is_empty() {
-            ui.label(
-                RichText::new(
-                    "no connected UEFI apps — a box appears here once it reaches the relay \
-                     (on the box: 'c' connect, 'd' DHCP, target http://<axum-LAN-IP>:8082 via 'e')",
-                )
-                .weak(),
+            controls::empty_state(
+                ui,
+                svg::MT_FIRMWARE,
+                "No connected UEFI apps",
+                "A box appears here once it reaches the relay (on the box: 'c' connect, \
+                 'd' DHCP, target http://<axum-LAN-IP>:8082 via 'e')",
+                &[],
             );
         }
         for a in &self.agents {
             ui.horizontal(|ui| {
                 let live = a.idle_secs < 60;
                 let color = if live { theme::success(ui) } else { theme::weak_text(ui) };
+                svg::MT_FIRMWARE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
                 ui.colored_label(color, &a.serial);
-                ui.label(if a.streaming { "streaming" } else { "connected" });
+                let (state_icon, state) = if a.streaming {
+                    (svg::BROADCAST, "streaming")
+                } else {
+                    (svg::PLUGS_CONNECTED, "connected")
+                };
+                state_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                ui.label(state);
                 ui.weak(format!("{}s", a.idle_secs));
                 if a.log_lines > 0 {
                     ui.weak(format!("logs: {}", a.log_lines));
                 }
-                if ui.button("View").clicked() {
+                if controls::icon_text_button(ui, svg::MONITOR_PLAY, "View").clicked() {
                     selected = Some(a.serial.clone());
                 }
             });
@@ -259,13 +269,15 @@ impl PreBootViewer {
         if !self.received_frame {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
                 if self.poll_err.load(Ordering::Acquire) {
+                    svg::CLOUD_WARNING.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::error(ui));
                     ui.label(RichText::new(format!(
                         "relay unreachable at {} — check the Relay URL / network",
                         self.base_url
                     )).color(theme::error(ui)));
                 } else if self.session_missing.load(Ordering::Acquire) {
+                    svg::LINK_BREAK.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::error(ui));
                     ui.label(RichText::new(format!(
                         "'{}' is not connected to the relay — on the box check the target \
                          ('e', http://<axum-LAN-IP>:8082) and its Log tab",
@@ -284,15 +296,9 @@ impl PreBootViewer {
             return;
         }
         if self.poll_err.load(Ordering::Acquire) {
-            ui.colored_label(
-                theme::error(ui),
-                "relay unreachable — showing the last received frame",
-            );
+            controls::note(ui, svg::CLOUD_WARNING, "relay unreachable — showing the last received frame", theme::error(ui));
         } else if self.session_missing.load(Ordering::Acquire) {
-            ui.colored_label(
-                theme::error(ui),
-                format!("'{}' dropped off the relay — showing its last frame", self.serial),
-            );
+            controls::note(ui, svg::LINK_BREAK, &format!("'{}' dropped off the relay — showing its last frame", self.serial), theme::error(ui));
         }
         // Scale the font so the full firmware grid fits the window.
         if let Some((cols, rows)) = self.grid {

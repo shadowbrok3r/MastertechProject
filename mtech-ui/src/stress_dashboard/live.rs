@@ -1,10 +1,17 @@
 //! Live column: run status, stage progress, per-lane meters, host telemetry.
 
 use eframe::egui::{self, RichText, Ui};
-use stress_runner::{info_for, mode_info, StressPanelConfig};
+use stress_runner::{StressPanelConfig, info_for, mode_info};
 
-use super::{configure::fmt_dur, StressLive};
-use crate::{icons, theme};
+use super::{StressLive, configure::fmt_dur, result_icon};
+use crate::controls::{self, Metrics, SpinnerSize, Tokens};
+use crate::icons::svg;
+use crate::theme;
+
+/// Height of the throughput sparkline.
+const SPARK_H: f32 = 44.0;
+/// Widest a lane hover card runs.
+const LANE_HINT_W: f32 = 320.0;
 
 pub(super) fn show(
     ui: &mut Ui,
@@ -13,55 +20,54 @@ pub(super) fn show(
     running: bool,
     chart: impl FnOnce(&mut Ui),
 ) {
+    let m = Metrics::get(ui.ctx());
     status_header(ui, cfg, live, running);
-    ui.add_space(6.0);
+    ui.add_space(m.gap.y);
 
-    if let Some(stage) = &live.stage {
-        if stage.count > 0 {
-            let frac = (stage.index as f32 + 1.0) / stage.count as f32;
-            ui.add(
-                egui::ProgressBar::new(frac)
-                    .text(format!(
-                        "stage {}/{}  ·  {}",
-                        stage.index + 1,
-                        stage.count,
-                        stage.label
-                    ))
-                    .desired_height(18.0),
-            );
-            ui.add_space(6.0);
-        }
+    if let Some(stage) = &live.stage
+        && stage.count > 0
+    {
+        let frac = (stage.index as f32 + 1.0) / stage.count as f32;
+        controls::ProgressBar::new(frac)
+            .text(&format!(
+                "stage {}/{}  ·  {}",
+                stage.index + 1,
+                stage.count,
+                stage.label
+            ))
+            .show(ui);
+        ui.add_space(m.gap.y);
     }
 
     if !live.lanes.is_empty() {
         lane_meters(ui, live);
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
     }
 
     if live.history.len() > 1 {
         sparkline(ui, live);
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
     }
 
     if let Some(err) = &live.last_error {
         let col = theme::warn(ui);
         egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.label(RichText::new(format!("{}  {err}", icons::STATUS_WARN)).color(col));
+            controls::status_label(ui, svg::WARNING, err, col);
         });
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
     }
 
-    ui.label(RichText::new(format!("{}  Live telemetry", icons::CHART)).strong());
+    controls::subheading(ui, svg::CHART_LINE, "Live telemetry");
     chart(ui);
 }
 
 fn status_header(ui: &mut Ui, cfg: &StressPanelConfig, live: &StressLive, running: bool) {
     let info = mode_info(cfg.mode.clone());
+    let m = Metrics::get(ui.ctx());
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.horizontal(|ui| {
             if running {
-                let col = theme::accent(ui);
-                ui.colored_label(col, RichText::new(icons::STATUS_WAIT).size(18.0));
+                controls::spinner(ui, SpinnerSize::Md);
                 ui.vertical(|ui| {
                     ui.label(RichText::new(format!("Running · {}", info.label)).strong());
                     ui.label(
@@ -71,7 +77,7 @@ fn status_header(ui: &mut Ui, cfg: &StressPanelConfig, live: &StressLive, runnin
                 });
             } else if let Some(v) = &live.verdict {
                 let col = super::result_color(ui, v.result);
-                ui.colored_label(col, RichText::new(icons::STATUS_DOT).size(18.0));
+                result_icon(v.result).show_tinted(ui, m.icon_lg, col);
                 ui.vertical(|ui| {
                     ui.label(
                         RichText::new(super::result_label(v.result, v.failure_kind.as_deref()))
@@ -85,7 +91,7 @@ fn status_header(ui: &mut Ui, cfg: &StressPanelConfig, live: &StressLive, runnin
                 });
             } else {
                 let col = theme::weak_text(ui);
-                ui.colored_label(col, RichText::new(icons::STATUS_IDLE).size(18.0));
+                svg::PAUSE_CIRCLE.show_tinted(ui, m.icon_lg, col);
                 ui.vertical(|ui| {
                     ui.label(RichText::new("Idle").strong());
                     ui.label(RichText::new(info.when).weak());
@@ -110,7 +116,8 @@ fn status_header(ui: &mut Ui, cfg: &StressPanelConfig, live: &StressLive, runnin
 
 /// One row per lane: name, live throughput bar, error count.
 fn lane_meters(ui: &mut Ui, live: &StressLive) {
-    ui.label(RichText::new("Lanes").strong());
+    let m = Metrics::get(ui.ctx());
+    controls::subheading(ui, svg::ROWS, "Lanes");
     let peak = live
         .lanes
         .iter()
@@ -121,29 +128,27 @@ fn lane_meters(ui: &mut Ui, live: &StressLive) {
     egui::Grid::new("stress_lane_meters")
         .num_columns(3)
         .striped(true)
-        .spacing([8.0, 4.0])
+        .spacing([m.gap.x, m.pad.y])
         .show(ui, |ui| {
             for lane in &live.lanes {
                 let resp = ui.label(&lane.label);
                 if let Some(choice) = lane.stressor {
                     let i = info_for(choice);
                     resp.on_hover_ui(|ui| {
-                        ui.set_max_width(320.0);
+                        ui.set_max_width(LANE_HINT_W);
                         ui.label(RichText::new(choice.label()).strong());
                         ui.label(i.what);
                     });
                 }
 
                 let frac = (lane.throughput / peak).clamp(0.0, 1.0) as f32;
-                ui.add(
-                    egui::ProgressBar::new(frac)
-                        .text(format!("{:.1} {}", lane.throughput, lane.unit))
-                        .desired_height(14.0),
-                );
+                controls::ProgressBar::new(frac)
+                    .text(&format!("{:.1} {}", lane.throughput, lane.unit))
+                    .show(ui);
 
                 if lane.errors > 0 {
                     let col = theme::error(ui);
-                    ui.colored_label(col, format!("{} {}", icons::STATUS_ERR, lane.errors))
+                    controls::status_label(ui, svg::X_CIRCLE, &lane.errors.to_string(), col)
                         .on_hover_text(
                             lane.last_error
                                 .clone()
@@ -151,7 +156,7 @@ fn lane_meters(ui: &mut Ui, live: &StressLive) {
                         );
                 } else {
                     let col = theme::result_pass(ui);
-                    ui.colored_label(col, icons::STATUS_READY);
+                    svg::CHECK.show_tinted(ui, m.icon_sm, col);
                 }
                 ui.end_row();
             }
@@ -164,14 +169,18 @@ fn sparkline(ui: &mut Ui, live: &StressLive) {
     if peak <= 0.0 {
         return;
     }
-    let height = 44.0;
+    let t = Tokens::get(ui.ctx());
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, SPARK_H), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    let stroke_col = theme::accent(ui);
+    let stroke_col = theme::primary(ui);
 
     let n = live.history.len();
-    let dx = if n > 1 { rect.width() / (n - 1) as f32 } else { 0.0 };
+    let dx = if n > 1 {
+        rect.width() / (n - 1) as f32
+    } else {
+        0.0
+    };
     let points: Vec<egui::Pos2> = live
         .history
         .iter()
@@ -183,16 +192,20 @@ fn sparkline(ui: &mut Ui, live: &StressLive) {
         })
         .collect();
 
-    painter.rect_filled(rect, 2.0, theme::bg_faint(ui));
+    painter.rect_filled(rect, t.radius_sm, theme::bg_faint(ui));
     if points.len() > 1 {
         painter.add(egui::Shape::line(
             points,
             egui::Stroke::new(1.5, stroke_col),
         ));
     }
-    ui.label(
-        RichText::new(format!("peak {:.1} {}", peak, live.throughput_unit))
-            .weak()
-            .small(),
-    );
+    let col = theme::weak_text(ui);
+    controls::IconLabel::new(
+        svg::TREND_UP,
+        &format!("peak {:.1} {}", peak, live.throughput_unit),
+    )
+    .tone(col)
+    .small(true)
+    .selectable(true)
+    .show(ui);
 }

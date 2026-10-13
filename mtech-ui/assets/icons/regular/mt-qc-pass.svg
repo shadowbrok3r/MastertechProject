@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" data-glyph="SHIELD_CHECK">
+<defs><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256"><rect width="256" height="256" fill="#ffffff" stroke="none"/><path d="M201.7,152.1A20,20,0,1,0,219.9,170.3 M186,186L160,212" fill="#000000" stroke="#000000" stroke-width="48"/></mask></defs>
+<g mask="url(#cut)">
+<path d="M40,56a8,8,0,0,1,8-8H184a8,8,0,0,1,8,8v58c0,74-62,98-76,104c-14-6-76-30-76-104Z"/>
+<path d="M80,120l24,24l48-48"/>
+</g>
+<path d="M201.7,152.1A20,20,0,1,0,219.9,170.3 M186,186L160,212"/>
+</svg>

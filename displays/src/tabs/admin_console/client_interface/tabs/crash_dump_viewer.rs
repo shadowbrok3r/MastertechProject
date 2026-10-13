@@ -19,11 +19,16 @@ use database::schema::{
     ConnectedClient, RecordIdExt,
 };
 use dump_triage::gpu::GpuCrashDump;
-use eframe::egui::{Color32, ComboBox, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{Color32, RichText, ScrollArea, Ui};
 use std::time::Duration;
 
+use crate::ui_tools::controls::{self, BarKind, IconLabel, Metrics, Section, SpinnerSize};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::list_row::{Lead, ListRow};
+
+use crate::ui_tools::controls::badge;
 use crate::ui_tools::info_card::{
-    badge, expandable_text, fmt_date_time, kv_row, section_card, truncate_chars,
+    expandable_text, fmt_date_time, kv_row, section_card, truncate_chars,
 };
 use crate::ui_tools::{dump_text, hex_json, icons, theme};
 use crate::{PlatformSpawner, Spawner};
@@ -159,26 +164,25 @@ impl CrashDumpViewer {
         }
 
         let mut reload = false;
-        ui.horizontal(|ui| {
-            ui.heading(format!("{} Crash Dumps — this machine", icons::CRITICAL));
+        controls::bar(ui, BarKind::Tool, |ui| {
+            let m = Metrics::get(ui.ctx());
+            controls::heading(ui, svg::SKULL, "Crash Dumps — this machine");
             if self.loading {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
-            ui.separator();
-            ComboBox::from_id_salt("crash_dump_kind")
-                .selected_text(kind_label(&self.kind_filter))
-                .show_ui(ui, |ui| {
-                    for k in KIND_FILTERS {
-                        ui.selectable_value(&mut self.kind_filter, k.to_string(), kind_label(k));
-                    }
-                });
-            ui.add(
-                TextEdit::singleline(&mut self.filter)
-                    .hint_text("bugcheck / module / dump / process")
-                    .desired_width(220.0),
+            controls::vline(ui, m.control_h);
+            let kinds: Vec<(String, &str)> = KIND_FILTERS
+                .iter()
+                .map(|k| (k.to_string(), kind_label(k)))
+                .collect();
+            controls::dropdown(ui, "crash_dump_kind", &mut self.kind_filter, &kinds, 130.0);
+            controls::search_field(
+                ui,
+                &mut self.filter,
+                "bugcheck / module / dump / process",
+                220.0,
             );
-            if ui
-                .button(format!("{} Refresh", icons::REFRESH))
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh")
                 .on_hover_text("Re-read this machine's sightings, signatures, and verdicts.")
                 .clicked()
             {
@@ -187,7 +191,7 @@ impl CrashDumpViewer {
         });
 
         if !self.status.is_empty() {
-            ui.label(RichText::new(&self.status).color(theme::warn(ui)).small());
+            IconLabel::new(svg::WARNING, &self.status).tone(theme::warn(ui)).small(true).wrap(true).show(ui);
         }
 
         ui.add_space(4.0);
@@ -223,20 +227,21 @@ impl CrashDumpViewer {
         if self.history.sightings.is_empty() {
             return;
         }
+        let rule_h = Metrics::get(ui.ctx()).control_h;
         glass_card::group(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
+                svg::BUG_BEETLE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::text(ui));
                 ui.label(
                     RichText::new(format!("{} crash record(s)", self.history.sightings.len()))
                         .strong(),
                 );
-                ui.separator();
+                controls::vline(ui, rule_h);
                 for (kind, n) in self.history.counts_by_kind() {
-                    let (glyph, color) = kind_badge(ui, &kind);
-                    ui.label(
-                        RichText::new(format!("{glyph} {} x{n}", kind_label(&kind))).color(color),
-                    );
+                    let (icon, color) = kind_badge(ui, &kind);
+                    icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+                    ui.label(RichText::new(format!("{} x{n}", kind_label(&kind))).color(color));
                 }
-                ui.separator();
+                controls::vline(ui, rule_h);
                 for (code, n) in self.history.counts_by_code() {
                     let color = if n >= 2 {
                         theme::warn(ui)
@@ -253,9 +258,12 @@ impl CrashDumpViewer {
     /// the width; module/process/dump live in the detail column.
     fn records_column(&mut self, ui: &mut Ui, avail_h: f32) {
         if self.history.sightings.is_empty() {
-            ui.label(
-                RichText::new("No crash sightings recorded for this machine.")
-                    .color(theme::weak_text(ui)),
+            controls::empty_state(
+                ui,
+                svg::SHIELD_CHECK,
+                "No crash sightings recorded for this machine.",
+                "",
+                &[],
             );
             return;
         }
@@ -282,20 +290,21 @@ impl CrashDumpViewer {
                     shown += 1;
 
                     let when = fmt_date_time(&s.created_at);
-                    let (glyph, kcolor) = kind_badge(ui, &s.dump_kind);
+                    let (kind_icon, kcolor) = kind_badge(ui, &s.dump_kind);
                     let code = match sig {
                         Some(g) => code_label(g),
                         None => s.signature.key_string(),
                     };
-                    let (vglyph, vcolor) = if history.has_verdict(&s.signature) {
-                        (icons::STATUS_ON, theme::success(ui))
+                    let (vicon, vcolor) = if history.has_verdict(&s.signature) {
+                        (svg::CHECK_CIRCLE, theme::success(ui))
                     } else {
-                        (icons::STATUS_DOT, theme::weak_text(ui))
+                        (svg::DOT, theme::weak_text(ui))
                     };
-                    let row = ui.selectable_label(
-                        selected == Some(idx),
-                        RichText::new(format!("{when}  {glyph}  {code}")).monospace(),
-                    );
+                    let title = format!("{when}  {code}");
+                    let row = ListRow::new(&title)
+                        .lead(Lead::Icon(kind_icon, Some(kcolor)))
+                        .selected(selected == Some(idx))
+                        .show(ui);
                     if row.clicked() {
                         clicked = Some(idx);
                     }
@@ -305,16 +314,12 @@ impl CrashDumpViewer {
                                 .color(kcolor)
                                 .small(),
                         );
-                        ui.label(RichText::new(vglyph).color(vcolor).small());
+                        vicon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, vcolor);
                     });
-                    ui.separator();
+                    controls::hairline(ui);
                 }
                 if shown == 0 {
-                    ui.label(
-                        RichText::new("No sightings match the current filter.")
-                            .color(theme::weak_text(ui))
-                            .small(),
-                    );
+                    IconLabel::new(svg::FUNNEL, "No sightings match the current filter.").tone(theme::weak_text(ui)).small(true).wrap(true).show(ui);
                 }
                 clicked
             })
@@ -328,10 +333,12 @@ impl CrashDumpViewer {
     /// Everything stored for the selected sighting, its signature, verdicts.
     fn detail_column(&mut self, ui: &mut Ui, avail_h: f32) {
         let Some(idx) = self.selected.filter(|i| *i < self.history.sightings.len()) else {
-            ui.label(
-                RichText::new("Select a crash to see everything we hold for it.")
-                    .color(theme::weak_text(ui))
-                    .small(),
+            controls::empty_state(
+                ui,
+                svg::CURSOR_CLICK,
+                "No crash selected",
+                "Select a crash to see everything we hold for it.",
+                &[],
             );
             return;
         };
@@ -358,21 +365,17 @@ impl CrashDumpViewer {
         view: &DetailView,
     ) {
         let gpu = gpu_detail(s);
-        let (glyph, color) = kind_badge(ui, &s.dump_kind);
+        let (kind_icon, color) = kind_badge(ui, &s.dump_kind);
 
         ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(format!("{glyph} {}", kind_label(&s.dump_kind)))
-                    .color(color)
-                    .strong(),
-            );
+            kind_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
+            ui.label(RichText::new(kind_label(&s.dump_kind)).color(color).strong());
             let code = match sig {
                 Some(g) => code_label(g),
                 None => s.signature.key_string(),
             };
             ui.label(RichText::new(code).monospace().strong());
-            if ui
-                .button(format!("{} Copy for ticket", icons::COPY))
+            if controls::icon_text_button(ui, svg::COPY, "Copy for ticket")
                 .on_hover_text("Copy this crash, its signature, and its verdicts as plain text.")
                 .clicked()
             {
@@ -380,8 +383,7 @@ impl CrashDumpViewer {
                     .copy_text(clipboard_text(s, sig, verdicts, gpu.as_ref()));
             }
             if let Some(name) = s.dump_name.as_deref() {
-                if ui
-                    .button(format!("{} Copy dump path", icons::CLIPBOARD))
+                if controls::icon_text_button(ui, svg::CLIPBOARD, "Copy dump path")
                     .on_hover_text("Copy the dump's recorded name/path on the client.")
                     .clicked()
                 {
@@ -396,7 +398,7 @@ impl CrashDumpViewer {
         }
 
         ui.add_space(4.0);
-        section_card(ui, icons::FILE_TEXT, "Sighting", None, |ui| {
+        section_card(ui, svg::CROSSHAIR, "Sighting", None, |ui| {
             kv_row(ui, "record", &s.id.key_string());
             dirty_kv_row(ui, "dump", s.dump_name.as_deref());
             kv_row(ui, "dump kind", &s.dump_kind);
@@ -420,7 +422,7 @@ impl CrashDumpViewer {
 
         if !view.excerpt.is_empty() {
             ui.add_space(4.0);
-            section_card(ui, icons::LIST, "Analyzer excerpt", None, |ui| {
+            section_card(ui, svg::FILE_MAGNIFYING_GLASS, "Analyzer excerpt", None, |ui| {
                 expandable_text(ui, &format!("excerpt-{}", view.key), &view.excerpt, 8);
             });
         }
@@ -430,7 +432,7 @@ impl CrashDumpViewer {
             let subtitle = format!("{} machine(s)", g.machines.len());
             section_card(
                 ui,
-                icons::DIAGNOSTICS,
+                svg::FINGERPRINT,
                 "Fleet signature",
                 Some(&subtitle),
                 |ui| {
@@ -449,23 +451,22 @@ impl CrashDumpViewer {
 
         ui.add_space(4.0);
         let vsub = format!("{}", verdicts.len());
-        section_card(ui, icons::LIGHTBULB, "Verdicts", Some(&vsub), |ui| {
+        section_card(ui, svg::SEAL_CHECK, "Verdicts", Some(&vsub), |ui| {
             if verdicts.is_empty() {
-                ui.label(
-                    RichText::new("No verdict recorded for this signature yet.")
-                        .small()
-                        .color(theme::weak_text(ui)),
-                );
+                IconLabel::new(svg::INFO, "No verdict recorded for this signature yet.").tone(theme::weak_text(ui)).small(true).wrap(true).show(ui);
             }
             for (i, v) in verdicts.iter().enumerate() {
                 let meta = format!("[{} | {} | {}]", v.confidence, v.source, v.author);
-                ui.label(RichText::new(meta).small().color(theme::weak_text(ui)));
+                IconLabel::new(svg::SEAL_CHECK, &meta)
+                    .small(true)
+                    .tone(theme::weak_text(ui))
+                    .show(ui);
                 expandable_text(ui, &format!("verdict-{}-{i}", view.key), &v.verdict, 6);
                 if !v.fix.is_empty() {
-                    ui.label(RichText::new("Fix").small().color(theme::success(ui)));
+                    IconLabel::new(svg::WRENCH, "Fix").tone(theme::success(ui)).small(true).wrap(true).show(ui);
                     expandable_text(ui, &format!("fix-{}-{i}", view.key), &v.fix, 6);
                 }
-                ui.separator();
+                controls::hairline(ui);
             }
         });
     }
@@ -480,7 +481,7 @@ impl CrashDumpViewer {
             .max_height(avail_h)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                section_card(ui, icons::LIST, "Full JSON payload", None, |ui| {
+                section_card(ui, svg::BRACKETS_CURLY, "Full JSON payload", None, |ui| {
                     hex_json::dump_json_tree(ui, &salt, blob);
                 });
             });
@@ -500,7 +501,7 @@ fn modules_section(ui: &mut Ui, s: &CrashSighting, view: &DetailView) {
     };
     let title = format!("Modules loaded at crash time ({})", split.total());
     let sub = (!subtitle.is_empty()).then_some(subtitle.as_str());
-    section_card(ui, icons::PACKAGE, &title, sub, |ui| {
+    section_card(ui, svg::PACKAGE, &title, sub, |ui| {
         let clean = theme::info(ui);
         let odd = theme::warn(ui);
         ui.horizontal_wrapped(|ui| {
@@ -518,47 +519,46 @@ fn modules_section(ui: &mut Ui, s: &CrashSighting, view: &DetailView) {
         if split.unreadable.is_empty() {
             return;
         }
-        let header = format!(
-            "{} {} unreadable entries",
-            icons::STATUS_WARN,
-            split.unreadable.len()
-        );
-        ui.collapsing(header, |ui| {
-            ui.label(
-                RichText::new(
-                    "These are not text. The dump parser resolved a name outside the string pool, so these bytes came from unrelated dump data.",
-                )
-                .small()
-                .color(theme::weak_text(ui)),
-            );
-            for entry in &split.unreadable {
-                ui.label(RichText::new(&entry.text).monospace().small());
-            }
-            ui.horizontal(|ui| {
-                if ui.small_button("Copy sanitized").clicked() {
-                    let text = split
-                        .unreadable
-                        .iter()
-                        .map(|e| e.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    ui.ctx().copy_text(text);
+        let header = format!("{} unreadable entries", split.unreadable.len());
+        Section::new("crash_unreadable_modules", &header)
+            .icon(svg::WARNING)
+            .icon_tone(theme::warn(ui))
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(
+                        "These are not text. The dump parser resolved a name outside the string pool, so these bytes came from unrelated dump data.",
+                    )
+                    .small()
+                    .color(theme::weak_text(ui)),
+                );
+                for entry in &split.unreadable {
+                    ui.label(RichText::new(&entry.text).monospace().small());
                 }
-                if ui
-                    .small_button("Copy raw (escaped)")
-                    .on_hover_text("Lossless escaped bytes, for a parser bug report.")
-                    .clicked()
-                {
-                    let text = s
-                        .loaded_modules
-                        .iter()
-                        .map(|m| dump_text::escaped_bytes(m))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    ui.ctx().copy_text(text);
-                }
+                ui.horizontal(|ui| {
+                    if controls::icon_text_button(ui, svg::COPY, "Copy sanitized").clicked() {
+                        let text = split
+                            .unreadable
+                            .iter()
+                            .map(|e| e.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        ui.ctx().copy_text(text);
+                    }
+                    if controls::icon_text_button(ui, svg::FILE_CODE, "Copy raw (escaped)")
+                        .on_hover_text("Lossless escaped bytes, for a parser bug report.")
+                        .clicked()
+                    {
+                        let text = s
+                            .loaded_modules
+                            .iter()
+                            .map(|m| dump_text::escaped_bytes(m))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        ui.ctx().copy_text(text);
+                    }
+                });
             });
-        });
     });
 }
 
@@ -579,7 +579,7 @@ fn gpu_detail(s: &CrashSighting) -> Option<GpuCrashDump> {
 fn gpu_section(ui: &mut Ui, g: &GpuCrashDump) {
     section_card(
         ui,
-        icons::MONITOR,
+        svg::GRAPHICS_CARD,
         "GPU crash — D3D12 / NVIDIA Aftermath",
         None,
         |ui| {
@@ -622,9 +622,12 @@ fn gpu_section(ui: &mut Ui, g: &GpuCrashDump) {
                     }
                 }
             } else if let Some(raw) = g.breadcrumbs_raw.as_deref() {
-                ui.collapsing("Raw breadcrumb tree", |ui| {
-                    ui.label(RichText::new(raw).monospace().small());
-                });
+                Section::new("crash_raw_breadcrumbs", "Raw breadcrumb tree")
+                    .icon(svg::TREE_STRUCTURE)
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(raw).monospace().small());
+                    });
             }
 
             opt_kv_row(ui, "adapter", g.gpu_adapter_name.as_deref());
@@ -718,12 +721,12 @@ fn kind_label(kind: &str) -> &str {
     }
 }
 
-fn kind_badge(ui: &Ui, kind: &str) -> (&'static str, Color32) {
+fn kind_badge(ui: &Ui, kind: &str) -> (svg::Icon, Color32) {
     match kind {
-        GPU_DUMP_KIND => (icons::MONITOR, theme::accent_secondary(ui)),
-        "livekernel" => (icons::FLASK, theme::warn(ui)),
-        "minidump" => (icons::FILE_TEXT, theme::info(ui)),
-        _ => (icons::STATUS_DOT, theme::weak_text(ui)),
+        GPU_DUMP_KIND => (svg::GRAPHICS_CARD, theme::accent_secondary(ui)),
+        "livekernel" => (svg::FLASK, theme::warn(ui)),
+        "minidump" => (svg::FILE_TEXT, theme::info(ui)),
+        _ => (svg::DOT, theme::weak_text(ui)),
     }
 }
 

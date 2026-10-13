@@ -2,10 +2,14 @@
 //! the AI task card and the diagnostics tab's AI Handoff panel.
 
 use crate::TaskUiActions;
-use crate::ui_tools::theme;
+use crate::ui_tools::{
+    controls::{self, IconBox, IconButton, IconLabel, Metrics},
+    icons::svg,
+    theme,
+};
 use crossbeam::channel::Sender;
 use database::schema::{AiTask, AiTaskItem, AiTaskStatus, RecordId, RecordIdExt, User};
-use eframe::egui::{Checkbox, ProgressBar, RichText, Ui, Widget};
+use eframe::egui::{RichText, Sense, Ui, Vec2};
 
 /// Short "3:41 PM" form of a Surreal datetime.
 fn short_time(dt: &database::schema::Datetime) -> String {
@@ -37,17 +41,24 @@ pub fn ai_checklist_progress(ui: &mut Ui, items: &[AiTaskItem]) -> (usize, usize
     let total = items.len();
     let checked = items.iter().filter(|i| i.checked).count();
     ui.horizontal(|ui| {
+        let done = checked == total && total > 0;
+        let icon = if done { svg::CHECK_CIRCLE } else { svg::LIST_CHECKS };
+        let ink = if done { theme::success(ui) } else { theme::weak_text(ui) };
+        let side = Metrics::get(ui.ctx()).icon_sm;
+        let (slot, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
+        icon.paint(ui, slot, side, ink);
         ui.label(
             RichText::new(format!("{checked}/{total}"))
                 .strong()
-                .color(if checked == total && total > 0 {
+                .color(if done {
                     theme::success(ui)
                 } else {
                     ui.style().visuals.text_color()
                 }),
         );
         let frac = if total > 0 { checked as f32 / total as f32 } else { 0.0 };
-        ProgressBar::new(frac).desired_height(6.0).desired_width(140.0).ui(ui);
+        let tone = if done { theme::success(ui) } else { theme::primary(ui) };
+        controls::meter(ui, frac, 140.0, tone);
     });
     (checked, total)
 }
@@ -64,7 +75,10 @@ pub fn display_ai_checklist(
     tx: &Sender<TaskUiActions>,
 ) {
     if items.is_empty() {
-        ui.label(RichText::new("No checklist items").weak().small());
+        IconLabel::new(svg::LIST_CHECKS, "No checklist items")
+            .small(true)
+            .tone(theme::weak_text(ui))
+            .show(ui);
         return;
     }
     let mut sorted: Vec<&AiTaskItem> = items.iter().collect();
@@ -74,13 +88,20 @@ pub fn display_ai_checklist(
     for item in sorted {
         ui.push_id(("ai_item", item.id.key_string()), |ui| {
             ui.horizontal(|ui| {
-                let mut checked = item.checked;
-                let response = ui.add_enabled(interactive, Checkbox::new(&mut checked, ""));
-                if response.changed() {
+                let (icon, tip) = if item.checked {
+                    (svg::CHECK_SQUARE, "Mark not done")
+                } else {
+                    (svg::SQUARE, "Mark done")
+                };
+                let mut check = IconButton::new(icon, IconBox::Sm).tip(tip).enabled(interactive);
+                if item.checked {
+                    check = check.tint(theme::success(ui));
+                }
+                if check.show(ui).clicked() {
                     let _ = tx.try_send(TaskUiActions::ToggleAiCheckItem {
                         ai_task_id: ai_task.id.clone(),
                         item_id: item.id.clone(),
-                        checked,
+                        checked: !item.checked,
                     });
                 }
                 // Clamped wrap width — a collapsed available_width (sizing
@@ -92,17 +113,11 @@ pub fn display_ai_checklist(
                     if item.checked {
                         ui.label(text.weak());
                         if let (Some(by), Some(at)) = (&item.checked_by, &item.checked_at) {
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} {} {}",
-                                    crate::ui_tools::icons::CHECK,
-                                    user_name(store_users, by),
-                                    short_time(at)
-                                ))
-                                .weak()
-                                .small()
-                                .color(theme::success(ui)),
-                            );
+                            let stamp = format!("{} {}", user_name(store_users, by), short_time(at));
+                            IconLabel::new(svg::CHECK, &stamp)
+                                .small(true)
+                                .tone(theme::success(ui))
+                                .show(ui);
                         }
                     } else {
                         ui.label(text);

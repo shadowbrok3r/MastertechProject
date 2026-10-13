@@ -21,12 +21,18 @@ use web_time::{Duration, Instant};
 const DEBOUNCE: Duration = Duration::from_millis(250);
 /// Ceiling on server-side results, so a one-letter query can't pull the table.
 const RESULT_LIMIT: usize = 200;
-const HINT: &str = " Search tasks, customers, phone";
+const HINT: &str = "Search tasks, customers, phone";
+/// Widest the search field grows.
+const FIELD_MAX_W: f32 = 260.0;
+/// Narrowest the search field shrinks.
+const FIELD_MIN_W: f32 = 140.0;
+/// Room kept after the field for the Semantic toggle and the count badge.
+const TRAILING_W: f32 = 140.0;
 
 const HELP: &str = "Matches task name, description, service number, customer name and phone.\n\
-     Every word has to appear somewhere. Tick Semantic to write it as a question.";
+     Every word has to appear somewhere. Turn on Semantic search to write it as a question.";
 
-const SEMANTIC_HELP: &str = "Read the query as a question instead of keywords:\n\
+const SEMANTIC_HELP: &str = "Semantic search: read the query as a question instead of keywords:\n\
      \"tasks for Jane Doe\" — that customer\n\
      \"assigned to josh\" / \"josh's tasks\" — that tech\n\
      \"completed smith\" / \"open smith\" — narrow by state\n\
@@ -116,27 +122,31 @@ pub struct TaskSearchCtx<'a> {
     pub actions: &'a Sender<TaskUiActions>,
 }
 
-/// The menu-bar search field, its Clear button, and the open/completed count
-/// hint. Shared so desktop and web behave identically.
+/// The menu-bar search field, Semantic toggle and match-count badge.
 pub fn search_bar(ui: &mut eframe::egui::Ui, mut ctx: TaskSearchCtx<'_>) {
-    use eframe::egui::{Key, RichText, TextEdit, Widget};
+    use crate::ui_tools::{
+        controls::{self, IconBox, IconButton, TextField, Tokens},
+        icons::svg,
+    };
+    use eframe::egui::Key;
 
-    let field = TextEdit::singleline(ctx.input)
-        .desired_width(200.0)
-        .hint_text(HINT)
-        .ui(ui)
+    let width = (ui.available_width() - TRAILING_W).clamp(FIELD_MIN_W, FIELD_MAX_W);
+    let field = TextField::new(&mut *ctx.input)
+        .hint(HINT)
+        .width(width)
+        .icon(svg::MAGNIFYING_GLASS)
+        .clear_button(true)
+        .id_salt("task_search.field")
+        .show(ui)
         .on_hover_text(HELP);
 
-    ui.add_space(5.);
-    let cleared = ui.button("Clear").clicked();
-
-    ui.add_space(5.);
+    let semantic = IconButton::new(svg::SPARKLE, IconBox::Md)
+        .selected(ctx.state.semantic)
+        .tip(SEMANTIC_HELP)
+        .show(ui);
     // Switching mode re-parses the same text, so the pending request is stale.
-    if ui
-        .checkbox(&mut ctx.state.semantic, "Semantic")
-        .on_hover_text(SEMANTIC_HELP)
-        .changed()
-    {
+    if semantic.clicked() {
+        ctx.state.semantic = !ctx.state.semantic;
         ctx.state.raw.clear();
         ctx.state.requested.clear();
         ctx.state.db_hits.clear();
@@ -145,26 +155,21 @@ pub fn search_bar(ui: &mut eframe::egui::Ui, mut ctx: TaskSearchCtx<'_>) {
     // Enter opens the single best hit rather than leaving the board filtered.
     let submitted = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
 
-    if cleared {
-        ctx.input.clear();
-    }
-
     update(&mut ctx);
 
     if !ctx.input.trim().is_empty() {
         let counts = ctx.state.counts;
-        let color = if counts.open + counts.completed == 0 {
-            ui.style().visuals.error_fg_color
+        let t = Tokens::get(ui.ctx());
+        let tone = if counts.open + counts.completed == 0 {
+            t.error
         } else {
-            ui.style().visuals.warn_fg_color
+            t.warn
         };
-        ui.add_space(6.0);
-        ui.label(RichText::new(counts.label()).small().color(color))
-            .on_hover_text(
-                "Totals across this store. While searching, each board shows both open \
-                 and completed matches — completed ones in a Complete column. My Tasks \
-                 still only counts work assigned to you; Store Tasks shows everyone's.",
-            );
+        controls::badge(ui, &counts.label(), tone).on_hover_text(
+            "Totals across this store. While searching, each board shows both open \
+             and completed matches — completed ones in a Complete column. My Tasks \
+             still only counts work assigned to you; Store Tasks shows everyone's.",
+        );
     }
 
     if submitted {

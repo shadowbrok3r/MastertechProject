@@ -1,6 +1,10 @@
+use crate::ui_tools::controls::IconLabel;
 use crate::{tabs::database_viewer::row_viewer::DatabaseRowViewer, Interaction};
 use database::schema::TaskPayload;
-use eframe::egui::{Response, Ui};
+use eframe::egui::{Color32, Response, Ui};
+use crate::ui_tools::controls::Metrics;
+use crate::ui_tools::icons::svg::{self, Icon};
+use crate::ui_tools::theme;
 
 
 // id, task_name, assignee, due_date, service_number, service_ticket, priority, status, completed, task_description
@@ -11,8 +15,8 @@ impl egui_data_table::RowViewer<TaskPayload> for DatabaseRowViewer {
         let _ = match column {
             0 => ui.label(row.id.key().to_string()),
             1 => ui.label(&row.task_name),
-            2 => ui.label(row.assignee.key().to_string()),
-            3 => ui.label(&row.due_date.to_string()),
+            2 => IconLabel::new(svg::USER, &row.assignee.key().to_string()).icon_tone(theme::faint_text(ui)).show(ui),
+            3 => IconLabel::new(svg::CALENDAR_BLANK, &row.due_date.to_string()).icon_tone(theme::faint_text(ui)).show(ui),
             4 => ui.label(&row.service_number.clone().unwrap_or_default()),
             5 => {
                 if let Some(ticket) = &row.service_ticket {
@@ -23,7 +27,14 @@ impl egui_data_table::RowViewer<TaskPayload> for DatabaseRowViewer {
             },
             6 => ui.label(row.priority.as_str()),
             7 => ui.label(row.status.as_str()),
-            8 => ui.label(row.completed.to_string()),
+            8 => {
+                let (icon, color) = if row.completed {
+                    (svg::CHECK_CIRCLE, theme::success(ui))
+                } else {
+                    (svg::CIRCLE, theme::faint_text(ui))
+                };
+                IconLabel::new(icon, &row.completed.to_string()).icon_tone(color).show(ui)
+            }
             9 => ui.label(&row.task_description),
             _ => ui.label("")
         };
@@ -58,3 +69,4 @@ impl egui_data_table::RowViewer<TaskPayload> for DatabaseRowViewer {
         TaskPayload::default()
     }
 }
+

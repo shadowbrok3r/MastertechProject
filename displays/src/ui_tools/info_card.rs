@@ -2,21 +2,19 @@
 
 use chrono::{DateTime, Utc};
 use eframe::egui::{
-    pos2,
+    Align, Color32, Id, Label, Layout, RichText, TextFormat, TextStyle, Ui, Vec2,
     text::{LayoutJob, TextWrapping},
-    Align, Color32, CornerRadius, Id, Label, Layout, Response, RichText, Sense, Stroke, StrokeKind,
-    TextFormat, TextStyle, TextWrapMode, Ui, Vec2, WidgetText,
 };
 
-use crate::ui_tools::{glass_card, icons, theme};
+use crate::ui_tools::{
+    controls, glass_card,
+    icons::{IconRef, svg},
+    theme,
+};
 
 const DATE_FMT: &str = "%m/%d/%Y";
 const DATE_TIME_FMT: &str = "%m/%d/%Y %H:%M";
 const KV_LABEL_WIDTH: f32 = 108.0;
-const BADGE_CORNER_RADIUS: u8 = 4;
-const BADGE_PAD_X: f32 = 6.0;
-const BADGE_PAD_Y: f32 = 1.0;
-const BADGE_FILL_ALPHA: f32 = 0.16;
 
 /// Tool-call markup fragments that mark a leaked AI draft.
 const MARKUP_MARKERS: [&str; 4] = [
@@ -26,9 +24,9 @@ const MARKUP_MARKERS: [&str; 4] = [
     "<function_calls>",
 ];
 
-pub fn section_card(
+pub fn section_card<'a>(
     ui: &mut Ui,
-    icon: &str,
+    icon: impl Into<IconRef<'a>>,
     title: &str,
     subtitle: Option<&str>,
     body: impl FnOnce(&mut Ui),
@@ -37,24 +35,6 @@ pub fn section_card(
         body(ui);
         ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
     });
-}
-
-/// Allocates its full size before painting, so a wrapped layout breaks the row
-/// ahead of the chip instead of squeezing it into the leftover width.
-pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
-    let galley = WidgetText::from(RichText::new(text).small().monospace().color(color))
-        .into_galley(ui, Some(TextWrapMode::Extend), f32::INFINITY, TextStyle::Small);
-    let pad = Vec2::new(BADGE_PAD_X, BADGE_PAD_Y);
-    let (rect, response) = ui.allocate_at_least(galley.size() + pad * 2.0, Sense::hover());
-    if ui.is_rect_visible(rect) {
-        let radius = CornerRadius::same(BADGE_CORNER_RADIUS);
-        let painter = ui.painter();
-        painter.rect_filled(rect, radius, color.gamma_multiply(BADGE_FILL_ALPHA));
-        painter.rect_stroke(rect, radius, Stroke::new(1.0, color), StrokeKind::Inside);
-        let text_pos = pos2(rect.left() + pad.x, rect.center().y - galley.size().y * 0.5);
-        painter.galley(text_pos, galley, color);
-    }
-    response
 }
 
 pub fn kv_row(ui: &mut Ui, label: &str, value: &str) {
@@ -93,11 +73,19 @@ pub fn expandable_text(ui: &mut Ui, id_salt: &str, text: &str, collapsed_lines: 
     let max_width = ui.available_width();
     let mut job = LayoutJob::single_section(
         text.to_owned(),
-        TextFormat { font_id, color, ..Default::default() },
+        TextFormat {
+            font_id,
+            color,
+            ..Default::default()
+        },
     );
     job.wrap = TextWrapping {
         max_width,
-        max_rows: if open { usize::MAX } else { collapsed_lines.max(1) },
+        max_rows: if open {
+            usize::MAX
+        } else {
+            collapsed_lines.max(1)
+        },
         break_anywhere: false,
         overflow_character: Some('…'),
     };
@@ -107,12 +95,16 @@ pub fn expandable_text(ui: &mut Ui, id_salt: &str, text: &str, collapsed_lines: 
     if !elided && !open {
         return;
     }
-    let toggle = if open {
-        format!("{} less", icons::CHEV_OPEN)
+    let (icon, label) = if open {
+        (svg::CARET_UP, "Less")
     } else {
-        format!("{} more", icons::CHEV_CLOSED)
+        (svg::CARET_DOWN, "More")
     };
-    if ui.small_button(toggle).clicked() {
+    let toggle = controls::TextButton::new(label)
+        .icon(icon)
+        .kind(controls::ButtonKind::Ghost)
+        .show(ui);
+    if toggle.clicked() {
         ui.ctx().data_mut(|d| d.insert_temp(state_id, !open));
     }
 }
@@ -179,8 +171,12 @@ mod tests {
 
     #[test]
     fn leaked_tool_markup_is_detected() {
-        assert!(markup_leak("<parameter name=\"fix\">Order of operations: (1) Flash BIOS"));
+        assert!(markup_leak(
+            "<parameter name=\"fix\">Order of operations: (1) Flash BIOS"
+        ));
         assert!(markup_leak("<parameter name=\"confidence\">medium"));
-        assert!(!markup_leak("DPC watchdog — update rtwlane.sys → 6001.1.0.0"));
+        assert!(!markup_leak(
+            "DPC watchdog — update rtwlane.sys → 6001.1.0.0"
+        ));
     }
 }

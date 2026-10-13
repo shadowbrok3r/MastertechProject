@@ -205,7 +205,7 @@ impl Ramp {
                 theme::series_color(index).unwrap_or_else(|| theme::other_series(ui))
             }
             Self::Fixed(color) => color,
-            Self::Neutral => theme::accent(ui),
+            Self::Neutral => theme::primary(ui),
         }
     }
 }

@@ -4,9 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use egui::containers::menu::MenuConfig;
-use egui::{Align, Layout, PopupCloseBehavior};
+use egui::{Align, Layout};
 use egui_dock::{DockArea, DockState};
+use mtech_ui::controls::{self, BarKind, MenuButton, Metrics, ModalWidth, Role, TextField};
+use mtech_ui::icons::svg::{self, Icon};
+use mtech_ui::theme;
 
 use crate::db;
 use crate::fleet_client::{FleetClient, InboundCommandKind};
@@ -75,6 +77,19 @@ impl QcTab {
         QcTab::HardwareMonitor,
     ];
 
+    fn icon(self) -> Icon {
+        match self {
+            QcTab::OrderQc => svg::MT_QC_PASS,
+            QcTab::SwiftDb => svg::DATABASE,
+            QcTab::Oa3 => svg::KEY,
+            QcTab::Stress => svg::MT_STRESS,
+            QcTab::Settings => svg::GEAR,
+            QcTab::Logs => svg::LIST_BULLETS,
+            QcTab::BugReport => svg::BUG,
+            QcTab::HardwareMonitor => svg::GAUGE,
+        }
+    }
+
     fn title(self) -> &'static str {
         match self {
             QcTab::OrderQc => "Order QC",
@@ -88,6 +103,11 @@ impl QcTab {
         }
     }
 }
+
+/// Width of a file-path field.
+const PATH_FIELD_W: f32 = 420.0;
+/// Width of the H2O generation dropdown.
+const GENERATION_W: f32 = 220.0;
 
 fn default_dock() -> DockState<QcTab> {
     DockState::new(QcTab::ALL.to_vec())
@@ -309,14 +329,21 @@ impl QcApp {
     }
 
     fn ui_database(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Swift driver DB (local SQLite)");
+        let m = Metrics::get(ui.ctx());
+        controls::heading(ui, svg::DATABASE, "Swift driver DB (local SQLite)");
         ui.label("Schema from `db_creation_script.sql` (MySQL), adapted for SQLite.");
+        ui.add_space(m.pad.y);
         ui.horizontal(|ui| {
             ui.label("Database file");
-            ui.text_edit_singleline(&mut self.sqlite_path);
+            TextField::new(&mut self.sqlite_path)
+                .icon(svg::FILE_SQL)
+                .mono(true)
+                .width(PATH_FIELD_W)
+                .show(ui);
         });
+        ui.add_space(m.pad.y);
 
-        if ui.button("Open / create & migrate").clicked() {
+        if controls::icon_text_button(ui, svg::DATABASE, "Open / create & migrate").clicked() {
             let path = Path::new(&self.sqlite_path);
             match db::open_or_create(path).and_then(|c| db::table_stats(&c)) {
                 Ok(rows) => {
@@ -339,17 +366,18 @@ impl QcApp {
 
         if let Ok(s) = self.db_line.lock() {
             if !s.is_empty() {
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new(s.as_str()).monospace().size(12.0));
+                ui.add_space(m.gap.y);
+                ui.label(egui::RichText::new(s.as_str()).monospace());
             }
         }
     }
 
     fn ui_settings(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Settings");
-        ui.add_space(8.0);
+        let m = Metrics::get(ui.ctx());
+        controls::heading(ui, svg::GEAR, "Settings");
+        ui.add_space(m.gap.x);
 
-        ui.label(egui::RichText::new("Fleet orchestrator").strong());
+        controls::subheading(ui, svg::BROADCAST, "Fleet orchestrator");
         ui.label(
             egui::RichText::new(
                 "Picked from .env at compile time. Rebuild after editing \
@@ -358,7 +386,7 @@ impl QcApp {
             .small()
             .weak(),
         );
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
 
         let active_url = database::orchestrator_url();
         let active_label = if cfg!(debug_assertions) {
@@ -367,37 +395,64 @@ impl QcApp {
             "ORCHESTRATOR_URL (release build)"
         };
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Active key:").monospace().small().weak());
+            ui.label(
+                egui::RichText::new("Active key:")
+                    .monospace()
+                    .small()
+                    .weak(),
+            );
             ui.label(egui::RichText::new(active_label).monospace().small());
         });
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Resolved URL:").monospace().small().weak());
+            ui.label(
+                egui::RichText::new("Resolved URL:")
+                    .monospace()
+                    .small()
+                    .weak(),
+            );
             if active_url.is_empty() {
-                ui.colored_label(
-                    egui::Color32::from_rgb(180, 140, 50),
-                    egui::RichText::new("(empty — reporting disabled)").monospace().small(),
-                );
+                let warn = theme::warn(ui);
+                controls::IconLabel::new(svg::WARNING, "(empty — reporting disabled)")
+                    .tone(warn)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
             } else {
                 ui.label(egui::RichText::new(active_url).monospace().small());
             }
         });
 
-        ui.add_space(8.0);
-        let status = if active_url.is_empty() {
-            "Reporting disabled (env var unset)".to_string()
+        ui.add_space(m.gap.x);
+        let (icon, tone, status) = if active_url.is_empty() {
+            (
+                svg::PROHIBIT,
+                theme::weak_text(ui),
+                "Reporting disabled (env var unset)".to_string(),
+            )
         } else if self.report_sink.is_some() {
-            format!("Reporting active → {active_url}")
+            (
+                svg::CHECK_CIRCLE,
+                theme::success(ui),
+                format!("Reporting active → {active_url}"),
+            )
         } else {
-            "Reporting will start on next frame".to_string()
+            (
+                svg::HOURGLASS_SIMPLE,
+                theme::weak_text(ui),
+                "Reporting will start on next frame".to_string(),
+            )
         };
-        ui.label(egui::RichText::new(status).monospace().small());
+        controls::IconLabel::new(icon, &status)
+            .tone(tone)
+            .small(true)
+            .selectable(true)
+            .show(ui);
 
-        ui.add_space(16.0);
-        ui.separator();
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new("Terminal mode").strong());
-        if ui
-            .button("Launch Terminal Mode")
+        ui.add_space(m.gap.y * 2.0);
+        controls::hairline(ui);
+        ui.add_space(m.gap.x);
+        controls::subheading(ui, svg::TERMINAL_WINDOW, "Terminal mode");
+        if controls::icon_text_button(ui, svg::TERMINAL_WINDOW, "Launch Terminal Mode")
             .on_hover_text("Closes the GUI and switches to the keyboard/terminal UI")
             .clicked()
         {
@@ -407,76 +462,104 @@ impl QcApp {
     }
 
     fn ui_oa3(&mut self, ui: &mut egui::Ui) {
-        ui.heading("OA3 — Sager H2O helper");
+        let m = Metrics::get(ui.ctx());
+        controls::heading(ui, svg::KEY, "OA3 — Sager H2O helper");
         ui.label("Command preview for Sager H2OOAE + `oa3tool` (paths from fields above).");
-        ui.horizontal(|ui| {
-            ui.label("Wrapper root");
-            ui.text_edit_singleline(&mut self.oa3_wrapper_path);
-        });
-        ui.horizontal(|ui| {
-            ui.label("OA3 .bin for inject");
-            ui.text_edit_singleline(&mut self.oa3_bin_path);
-        });
-
-        egui::ComboBox::from_id_salt("h2o_gen")
-            .selected_text(self.h2o_generation.label())
-            .show_ui(ui, |ui| {
-                for g in H2oGeneration::all() {
-                    ui.selectable_value(&mut self.h2o_generation, *g, g.label());
-                }
+        ui.add_space(m.pad.y);
+        egui::Grid::new("oa3_paths")
+            .num_columns(2)
+            .spacing([m.gap.x, m.gap.y])
+            .show(ui, |ui| {
+                ui.label("Wrapper root");
+                TextField::new(&mut self.oa3_wrapper_path)
+                    .icon(svg::FOLDER)
+                    .mono(true)
+                    .width(PATH_FIELD_W)
+                    .show(ui);
+                ui.end_row();
+                ui.label("OA3 .bin for inject");
+                TextField::new(&mut self.oa3_bin_path)
+                    .icon(svg::BINARY)
+                    .mono(true)
+                    .width(PATH_FIELD_W)
+                    .show(ui);
+                ui.end_row();
+                ui.label("Generation");
+                let options: Vec<(H2oGeneration, &str)> = H2oGeneration::all()
+                    .iter()
+                    .map(|g| (*g, g.label()))
+                    .collect();
+                controls::dropdown(
+                    ui,
+                    "h2o_gen",
+                    &mut self.h2o_generation,
+                    &options,
+                    GENERATION_W,
+                );
+                ui.end_row();
             });
 
         let wrapper = Path::new(&self.oa3_wrapper_path);
         let bin = Path::new(&self.oa3_bin_path);
         let exe = oa3_sager::h2ooae_exe(wrapper, self.h2o_generation);
 
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new("Resolved H2OOAE").strong());
-        ui.label(exe.display().to_string());
+        ui.add_space(m.gap.x);
+        controls::subheading(ui, svg::TERMINAL, "Resolved H2OOAE");
+        ui.label(egui::RichText::new(exe.display().to_string()).monospace());
 
         if wrapper.as_os_str().is_empty() || bin.as_os_str().is_empty() {
-            ui.colored_label(egui::Color32::YELLOW, "Set wrapper root and OA3 .bin path for command preview.");
+            let warn = theme::warn(ui);
+            controls::status_label(
+                ui,
+                svg::WARNING,
+                "Set wrapper root and OA3 .bin path for command preview.",
+                warn,
+            );
             return;
         }
 
         let inject = oa3_sager::inject_command_line(self.h2o_generation, wrapper, bin);
         let clear = oa3_sager::clear_command_line(self.h2o_generation, wrapper);
 
-        ui.add_space(8.0);
-        ui.collapsing("Inject (preview)", |ui| {
-            let mut inject_buf = inject.clone();
-            ui.add(
-                egui::TextEdit::multiline(&mut inject_buf)
-                    .desired_rows(6)
-                    .interactive(false),
-            );
-            if ui.button("Copy inject preview").clicked() {
-                ui.ctx().copy_text(inject);
-            }
-        });
-        ui.collapsing("Clear (preview)", |ui| {
-            let mut clear_buf = clear.clone();
-            ui.add(
-                egui::TextEdit::multiline(&mut clear_buf)
-                    .desired_rows(8)
-                    .interactive(false),
-            );
-            if ui.button("Copy clear preview").clicked() {
-                ui.ctx().copy_text(clear);
-            }
-        });
+        ui.add_space(m.gap.x);
+        controls::Section::new("Inject (preview)", "Inject (preview)")
+            .icon(svg::ARROW_SQUARE_IN)
+            .default_open(false)
+            .show(ui, |ui| {
+                controls::TextArea::new(&mut inject.as_str())
+                    .rows(6)
+                    .mono(true)
+                    .show(ui);
+                if controls::icon_text_button(ui, svg::COPY, "Copy inject preview").clicked() {
+                    ui.ctx().copy_text(inject);
+                }
+            });
+        controls::Section::new("Clear (preview)", "Clear (preview)")
+            .icon(svg::ERASER)
+            .default_open(false)
+            .show(ui, |ui| {
+                controls::TextArea::new(&mut clear.as_str())
+                    .rows(8)
+                    .mono(true)
+                    .show(ui);
+                if controls::icon_text_button(ui, svg::COPY, "Copy clear preview").clicked() {
+                    ui.ctx().copy_text(clear);
+                }
+            });
     }
 
     fn ui_logs(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui
-                .button(format!("{} Dump logs to file", egui_phosphor::regular::FLOPPY_DISK))
-                .clicked()
-            {
+            if controls::icon_text_button(ui, svg::FLOPPY_DISK, "Dump logs to file").clicked() {
                 self.log_dump_status = Some(Self::dump_logs_to_file());
             }
             if let Some(status) = self.log_dump_status.as_ref() {
-                ui.label(egui::RichText::new(status).weak().small());
+                let weak = theme::weak_text(ui);
+                controls::IconLabel::new(svg::FILE_TEXT, status)
+                    .tone(weak)
+                    .small(true)
+                    .selectable(true)
+                    .show(ui);
             }
         });
         mtech_ui::egui_logger::logger_ui()
@@ -600,7 +683,8 @@ impl QcApp {
         }
 
         // New stress runs link to the active order session and signed-in tech.
-        self.stress_panel.set_order_context(self.order_panel.run_context());
+        self.stress_panel
+            .set_order_context(self.order_panel.run_context());
 
         self.stress_panel.tick(ctx);
 
@@ -620,20 +704,16 @@ impl QcApp {
                 .with_inner_size([960.0, 620.0]);
 
             #[allow(deprecated)]
-            ctx.show_viewport_immediate(
-                viewport_id,
-                viewport_builder,
-                move |ctx, _class| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        if let Ok(mut monitor) = hw_monitor.lock() {
-                            monitor.show(ui);
-                        }
-                    });
-                    if ctx.input(|i| i.viewport().close_requested()) {
-                        show_hw_monitor.store(false, Ordering::Relaxed);
+            ctx.show_viewport_immediate(viewport_id, viewport_builder, move |ctx, _class| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    if let Ok(mut monitor) = hw_monitor.lock() {
+                        monitor.show(ui);
                     }
-                },
-            );
+                });
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    show_hw_monitor.store(false, Ordering::Relaxed);
+                }
+            });
         }
 
         self.update_available = self.update_checker.poll();
@@ -649,33 +729,42 @@ impl QcApp {
         if self.crashes.is_empty() {
             return;
         }
-        let mut report = false;
-        let mut dismiss = false;
-        egui::Window::new("Crash detected")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.label(format!("{} crash report(s) from a previous session.", self.crashes.len()));
+        let outcome = controls::modal(
+            ctx,
+            egui::Id::new("qc_crash_modal"),
+            svg::BUG,
+            "Crash detected",
+            ModalWidth::Regular,
+            &[
+                (Role::Primary, "Copy details & open Bug Report"),
+                (Role::Cancel, "Dismiss"),
+            ],
+            |ui| {
+                ui.label(format!(
+                    "{} crash report(s) from a previous session.",
+                    self.crashes.len()
+                ));
                 if let Some((_, c)) = self.crashes.first() {
                     ui.label(egui::RichText::new(&c.message).strong());
-                    ui.label(egui::RichText::new(format!("{} · {}", c.timestamp, c.location)).weak().small());
+                    ui.label(
+                        egui::RichText::new(format!("{} · {}", c.timestamp, c.location))
+                            .weak()
+                            .small(),
+                    );
                 }
-                ui.horizontal(|ui| {
-                    if ui.button("Copy details & open Bug Report").clicked() {
-                        report = true;
-                    }
-                    if ui.button("Dismiss").clicked() {
-                        dismiss = true;
-                    }
-                });
-            });
+            },
+        );
+        let report = outcome.clicked == Some(0);
+        let dismiss = outcome.clicked == Some(1);
         if report {
             let detail = self
                 .crashes
                 .iter()
                 .map(|(_, c)| {
-                    format!("{} v{} {}\n{}\n{}", c.timestamp, c.version, c.location, c.message, c.backtrace)
+                    format!(
+                        "{} v{} {}\n{}\n{}",
+                        c.timestamp, c.version, c.location, c.message, c.backtrace
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
@@ -697,15 +786,30 @@ impl QcApp {
 
         if let Some(ver) = self.update_available.clone() {
             if !self.update_dismissed {
-                egui::Panel::top("qc_update_banner").show_inside(ui, |ui| {
+                egui::Panel::top("qc_update_banner").show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(80, 160, 220),
-                            format!("{} Update available: {ver}", egui_phosphor::regular::ARROW_CIRCLE_UP),
+                        let info = theme::info(ui);
+                        controls::status_label(
+                            ui,
+                            svg::ARROW_CIRCLE_UP,
+                            &format!("Update available: {ver}"),
+                            info,
                         );
-                        ui.label(egui::RichText::new("Pick up the new build from the install share.").small().weak());
+                        ui.label(
+                            egui::RichText::new("Pick up the new build from the install share.")
+                                .small()
+                                .weak(),
+                        );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.small_button("Dismiss").clicked() {
+                            if controls::icon_button(
+                                ui,
+                                svg::X,
+                                controls::IconBox::Sm,
+                                false,
+                                "Dismiss",
+                            )
+                            .clicked()
+                            {
                                 self.update_dismissed = true;
                             }
                         });
@@ -714,29 +818,35 @@ impl QcApp {
             }
         }
 
-        egui::Panel::top("qc_menu_bar").show_inside(ui, |ui| {
-            egui::MenuBar::new()
-                .config(
-                    MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
-                )
-                .ui(ui, |ui| {
-                    ui.menu_button("View", |ui| {
-                        for tab in QcTab::ALL {
-                            let open = tree.find_tab(&tab).is_some();
-                            if ui.selectable_label(open, tab.title()).clicked() {
-                                match tree.find_tab(&tab) {
-                                    Some(idx) => {
-                                        tree.remove_tab(idx);
+        egui::Panel::top("qc_menu_bar")
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    MenuButton::new("View")
+                        .icon(svg::LAYOUT)
+                        .keep_open(true)
+                        .show(ui, |ui| {
+                            for tab in QcTab::ALL {
+                                let open = tree.find_tab(&tab).is_some();
+                                if controls::menu_check_item(ui, tab.icon(), tab.title(), open)
+                                    .clicked()
+                                {
+                                    match tree.find_tab(&tab) {
+                                        Some(idx) => {
+                                            tree.remove_tab(idx);
+                                        }
+                                        None => tree.push_to_focused_leaf(tab),
                                     }
-                                    None => tree.push_to_focused_leaf(tab),
                                 }
                             }
-                        }
-                    });
+                        });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(format!(" Mastertech QC - {}", database::version_with_build!()));
-                        if ui
-                            .button(format!("{} Terminal Mode", egui_phosphor::regular::TERMINAL_WINDOW))
+                        controls::icon_label(
+                            ui,
+                            svg::MT_LOGO,
+                            &format!("Mastertech QC - {}", database::version_with_build!()),
+                        );
+                        if controls::icon_text_button(ui, svg::TERMINAL_WINDOW, "Terminal Mode")
                             .on_hover_text("Close the GUI and switch to the keyboard/terminal UI")
                             .clicked()
                         {
@@ -745,7 +855,7 @@ impl QcApp {
                         }
                     });
                 });
-        });
+            });
 
         let style = mtech_ui::dock_style::style(ui.ctx());
         DockArea::new(&mut tree)
@@ -781,7 +891,7 @@ impl egui_dock::TabViewer for QcApp {
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.title().into()
+        controls::tab_title(tab.icon(), tab.title())
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -793,22 +903,21 @@ impl egui_dock::TabViewer for QcApp {
             QcTab::BugReport => self.bug_report.ui(ui),
             QcTab::HardwareMonitor => {
                 let undocked = self.show_hw_monitor.load(Ordering::Relaxed);
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(undocked, "Undock to window")
-                        .on_hover_text("Show the hardware monitor in its own resizable window")
-                        .clicked()
-                    {
-                        self.show_hw_monitor.store(!undocked, Ordering::Relaxed);
-                    }
-                });
-                ui.separator();
+                let mut toggled = undocked;
+                if controls::toggle(ui, &mut toggled, "Undock to window")
+                    .on_hover_text("Show the hardware monitor in its own resizable window")
+                    .changed()
+                {
+                    self.show_hw_monitor.store(toggled, Ordering::Relaxed);
+                }
+                controls::hairline(ui);
                 if undocked {
-                    ui.add_space(8.0);
-                    ui.colored_label(
-                        egui::Color32::GRAY,
-                        "Hardware monitor is shown in a separate window — untoggle \
-                         \"Undock to window\" or close that window to dock it here.",
+                    controls::empty_state(
+                        ui,
+                        svg::PICTURE_IN_PICTURE,
+                        "Hardware monitor is shown in a separate window",
+                        "Untoggle \"Undock to window\" or close that window to dock it here.",
+                        &[],
                     );
                 } else if let Ok(mut monitor) = self.hw_monitor.lock() {
                     monitor.show(ui);
@@ -826,15 +935,23 @@ impl egui_dock::TabViewer for QcApp {
                 let telemetry = self.hw_sampler.as_ref().map(|s| s.agent());
                 if let Some(telemetry) = telemetry {
                     let computer = local_computer_record();
-                    self.stress_panel
-                        .ui(ui, &mut self.stress_cfg, &mut open_hw, telemetry, computer);
+                    self.stress_panel.ui(
+                        ui,
+                        &mut self.stress_cfg,
+                        &mut open_hw,
+                        telemetry,
+                        computer,
+                    );
                     if open_hw {
                         self.show_hw_monitor.store(true, Ordering::Relaxed);
                     }
                 } else {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(180, 140, 50),
+                    let warn = theme::warn(ui);
+                    controls::status_label(
+                        ui,
+                        svg::WARNING,
                         "Telemetry sampler not initialized — open the Hardware Monitor first.",
+                        warn,
                     );
                 }
             }
@@ -881,7 +998,13 @@ mod dock_storage_tests {
             dock: DockState<QcTab>,
         }
         let mut storage = MemStorage::default();
-        eframe::set_value(&mut storage, eframe::APP_KEY, &OldBlob { dock: single_tab_dock() });
+        eframe::set_value(
+            &mut storage,
+            eframe::APP_KEY,
+            &OldBlob {
+                dock: single_tab_dock(),
+            },
+        );
         assert_eq!(load_dock(&storage).iter_all_tabs().count(), 1);
     }
 

@@ -1,6 +1,14 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, assignee_names, prestashop::OrderType, entity_link::computer_has_minimal_hardware},db};
-use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, ui_tools::icons, DisplayModal, PlatformSpawner, Spawner, TaskUiActions, ToastMessage};
-use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
+use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner, TaskUiActions, ToastMessage};
+use crate::ui_tools::{
+    controls::{
+        self, BarKind, ButtonKind, IconBox, IconLabel, Metrics, SpinnerSize, TextArea, TextButton,
+        TextField, Tokens,
+    },
+    icons::svg,
+    theme,
+};
+use eframe::egui::{Align, Frame, Layout, Margin, Stroke, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
 use database::schema::{fetch_prestashop_order, OrderLookup};
 use database::schema::task_creation::{
@@ -14,6 +22,17 @@ use egui_extras::DatePickerButton;
 use crossbeam::channel::{Sender, Receiver};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
+
+/// Width of the single-line fields.
+const FIELD_W: f32 = 200.0;
+/// Width of the priority dropdown.
+const PRIORITY_W: f32 = 110.0;
+/// Smallest width of the Submit button.
+const SUBMIT_W: f32 = 130.0;
+/// Width of the description area.
+const DESCRIPTION_W: f32 = 350.0;
+/// Longest service number the field accepts.
+const SERVICE_NUMBER_MAX: usize = 8;
 
 /// Whether `assignee` maps to a real `user` record.
 #[derive(Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,48 +207,36 @@ impl DisplayModal for CreateTaskModal {
         }
         
         let avail_size = Vec2::new(500.0, 500.0);
+        let m = Metrics::get(ui.ctx());
         ui.set_min_size(avail_size);
         ui.set_max_size(avail_size);
         ui.vertical_centered(|ui| {
-            ui.horizontal(|ui| {
-
-                ui.add_space(225.0);
-
-                if ui
-                    .selectable_label(self.current_page_state == ModalAction::TicketInfoPage, RichText::new("🖹").heading())
-                    .clicked()
-                {
-                    self.current_page_state = ModalAction::TicketInfoPage;
-                };
-
-                if ui
-                    .selectable_label(
-                        self.current_page_state == ModalAction::ComputerInfoPage,
-                        RichText::new("🖹").heading(),
-                    )
-                    .clicked()
-                {
-                    self.current_page_state = ModalAction::ComputerInfoPage;
-                };    
-                if ui
-                    .selectable_label(
-                        self.current_page_state == ModalAction::ImportTask,
-                        RichText::new("🖥").heading(),
-                    )
-                    .clicked()
-                {
-                    self.current_page_state = ModalAction::ImportTask;
-                };
+            let pages = [
+                (ModalAction::TicketInfoPage, svg::NOTE_PENCIL, "New task"),
+                (ModalAction::ComputerInfoPage, svg::DESKTOP_TOWER, "Computer"),
+                (ModalAction::ImportTask, svg::TICKET, "Ticket"),
+            ];
+            controls::bar(ui, BarKind::Tool, |ui| {
+                let side = IconBox::Md.side(&m);
+                let gaps = (pages.len() - 1) as f32 * ui.spacing().item_spacing.x;
+                let row_w = pages.len() as f32 * side + gaps;
+                ui.add_space(((ui.available_width() - row_w) / 2.0).max(0.0));
+                for (page, icon, tip) in pages {
+                    let selected = self.current_page_state == page;
+                    if controls::icon_button(ui, icon, IconBox::Md, selected, tip).clicked() {
+                        self.current_page_state = page;
+                    }
+                }
             });
 
-            ui.add_space(20.);
+            ui.add_space(2.0 * m.gap.y);
 
             ui.horizontal_centered(|ui| {
                 match self.current_page_state {
                     ModalAction::TicketInfoPage => {
                         if let Some(tx) = self.prestashop_api_tx.clone()
                         {
-                            ui.add_space(10.0);
+                            ui.add_space(m.gap.x);
                             let action = self
                             .create_task(
                                 ui, 
@@ -303,37 +310,56 @@ impl CreateTaskModal {
             ui.ctx().request_repaint();
         }
 
+        let m = Metrics::get(ui.ctx());
         ui.vertical_centered(|ui| {
             let mut lost_focus = false;
             self.tur.tur_sheet(ui, prestashop_api_tx.clone());
 
-            ui.add_space(15.0);
+            ui.add_space(2.0 * m.gap.y);
 
-            let _ = TextEdit::singleline(&mut self.task_name)
-                .hint_text("Task Name")
-                .margin(vec2(10., 3.))
-                .desired_width(200.0)
-                .ui(ui);
+            TextField::new(&mut self.task_name)
+                .hint("Task Name")
+                .width(FIELD_W)
+                .icon(svg::NOTE_PENCIL)
+                .show(ui);
 
-            ui.add_space(15.0);
+            ui.add_space(2.0 * m.gap.y);
             let (inputs, local) = assignee_names(&self.store_users, self.user.get_store());
 
-            let r = AutoCompleteTextEdit::new(
-                &mut self.assignee,
-                inputs
-            )
-            .highlight_matches(true)
-            .max_suggestions(3)
-            .group_by(move |name| usize::from(!local.contains(name)))
-            .set_text_edit_properties(|text_edit| {
-                text_edit
-                    .hint_text("Assignee")
-                    .desired_width(200.0)
-                    .desired_rows(1)
-                    .margin(vec2(10., 3.))
-                    .frame(Frame::NONE)
-            })
-            .ui(ui);
+            let t = Tokens::get(ui.ctx());
+            let assignee = &mut self.assignee;
+            let r = ui
+                .allocate_ui_with_layout(
+                    vec2(FIELD_W, m.control_h),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        Frame::new()
+                            .fill(t.field)
+                            .stroke(Stroke::new(1.0, t.field_border))
+                            .corner_radius(t.radius_sm)
+                            .show(ui, |ui| {
+                                AutoCompleteTextEdit::new(assignee, inputs)
+                                    .highlight_matches(true)
+                                    .max_suggestions(3)
+                                    .group_by(move |name| usize::from(!local.contains(name)))
+                                    .set_text_edit_properties(move |text_edit| {
+                                        text_edit
+                                            .hint_text("Assignee")
+                                            .desired_width(FIELD_W - 2.0)
+                                            .desired_rows(1)
+                                            .frame(Frame::NONE.inner_margin(Margin::symmetric(
+                                                (m.pad.x - 1.0) as i8,
+                                                0,
+                                            )))
+                                            .min_size(vec2(0.0, m.control_h - 2.0))
+                                            .vertical_align(Align::Center)
+                                    })
+                                    .ui(ui)
+                            })
+                            .inner
+                    },
+                )
+                .inner;
         
             if r.lost_focus() {
                 lost_focus = true;
@@ -361,73 +387,81 @@ impl CreateTaskModal {
 
             match self.assignee_status {
                 AssigneeVerification::Pending => {
-                    Spinner::new().size(14.0).ui(ui);
-                    ui.label(RichText::new("Verifying assignee...").color(Color32::LIGHT_BLUE));
+                    controls::spinner(ui, SpinnerSize::Sm);
+                    ui.colored_label(theme::info(ui), "Verifying assignee...");
                 }
                 AssigneeVerification::NotFound => {
-                    let color = ui.visuals().error_fg_color;
-                    ui.label(RichText::new(format!("{}  No such user - pick a valid assignee", icons::STATUS_ERR)).color(color));
+                    IconLabel::new(svg::USER_MINUS, "No such user - pick a valid assignee")
+                        .tone(theme::error(ui))
+                        .show(ui);
                 }
                 AssigneeVerification::Verified => {
-                    let color = Color32::from_rgb(120, 200, 120);
-                    ui.label(RichText::new(format!("{}  Assignee verified", icons::STATUS_READY)).color(color));
+                    IconLabel::new(svg::USER_CHECK, "Assignee verified")
+                        .tone(theme::success(ui))
+                        .show(ui);
                 }
                 AssigneeVerification::Unverified => {}
             }
-        
-            ui.add_space(15.0);
 
-            ui.horizontal_top(|ui|{
-                ui.add_space(150.);
-                ui.scope(|ui| {
-                    ui.style_mut().spacing.combo_width = 70.0;
-                    ComboBox::new("PriorityComboBox", "")
-                        .selected_text(RichText::new(format!(
-                            "{}",
-                            &self.task_priority.as_str()
-                        )))
-                        .show_ui(ui, |ui| {
-                            for priority in Priority::VALUES {
-                                ui.selectable_value(
-                                    &mut self.task_priority,
-                                    priority.to_owned(),
-                                    priority.as_str(),
-                                );
+            ui.add_space(2.0 * m.gap.y);
+
+            let priorities = Priority::VALUES;
+            let priority_options: Vec<(Priority, &str)> =
+                priorities.iter().map(|p| (p.clone(), p.as_str())).collect();
+            ui.allocate_ui_with_layout(
+                Vec2::new(ui.available_width(), m.control_h),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.columns(2, |cols| {
+                        cols[0].with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            controls::dropdown(
+                                ui,
+                                "PriorityComboBox",
+                                &mut self.task_priority,
+                                &priority_options,
+                                PRIORITY_W,
+                            )
+                            .on_hover_text("Priority");
+                        });
+                        cols[1].with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            let mut due_date = crate::to_jiff_date(&self.due_date);
+                            let date_picker = DatePickerButton::new(&mut due_date)
+                                .calendar_week(false)
+                                .format("%m/%d/%y")
+                                .show_icon(true)
+                                .ui(ui);
+
+                            if date_picker.changed() {
+                                self.due_date = crate::apply_jiff_date(&self.due_date, &due_date).into();
                             }
                         });
-                });
+                    });
+                },
+            );
 
-                let mut due_date = crate::to_jiff_date(&self.due_date);
-                let date_picker = DatePickerButton::new(&mut due_date)
-                    .calendar_week(false)
-                    .format("%m/%d/%y")
-                    .show_icon(true)
-                    .ui(ui);
+            ui.add_space(2.0 * m.gap.y);
 
-                if date_picker.changed() {
-                    self.due_date = crate::apply_jiff_date(&self.due_date, &due_date).into();
-                }
-            });
-
-            ui.add_space(15.0);
-
-            let r = TextEdit::multiline(&mut self.description)
-                .hint_text("Task Description")
-                .margin(vec2(10., 3.))
-                .desired_rows(10)
-                .code_editor()
-                .desired_width(350.0)
-                .ui(ui);
+            let r = ui
+                .allocate_ui_with_layout(
+                    vec2(DESCRIPTION_W, 0.0),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        TextArea::new(&mut self.description)
+                            .hint("Task Description")
+                            .rows(10)
+                            .mono(true)
+                            .tab_indents(true)
+                            .width(DESCRIPTION_W)
+                            .show(ui)
+                    },
+                )
+                .inner;
 
             if lost_focus {
                 r.request_focus();
             }
 
-            ui.add_space(15.0);
-            let btn = Button::new("Submit")
-                .min_size(Vec2::new(130.0, 30.0))
-                .fill(Color32::from_rgb(30, 30, 35))
-                .stroke(Stroke::new(2.0_f32, Color32::from_rgb(30, 3, 28)));
+            ui.add_space(2.0 * m.gap.y);
             let pulling_ticket = !self.tur.ticket_data.service_number.is_empty();
             let check = !self.task_name.is_empty() && !self.description.is_empty() && !self.assignee.is_empty();
 
@@ -438,11 +472,17 @@ impl CreateTaskModal {
 
             // Show spinner when creating task
             if self.creating_task {
-                Spinner::new().size(20.0).ui(ui);
-                ui.label(RichText::new("Creating...").color(Color32::LIGHT_BLUE));
+                controls::spinner(ui, SpinnerSize::Md);
+                ui.colored_label(theme::info(ui), "Creating...");
             }
 
-            if ui.add_enabled(enabled, btn).clicked() {
+            let btn = TextButton::new("Submit")
+                .kind(ButtonKind::Primary)
+                .prominent(true)
+                .icon(svg::PAPER_PLANE_RIGHT)
+                .min_width(SUBMIT_W)
+                .enabled(enabled);
+            if btn.show(ui).clicked() {
                 info!("ASSIGNEE: {:?}", self.assignee.clone());
                 let assignee = self.assignee.clone();
                 let mut payload = self.tur.clone();                   
@@ -664,15 +704,20 @@ impl Tur {
 
     pub fn tur_sheet(&mut self, ui: &mut Ui, prestashop_api_tx: Sender<PrestashopPayload>) {
         let check = !self.ticket_data.service_number.is_empty();
-        let stroke = Stroke::new(1.0_f32, Color32::from_rgb(191, 33, 101));
-        let txt_color = Color32::from_rgb(255, 204, 255);
-        let txt = RichText::new("Pull Order").color(txt_color);
-        let button_size = Vec2::new(70.0, 25.0);
-        let button = Button::new(txt).stroke(stroke).min_size(button_size);
-        
+        let m = Metrics::get(ui.ctx());
+        let pull = TextButton::new("Pull Order")
+            .icon(svg::CLOUD_ARROW_DOWN)
+            .enabled(check);
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        let upload = TextButton::new("Upload TUR").icon(svg::UPLOAD_SIMPLE);
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        let row_w = pull.size(ui).x + ui.spacing().item_spacing.x + upload.size(ui).x;
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        let row_w = pull.size(ui).x;
+
         ui.horizontal_top(|ui| {
-            ui.add_space(ui.available_width() / 3.5);
-            if ui.add_enabled(check, button).clicked() {
+            ui.add_space(((ui.available_width() - row_w) / 2.0).max(0.0));
+            if pull.show(ui).clicked() {
                 let service_num = self.ticket_data.service_number.clone();
                 self.ticket_data = TicketData::default();
                 self.task_data = LiveTaskPayload::default();
@@ -683,10 +728,7 @@ impl Tur {
             }
         
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
-            let upload = Button::new("Upload TUR")
-                .min_size(Vec2::new(70., 25.))
-                .stroke(Stroke::new(1.0_f32, ui.style().visuals.warn_fg_color))
-                .ui(ui);
+            let upload = upload.show(ui);
 
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
             if upload.clicked() {
@@ -706,15 +748,16 @@ impl Tur {
             }
         });
 
-        ui.add_space(15.0);
+        ui.add_space(2.0 * m.gap.y);
 
-        TextEdit::singleline(&mut self.ticket_data.service_number)
-            .hint_text(" Service #  ")
-            .char_limit(8)
-            .vertical_align(Align::Center)
-            .margin(vec2(10., 3.))
-            .desired_width(200.)
-            .ui(ui);
+        TextField::new(&mut self.ticket_data.service_number)
+            .hint("Service #")
+            .width(FIELD_W)
+            .icon(svg::TICKET)
+            .show(ui);
+        if let Some((cut, _)) = self.ticket_data.service_number.char_indices().nth(SERVICE_NUMBER_MAX) {
+            self.ticket_data.service_number.truncate(cut);
+        }
     }
 
     pub fn presta_api(prestashop_api_tx: Sender<PrestashopPayload>, input: String) {

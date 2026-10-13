@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 use eframe::egui::{self, scroll_area::ScrollBarVisibility, ScrollArea};
+use displays::ui_tools::{
+    controls::{self, Metrics, SpinnerSize},
+    icons::svg::{self, Icon},
+};
 use egui::{Color32, Ui};
 use egui_extras::{Column, TableBuilder};
 use memmap2::Mmap;
@@ -328,18 +332,36 @@ impl MiniDumpApp {
             .resizable(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.tab, Tab::Settings, "settings");
+                    ui.set_min_height(Metrics::get(ui.ctx()).bar_h);
+                    tab_pill(ui, &mut self.tab, Tab::Settings, svg::GEAR, "Settings");
                     if self.cur_status >= ProcessingStatus::RawProcessing {
-                        ui.selectable_value(&mut self.tab, Tab::RawDump, "raw dump");
+                        tab_pill(ui, &mut self.tab, Tab::RawDump, svg::BINARY, "Raw dump");
                     }
                     if self.cur_status >= ProcessingStatus::Symbolicating {
-                        ui.selectable_value(&mut self.tab, Tab::Processed, "processed");
+                        tab_pill(ui, &mut self.tab, Tab::Processed, svg::STACK, "Processed");
                     }
                     if self.cur_status >= ProcessingStatus::RawProcessing {
-                        ui.selectable_value(&mut self.tab, Tab::Logs, "logs");
+                        tab_pill(ui, &mut self.tab, Tab::Logs, svg::SCROLL, "Logs");
                     }
                     if matches!(self.kernel_triage, Some(Ok(_))) {
-                        ui.selectable_value(&mut self.tab, Tab::Kernel, "kernel crash");
+                        tab_pill(
+                            ui,
+                            &mut self.tab,
+                            Tab::Kernel,
+                            svg::WARNING_OCTAGON,
+                            "Kernel crash",
+                        );
+                    }
+                    if matches!(
+                        self.cur_status,
+                        ProcessingStatus::ReadingDump
+                            | ProcessingStatus::RawProcessing
+                            | ProcessingStatus::Symbolicating
+                    ) {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            controls::spinner(ui, SpinnerSize::Sm)
+                                .on_hover_text("Processing the dump");
+                        });
                     }
                 });
             });
@@ -362,6 +384,13 @@ impl MiniDumpApp {
             minidump::system_info::PointerWidth::Bits64 => format!("0x{addr:016x}"),
             minidump::system_info::PointerWidth::Unknown => format!("0x{addr:08x}"),
         }
+    }
+}
+
+/// A pill that selects `value` as the current tab.
+fn tab_pill(ui: &mut Ui, current: &mut Tab, value: Tab, icon: Icon, label: &str) {
+    if controls::pill(ui, icon, label, *current == value).clicked() {
+        *current = value;
     }
 }
 
@@ -391,6 +420,7 @@ pub fn listing_rows(
     rows: impl IntoIterator<Item = database::shape_walk::Row>,
 ) {
     ui.push_id(id, |ui| {
+        let pad = Metrics::get(ui.ctx()).gap.y;
         let mono_font = egui::style::TextStyle::Monospace.resolve(ui.style());
         let body_font = egui::style::TextStyle::Body.resolve(ui.style());
         TableBuilder::new(ui)
@@ -406,9 +436,9 @@ pub fn listing_rows(
                 let col2_width = widths[1];
                 for database::shape_walk::Row { label, value, hover } in rows {
                     let (col1, col2, row_height) = ctx.fonts_mut(|fonts| {
-                        let col1 = fonts.layout(label, body_font.clone(), Color32::WHITE, col1_width);
-                        let col2 = fonts.layout(value, mono_font.clone(), Color32::WHITE, col2_width);
-                        let row_height = col1.rect.height().max(col2.rect.height()) + 6.0;
+                        let col1 = fonts.layout(label, body_font.clone(), Color32::PLACEHOLDER, col1_width);
+                        let col2 = fonts.layout(value, mono_font.clone(), Color32::PLACEHOLDER, col2_width);
+                        let row_height = col1.rect.height().max(col2.rect.height()) + pad;
                         (col1, col2, row_height)
                     });
                     body.row(row_height, |mut row| {

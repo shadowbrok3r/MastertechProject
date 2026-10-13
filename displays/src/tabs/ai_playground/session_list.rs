@@ -6,13 +6,11 @@ use std::fmt::Display;
 use chrono::{DateTime, Datelike, TimeDelta, TimeZone, Utc};
 use database::schema::agent_thread::is_voice;
 use database::schema::{AgentThread, RecordId, RecordIdExt, is_general};
-use eframe::egui::text::{LayoutJob, TextFormat};
-use eframe::egui::{
-    Button, Context, Id, Popup, PopupCloseBehavior, RectAlign, RichText, TextStyle, Ui,
-};
+use eframe::egui::{AsIdSalt, Context, Id, Popup, PopupCloseBehavior, RectAlign, Ui};
 
-use crate::ui_tools::framed_controls::{FramedSelectable, framed_menu_style};
-use crate::ui_tools::{agent_chat, chat_bubble, icons, theme};
+use crate::ui_tools::controls::{self, Icon, IconBox, Section};
+use crate::ui_tools::framed_controls::framed_menu_style;
+use crate::ui_tools::{agent_chat, chat_bubble, icons, icons::svg, theme};
 
 /// Group key of the sessions no technician asked for.
 const UNATTRIBUTED: &str = "unattributed";
@@ -47,6 +45,14 @@ impl SessionKind {
             Self::Machine => icons::DESKTOP,
             Self::Records => icons::RECORDS,
             Self::Voice => icons::VOICE,
+        }
+    }
+
+    fn svg(self) -> Icon {
+        match self {
+            Self::Machine => svg::DESKTOP,
+            Self::Records => svg::DATABASE,
+            Self::Voice => svg::MICROPHONE,
         }
     }
 
@@ -517,30 +523,39 @@ pub(super) fn stores(index: &[AgentThread]) -> Vec<String> {
         .collect()
 }
 
-/// A group's header: the technician, a `(you)` mark, the session count and how many are working.
-pub(super) fn group_header(ui: &Ui, group: &SessionGroup<'_>) -> LayoutJob {
-    let font = TextStyle::Body.resolve(ui.style());
-    let weak = TextFormat::simple(font.clone(), theme::weak_text(ui));
-    let mut job = LayoutJob::default();
-    let name = chat_bubble::clip(&group.name, GROUP_NAME_CHARS);
-    job.append(
-        &name,
-        0.0,
-        TextFormat::simple(font.clone(), ui.visuals().text_color()),
-    );
-    if group.mine {
-        job.append(" (you)", 0.0, weak.clone());
+/// Text of a group's section header.
+pub(super) struct GroupHeader {
+    name: String,
+    mine: bool,
+    count: String,
+    working: Option<String>,
+}
+
+impl GroupHeader {
+    pub(super) fn new(group: &SessionGroup<'_>) -> Self {
+        let working = group.working();
+        Self {
+            name: chat_bubble::clip(&group.name, GROUP_NAME_CHARS).into_owned(),
+            mine: group.mine,
+            count: group.rows.len().to_string(),
+            working: (working > 0).then(|| format!("\u{00b7} {working} working")),
+        }
     }
-    job.append(&format!("  {}", group.rows.len()), 0.0, weak);
-    let working = group.working();
-    if working > 0 {
-        job.append(
-            &format!("  \u{00b7} {working} working"),
-            0.0,
-            TextFormat::simple(font, theme::info(ui)),
-        );
+
+    /// The technician, a `(you)` mark, the session count and how many are working.
+    pub(super) fn section(&self, ui: &Ui, salt: impl AsIdSalt) -> Section<'_> {
+        let mut section = Section::new(salt, &self.name)
+            .icon(svg::USER_CIRCLE)
+            .icon_tone(theme::weak_text(ui));
+        if self.mine {
+            section = section.suffix("(you)", None);
+        }
+        section = section.suffix(&self.count, None);
+        if let Some(working) = &self.working {
+            section = section.suffix(working, theme::info(ui));
+        }
+        section
     }
-    job
 }
 
 fn filter_popup_id() -> Id {
@@ -565,9 +580,7 @@ pub(super) fn filter_button(
     } else {
         "Filter sessions".to_string()
     };
-    let button = ui
-        .add(Button::new(icons::FILTER).selected(active))
-        .on_hover_text(tip);
+    let button = controls::icon_button(ui, svg::FUNNEL_SIMPLE, IconBox::Md, active, &tip);
     Popup::menu(&button)
         .id(filter_popup_id())
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
@@ -579,59 +592,65 @@ pub(super) fn filter_button(
 
 fn filter_menu(ui: &mut Ui, filter: &mut SessionFilter, by_tech: &mut bool, stores: &[String]) {
     ui.set_max_width(FILTER_MENU_W);
-    caption(ui, "Status");
+    controls::section_label(ui, "Status");
     ui.horizontal_wrapped(|ui| {
         chip(
             ui,
             &mut filter.working,
+            svg::PLAY,
             "Working",
             "Starting, running, waiting on an approval or queued",
         );
         chip(
             ui,
             &mut filter.idle,
+            svg::PAUSE,
             "Idle",
             "Open and waiting for a message",
         );
     });
-    caption(ui, "Kind");
+    controls::section_label(ui, "Kind");
     ui.horizontal_wrapped(|ui| {
         for kind in SessionKind::ALL {
-            let label = format!("{} {}", kind.icon(), kind.label());
-            chip(ui, filter.kind_mut(kind), &label, kind.hint());
+            chip(ui, filter.kind_mut(kind), kind.svg(), kind.label(), kind.hint());
         }
     });
-    caption(ui, "Last active");
+    controls::section_label(ui, "Last active");
     ui.horizontal_wrapped(|ui| {
         for age in Age::ALL {
-            ui.framed_selectable_value(&mut filter.age, age, age.label());
+            if controls::pill(ui, None, age.label(), filter.age == age).clicked() {
+                filter.age = age;
+            }
         }
     });
     if !stores.is_empty() {
-        caption(ui, "Store");
+        controls::section_label(ui, "Store");
         ui.horizontal_wrapped(|ui| {
-            ui.framed_selectable_value(&mut filter.store, None, "All");
+            if controls::pill(ui, svg::STOREFRONT, "All", filter.store.is_none()).clicked() {
+                filter.store = None;
+            }
             for store in stores {
-                ui.framed_selectable_value(&mut filter.store, Some(store.clone()), store.as_str());
+                let on = filter.store.as_deref() == Some(store.as_str());
+                if controls::pill(ui, None, store, on).clicked() {
+                    filter.store = Some(store.clone());
+                }
             }
         });
     }
-    ui.separator();
-    ui.checkbox(by_tech, "Group by technician");
-    let reset = Button::new(format!("{} Reset filters", icons::UNDO));
-    if ui.add_enabled(!filter.is_default(), reset).clicked() {
+    controls::hairline(ui);
+    controls::toggle(ui, by_tech, "Group by technician");
+    let reset = controls::TextButton::new("Reset filters")
+        .icon(svg::ARROW_COUNTER_CLOCKWISE)
+        .enabled(!filter.is_default())
+        .show(ui);
+    if reset.clicked() {
         *filter = SessionFilter::default();
     }
 }
 
-fn caption(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).small().weak());
-}
-
 /// A chip that flips one filter flag.
-fn chip(ui: &mut Ui, on: &mut bool, text: &str, hint: &str) {
-    if ui
-        .framed_selectable_label(*on, text)
+fn chip(ui: &mut Ui, on: &mut bool, icon: Icon, text: &str, hint: &str) {
+    if controls::pill(ui, icon, text, *on)
         .on_hover_text(hint)
         .clicked()
     {

@@ -12,7 +12,12 @@ use web_time::Instant;
 
 use super::session_list::Roster;
 use crate::ui_tools::list_row::{Lead, ListRow};
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{
+    controls::{self, Icon, Segment, SpinnerSize},
+    icons::svg,
+    metrics::Metrics,
+    theme,
+};
 use crate::{PlatformSpawner, Spawner};
 
 const SHOWN_POLL: Duration = Duration::from_secs(20);
@@ -120,11 +125,11 @@ fn local(at: &Datetime) -> String {
 }
 
 /// Icon and colour for a problem: red for a failure, amber for a request lost or still waiting.
-fn mark(ui: &Ui, kind: ProblemKind) -> (&'static str, Color32) {
+fn mark(ui: &Ui, kind: ProblemKind) -> (Icon, Color32) {
     match kind {
-        ProblemKind::Waiting | ProblemKind::Stuck => (icons::STATUS_WAIT, theme::warn(ui)),
-        ProblemKind::NotPickedUp => (icons::STATUS_WARN, theme::warn(ui)),
-        _ => (icons::STATUS_ERR, theme::error(ui)),
+        ProblemKind::Waiting | ProblemKind::Stuck => (svg::HOURGLASS_SIMPLE, theme::warn(ui)),
+        ProblemKind::NotPickedUp => (svg::WARNING, theme::warn(ui)),
+        _ => (svg::X_CIRCLE, theme::error(ui)),
     }
 }
 
@@ -240,11 +245,10 @@ impl ProblemsView {
     /// The range buttons and the reading spinner.
     pub fn range_ui(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            for range in Range::ALL {
-                ui.selectable_value(&mut self.range, range, range.label());
-            }
+            let ranges = Range::ALL.map(|range| Segment::new(range, range.label()));
+            controls::segmented(ui, &mut self.range, &ranges);
             if self.loading {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
         });
     }
@@ -260,11 +264,11 @@ impl ProblemsView {
         crate::ui_data::agent_problem_notify::mark_list_in_view();
         self.mark_seen(ui);
         if let Some(err) = &self.error {
-            ui.label(
-                RichText::new(format!("{} {err}", icons::STATUS_ERR))
-                    .color(theme::error(ui))
-                    .small(),
-            );
+            controls::IconLabel::new(svg::WARNING_CIRCLE, err)
+                .tone(theme::error(ui))
+                .small(true)
+                .selectable(true)
+                .show(ui);
         }
         let needle = needle.trim().to_lowercase();
         let rows: Vec<(&AgentProblem, String)> = self
@@ -274,12 +278,24 @@ impl ProblemsView {
             .filter(|(p, tech)| mentions(p, tech, &needle))
             .collect();
         if rows.is_empty() {
-            let empty = match (self.loaded.is_none(), needle.is_empty()) {
-                (true, _) => "Loading\u{2026}",
-                (false, true) => "No problems in this range",
-                (false, false) => "No matching problems",
-            };
-            ui.label(RichText::new(empty).color(theme::weak_text(ui)).small());
+            let weak = theme::weak_text(ui);
+            match (self.loaded.is_none(), needle.is_empty()) {
+                (true, _) => {
+                    controls::loading_row(ui, "Loading\u{2026}");
+                }
+                (false, true) => {
+                    controls::IconLabel::new(svg::CHECK_CIRCLE, "No problems in this range")
+                        .tone(weak)
+                        .small(true)
+                        .show(ui);
+                }
+                (false, false) => {
+                    controls::IconLabel::new(svg::FUNNEL_SIMPLE, "No matching problems")
+                        .tone(weak)
+                        .small(true)
+                        .show(ui);
+                }
+            }
         }
         let new_after = self.seen_at_open.unwrap_or(i64::MIN);
         let mut clicked = None;
@@ -328,63 +344,78 @@ impl ProblemsView {
         let Some(key) = self.picked.clone() else {
             return;
         };
+        let m = Metrics::get(ui.ctx());
         let Some(problem) = self.rows.iter().find(|p| p.key == key) else {
-            let text = if self.loaded.is_none() {
-                "Loading\u{2026}"
+            if self.loaded.is_none() {
+                controls::loading_state(ui, "Loading\u{2026}");
             } else {
-                "This problem is no longer listed; a waiting request may have been picked up since."
-            };
-            ui.label(RichText::new(text).color(theme::weak_text(ui)));
+                controls::IconLabel::new(
+                    svg::INFO,
+                    "This problem is no longer listed; a waiting request may have been picked up since.",
+                )
+                .tone(theme::weak_text(ui))
+                .wrap(true)
+                .show(ui);
+            }
             return;
         };
         let (icon, color) = mark(ui, problem.kind);
-        ui.label(
-            RichText::new(format!("{icon} {}", problem.headline()))
-                .heading()
-                .color(color),
-        );
+        ui.horizontal(|ui| {
+            ui.add(icon.image(m.icon_lg).tint(color));
+            ui.label(RichText::new(problem.headline()).heading().color(color));
+        });
         ui.label(
             RichText::new(problem.kind.label())
                 .color(theme::weak_text(ui))
                 .small(),
         );
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
         let machine = problem
             .hostname
             .clone()
             .unwrap_or_else(|| problem.connection_string.clone());
         let fields = [
-            ("Technician", tech(problem, roster)),
-            ("Store", problem.store.clone().unwrap_or_default()),
-            ("Machine", machine),
+            (svg::USER, "Technician", tech(problem, roster)),
             (
+                svg::STOREFRONT,
+                "Store",
+                problem.store.clone().unwrap_or_default(),
+            ),
+            (svg::DESKTOP, "Machine", machine),
+            (
+                svg::RECEIPT,
                 "Service order",
                 problem.service_number.clone().unwrap_or_default(),
             ),
-            ("When", problem.at.as_ref().map(local).unwrap_or_default()),
+            (
+                svg::CLOCK,
+                "When",
+                problem.at.as_ref().map(local).unwrap_or_default(),
+            ),
         ];
         Grid::new("enhanced_ai_problem_detail")
             .num_columns(2)
-            .spacing([12.0, 4.0])
+            .spacing([2.0 * m.gap.x, m.gap.y / 2.0])
             .show(ui, |ui| {
-                for (name, value) in fields.iter().filter(|(_, v)| !v.is_empty()) {
-                    ui.label(RichText::new(*name).color(theme::weak_text(ui)));
+                for (icon, name, value) in fields.iter().filter(|(_, _, v)| !v.is_empty()) {
+                    controls::IconLabel::new(*icon, name)
+                        .tone(theme::weak_text(ui))
+                        .show(ui);
                     ui.label(value);
                     ui.end_row();
                 }
             });
-        ui.add_space(6.0);
+        ui.add_space(m.gap.y);
         let explained = explanation(problem.kind);
         if !explained.is_empty() {
             ui.label(explained);
         }
         if !problem.message.trim().is_empty() {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("Recorded error")
-                    .color(theme::weak_text(ui))
-                    .small(),
-            );
+            ui.add_space(m.gap.y);
+            controls::IconLabel::new(svg::BUG, "Recorded error")
+                .tone(theme::weak_text(ui))
+                .small(true)
+                .show(ui);
             ScrollArea::vertical()
                 .id_salt("enhanced_ai_problem_message")
                 .max_height(200.0)

@@ -8,6 +8,7 @@ use eframe::egui::{Id, Ui};
 use serde_json::Value;
 
 use crate::ui_tools::agent_chat;
+use crate::ui_tools::metrics::Metrics;
 use crate::ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle};
 
 /// Longest header summary in characters; the header also truncates to its width.
@@ -65,7 +66,7 @@ fn event_row(
             chat_bubble::divider(ui, style, &chat_bubble::turn_title(ev.turn_id.as_deref()))
         }
         "turn_completed" => {
-            ui.add_space(2.0);
+            ui.add_space(Metrics::get(ui.ctx()).gap.y / 2.0);
         }
         "user" => {
             let images = agent_chat::attach::image_names(ev.item.as_ref());

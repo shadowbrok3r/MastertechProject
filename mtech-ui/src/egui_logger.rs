@@ -5,6 +5,9 @@ use std::sync::Mutex;
 use log::SetLoggerError;
 
 use eframe::egui::{Align, Color32, FontSelection, RichText, Style, text::LayoutJob};
+
+use crate::controls::{self, BarKind, IconBox, MenuButton, Metrics};
+use crate::icons::svg::{self, Icon};
 use regex::{Regex, RegexBuilder};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,9 +55,9 @@ impl Default for LoggerStyle {
             include_level: true,
             time_format: TimeFormat::LocalTime,
             time_precision: TimePrecision::Seconds,
-            warn_color: Color32::YELLOW,
-            error_color: Color32::RED,
-            highlight_color: Color32::LIGHT_GRAY,
+            warn_color: Color32::PLACEHOLDER,
+            error_color: Color32::PLACEHOLDER,
+            highlight_color: Color32::PLACEHOLDER,
             enable_log_count: true,
             enable_copy_button: true,
             enable_search: true,
@@ -251,7 +254,13 @@ impl LoggerUi {
         if let Ok(ref mut logger_ui) = self.log_ui().lock() {
             logger_ui.ui(ui);
         } else {
-            ui.colored_label(ui.style().visuals.error_fg_color, "Something went wrong loading the log");
+            controls::empty_state(
+                ui,
+                svg::WARNING_CIRCLE,
+                "Log unavailable",
+                "Something went wrong loading the log.",
+                &[],
+            );
         }
     }
 
@@ -270,99 +279,123 @@ impl LoggerUi {
             drop(logger.logs.drain(..dropped_entries));
         }
 
-        ui.horizontal(|ui| {
-            if ui.button("Clear").clicked() {
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Tool, |ui| {
+            if controls::icon_text_button(ui, svg::ERASER, "Clear")
+                .on_hover_text("Clear the retained log")
+                .clicked()
+            {
                 logger.logs.clear();
             }
+            controls::vline(ui, m.control_h);
 
             if self.style.enable_levels_button {
-                ui.menu_button("Log Levels", |ui| {
-                    for level in LEVELS {
-                        if ui
-                            .selectable_label(self.loglevels[level as usize - 1], level.as_str())
-                            .clicked()
-                        {
-                            self.loglevels[level as usize - 1] =
-                                !self.loglevels[level as usize - 1];
+                MenuButton::new("Levels")
+                    .icon(svg::FUNNEL)
+                    .keep_open(true)
+                    .show(ui, |ui| {
+                        for level in LEVELS {
+                            let on = self.loglevels[level as usize - 1];
+                            if controls::menu_check_item(ui, level_icon(level), level.as_str(), on)
+                                .clicked()
+                            {
+                                self.loglevels[level as usize - 1] = !on;
+                            }
                         }
-                    }
-                });
+                    });
             }
 
             if self.style.enable_categories_button {
-                ui.menu_button("Categories", |ui| {
-                    if ui.button("Select All").clicked() {
-                        for (_, enabled) in logger.categories.iter_mut() {
-                            *enabled = true;
+                MenuButton::new("Categories")
+                    .icon(svg::TAG)
+                    .keep_open(true)
+                    .show(ui, |ui| {
+                        if controls::menu_item(ui, svg::CHECK_SQUARE, "Select all").clicked() {
+                            for enabled in logger.categories.values_mut() {
+                                *enabled = true;
+                            }
+                        }
+                        if controls::menu_item(ui, svg::SQUARE, "Unselect all").clicked() {
+                            for enabled in logger.categories.values_mut() {
+                                *enabled = false;
+                            }
+                        }
+                        ui.add_space(m.pad.y);
+                        controls::hairline(ui);
+                        ui.add_space(m.pad.y);
+                        for (category, enabled) in logger.categories.iter_mut() {
+                            if controls::menu_check_item(ui, None, category, *enabled).clicked() {
+                                *enabled = !*enabled;
+                            }
+                        }
+                    });
+            }
+
+            if self.style.enable_time_button {
+                MenuButton::new("Time").icon(svg::CLOCK).show(ui, |ui| {
+                    for (format, icon, label) in TIME_FORMATS {
+                        let on = self.style.time_format == format;
+                        if controls::menu_check_item(ui, icon, label, on).clicked() {
+                            self.style.time_format = format;
                         }
                     }
-
-                    if ui.button("Unselect All").clicked() {
-                        for (_, enabled) in logger.categories.iter_mut() {
-                            *enabled = false;
-                        }
-                    }
-
-                    for (category, enabled) in logger.categories.iter_mut() {
-                        if ui.selectable_label(*enabled, category).clicked() {
-                            *enabled = !*enabled;
+                    ui.add_space(m.pad.y);
+                    controls::hairline(ui);
+                    ui.add_space(m.pad.y);
+                    for (precision, label) in TIME_PRECISIONS {
+                        let on = self.style.time_precision == precision;
+                        if controls::menu_check_item(ui, svg::TIMER, label, on).clicked() {
+                            self.style.time_precision = precision;
                         }
                     }
                 });
             }
 
-            if self.style.enable_time_button {
-                ui.menu_button("Time", |ui| {
-                    ui.radio_value(&mut self.style.time_format, TimeFormat::Utc, "UTC");
-                    ui.radio_value(
-                        &mut self.style.time_format,
-                        TimeFormat::LocalTime,
-                        "Local Time",
-                    );
-                    ui.radio_value(
-                        &mut self.style.time_format,
-                        TimeFormat::SinceStart,
-                        "Since Start",
-                    );
-                    ui.radio_value(&mut self.style.time_format, TimeFormat::Hide, "Hide");
-
-                    ui.separator();
-
-                    ui.radio_value(
-                        &mut self.style.time_precision,
-                        TimePrecision::Seconds,
-                        "Seconds",
-                    );
-                    ui.radio_value(
-                        &mut self.style.time_precision,
-                        TimePrecision::Milliseconds,
-                        "Milliseconds",
-                    );
+            if self.style.enable_max_log_output {
+                ui.with_layout(eframe::egui::Layout::right_to_left(Align::Center), |ui| {
+                    controls::value_field(
+                        ui,
+                        &mut self.max_log_length,
+                        0..=MAX_RETAINED_LOGS,
+                        "lines",
+                        MAX_LINES_W,
+                    )
+                    .on_hover_text("Most log lines kept on screen");
+                    ui.label("Max log output");
                 });
             }
         });
 
         if self.style.enable_search {
+            ui.add_space(m.pad.y);
             ui.horizontal(|ui| {
-                ui.label("Search: ");
-                let response = ui.text_edit_singleline(&mut self.search_term);
+                let response =
+                    controls::search_field(ui, &mut self.search_term, "Search logs", SEARCH_W);
 
                 let mut config_changed = false;
 
-                if ui
-                    .selectable_label(self.search_case_sensitive, "Aa")
-                    .on_hover_text("Case sensitive")
-                    .clicked()
+                if controls::icon_button(
+                    ui,
+                    svg::TEXT_AA,
+                    IconBox::Md,
+                    self.search_case_sensitive,
+                    "Case sensitive",
+                )
+                .clicked()
                 {
                     self.search_case_sensitive = !self.search_case_sensitive;
                     config_changed = true;
                 }
 
                 if self.style.enable_regex
-                    && ui
-                        .selectable_label(self.search_use_regex, ".*")
-                        .on_hover_text("Use regex")
-                        .clicked()
+                    && controls::icon_button(
+                        ui,
+                        svg::ASTERISK,
+                        IconBox::Md,
+                        self.search_use_regex,
+                        "Use regex",
+                    )
+                    .clicked()
                 {
                     self.search_use_regex = !self.search_use_regex;
                     config_changed = true;
@@ -380,14 +413,7 @@ impl LoggerUi {
             });
         }
 
-        if self.style.enable_max_log_output {
-            ui.horizontal(|ui| {
-                ui.label("Max Log output");
-                ui.add(eframe::egui::widgets::DragValue::new(&mut self.max_log_length).speed(1));
-            });
-        }
-
-        ui.separator();
+        ui.add_space(m.pad.y);
 
         let mut logs_displayed: usize = 0;
 
@@ -404,7 +430,7 @@ impl LoggerUi {
 
         eframe::egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .max_height(ui.available_height() - 30.0)
+            .max_height(ui.available_height() - m.header_h - ui.spacing().item_spacing.y)
             .show(ui, |ui| {
                 filtered_logs.iter().for_each(|record| {
                     let layout_job = format_record(logger, &self.style, record, time_padding);
@@ -433,7 +459,7 @@ impl LoggerUi {
                                 ui.monospace(string_format);
                             });
 
-                            if ui.button("Copy").clicked() {
+                            if controls::menu_item(ui, svg::COPY, "Copy").clicked() {
                                 ui.ctx().copy_text(raw_text);
                             }
                         });
@@ -443,14 +469,21 @@ impl LoggerUi {
                 });
             });
 
-        ui.horizontal(|ui| {
+        controls::bar(ui, BarKind::Status, |ui| {
             if self.style.enable_log_count {
-                ui.label(format!("Log size: {}", logger.logs.len()));
-                ui.label(format!("Displayed: {}", logs_displayed));
+                controls::icon_label(
+                    ui,
+                    svg::LIST_BULLETS,
+                    &format!("Log size: {}", logger.logs.len()),
+                );
+                controls::icon_label(ui, svg::EYE, &format!("Displayed: {logs_displayed}"));
             }
             if self.style.enable_copy_button {
                 ui.with_layout(eframe::egui::Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Copy").clicked() {
+                    if controls::icon_text_button(ui, svg::COPY, "Copy")
+                        .on_hover_text("Copy the retained log")
+                        .clicked()
+                    {
                         let mut out_string = String::new();
                         logger
                             .logs
@@ -598,6 +631,36 @@ fn format_record(
 
     layout_job
 }
+/// Width of the search field.
+const SEARCH_W: f32 = 240.0;
+/// Width of the max-lines field.
+const MAX_LINES_W: f32 = 96.0;
+
+/// Time formats offered in the Time menu.
+const TIME_FORMATS: [(TimeFormat, Icon, &str); 4] = [
+    (TimeFormat::Utc, svg::GLOBE, "UTC"),
+    (TimeFormat::LocalTime, svg::CLOCK, "Local Time"),
+    (TimeFormat::SinceStart, svg::HOURGLASS_SIMPLE, "Since Start"),
+    (TimeFormat::Hide, svg::EYE_SLASH, "Hide"),
+];
+
+/// Time precisions offered in the Time menu.
+const TIME_PRECISIONS: [(TimePrecision, &str); 2] = [
+    (TimePrecision::Seconds, "Seconds"),
+    (TimePrecision::Milliseconds, "Milliseconds"),
+];
+
+/// Icon for a log level.
+fn level_icon(level: log::Level) -> Icon {
+    match level {
+        log::Level::Error => svg::X_CIRCLE,
+        log::Level::Warn => svg::WARNING,
+        log::Level::Info => svg::INFO,
+        log::Level::Debug => svg::BUG,
+        log::Level::Trace => svg::FOOTPRINTS,
+    }
+}
+
 const LEVELS: [log::Level; log::Level::Trace as usize] = [
     log::Level::Error,
     log::Level::Warn,
@@ -792,16 +855,20 @@ pub fn clear_logs() {
 
 /// Returns all logs as a formatted string.
 /// Useful for exporting logs to a file or including in bug reports.
-/// 
+///
 /// # Arguments
 /// * `max_logs` - Optional maximum number of logs to include (most recent). If None, includes all logs.
 /// * `include_level` - Whether to include the log level in the output.
 /// * `include_target` - Whether to include the target (category) in the output.
-pub fn get_logs_as_string(max_logs: Option<usize>, include_level: bool, include_target: bool) -> String {
+pub fn get_logs_as_string(
+    max_logs: Option<usize>,
+    include_level: bool,
+    include_target: bool,
+) -> String {
     let Ok(logger) = LOGGER.lock() else {
         return String::from("Could not access logger");
     };
-    
+
     let mut output = String::new();
     let logs_iter = if let Some(max) = max_logs {
         // Get the last N logs
@@ -810,26 +877,29 @@ pub fn get_logs_as_string(max_logs: Option<usize>, include_level: bool, include_
     } else {
         logger.logs.iter().collect::<Vec<_>>()
     };
-    
+
     for record in logs_iter {
         // Format: [TIMESTAMP] [LEVEL] target: message
         let time_str = record.time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-        
+
         let level_str = if include_level {
             format!("[{:5}] ", record.level)
         } else {
             String::new()
         };
-        
+
         let target_str = if include_target {
             format!("{}: ", record.target)
         } else {
             String::new()
         };
-        
-        output.push_str(&format!("[{}] {}{}{}\n", time_str, level_str, target_str, record.message));
+
+        output.push_str(&format!(
+            "[{}] {}{}{}\n",
+            time_str, level_str, target_str, record.message
+        ));
     }
-    
+
     output
 }
 
@@ -865,5 +935,3 @@ pub fn get_logs_for_issue() -> String {
 pub fn builder() -> Builder {
     Builder::default()
 }
-
-

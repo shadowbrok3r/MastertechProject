@@ -2,6 +2,15 @@ use std::path::PathBuf;
 
 use super::{FileDialogModal, ModalAction, ModalState};
 use crate::tabs::egui_file_dialog::config::{FileDialogConfig, FileDialogKeyBindings};
+use displays::ui_tools::{
+    controls::{self, Metrics, Role, Tokens},
+    icons::svg,
+};
+
+/// Size of the warning icon.
+const WARN_ICON: f32 = 40.0;
+/// Opacity of the warning icon's duotone back layer.
+const DUO_ALPHA: f32 = 0.3;
 
 /// The modal that is used to ask the user if the selected path should be
 /// overwritten.
@@ -40,19 +49,18 @@ impl OverwriteFileModal {
 
 impl FileDialogModal for OverwriteFileModal {
     fn update(&mut self, config: &FileDialogConfig, ui: &mut egui::Ui) -> ModalState {
-        const SECTION_SPACING: f32 = 15.0;
-        const BUTTON_SIZE: egui::Vec2 = egui::Vec2::new(90.0, 20.0);
+        let section_spacing = Metrics::get(ui.ctx()).gap.y * 2.0;
 
         ui.vertical_centered(|ui| {
-            let warn_icon = egui::RichText::new(&config.warn_icon)
-                .color(ui.visuals().warn_fg_color)
-                .heading();
+            let warn = Tokens::get(ui.ctx()).warn;
 
-            ui.add_space(SECTION_SPACING);
+            ui.add_space(section_spacing);
 
-            ui.label(warn_icon);
+            let (slot, _) =
+                ui.allocate_exact_size(egui::Vec2::splat(WARN_ICON), egui::Sense::hover());
+            svg::WARNING.paint_duo(ui, slot, WARN_ICON, warn, warn.gamma_multiply(DUO_ALPHA));
 
-            ui.add_space(SECTION_SPACING);
+            ui.add_space(section_spacing);
 
             // Used to wrap the path on a single line.
             let mut job = egui::text::LayoutJob::single_section(
@@ -68,30 +76,17 @@ impl FileDialogModal for OverwriteFileModal {
             ui.label(job);
             ui.label(&config.labels.overwrite_file_modal_text);
 
-            ui.add_space(SECTION_SPACING);
+            ui.add_space(section_spacing);
 
             ui.horizontal(|ui| {
-                let required_width = BUTTON_SIZE
-                    .x
-                    .mul_add(2.0, ui.style().spacing.item_spacing.x);
-                let padding = (ui.available_width() - required_width) / 2.0;
-
-                ui.add_space(padding);
-
-                if ui
-                    .add_sized(BUTTON_SIZE, egui::Button::new(&config.labels.cancel))
-                    .clicked()
-                {
-                    self.cancel();
-                }
-
-                ui.add_space(ui.style().spacing.item_spacing.x);
-
-                if ui
-                    .add_sized(BUTTON_SIZE, egui::Button::new(&config.labels.overwrite))
-                    .clicked()
-                {
-                    self.submit();
+                let buttons = [
+                    (Role::Danger, config.labels.overwrite.as_str()),
+                    (Role::Cancel, config.labels.cancel.as_str()),
+                ];
+                match controls::dialog_buttons(ui, &buttons) {
+                    Some(0) => self.submit(),
+                    Some(_) => self.cancel(),
+                    None => {}
                 }
             });
         });

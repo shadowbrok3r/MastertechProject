@@ -6699,9 +6699,12 @@ dependencies = [
  "eframe",
  "egui-phosphor",
  "egui_dock",
+ "egui_extras",
  "log",
  "regex",
  "reqwest 0.13.5",
+ "resvg",
+ "serde",
  "serde_json",
  "stress-runner",
 ]

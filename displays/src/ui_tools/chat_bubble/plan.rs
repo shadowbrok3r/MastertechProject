@@ -3,13 +3,15 @@
 use database::schema::{Plan, PlanStatus, PlanStep};
 use eframe::egui::collapsing_header::CollapsingState;
 use eframe::egui::{
-    Align, Align2, Area, Button, Color32, CornerRadius, CursorIcon, Frame, Id, Label, Layout,
-    Margin, Rect, RichText, ScrollArea, Sense, Spinner, Stroke, TextFormat, Ui, UiBuilder, pos2,
-    text::LayoutJob, vec2,
+    Align, Align2, Area, Color32, CornerRadius, CursorIcon, Frame, Id, Label, Layout, Margin, Rect,
+    RichText, ScrollArea, Sense, Stroke, TextFormat, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
+    vec2,
 };
 
 use super::ChatStyle;
-use crate::ui_tools::{glass_backdrop, icons, theme};
+use crate::ui_tools::controls::{self, IconBox, IconButton, Metrics, SpinnerSize};
+use crate::ui_tools::icons::svg::{self};
+use crate::ui_tools::{glass_backdrop, theme, tokens};
 
 /// Gap between the card and the edges of the transcript it floats over.
 const CARD_GAP: f32 = 8.0;
@@ -54,35 +56,29 @@ fn explanation(ui: &mut Ui, style: &ChatStyle, plan: &Plan) {
             )
             .wrap(),
         );
-        ui.add_space(2.0);
+        ui.add_space(Metrics::get(ui.ctx()).gap.y / 3.0);
     }
 }
 
 /// A status glyph column, then the step wrapped under itself; `spin` turns the step in progress into a spinner.
 fn step_row(ui: &mut Ui, style: &ChatStyle, step: &PlanStep, spin: bool) {
-    let (glyph, glyph_ink, ink, strike) = match step.status {
-        PlanStatus::Completed => (icons::PLAN_DONE, theme::success(ui), style.weak, true),
-        PlanStatus::InProgress => (icons::PLAN_ACTIVE, style.primary, style.strong, false),
-        PlanStatus::Pending => (icons::PLAN_PENDING, style.weak, style.text, false),
+    let (icon, glyph_ink, ink, strike) = match step.status {
+        PlanStatus::Completed => (svg::CHECK_CIRCLE, theme::success(ui), style.weak, true),
+        PlanStatus::InProgress => (svg::CIRCLE_HALF, style.primary, style.strong, false),
+        PlanStatus::Pending => (svg::CIRCLE, style.weak, style.text, false),
     };
     let row_h = ui.ctx().fonts_mut(|f| f.row_height(&style.body));
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let (slot, _) = ui.allocate_exact_size(vec2(GLYPH_W, row_h), Sense::hover());
         if spin && step.status == PlanStatus::InProgress {
-            let size = (row_h - 4.0).max(8.0);
-            ui.put(
-                Rect::from_center_size(slot.center(), vec2(size, size)),
-                Spinner::new().size(size).color(glyph_ink),
-            );
+            let side = SpinnerSize::Sm.side();
+            let spot = Rect::from_center_size(slot.center(), Vec2::splat(side));
+            ui.scope_builder(UiBuilder::new().max_rect(spot), |ui| {
+                controls::spinner(ui, SpinnerSize::Sm)
+            });
         } else {
-            ui.painter().text(
-                slot.center(),
-                Align2::CENTER_CENTER,
-                glyph,
-                style.body.clone(),
-                glyph_ink,
-            );
+            icon.paint(ui, slot, Metrics::get(ui.ctx()).icon_sm, glyph_ink);
         }
         let mut job = LayoutJob::default();
         job.wrap.max_width = ui.available_width().max(48.0);
@@ -155,22 +151,12 @@ fn card_frame(ui: &Ui) -> Frame {
     let fill = if frosted || v.window_fill.a() == 255 {
         v.window_fill
     } else {
-        opaque(v.window_fill, v.panel_fill)
+        tokens::composite(v.window_fill, v.panel_fill)
     };
+    let m = Metrics::get(ui.ctx());
     Frame::window(ui.style())
         .fill(fill)
-        .inner_margin(Margin::symmetric(10, 6))
-}
-
-/// `over` composited onto `base`.
-fn opaque(over: Color32, base: Color32) -> Color32 {
-    let inv = 1.0 - f32::from(over.a()) / 255.0;
-    let ch = |o: u8, b: u8| (f32::from(o) + f32::from(b) * inv).round().min(255.0) as u8;
-    Color32::from_rgb(
-        ch(over.r(), base.r()),
-        ch(over.g(), base.g()),
-        ch(over.b(), base.b()),
-    )
+        .inner_margin(Margin::symmetric(m.pad.x as i8, m.gap.y as i8))
 }
 
 fn card(
@@ -232,20 +218,15 @@ fn header(
             .max_rect(rect)
             .layout(Layout::left_to_right(Align::Center)),
     );
-    row.spacing_mut().item_spacing.x = 6.0;
-    let (glyph, glyph_ink) = if complete {
-        (icons::PLAN_DONE, done_ink)
+    let m = Metrics::get(ui.ctx());
+    row.spacing_mut().item_spacing.x = m.gap.x * 0.75;
+    let (icon, glyph_ink) = if complete {
+        (svg::CHECK_CIRCLE, done_ink)
     } else {
-        (icons::PLAN, style.secondary)
+        (svg::LIST_CHECKS, style.secondary)
     };
-    row.add(
-        Label::new(
-            RichText::new(glyph)
-                .font(style.label.clone())
-                .color(glyph_ink),
-        )
-        .selectable(false),
-    );
+    let (slot, _) = row.allocate_exact_size(Vec2::splat(m.icon_sm), Sense::hover());
+    icon.paint(&row, slot, Metrics::get(&row.ctx()).icon_sm, glyph_ink);
     row.add(
         Label::new(
             RichText::new("Plan")
@@ -289,32 +270,20 @@ fn header(
     );
 
     row.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let close = ui
-            .add(
-                Button::new(
-                    RichText::new(icons::CLOSE)
-                        .font(style.small.clone())
-                        .color(style.weak),
-                )
-                .frame(false),
-            )
-            .on_hover_text("Hide until the plan changes");
+        let close = IconButton::new(svg::X, IconBox::Sm)
+            .tint(style.weak)
+            .tip("Hide until the plan changes")
+            .show(ui);
         if close.clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(dismiss_id, true));
         }
         let chevron = if state.is_open() {
-            icons::PLAN_COLLAPSE
+            svg::CARET_DOWN
         } else {
-            icons::PLAN_EXPAND
+            svg::CARET_UP
         };
-        ui.add(
-            Label::new(
-                RichText::new(chevron)
-                    .font(style.small.clone())
-                    .color(style.weak),
-            )
-            .selectable(false),
-        );
+        let (slot, _) = ui.allocate_exact_size(Vec2::splat(m.icon_sm), Sense::hover());
+        chevron.paint(ui, slot, Metrics::get(ui.ctx()).icon_sm, style.weak);
     });
 }
 

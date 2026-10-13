@@ -1,13 +1,14 @@
 use eframe::egui::{
-    Align, CentralPanel, Frame, Id, Layout, Margin, Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, Ui,
+    Align, CentralPanel, Frame, Id, Layout, Margin, Popup, PopupCloseBehavior, RichText, ScrollArea, Ui,
 };
 use crate::{
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom, TOOL_PREFIX},
     ui_tools::agent_chat::{self, Composer, ComposerAction, QueueAction, Rename, RenameOutcome},
     ui_tools::chat_bubble::{self, ChatKind, ChatRow, ChatStyle},
-    ui_tools::framed_controls::FramedSelectable,
-    ui_tools::icons,
+    ui_tools::controls::{self, ButtonKind, IconBox, IconLabel, MenuItem, Metrics, TextButton},
+    ui_tools::icons::{self, svg},
     ui_tools::list_row::{Lead, ListRow},
+    ui_tools::theme,
     PlatformSpawner, Spawner,
 };
 use super::session_list::{self, Roster, SessionFilter};
@@ -694,7 +695,7 @@ impl EnhancedAiPlayground {
 
         eframe::egui::Panel::top("enhanced_ai_topbar")
             .frame(Frame::default().inner_margin(Margin::symmetric(6, 2)))
-            .exact_size(28.)
+            .exact_size(Metrics::get(ui.ctx()).header_h)
             .show_separator_line(false)
             .show(ui, |ui| self.show_chat_topbar(ui));
 
@@ -860,20 +861,25 @@ impl EnhancedAiPlayground {
             }
             // ── Threads dropdown (opens on hover, stays open over the popup; a click pins it to the side) ──
             let pinned = sessions_pinned(ui);
-            let tail = if pinned { icons::UNPIN } else { icons::CHEV_OPEN };
-            let label = format!("{}  {}  {}", icons::CHAT, self.current_thread_title(), tail);
-            let resp = ui
-                .add(eframe::egui::Button::new(RichText::new(label)).selected(pinned))
+            let tail = if pinned { svg::PUSH_PIN_SLASH } else { svg::CARET_DOWN };
+            let title = self.current_thread_title();
+            let resp = controls::Pill::new(&title)
+                .icon(svg::CHAT_TEXT)
+                .trailing(tail)
+                .selected(pinned)
+                .show(ui)
                 .on_hover_text(if pinned { "Click to unpin the session list" } else { "Click to pin the session list to the side" });
             if resp.clicked() {
                 set_sessions_pinned(ui, !pinned);
             }
             if self.threads.contains_key(&self.selected_thread) && !self.side_view_open() {
                 resp.context_menu(|ui| {
-                    if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                        self.start_rename(self.selected_thread.clone());
-                        ui.close();
-                    }
+                    controls::menu_body(ui, |ui| {
+                        if controls::menu_item(ui, svg::PENCIL_SIMPLE, "Rename").clicked() {
+                            self.start_rename(self.selected_thread.clone());
+                            ui.close();
+                        }
+                    })
                 });
             }
             // Stay open while the pointer is over the button OR the popup
@@ -901,23 +907,27 @@ impl EnhancedAiPlayground {
             ui.memory_mut(|m| m.data.insert_temp(rect_id, stored));
             self.apply_pick(pick);
 
-            if ui.button(RichText::new(icons::PLUS)).on_hover_text("New chat").clicked() {
+            if controls::icon_button(ui, svg::PLUS, IconBox::Md, false, "New chat").clicked() {
                 self.start_new_session();
             }
 
             // ── Right side: close · diagnose · status or engine ──
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if !self.self_diagnosis
-                    && ui.button(RichText::new(icons::CLOSE)).on_hover_text("Close chat").clicked()
+                    && controls::icon_button(ui, svg::X, IconBox::Md, false, "Close chat").clicked()
                 {
                     self.close_requested = true;
                 }
                 #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
                 if self.focused_client.is_some()
-                    && ui
-                        .button(RichText::new(icons::ROBOT))
-                        .on_hover_text("Ask the agent for a first look at the focused machine")
-                        .clicked()
+                    && controls::icon_button(
+                        ui,
+                        svg::ROBOT,
+                        IconBox::Md,
+                        false,
+                        "Ask the agent for a first look at the focused machine",
+                    )
+                    .clicked()
                 {
                     let cs = self.focused_client.clone();
                     self.start_agent_diagnosis(cs);
@@ -946,11 +956,8 @@ impl EnhancedAiPlayground {
         ui.horizontal(|ui| {
             let toggles = if self.viewer_root { 2.0 } else { 3.0 };
             let toggle_w = toggles * (ui.spacing().interact_size.y + ui.spacing().item_spacing.x);
-            ui.add(
-                TextEdit::singleline(&mut self.list_filter)
-                    .hint_text(format!("{} Search", icons::SEARCH))
-                    .desired_width((ui.available_width() - toggle_w).max(40.0)),
-            );
+            let width = (ui.available_width() - toggle_w).max(40.0);
+            controls::search_field(ui, &mut self.list_filter, "Search", width);
             session_list::filter_button(
                 ui,
                 &mut self.session_filter,
@@ -962,10 +969,13 @@ impl EnhancedAiPlayground {
             } else {
                 format!("Show archived and closed sessions ({hidden})")
             };
-            ui.toggle_value(&mut self.show_archived, icons::ARCHIVE).on_hover_text(tip);
+            if controls::icon_button(ui, svg::ARCHIVE, IconBox::Md, self.show_archived, &tip).clicked() {
+                self.show_archived = !self.show_archived;
+            }
             if !self.viewer_root {
                 let tip = if self.show_everyone { "Show only your sessions" } else { "Show every technician's sessions" };
-                if ui.toggle_value(&mut self.show_everyone, icons::EVERYONE).on_hover_text(tip).changed() {
+                if controls::icon_button(ui, svg::USERS, IconBox::Md, self.show_everyone, tip).clicked() {
+                    self.show_everyone = !self.show_everyone;
                     self.last_index_poll = None;
                 }
             }
@@ -987,34 +997,37 @@ impl EnhancedAiPlayground {
         let unread = self.zeroclaw.unread_count();
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
         let unread = 0;
-        let zeroclaw = if unread > 0 {
-            format!("{} ZeroClaw \u{00b7} {unread} new", icons::ROBOT)
-        } else {
-            format!("{} ZeroClaw", icons::ROBOT)
-        };
         #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
         let new_problems = self.problems.unseen_count();
         #[cfg(not(any(target_arch = "wasm32", feature = "tokio")))]
         let new_problems = 0;
-        let problems = if new_problems > 0 {
-            RichText::new(format!("{} Problems \u{00b7} {new_problems} new", icons::STATUS_WARN))
-                .color(crate::ui_tools::theme::error(ui))
-        } else {
-            RichText::new(format!("{} Problems", icons::STATUS_WARN))
-        };
+        let views = [
+            (ListView::Chats, svg::CHAT_TEXT, "Chats", "Your chats and the technicians' agent sessions", 0, theme::info(ui)),
+            (
+                ListView::ZeroClaw,
+                svg::ROBOT,
+                "ZeroClaw",
+                "Automated diagnostic sessions, ZeroClaw automations and agent sessions",
+                unread,
+                theme::info(ui),
+            ),
+            (
+                ListView::Problems,
+                svg::WARNING,
+                "Problems",
+                "Failed AI requests and agent errors across every technician",
+                new_problems,
+                theme::error(ui),
+            ),
+        ];
         ui.horizontal_wrapped(|ui| {
-            ui.framed_selectable_value(
-                &mut self.list_view,
-                ListView::Chats,
-                format!("{} Chats", icons::CHAT),
-            )
-            .on_hover_text("Your chats and the technicians' agent sessions");
-            ui.framed_selectable_value(&mut self.list_view, ListView::ZeroClaw, zeroclaw)
-                .on_hover_text(
-                    "Automated diagnostic sessions, ZeroClaw automations and agent sessions",
-                );
-            ui.framed_selectable_value(&mut self.list_view, ListView::Problems, problems)
-                .on_hover_text("Failed AI requests and agent errors across every technician");
+            for (view, icon, label, tip, count, tone) in views {
+                let resp = controls::pill(ui, icon, label, self.list_view == view).on_hover_text(tip);
+                controls::count_badge(ui, resp.rect, count, tone);
+                if resp.clicked() {
+                    self.list_view = view;
+                }
+            }
         });
     }
 
@@ -1041,11 +1054,8 @@ impl EnhancedAiPlayground {
     /// The search box, the range buttons and every technician's problems; clicks land in `pick`.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn problem_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
-        ui.add(
-            TextEdit::singleline(&mut self.list_filter)
-                .hint_text(format!("{} Search", icons::SEARCH))
-                .desired_width(ui.available_width()),
-        );
+        let width = ui.available_width();
+        controls::search_field(ui, &mut self.list_filter, "Search", width);
         self.problems.range_ui(ui);
         let filter = self.list_filter.clone();
         let selected = if self.side_view_open() { String::new() } else { self.selected_thread.clone() };
@@ -1065,11 +1075,8 @@ impl EnhancedAiPlayground {
     /// The search box, then automated diagnostic sessions and ZeroClaw's automations and sessions; clicks land in `pick`.
     #[cfg(any(target_arch = "wasm32", feature = "tokio"))]
     fn automation_rows(&mut self, ui: &mut Ui, max_height: f32, pick: &mut ThreadPick) {
-        ui.add(
-            TextEdit::singleline(&mut self.list_filter)
-                .hint_text(format!("{} Search", icons::SEARCH))
-                .desired_width(ui.available_width()),
-        );
+        let width = ui.available_width();
+        controls::search_field(ui, &mut self.list_filter, "Search", width);
         let filter = self.list_filter.clone();
         ScrollArea::vertical()
             .id_salt("enhanced_ai_automation_rows")
@@ -1081,7 +1088,7 @@ impl EnhancedAiPlayground {
                 }
                 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
                 {
-                    ui.separator();
+                    controls::hairline(ui);
                     if let Some(p) = self.zeroclaw.list_ui(ui, &filter) {
                         pick.zeroclaw = Some(p);
                     }
@@ -1142,16 +1149,16 @@ impl EnhancedAiPlayground {
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 if chats.is_empty() && sessions.is_empty() {
-                    let empty = match (searching, narrowed) {
-                        (true, _) => "No matching chats",
-                        (false, true) => "No sessions match the filters",
-                        (false, false) => "No chats yet",
+                    let (icon, empty) = match (searching, narrowed) {
+                        (true, _) => (svg::MAGNIFYING_GLASS, "No matching chats"),
+                        (false, true) => (svg::FUNNEL, "No sessions match the filters"),
+                        (false, false) => (svg::CHAT_TEXT, "No chats yet"),
                     };
-                    ui.label(RichText::new(empty).weak());
+                    controls::empty_state(ui, icon, empty, "", &[]);
                 }
                 for (id, title) in chats {
                     let row = ListRow::new(&title)
-                        .lead(Lead::Icon(icons::CHAT, None))
+                        .lead(Lead::Icon(svg::CHAT_TEXT, None))
                         .selected(selected == id)
                         .show(ui)
                         .on_hover_text(&title);
@@ -1159,14 +1166,16 @@ impl EnhancedAiPlayground {
                         pick.picked = Some(id.clone());
                     }
                     row.context_menu(|ui| {
-                        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                            pick.rename = Some(id.clone());
-                            ui.close();
-                        }
+                        controls::menu_body(ui, |ui| {
+                            if controls::menu_item(ui, svg::PENCIL_SIMPLE, "Rename").clicked() {
+                                pick.rename = Some(id.clone());
+                                ui.close();
+                            }
+                        })
                     });
                 }
                 if !sessions.is_empty() || filters.is_some() {
-                    ui.separator();
+                    controls::hairline(ui);
                     if sessions_header(ui, sessions.len(), filters.as_deref()) {
                         self.session_filter = SessionFilter::default();
                     }
@@ -1180,35 +1189,41 @@ impl EnhancedAiPlayground {
                             searching,
                             lone,
                         );
-                        let shown = eframe::egui::CollapsingHeader::new(
-                            session_list::group_header(ui, &group),
-                        )
-                        .id_salt(("enhanced_ai_session_group", group.id()))
-                        .open(Some(open))
-                        .show(ui, |ui| {
-                            for thread in &group.rows {
-                                session_row(ui, &rows, thread, false, pick);
-                            }
+                        let labels = session_list::GroupHeader::new(&group);
+                        let (header, _) = labels
+                            .section(ui, ("enhanced_ai_session_group", group.id()))
+                            .open(Some(open))
+                            .show_with_header(ui, |ui| {
+                                for thread in &group.rows {
+                                    session_row(ui, &rows, thread, false, pick);
+                                }
+                            });
+                        header.context_menu(|ui| {
+                            controls::menu_body(ui, |ui| {
+                                let idle: Vec<String> = group
+                                    .rows
+                                    .iter()
+                                    .filter(|t| t.is_open() && !t.is_working())
+                                    .map(|t| t.id.key_string())
+                                    .filter(|key| !archived_now.contains(key))
+                                    .collect();
+                                let label = format!("Archive {} idle", idle.len());
+                                let clicked = MenuItem::new(&label)
+                                    .icon(svg::ARCHIVE)
+                                    .enabled(!idle.is_empty())
+                                    .show(ui)
+                                    .clicked();
+                                if clicked {
+                                    pick.archive = Some((idle, true));
+                                    ui.close();
+                                }
+                            })
                         });
-                        shown.header_response.context_menu(|ui| {
-                            let idle: Vec<String> = group
-                                .rows
-                                .iter()
-                                .filter(|t| t.is_open() && !t.is_working())
-                                .map(|t| t.id.key_string())
-                                .filter(|key| !archived_now.contains(key))
-                                .collect();
-                            let label = format!("{} Archive {} idle", icons::ARCHIVE, idle.len());
-                            if ui.add_enabled(!idle.is_empty(), eframe::egui::Button::new(label)).clicked() {
-                                pick.archive = Some((idle, true));
-                                ui.close();
-                            }
-                        });
-                        if shown.header_response.clicked() && !searching {
+                        if header.clicked() && !searching {
                             self.group_open.insert(group.id().to_string(), !open);
                         }
                         if let Some(hint) = group.hint() {
-                            shown.header_response.on_hover_text(hint);
+                            header.on_hover_text(hint);
                         }
                     }
                 } else {
@@ -1351,7 +1366,7 @@ impl EnhancedAiPlayground {
         let tid = self.selected_thread.clone();
         if !self.threads.contains_key(&tid) {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new(format!("Start a new chat with  {}  above.", icons::PLUS)).weak());
+                ui.label(RichText::new(format!("Start a new chat with  {}  above.", svg::PLUS.glyph())).weak());
             });
             return INPUT_MIN_HEIGHT;
         }
@@ -1361,7 +1376,11 @@ impl EnhancedAiPlayground {
             self.apply_queue_action(&tid, action);
         }
         if !steerable {
-            ui.label(RichText::new(NOT_YOURS).weak().small());
+            IconLabel::new(svg::LOCK, NOT_YOURS)
+                .tone(theme::weak_text(ui))
+                .small(true)
+                .wrap(true)
+                .show(ui);
         }
         let busy = self
             .open_row
@@ -1425,17 +1444,23 @@ impl EnhancedAiPlayground {
 
         if messages.is_empty() {
             ui.vertical_centered(|ui| {
-                ui.add_space(120.);
-                ui.label(RichText::new(format!("{}", icons::CHAT)).size(40.).weak());
+                ui.add_space(ui.available_height() / 4.0);
                 if self.self_diagnosis && cfg!(not(target_arch = "wasm32")) {
-                    ui.heading(RichText::new("Diagnose this computer").strong());
-                    ui.label(
-                        RichText::new("Ask about the PC Mastertech is running on. The Codex agent inspects it with the Mastertech tools; anything that would run a command here waits for a technician's approval.")
-                            .weak(),
+                    controls::empty_state(
+                        ui,
+                        svg::STETHOSCOPE,
+                        "Diagnose this computer",
+                        "Ask about the PC Mastertech is running on. The Codex agent inspects it with the Mastertech tools; anything that would run a command here waits for a technician's approval.",
+                        &[],
                     );
                 } else {
-                    ui.heading(RichText::new("Mastertech Assistant").strong());
-                    ui.label(RichText::new("Ask a question to get started.").weak());
+                    controls::empty_state(
+                        ui,
+                        svg::SPARKLE,
+                        "Mastertech Assistant",
+                        "Ask a question to get started.",
+                        &[],
+                    );
                 }
             });
             return;
@@ -1506,7 +1531,11 @@ impl EnhancedAiPlayground {
                 crate::tabs::agent_sessions::transcript_ui(ui, &salt, events, true, &user);
                 chat_rows(ui, &style, scope, &now, &pending, &user);
                 if let Some(e) = error {
-                    ui.label(RichText::new(e).small().color(crate::ui_tools::theme::warn(ui)));
+                    IconLabel::new(svg::WARNING, &e)
+                        .tone(theme::warn(ui))
+                        .small(true)
+                        .wrap(true)
+                        .show(ui);
                 }
                 ui.add_space(covered);
             });
@@ -2433,8 +2462,13 @@ fn session_details(ui: &mut Ui, row: &AgentThread, customer: Option<&str>) {
     }
     ui.add(eframe::egui::Label::new(RichText::new(line).small().weak()).truncate());
     if let Some(error) = row.error.as_deref().filter(|e| !e.trim().is_empty()) {
-        let text = RichText::new(format!("{} {error}", icons::STATUS_ERR)).small().color(crate::ui_tools::theme::error(ui));
-        ui.add(eframe::egui::Label::new(text).truncate()).on_hover_text(error);
+        let color = theme::error(ui);
+        let size = Metrics::get(ui.ctx()).icon_sm;
+        ui.horizontal(|ui| {
+            ui.add(svg::WARNING_CIRCLE.image(size).tint(color));
+            let text = RichText::new(error).small().color(color);
+            ui.add(eframe::egui::Label::new(text).truncate()).on_hover_text(error);
+        });
     }
 }
 
@@ -2463,14 +2497,14 @@ fn session_row(
     pick: &mut ThreadPick,
 ) {
     let key = thread.id.key_string();
-    let (icon, color, _) = agent_chat::status_chip(ui, &thread.status);
+    let (_, color, _) = agent_chat::status_chip(ui, &thread.status);
     let failed_turn = thread.failed_turn_error();
     let lead = if agent_chat::is_active(thread) {
         Lead::Spinner(Some(color))
     } else if failed_turn.is_some() {
-        Lead::Icon(icons::STATUS_ERR, Some(crate::ui_tools::theme::error(ui)))
+        Lead::Icon(svg::WARNING_CIRCLE, Some(theme::error(ui)))
     } else {
-        Lead::Icon(icon, Some(color))
+        Lead::Icon(agent_chat::status_icon(&thread.status), Some(color))
     };
     let extra = rows.extras.get(&key);
     let title = thread.list_label(extra.and_then(|e| e.customer.as_deref()));
@@ -2484,12 +2518,12 @@ fn session_row(
     if archived {
         detail.push_str(" \u{00b7} Archived");
     }
-    let (archive_icon, archive_word) = if archived { (icons::UNARCHIVE, "Unarchive") } else { (icons::ARCHIVE, "Archive") };
+    let (archive_svg, archive_word) = if archived { (svg::TRAY_ARROW_UP, "Unarchive") } else { (svg::ARCHIVE, "Archive") };
     let mut list_row = ListRow::new(&title)
         .lead(lead)
         .detail(&detail)
         .selected(rows.selected == key)
-        .action(archive_icon, archive_word);
+        .action(archive_svg, archive_word);
     if let Some((share, _)) = plan {
         list_row = list_row.progress(*share);
     }
@@ -2501,7 +2535,7 @@ fn session_row(
         }
         if let Some(error) = failed_turn {
             let line = database::schema::agent_problem::headline(database::schema::ProblemKind::AgentError, error);
-            ui.label(RichText::new(format!("{} {line}", icons::STATUS_ERR)).color(crate::ui_tools::theme::error(ui)));
+            IconLabel::new(svg::WARNING_CIRCLE, &line).tone(theme::error(ui)).wrap(true).show(ui);
         }
     });
     if action.is_some_and(|button| button.clicked()) {
@@ -2510,23 +2544,23 @@ fn session_row(
         pick.picked = Some(key.clone());
     }
     row.context_menu(|ui| {
-        if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-            pick.rename = Some(key.clone());
-            ui.close();
-        }
-        if ui.button(format!("{archive_icon} {archive_word}")).clicked() {
-            pick.archive = Some((vec![key.clone()], !archived));
-            ui.close();
-        }
-        if thread.is_open()
-            && may_steer(thread)
-            && ui
-                .button(format!("{} Close session", icons::CLOSE))
-                .clicked()
-        {
-            pick.close = Some(key.clone());
-            ui.close();
-        }
+        controls::menu_body(ui, |ui| {
+            if controls::menu_item(ui, svg::PENCIL_SIMPLE, "Rename").clicked() {
+                pick.rename = Some(key.clone());
+                ui.close();
+            }
+            if controls::menu_item(ui, archive_svg, archive_word).clicked() {
+                pick.archive = Some((vec![key.clone()], !archived));
+                ui.close();
+            }
+            if thread.is_open()
+                && may_steer(thread)
+                && controls::menu_item(ui, svg::X_CIRCLE, "Close session").clicked()
+            {
+                pick.close = Some(key.clone());
+                ui.close();
+            }
+        })
     });
 }
 
@@ -2534,6 +2568,8 @@ fn session_row(
 fn sessions_header(ui: &mut Ui, count: usize, filters: Option<&str>) -> bool {
     let mut clear = false;
     ui.horizontal(|ui| {
+        let size = Metrics::get(ui.ctx()).icon_sm;
+        ui.add(svg::ROBOT.image(size).tint(theme::faint_text(ui)));
         ui.label(
             RichText::new(format!("Agent sessions  {count}"))
                 .weak()
@@ -2541,8 +2577,10 @@ fn sessions_header(ui: &mut Ui, count: usize, filters: Option<&str>) -> bool {
         );
         if let Some(summary) = filters {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                clear = ui
-                    .small_button(format!("{} Clear", icons::CLOSE))
+                clear = TextButton::new("Clear")
+                    .kind(ButtonKind::Ghost)
+                    .icon(svg::X)
+                    .show(ui)
                     .on_hover_text(format!("Filtered: {summary}"))
                     .clicked();
             });

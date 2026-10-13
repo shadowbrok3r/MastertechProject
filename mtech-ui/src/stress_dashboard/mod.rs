@@ -11,8 +11,12 @@ mod help;
 mod live;
 mod results;
 
-use eframe::egui::{self, Ui};
-use stress_runner::{RunResult, StressPanelConfig, StressorChoice};
+use eframe::egui::{self, Color32, Ui, vec2};
+use stress_runner::{PanelMode, RunResult, StressPanelConfig, StressorChoice, Subsystem};
+
+use crate::controls::{self, BarKind, ButtonKind, Icon, Metrics, SpinnerSize, TextButton};
+use crate::icons::svg;
+use crate::theme;
 
 /// What the operator asked for this frame.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -147,10 +151,10 @@ impl StressDashboard {
 
         self.header(ui, cfg, running, &mut action);
         if let Some(err) = start_error {
-            let col = crate::theme::error(ui);
-            ui.colored_label(col, err);
+            let col = theme::error(ui);
+            controls::status_label(ui, svg::WARNING_CIRCLE, err, col);
         }
-        ui.separator();
+        ui.add_space(Metrics::get(ui.ctx()).gap.y);
 
         if self.help_open {
             help::show(ui, &mut self.help_open);
@@ -202,44 +206,41 @@ impl StressDashboard {
         running: bool,
         action: &mut DashboardAction,
     ) {
-        use crate::icons;
-
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(format!("{}  Stress Test", icons::FLASK))
-                    .heading(),
-            );
-            ui.separator();
+        let m = Metrics::get(ui.ctx());
+        controls::bar(ui, BarKind::Tool, |ui| {
+            controls::heading(ui, svg::MT_STRESS, "Stress Test");
+            controls::vline(ui, m.control_h);
             configure::mode_selector(ui, cfg, running);
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .selectable_label(self.help_open, format!("{}  Help", icons::INFO))
+                if controls::pill(ui, svg::QUESTION, "Help", self.help_open)
                     .on_hover_text("What each test does and when to run it")
                     .clicked()
                 {
                     self.help_open = !self.help_open;
                 }
-                if ui
-                    .button(format!("{}  History", icons::EYE))
+                if controls::icon_text_button(ui, svg::CLOCK_COUNTER_CLOCKWISE, "History")
                     .on_hover_text("Browse previously persisted runs")
                     .clicked()
                 {
                     *action = DashboardAction::OpenHistory;
                 }
-                ui.separator();
+                controls::vline(ui, m.control_h);
                 if running {
-                    ui.spinner();
-                    if ui
-                        .button(egui::RichText::new(format!("{}  Stop", icons::STOP)))
+                    if TextButton::new("Stop")
+                        .icon(svg::STOP)
+                        .kind(ButtonKind::Danger)
+                        .show(ui)
                         .on_hover_text("Cancel the run — it is recorded as aborted")
                         .clicked()
                     {
                         *action = DashboardAction::Stop;
                     }
-                } else if ui
-                    .button(egui::RichText::new(format!("{}  Start", icons::PLAY)).strong())
+                    controls::spinner(ui, SpinnerSize::Sm);
+                } else if TextButton::new("Start")
+                    .icon(svg::PLAY)
+                    .kind(ButtonKind::Primary)
+                    .show(ui)
                     .on_hover_text("Run the configured test on this machine")
                     .clicked()
                 {
@@ -247,7 +248,6 @@ impl StressDashboard {
                 }
             });
         });
-        ui.add_space(2.0);
     }
 }
 
@@ -255,7 +255,7 @@ impl StressDashboard {
 fn column(ui: &mut Ui, width: f32, id: &str, add: impl FnOnce(&mut Ui)) {
     let height = ui.available_height();
     ui.allocate_ui_with_layout(
-        egui::vec2(width, height),
+        vec2(width, height),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
             ui.set_min_width(width);
@@ -268,9 +268,41 @@ fn column(ui: &mut Ui, width: f32, id: &str, add: impl FnOnce(&mut Ui)) {
     );
 }
 
+/// Icon for a run mode.
+pub(crate) fn mode_icon(mode: &PanelMode) -> Icon {
+    match mode {
+        PanelMode::Single => svg::TARGET,
+        PanelMode::Scenario => svg::LIST_NUMBERS,
+        PanelMode::QcBenchmark => svg::GAUGE,
+        PanelMode::Certification => svg::CERTIFICATE,
+        PanelMode::Concurrent => svg::STACK,
+    }
+}
+
+/// Icon for a stressor subsystem.
+pub(crate) fn subsystem_icon(group: Subsystem) -> Icon {
+    match group {
+        Subsystem::Cpu => svg::CPU,
+        Subsystem::Memory => svg::MEMORY,
+        Subsystem::Storage => svg::HARD_DRIVE,
+        Subsystem::Gpu => svg::GRAPHICS_CARD,
+        Subsystem::Power => svg::LIGHTNING,
+    }
+}
+
+/// Icon for a run result.
+pub(crate) fn result_icon(result: RunResult) -> Icon {
+    match result {
+        RunResult::Pass => svg::CHECK_CIRCLE,
+        RunResult::Fail => svg::X_CIRCLE,
+        RunResult::Aborted => svg::PROHIBIT,
+        RunResult::Inconclusive => svg::QUESTION,
+        RunResult::InProgress => svg::HOURGLASS_SIMPLE,
+    }
+}
+
 /// Colour for a run result, used by the live and results columns.
-pub(crate) fn result_color(ui: &Ui, result: RunResult) -> egui::Color32 {
-    use crate::theme;
+pub(crate) fn result_color(ui: &Ui, result: RunResult) -> Color32 {
     match result {
         RunResult::Pass => theme::result_pass(ui),
         RunResult::Fail => theme::result_fail(ui),

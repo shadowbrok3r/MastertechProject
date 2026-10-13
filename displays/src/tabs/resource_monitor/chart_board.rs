@@ -9,7 +9,7 @@ use egui_plot::{Line, Plot, PlotPoints};
 use stress_kit::telemetry::{CpuTempSource, GpuSample, TelemetrySnapshot, is_cpu_thermal_label};
 use web_time::Instant;
 
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::{controls::{self, Icon}, icons::svg, metrics::Metrics, theme};
 
 const HISTORY_SECS: f64 = 120.0;
 /// Backstop for `HISTORY_SECS`; holds the full window at a 30 Hz sample rate.
@@ -76,7 +76,7 @@ impl ChartBoard {
 
     /// Two charts per row, falling back to one column when the width can't hold two.
     pub fn show_compact(&self, ui: &mut Ui) {
-        ui.add_space(2.0);
+        ui.add_space(Metrics::get(ui.ctx()).gap.y / 2.0);
         let two_col = ui.available_width() >= TWO_COL_MIN_WIDTH;
         self.grid(ui, "chart_c", COMPACT_HEIGHT, true, two_col);
     }
@@ -88,26 +88,29 @@ impl ChartBoard {
 
     pub fn show(&self, ui: &mut Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add_space(4.0);
+            let gap = Metrics::get(ui.ctx()).gap.y;
+            ui.add_space(gap);
             let two_col = ui.available_width() >= TWO_COL_MIN_WIDTH;
             self.grid(ui, "chart_full", FULL_HEIGHT, false, two_col);
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(
-                    "Raw samples, linear segments — no spline interpolation. \
-                     History capped at 120 s; older points are dropped.",
-                )
-                .small()
-                .weak(),
-            );
+            ui.add_space(gap);
+            controls::IconLabel::new(
+                svg::INFO,
+                "Raw samples, linear segments — no spline interpolation. \
+                 History capped at 120 s; older points are dropped.",
+            )
+            .tone(theme::weak_text(ui))
+            .small(true)
+            .wrap(true)
+            .show(ui);
         });
     }
 
     fn grid(&self, ui: &mut Ui, id: &str, height: f32, compact: bool, two_col: bool) {
+        let gap = Metrics::get(ui.ctx()).gap.y;
         if two_col {
             for row in 0..CELL_COUNT / 2 {
                 if row > 0 {
-                    ui.add_space(6.0);
+                    ui.add_space(gap);
                 }
                 ui.columns(2, |cols| {
                     self.cell(&mut cols[0], row * 2, id, height, compact);
@@ -117,7 +120,7 @@ impl ChartBoard {
         } else {
             for index in 0..CELL_COUNT {
                 if index > 0 {
-                    ui.add_space(6.0);
+                    ui.add_space(gap);
                 }
                 self.cell(ui, index, id, height, compact);
             }
@@ -246,14 +249,30 @@ fn swatch(ui: &mut Ui, color: Color32) {
 
 /// Legend row; the swatch carries identity and the label wears text ink.
 fn legend_row(ui: &mut Ui, entries: &[(String, Color32)]) {
+    let gap = Metrics::get(ui.ctx()).gap.x / 2.0;
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = gap;
         for (label, color) in entries {
             swatch(ui, *color);
             ui.label(RichText::new(label.as_str()).small());
-            ui.add_space(4.0);
+            ui.add_space(gap);
         }
     });
+}
+
+/// Icon for a chart titled `title`.
+fn chart_icon(title: &str) -> Icon {
+    if title.starts_with("CPU clock") {
+        svg::SPEEDOMETER
+    } else if title.starts_with("CPU") {
+        svg::CPU
+    } else if title.starts_with("Temperatures") {
+        svg::THERMOMETER
+    } else if title.starts_with("RAM") {
+        svg::MEMORY
+    } else {
+        svg::CHART_LINE
+    }
 }
 
 /// Title row with an optional identity mark; `value` of `None` renders as an explicit absence.
@@ -268,6 +287,8 @@ fn chart_header(
         if let Some(color) = mark {
             swatch(ui, color);
         }
+        let size = Metrics::get(ui.ctx()).icon_sm;
+        ui.add(chart_icon(title).image(size).tint(theme::weak_text(ui)));
         let title_rt = if compact {
             RichText::new(title).strong().small()
         } else {
@@ -282,7 +303,10 @@ fn chart_header(
                     ui.label(if compact { rt.small() } else { rt });
                 }
                 None => {
-                    ui.label(RichText::new("— no sensor").small().weak());
+                    controls::IconLabel::new(svg::MINUS_CIRCLE, "no sensor")
+                        .tone(theme::weak_text(ui))
+                        .small(true)
+                        .show(ui);
                 }
             },
         );
@@ -290,11 +314,10 @@ fn chart_header(
 }
 
 fn empty_note(ui: &mut Ui, text: &str) {
-    ui.label(
-        RichText::new(format!("{} {text}", icons::STATUS_OFF))
-            .small()
-            .weak(),
-    );
+    controls::IconLabel::new(svg::MINUS_CIRCLE, text)
+        .tone(theme::weak_text(ui))
+        .small(true)
+        .show(ui);
 }
 
 /// Colour-scale key for the sequential magnitude ramp.
@@ -529,25 +552,18 @@ impl TempChart {
 
     fn notes(&self, ui: &mut Ui) {
         if self.cpu_zone_only {
-            ui.label(
-                RichText::new(format!(
-                    "{} CPU value is a firmware zone, not the die sensor.",
-                    icons::STATUS_WARN
-                ))
-                .small()
-                .color(theme::warn(ui)),
-            );
+            let text = "CPU value is a firmware zone, not the die sensor.";
+            controls::IconLabel::new(svg::WARNING, text)
+                .tone(theme::warn(ui))
+                .small(true)
+                .show(ui);
         }
         if !self.absent.is_empty() {
-            ui.label(
-                RichText::new(format!(
-                    "{} Not measured: {}",
-                    icons::STATUS_OFF,
-                    self.absent.join(", ")
-                ))
-                .small()
-                .weak(),
-            );
+            let text = format!("Not measured: {}", self.absent.join(", "));
+            controls::IconLabel::new(svg::MINUS_CIRCLE, &text)
+                .tone(theme::weak_text(ui))
+                .small(true)
+                .show(ui);
         }
     }
 }

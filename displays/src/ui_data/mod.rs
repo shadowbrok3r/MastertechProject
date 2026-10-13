@@ -1,5 +1,8 @@
 use database::{live_data::{listen_data_filtered, Action}, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskHistory, TaskNotePayload, TaskNoteRead, User}};
+use crate::ui_tools::controls::{self, Metrics, SpinnerSize, Tokens};
+use crate::ui_tools::icons::svg;
 use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle};
+use crate::ui_tools::tokens::composite;
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
 use crate::app_state::ReconnectOutcome;
 use crossbeam::channel::Sender;
@@ -25,6 +28,11 @@ pub mod task_search;
 
 /// Scope selector shared with the snapshot fetch in `database::schema`.
 pub use database::schema::client::ClientScope;
+
+/// Share of the warn hue in the reconnect pill's fill.
+const PILL_WASH: f32 = 0.16;
+/// Share of the warn hue in the reconnect pill's outline.
+const PILL_EDGE: f32 = 0.6;
 
 /// Builds the `connected_client` LIVE query for `scope`, clamping non-root
 /// users via [`ClientScope::effective`] — the authoritative gate, not the
@@ -1006,7 +1014,7 @@ impl crate::app_state::SharedContext {
             self.task_index.values().map(|t| t.task_name.clone()).collect();
         let mut open = true;
 
-        eframe::egui::Window::new("Notifications")
+        controls::icon_window(ctx, svg::BELL, "Notifications")
             .open(&mut open)
             .default_size([520.0, 620.0])
             .min_width(420.0)
@@ -1031,26 +1039,24 @@ impl crate::app_state::SharedContext {
         if !(self.reconnect_in_progress || self.needs_reconnect) {
             return;
         }
+        use eframe::egui::{CornerRadius, Frame, Margin, Stroke};
+        let t = Tokens::get(ctx);
+        let m = Metrics::get(ctx);
+        let fill = composite(t.warn.gamma_multiply(PILL_WASH), t.window);
+        let edge = composite(t.warn.gamma_multiply(PILL_EDGE), t.window);
         eframe::egui::Area::new(eframe::egui::Id::new("db_status_pill"))
             .anchor(eframe::egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
             .order(eframe::egui::Order::Foreground)
             .show(ctx, |ui| {
-                eframe::egui::Frame::new()
-                    .fill(eframe::egui::Color32::from_rgb(45, 35, 20))
-                    .stroke(eframe::egui::Stroke::new(
-                        1.0,
-                        eframe::egui::Color32::from_rgb(220, 170, 60),
-                    ))
-                    .corner_radius(eframe::egui::CornerRadius::same(12))
-                    .inner_margin(eframe::egui::Margin::symmetric(10, 6))
+                Frame::new()
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0, edge))
+                    .corner_radius(CornerRadius::same((m.control_h / 2.0) as u8))
+                    .inner_margin(Margin::symmetric(m.pad.x as i8, 4))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.add(eframe::egui::Spinner::new().size(13.0));
-                            ui.label(
-                                eframe::egui::RichText::new("Reconnecting…")
-                                    .size(12.0)
-                                    .color(eframe::egui::Color32::from_rgb(240, 210, 140)),
-                            );
+                            controls::status_label(ui, svg::CLOUD_WARNING, "Reconnecting…", t.warn);
+                            controls::tinted_spinner(ui, SpinnerSize::Sm, t.warn);
                         });
                     });
             });
@@ -1152,7 +1158,8 @@ impl crate::app_state::SharedContext {
         }
 
         let mut still_open = true;
-        eframe::egui::Window::new(format!("Diagnostics — {target}"))
+        let title = format!("Diagnostics — {target}");
+        controls::icon_window(ctx, svg::STETHOSCOPE, &title)
             .id(eframe::egui::Id::new(("client_diagnostics_popup", &target)))
             .open(&mut still_open)
             .resizable(true)

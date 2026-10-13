@@ -3,11 +3,18 @@
 //! line items into the TUR Sheet form. Self-contained: owns its async channel
 //! and drains it in `ui`.
 
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, unbounded};
 use database::orders::{OrderKey, OrderSummary, QcBackend, QcOrder, QcOrderItem};
 use database::schema::prestashop_schema::{OrderRow, ServiceOrder};
 use displays::tabs::TabId;
-use eframe::egui::{self, scroll_area, CentralPanel, Id, RichText, TextEdit, Ui, Widget};
+use displays::ui_tools::{
+    controls::{
+        self, BarKind, ButtonKind, IconBox, Metrics, SpinnerSize, TextButton, TextField, Tokens,
+    },
+    fonts, glass_card,
+    icons::svg,
+};
+use eframe::egui::{self, CentralPanel, Id, RichText, Ui, Widget, scroll_area};
 use egui_data_table::{DataTable, Renderer};
 
 use crate::app_state::MastertechContext;
@@ -18,6 +25,13 @@ pub mod row_viewer;
 
 use data::{ShopifyLineItemRow, ShopifyOrderRow};
 use row_viewer::{ShopifyLineItemRowViewer, ShopifyOrderRowViewer};
+
+/// Width of the loaded-orders filter.
+const FILTER_W: f32 = 180.0;
+/// Width of the order lookup field.
+const LOOKUP_W: f32 = 150.0;
+/// Order title size in the detail panel.
+const ORDER_TITLE_PT: f32 = 15.0;
 
 enum ShopifyMsg {
     Recent(Result<Vec<OrderSummary>, String>),
@@ -96,7 +110,8 @@ impl ShopifyOrdersTab {
                 ShopifyMsg::Detail(Ok(order)) => {
                     self.detail_busy = false;
                     self.detail_error = None;
-                    let rows: Vec<ShopifyLineItemRow> = order.items.iter().map(row_from_item).collect();
+                    let rows: Vec<ShopifyLineItemRow> =
+                        order.items.iter().map(row_from_item).collect();
                     self.items_table.replace(rows);
                     self.detail = Some(order);
                 }
@@ -120,7 +135,10 @@ impl ShopifyOrdersTab {
         let ctx = ctx.clone();
         let limit = self.limit;
         tokio::spawn(async move {
-            let result = QcBackend::shopify().recent_orders(limit).await.map_err(|e| format!("{e:#}"));
+            let result = QcBackend::shopify()
+                .recent_orders(limit)
+                .await
+                .map_err(|e| format!("{e:#}"));
             let _ = tx.send(ShopifyMsg::Recent(result));
             ctx.request_repaint();
         });
@@ -152,63 +170,85 @@ impl ShopifyOrdersTab {
 
         let mut action = None;
 
-        egui::Panel::top("shopify_orders_top").exact_size(62.0).show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if ui.add_enabled(!self.recent_busy, egui::Button::new("Refresh")).clicked() {
-                    self.limit = 10;
-                    self.start_recent(&ctx);
-                }
-                if ui
-                    .add_enabled(self.has_more && !self.recent_busy, egui::Button::new("Load +10 more"))
-                    .clicked()
-                {
-                    self.limit += 10;
-                    self.start_recent(&ctx);
-                }
-                if self.recent_busy || self.detail_busy {
-                    ui.spinner();
-                }
-                ui.label(
-                    RichText::new(format!("{} loaded · Order Placed / Ready to Build", self.loaded_count)).weak(),
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.label("Filter:");
-                ui.add(
-                    TextEdit::singleline(&mut self.orders_viewer.filter)
-                        .hint_text(" loaded orders")
-                        .desired_width(150.0),
-                );
-                ui.separator();
-                ui.label("Look up order:");
-                let resp = ui.add(
-                    TextEdit::singleline(&mut self.lookup_input)
-                        .hint_text(" #1032 / XBS-…")
-                        .desired_width(120.0),
-                );
-                let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if (ui.button("Load").clicked() || submit) && !self.lookup_input.trim().is_empty() {
-                    let raw = self.lookup_input.trim().to_string();
-                    // The tab is Shopify-only; force the Shopify route for bare numbers.
-                    let normalized = if raw.starts_with('#') || raw.to_uppercase().starts_with("XBS-") {
-                        raw
-                    } else {
-                        format!("#{raw}")
-                    };
-                    match OrderKey::parse(&normalized) {
-                        Some(key) => {
-                            self.lookup_error = None;
-                            self.start_detail(&ctx, key);
-                        }
-                        None => self.lookup_error = Some("Enter an order # or XBS- serial.".to_string()),
+        let t = Tokens::get(&ctx);
+        let m = Metrics::get(&ctx);
+        egui::Panel::top("shopify_orders_top")
+            .resizable(false)
+            .show(ui, |ui| {
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    let refresh = TextButton::new("Refresh")
+                        .icon(svg::ARROW_CLOCKWISE)
+                        .enabled(!self.recent_busy)
+                        .show(ui);
+                    if refresh.clicked() {
+                        self.limit = 10;
+                        self.start_recent(&ctx);
                     }
-                }
-                if let Some(e) = self.lookup_error.as_ref() {
-                    ui.colored_label(ui.visuals().error_fg_color, e);
-                }
+                    let more = TextButton::new("Load +10 more")
+                        .icon(svg::PLUS)
+                        .enabled(self.has_more && !self.recent_busy)
+                        .show(ui);
+                    if more.clicked() {
+                        self.limit += 10;
+                        self.start_recent(&ctx);
+                    }
+                    if self.recent_busy || self.detail_busy {
+                        controls::spinner(ui, SpinnerSize::Sm);
+                    }
+                    ui.add(svg::STOREFRONT.image(m.icon_sm).tint(t.text_dim));
+                    ui.label(
+                        RichText::new(format!(
+                            "{} loaded · Order Placed / Ready to Build",
+                            self.loaded_count
+                        ))
+                        .color(t.text_dim),
+                    );
+                });
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    controls::search_field(
+                        ui,
+                        &mut self.orders_viewer.filter,
+                        "Filter loaded orders",
+                        FILTER_W,
+                    );
+                    controls::vline(ui, m.control_h);
+                    controls::icon_label(ui, svg::RECEIPT, "Look up order");
+                    let resp = TextField::new(&mut self.lookup_input)
+                        .hint("#1032 / XBS-…")
+                        .icon(svg::HASH)
+                        .width(LOOKUP_W)
+                        .id_salt("shopify_orders.lookup")
+                        .show(ui);
+                    let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let load = TextButton::new("Load")
+                        .icon(svg::DOWNLOAD_SIMPLE)
+                        .kind(ButtonKind::Primary)
+                        .show(ui);
+                    if (load.clicked() || submit) && !self.lookup_input.trim().is_empty() {
+                        let raw = self.lookup_input.trim().to_string();
+                        // The tab is Shopify-only; force the Shopify route for bare numbers.
+                        let normalized =
+                            if raw.starts_with('#') || raw.to_uppercase().starts_with("XBS-") {
+                                raw
+                            } else {
+                                format!("#{raw}")
+                            };
+                        match OrderKey::parse(&normalized) {
+                            Some(key) => {
+                                self.lookup_error = None;
+                                self.start_detail(&ctx, key);
+                            }
+                            None => {
+                                self.lookup_error =
+                                    Some("Enter an order # or XBS- serial.".to_string())
+                            }
+                        }
+                    }
+                    if let Some(e) = self.lookup_error.as_ref() {
+                        controls::status_label(ui, svg::WARNING_CIRCLE, e, t.error);
+                    }
+                });
             });
-        });
 
         if self.detail.is_some() || self.detail_busy || self.detail_error.is_some() {
             egui::Panel::right(Id::new("shopify_order_detail"))
@@ -221,7 +261,7 @@ impl ShopifyOrdersTab {
 
         CentralPanel::default().show(ui, |ui| {
             if let Some(e) = self.recent_error.as_ref() {
-                ui.colored_label(ui.visuals().error_fg_color, e);
+                controls::status_label(ui, svg::WARNING_CIRCLE, e, t.error);
             }
             Renderer::new(&mut self.orders_table, &mut self.orders_viewer)
                 .with_style_modify(|s| {
@@ -235,47 +275,73 @@ impl ShopifyOrdersTab {
     }
 
     fn ui_detail(&mut self, ui: &mut Ui) -> Option<ShopifyOrderAction> {
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
         let mut action = None;
-        ui.horizontal(|ui| {
-            if ui.button("Close").clicked() {
-                self.detail = None;
-                self.detail_error = None;
-                self.items_table.clear();
-            }
+        controls::bar(ui, BarKind::Header, |ui| {
+            controls::icon_label(ui, svg::RECEIPT, "Order detail");
             if self.detail_busy {
-                ui.spinner();
+                controls::spinner(ui, SpinnerSize::Sm);
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Close").clicked() {
+                    self.detail = None;
+                    self.detail_error = None;
+                    self.items_table.clear();
+                }
+            });
         });
         if let Some(e) = self.detail_error.as_ref() {
-            ui.colored_label(ui.visuals().error_fg_color, e);
+            controls::status_label(ui, svg::WARNING_CIRCLE, e, t.error);
             return None;
         }
         let Some(order) = self.detail.as_ref() else {
             return None;
         };
 
-        ui.add_space(6.0);
-        ui.heading(format!("Order {}", order.reference));
+        ui.add_space(m.gap.y);
+        ui.label(
+            RichText::new(format!("Order {}", order.reference))
+                .font(fonts::semibold(ORDER_TITLE_PT)),
+        );
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(order.kind.as_str()).monospace());
-            ui.label(RichText::new(&order.status.name).strong());
+            controls::badge(ui, order.kind.as_str(), t.secondary);
+            controls::badge(ui, &order.status.name, t.primary);
         });
         if !order.customer_name.is_empty() {
-            ui.label(format!("Customer: {}", order.customer_name));
+            controls::icon_label(ui, svg::USER, &format!("Customer: {}", order.customer_name));
         }
         if !order.total_paid.is_empty() {
-            ui.label(format!("Total ${}", order.total_paid));
+            controls::icon_label(
+                ui,
+                svg::CURRENCY_DOLLAR,
+                &format!("Total ${}", order.total_paid),
+            );
         }
         if let Some(serial) = order.build_serial.as_ref() {
-            ui.label(RichText::new(serial).monospace());
+            ui.horizontal(|ui| {
+                ui.add(svg::BARCODE.image(m.icon_md).tint(t.icon));
+                ui.label(RichText::new(serial).monospace());
+            });
         }
 
-        ui.add_space(6.0);
-        if ui.button(RichText::new("Pull into TUR Sheet").strong()).clicked() {
+        ui.add_space(m.gap.y);
+        if TextButton::new("Pull into TUR Sheet")
+            .icon(svg::CLIPBOARD_TEXT)
+            .kind(ButtonKind::Primary)
+            .prominent(true)
+            .show(ui)
+            .clicked()
+        {
             action = Some(ShopifyOrderAction::PullIntoTur(order.clone()));
         }
-        ui.add_space(6.0);
-        ui.label(RichText::new(format!("Line items ({})", order.items.len())).strong());
+        ui.add_space(m.gap.y);
+        glass_card::card_header(
+            ui,
+            svg::PACKAGE,
+            &format!("Line items ({})", order.items.len()),
+            None,
+        );
 
         Renderer::new(&mut self.items_table, &mut self.items_viewer)
             .with_style_modify(|s| {
@@ -289,7 +355,11 @@ impl ShopifyOrdersTab {
 
 fn row_from_summary(o: &OrderSummary) -> ShopifyOrderRow {
     ShopifyOrderRow {
-        reference: if o.reference.is_empty() { o.id.clone() } else { o.reference.clone() },
+        reference: if o.reference.is_empty() {
+            o.id.clone()
+        } else {
+            o.reference.clone()
+        },
         status: o.status.name.clone(),
         customer: o.customer_name.clone(),
         build: o.model.clone(),
@@ -304,13 +374,18 @@ fn row_from_item(item: &QcOrderItem) -> ShopifyLineItemRow {
         name: item.name.clone(),
         reference: item.reference.clone(),
         quantity: format!("{:.0}", item.quantity),
-        serials: if item.serials.is_empty() { "—".to_string() } else { item.serials.join(", ") },
+        serials: if item.serials.is_empty() {
+            "—".to_string()
+        } else {
+            item.serials.join(", ")
+        },
     }
 }
 
 /// Date portion of an ISO-8601 timestamp (`2026-06-15T17:54:35Z` → `2026-06-15`).
 fn short_date(iso: Option<&str>) -> String {
-    iso.map(|s| s.split('T').next().unwrap_or(s).to_string()).unwrap_or_default()
+    iso.map(|s| s.split('T').next().unwrap_or(s).to_string())
+        .unwrap_or_default()
 }
 
 impl MastertechContext {
@@ -321,7 +396,10 @@ impl MastertechContext {
                     self.apply_shopify_order_to_form(&order);
                     self.pending_tab_opens.push(TabId::TurSheet);
                     self.pending_activate_tab = Some(TabId::TurSheet);
-                    log::info!("Pulled Shopify order {} into the TUR Sheet", order.reference);
+                    log::info!(
+                        "Pulled Shopify order {} into the TUR Sheet",
+                        order.reference
+                    );
                 }
             }
         }

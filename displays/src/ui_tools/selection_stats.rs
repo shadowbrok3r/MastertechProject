@@ -1,4 +1,6 @@
-use eframe::egui::{Color32, RichText, Ui};
+use eframe::egui::{RichText, Ui};
+
+use crate::ui_tools::controls::{self, Metrics, Tokens};
 
 /// Per-column aggregate over the currently selected rows.
 pub struct SelColStat {
@@ -27,8 +29,12 @@ pub fn selection_stats<'a, T: 'a>(
         for (i, (_, extract, _)) in cols.iter().enumerate() {
             let v = extract(r);
             sums[i] += v;
-            if v < mins[i] { mins[i] = v; }
-            if v > maxs[i] { maxs[i] = v; }
+            if v < mins[i] {
+                mins[i] = v;
+            }
+            if v > maxs[i] {
+                maxs[i] = v;
+            }
         }
     }
     let stats = cols
@@ -37,7 +43,11 @@ pub fn selection_stats<'a, T: 'a>(
         .map(|(i, (label, _, money))| SelColStat {
             label,
             sum: sums[i],
-            avg: if count > 0 { sums[i] / count as f64 } else { 0.0 },
+            avg: if count > 0 {
+                sums[i] / count as f64
+            } else {
+                0.0
+            },
             min: if count > 0 { mins[i] } else { 0.0 },
             max: if count > 0 { maxs[i] } else { 0.0 },
             money: *money,
@@ -52,10 +62,17 @@ pub fn render_selection_stats(ui: &mut Ui, count: usize, stats: &[SelColStat]) {
     if count == 0 {
         return;
     }
-    ui.colored_label(Color32::GOLD, format!("Selected: {count}"));
+    let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+    controls::badge(ui, &format!("{count} selected"), t.primary);
     for s in stats {
-        let fmt = |v: f64| if s.money { format!("${:.2}", v) } else { format!("{:.2}", v) };
-        ui.separator();
+        let fmt = |v: f64| {
+            if s.money {
+                format!("${:.2}", v)
+            } else {
+                format!("{:.2}", v)
+            }
+        };
+        controls::vline(ui, m.control_h - 8.0);
         ui.label(RichText::new(s.label).strong());
         ui.label(format!("sum {}", fmt(s.sum)));
         ui.label(format!("avg {}", fmt(s.avg)));

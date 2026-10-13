@@ -1,3 +1,4 @@
+use crate::ui_tools::controls::IconLabel;
 use crate::{Cmd, PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
 use eframe::egui::{self, Align, CentralPanel, Context, Frame, Layout, Margin, RichText, ScrollArea, Ui};
 use database::schema::{utilities::get_connected_clients, ConnectedClient, RecordIdExt, Sortable};
@@ -6,9 +7,12 @@ use std::collections::{BTreeMap, HashMap};
 use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::should_show_connected_client_in_summaries;
-use crate::ui_tools::icons::{self, menu_label};
-use crate::ui_tools::framed_controls::{framed_menu_style, FramedSelectable};
-use crate::ui_tools::{glass_card, theme};
+use crate::ui_tools::controls::{
+    self, BarKind, ButtonKind, Dropdown, IconBox, IconButton, MenuButton, MenuItem, Role, Section,
+    TextButton, TextField,
+};
+use crate::ui_tools::icons::svg;
+use crate::ui_tools::{glass_card, metrics::Metrics, theme};
 use client_action::ClientUiAction;
 use client_interface::TransportKind;
 use serde::Serialize;
@@ -80,6 +84,18 @@ impl BatchAction {
             BatchAction::Shutdown => "Shutdown",
             BatchAction::RunWindowsUpdate => "Run Windows Update",
         }
+    }
+}
+
+/// Menu icon for a batch action.
+fn batch_icon(action: BatchAction) -> svg::Icon {
+    match action {
+        BatchAction::Reboot => svg::ARROW_CLOCKWISE,
+        BatchAction::SwitchToTerminalMode => svg::TERMINAL_WINDOW,
+        BatchAction::Lock => svg::LOCK,
+        BatchAction::LogOff => svg::SIGN_OUT,
+        BatchAction::Shutdown => svg::POWER,
+        BatchAction::RunWindowsUpdate => svg::WINDOWS_LOGO,
     }
 }
 
@@ -420,37 +436,50 @@ impl AdminConsole {
         // Connected UEFI apps are Root-only.
         let is_root = crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false);
         let mut open = true;
-        egui::Window::new(format!("{} Pre-Boot Viewer", icons::TERMINAL))
+        controls::icon_window(ctx, svg::MT_FIRMWARE, "Pre-Boot Viewer")
             .id(egui::Id::new("admin_preboot_viewer"))
             .default_size([920.0, 640.0])
             .open(&mut open)
             .show(ctx, |ui| {
                 if !is_root {
-                    ui.label(RichText::new("Root access required.").weak());
+                    controls::empty_state(ui, svg::LOCK, "Root access required.", "", &[]);
                     return;
                 }
-                ui.label(RichText::new("Connected UEFI apps").strong());
+                glass_card::card_header(ui, svg::CIRCUITRY, "Connected UEFI apps", None);
                 let base = self.preboot_base_url.trim().trim_end_matches('/').to_string();
                 if let Some(serial) = self.preboot_roster.ui(ui, &base) {
                     self.preboot_serial = serial.clone();
                     self.preboot_viewer = Some(preboot_viewer::PreBootViewer::new(serial, base.clone()));
                 }
-                ui.separator();
+                controls::hairline(ui);
                 ui.horizontal(|ui| {
-                    ui.label("Relay:");
-                    ui.add(egui::TextEdit::singleline(&mut self.preboot_base_url).desired_width(220.0));
-                    ui.label("Serial:");
-                    ui.add(egui::TextEdit::singleline(&mut self.preboot_serial).desired_width(160.0));
+                    ui.label("Relay");
+                    TextField::new(&mut self.preboot_base_url)
+                        .icon(svg::GLOBE)
+                        .hint("Relay URL")
+                        .width(220.0)
+                        .show(ui);
+                    ui.label("Serial");
+                    TextField::new(&mut self.preboot_serial)
+                        .icon(svg::BARCODE)
+                        .hint("Machine serial")
+                        .width(160.0)
+                        .show(ui);
                     let ready = !self.preboot_serial.trim().is_empty()
                         && !self.preboot_base_url.trim().is_empty();
-                    if ui.add_enabled(ready, egui::Button::new("Connect")).clicked() {
+                    if TextButton::new("Connect")
+                        .icon(svg::PLUGS_CONNECTED)
+                        .enabled(ready)
+                        .show(ui)
+                        .clicked()
+                    {
                         self.preboot_viewer = Some(preboot_viewer::PreBootViewer::new(
                             self.preboot_serial.trim().to_string(),
                             self.preboot_base_url.trim().trim_end_matches('/').to_string(),
                         ));
                     }
                 });
-                ui.separator();
+                controls::hairline(ui);
                 // Plugin push over a direct link (no HTTP): only when the
                 // active viewer is direct-linked to a connected box.
                 #[cfg(not(target_arch = "wasm32"))]
@@ -471,12 +500,13 @@ impl AdminConsole {
                         }
                     }
                     ui.horizontal(|ui| {
-                        ui.label("Plugin:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.preboot_plugin_id)
-                                .desired_width(220.0),
-                        );
-                        if ui.button(format!("{} Push + run", icons::PLAY)).clicked() {
+                        ui.label("Plugin");
+                        TextField::new(&mut self.preboot_plugin_id)
+                            .icon(svg::MT_PLUGIN)
+                            .hint("Plugin id")
+                            .width(220.0)
+                            .show(ui);
+                        if controls::icon_text_button(ui, svg::PLAY, "Push + run").clicked() {
                             let req = tcp_protocol::preboot::PbPluginRun {
                                 source: self.preboot_plugin_id.trim().to_string(),
                                 tool: String::new(),
@@ -499,14 +529,20 @@ impl AdminConsole {
                             },
                         );
                     }
-                    ui.separator();
+                    controls::hairline(ui);
                 }
                 if let Some(v) = self.preboot_viewer.as_mut() {
                     v.poll();
                     v.ui(ui);
                     ctx.request_repaint_after(v.repaint_after());
                 } else {
-                    ui.label("Enter a serial and Connect to view a booting machine's screen.");
+                    controls::empty_state(
+                        ui,
+                        svg::MONITOR_PLAY,
+                        "No machine selected",
+                        "Enter a serial and Connect to view a booting machine's screen.",
+                        &[],
+                    );
                 }
             });
         if !open {
@@ -805,36 +841,36 @@ impl SharedContext {
 
         
 
+        let bar_h = Metrics::get(ui.ctx()).bar_h;
         eframe::egui::Panel::top("Client_Top_panel")
-            .frame(
-                Frame::default()
-                    .inner_margin(inner_margin)
-                    .outer_margin(outer_margin)
-                    .stroke(stroke)
-                    .corner_radius(radius)
-            )
-            .show_separator_line(true)
-            .exact_size(26.)
+            .frame(Frame::default().outer_margin(outer_margin))
+            .show_separator_line(false)
+            .exact_size(bar_h)
             .show(ui, |ui |
         {
-            egui::MenuBar::new().style(framed_menu_style).ui(ui, |ui| {
-                ui.set_height(20.);
+            controls::bar(ui, BarKind::Tool, |ui| {
+                let rule_h = Metrics::get(ui.ctx()).control_h;
                 let txt = match self.web_console_layout.open_menu {
-                    false => "Show Clients ->",
-                    true => "<- Hide Clients",
+                    false => "Show Clients",
+                    true => "Hide Clients",
                 };
-                if ui.button(txt).clicked() {
+                if TextButton::new(txt)
+                    .icon(svg::SIDEBAR_SIMPLE)
+                    .kind(ButtonKind::Ghost)
+                    .show(ui)
+                    .clicked()
+                {
                     self.web_console_layout.open_menu = !self.web_console_layout.open_menu;
                 }
 
                 // ── Clients menu: Refresh + Batch submenu ────────────────
-                ui.menu_button("Clients", |ui| {
-                    if ui.button(format!("{}  Refresh", icons::REFRESH)).clicked() {
+                MenuButton::new("Clients").icon(svg::USERS).show(ui, |ui| {
+                    if controls::menu_item(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                         self.refresh_client_list();
                         ui.close();
                     }
 
-                // ── Batch menu (slice 4) ─────────────────────────────────
+                // ── Batch menu ───────────────────────────────────────────
                 //
                 // Fires destructive actions across every currently-open
                 // session. The count next to the label shows the
@@ -847,94 +883,82 @@ impl SharedContext {
                 // (rendered later in this top panel) is the only
                 // place that actually dispatches.
                 let open_count = self.web_console_layout.ws_clients.len();
-                let batch_label = menu_label(&format!("Batch ({open_count})"));
-                ui.add_enabled_ui(open_count > 0, |ui| {
-                    ui.menu_button(
-                        RichText::new(batch_label)
-                            .color(if open_count > 0 {
-                                theme::warn(ui)
-                            } else {
-                                theme::faint_text(ui)
+                let batch_label = format!("Batch ({open_count})");
+                MenuItem::new(&batch_label)
+                    .icon(svg::STACK)
+                    .tone(theme::warn(ui))
+                    .enabled(open_count > 0)
+                    .submenu(ui, |ui| {
+                        // Header that previews the affected
+                        // clients — operators get blindsided
+                        // when "Reboot all" turns out to mean
+                        // "the one I forgot I had open in a
+                        // floating window too."
+                        ui.label(
+                            RichText::new(format!("Acts on {open_count} open client(s):"))
+                                .small()
+                                .color(theme::weak_text(ui)),
+                        );
+                        let names: Vec<String> = self
+                            .web_console_layout
+                            .ws_clients
+                            .values()
+                            .map(|w| {
+                                w.client
+                                    .friendly_name
+                                    .clone()
+                                    .unwrap_or_else(|| w.client.connection_string.clone())
                             })
-                            .strong(),
-                        |ui| {
-                            // Header that previews the affected
-                            // clients — operators get blindsided
-                            // when "Reboot all" turns out to mean
-                            // "the one I forgot I had open in a
-                            // floating window too."
-                            ui.label(
-                                RichText::new(format!("Acts on {open_count} open client(s):"))
-                                    .small()
-                                    .color(theme::weak_text(ui)),
-                            );
-                            let names: Vec<String> = self
-                                .web_console_layout
-                                .ws_clients
-                                .values()
-                                .map(|w| {
-                                    w.client
-                                        .friendly_name
-                                        .clone()
-                                        .unwrap_or_else(|| w.client.connection_string.clone())
-                                })
-                                .collect();
-                            for name in &names {
-                                ui.label(RichText::new(format!("  • {name}")).small());
-                            }
-                            ui.separator();
+                            .collect();
+                        for name in &names {
+                            ui.horizontal(|ui| {
+                                svg::DESKTOP.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                                ui.label(RichText::new(name).small());
+                            });
+                        }
+                        controls::menu_separator(ui);
 
-                            // Action items. Each one *stages*; the
-                            // confirm dialog is the firing point.
-                            for action in [
-                                BatchAction::Reboot,
-                                BatchAction::SwitchToTerminalMode,
-                                BatchAction::Lock,
-                                BatchAction::LogOff,
-                                BatchAction::Shutdown,
-                                BatchAction::RunWindowsUpdate,
-                            ] {
-                                let color = match action {
-                                    BatchAction::Shutdown => theme::error(ui),
-                                    BatchAction::RunWindowsUpdate => theme::info(ui),
-                                    _ => theme::text(ui),
-                                };
-                                if ui.button(RichText::new(action.label()).color(color)).clicked() {
-                                    self.web_console_layout.pending_batch_action = Some(action);
-                                    ui.close();
-                                }
+                        // Action items. Each one *stages*; the
+                        // confirm dialog is the firing point.
+                        for action in [
+                            BatchAction::Reboot,
+                            BatchAction::SwitchToTerminalMode,
+                            BatchAction::Lock,
+                            BatchAction::LogOff,
+                            BatchAction::Shutdown,
+                            BatchAction::RunWindowsUpdate,
+                        ] {
+                            let item =
+                                controls::menu_item(ui, batch_icon(action), action.label());
+                            if item.clicked() {
+                                self.web_console_layout.pending_batch_action = Some(action);
+                                ui.close();
                             }
-                        },
-                    );
-                });
+                        }
+                    });
                 }); // ── end Clients menu ─────────────────────────────────
 
                 // ── Panels menu: open Script Editor / Chat as a right panel ──
                 // Framed popup style so the two toggles show an off-state frame.
-                egui::containers::menu::MenuButton::new("Panels")
-                    .config(
-                        egui::containers::menu::MenuConfig::default().style(framed_menu_style),
-                    )
-                    .ui(ui, |ui| {
+                MenuButton::new("Panels").icon(svg::SIDEBAR).show(ui, |ui| {
                         let cur = self.web_console_layout.right_panel;
                         let script_open = cur == Some(RightPanel::ScriptEditor);
-                        if ui.framed_selectable_label(script_open, "Script Editor").clicked() {
+                        if controls::menu_check_item(ui, svg::CODE, "Script Editor", script_open)
+                            .clicked()
+                        {
                             self.web_console_layout.right_panel =
                                 if script_open { None } else { Some(RightPanel::ScriptEditor) };
                             ui.close();
                         }
                         let chat_open = cur == Some(RightPanel::Chat);
-                        if ui
-                            .framed_selectable_label(chat_open, format!("{}  Chat", icons::CHAT))
-                            .clicked()
-                        {
+                        if controls::menu_check_item(ui, svg::CHAT, "Chat", chat_open).clicked() {
                             self.web_console_layout.right_panel =
                                 if chat_open { None } else { Some(RightPanel::Chat) };
                             ui.close();
                         }
                     });
 
-                ui.separator();
+                controls::vline(ui, rule_h);
 
                 // ── Visibility scope ────────────────────────────────────
                 // Non-root has one option, so the combo renders disabled;
@@ -942,19 +966,14 @@ impl SharedContext {
                 let is_root = current_user_is_root();
                 let options = crate::ui_data::ClientScope::selectable_for(is_root);
                 let mut selected = self.client_scope;
+                svg::FUNNEL_SIMPLE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
                 ui.label(RichText::new("Show").small().weak());
-                ui.add_enabled_ui(options.len() > 1, |ui| {
-                    egui::ComboBox::from_id_salt("admin_client_scope")
-                        .selected_text(RichText::new(selected.label()).small())
-                        .width(88.)
-                        .show_ui(ui, |ui| {
-                            for opt in options {
-                                ui.selectable_value(&mut selected, *opt, opt.label());
-                            }
-                        });
-                })
-                .response
-                .on_hover_text(if is_root {
+                let scope_options: Vec<_> = options.iter().map(|o| (*o, o.label())).collect();
+                Dropdown::new("admin_client_scope", &mut selected, &scope_options)
+                    .width(112.)
+                    .enabled(options.len() > 1)
+                    .show(ui)
+                    .on_hover_text(if is_root {
                     "Which connected clients to subscribe to"
                 } else {
                     "Root authorization required to widen this"
@@ -968,27 +987,22 @@ impl SharedContext {
                 // Reaches a client the live query never returns (another
                 // store's machine, or one assigned to another user).
                 if is_root {
-                    ui.separator();
+                    controls::vline(ui, rule_h);
                     let layout = &mut self.web_console_layout;
-                    let submitted = ui
-                        .add_sized(
-                            [180., 18.],
-                            egui::TextEdit::singleline(&mut layout.manual_connect_input)
-                                .hint_text("host:hash or client hash")
-                                .font(egui::TextStyle::Small),
-                        )
+                    let submitted = TextField::new(&mut layout.manual_connect_input)
+                        .hint("host:hash or client hash")
+                        .icon(svg::HASH)
+                        .width(180.)
+                        .show(ui)
                         .on_hover_text("Root only: connect to any client by identifier")
                         .lost_focus()
                         && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let ready = !layout.manual_connect_busy
                         && !layout.manual_connect_input.trim().is_empty();
-                    let clicked = ui
-                        .add_enabled(
-                            ready,
-                            egui::Button::new(
-                                RichText::new(format!("{} Connect", icons::LOCK)).small(),
-                            ),
-                        )
+                    let clicked = TextButton::new("Connect")
+                        .icon(svg::PLUGS_CONNECTED)
+                        .enabled(ready)
+                        .show(ui)
                         .clicked();
                     if ready && (submitted || clicked) {
                         let query = layout.manual_connect_input.clone();
@@ -1043,6 +1057,7 @@ impl SharedContext {
                                 .color(theme::success(ui)),
                         );
                         ui.label(egui::RichText::new("Active:").small().color(theme::weak_text(ui)));
+                        svg::CROSSHAIR.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::success(ui));
                     } else {
                         ui.label(
                             egui::RichText::new("No active client")
@@ -1050,6 +1065,7 @@ impl SharedContext {
                                 .italics()
                                 .color(theme::faint_text(ui)),
                         );
+                        svg::CIRCLE_DASHED.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::faint_text(ui));
                     }
                 });
             });
@@ -1156,11 +1172,13 @@ impl SharedContext {
                     .collect();
 
                 if visible_indices.is_empty() {
-                    ui.label(
-                        egui::RichText::new(
-                            "No clients with connected = true in the database (or an open admin session).",
-                        )
-                        .weak(),
+                    controls::empty_state(
+                        ui,
+                        svg::PLUGS,
+                        "No connected clients",
+                        "No clients with connected = true in the database (or an open admin \
+                         session).",
+                        &[],
                     );
                     ui.add_space(6.);
                 }
@@ -1269,33 +1287,30 @@ impl SharedContext {
                     for (header, indices) in groups {
                         match header {
                             Some(store) => {
-                                egui::CollapsingHeader::new(
-                                    RichText::new(format!("{store}  ({})", indices.len()))
-                                        .strong(),
-                                )
-                                .id_salt(("admin_store_group", store.as_str()))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    for &index in &indices {
-                                        if let Some(client) = clients.get(index) {
-                                            render_client_row(
-                                                ui,
-                                                client,
-                                                &ws_client.ws_clients,
-                                                &ws_client.security_inventory,
-                                                &ws_client.session_layout,
-                                                ws_client.focused_client.as_deref(),
-                                                &ws_client.ui_actions_channel.0,
-                                                &ws_client.fk_health_tx,
-                                                &ws_client.fk_health_cache,
-                                                &ws_client.client_tasks_tx,
-                                                &ws_client.client_tasks_cache,
-                                                reachability_snapshot
-                                                    .get(&client.connection_string),
-                                            );
+                                let title = format!("{store}  ({})", indices.len());
+                                Section::new(("admin_store_group", store.as_str()), &title)
+                                    .icon(svg::STOREFRONT)
+                                    .show(ui, |ui| {
+                                        for &index in &indices {
+                                            if let Some(client) = clients.get(index) {
+                                                render_client_row(
+                                                    ui,
+                                                    client,
+                                                    &ws_client.ws_clients,
+                                                    &ws_client.security_inventory,
+                                                    &ws_client.session_layout,
+                                                    ws_client.focused_client.as_deref(),
+                                                    &ws_client.ui_actions_channel.0,
+                                                    &ws_client.fk_health_tx,
+                                                    &ws_client.fk_health_cache,
+                                                    &ws_client.client_tasks_tx,
+                                                    &ws_client.client_tasks_cache,
+                                                    reachability_snapshot
+                                                        .get(&client.connection_string),
+                                                );
+                                            }
                                         }
-                                    }
-                                });
+                                    });
                             }
                             None => {
                                 for &index in &indices {
@@ -1324,15 +1339,8 @@ impl SharedContext {
 
                 if show_preboot {
                     ui.add_space(4.);
-                    ui.separator();
-                    ui.label(
-                        RichText::new(format!(
-                            "{} Pre-Boot UEFI ({})",
-                            icons::TERMINAL,
-                            preboot_rows.len()
-                        ))
-                        .strong(),
-                    );
+                    let title = format!("Pre-Boot UEFI ({})", preboot_rows.len());
+                    glass_card::card_header(ui, svg::CIRCUITRY, &title, None);
                     let mut view_serial: Option<(String, bool)> = None;
                     ScrollArea::vertical()
                         .id_salt("preboot_qc_section")
@@ -1394,12 +1402,17 @@ impl SharedContext {
                     // a close request we drain.
                     Some(RightPanel::Chat) => {
                         ui.horizontal(|ui| {
-                            let (label, tip) = if chat_full {
-                                ("Exit fullscreen", "Return chat to the right panel")
+                            let (icon, label, tip) = if chat_full {
+                                (
+                                    svg::CORNERS_IN,
+                                    "Exit fullscreen",
+                                    "Return chat to the right panel",
+                                )
                             } else {
-                                ("Fullscreen", "Expand chat over the whole tab")
+                                (svg::CORNERS_OUT, "Fullscreen", "Expand chat over the whole tab")
                             };
-                            if ui.small_button(label).on_hover_text(tip).clicked() {
+                            let flip = controls::icon_text_button(ui, icon, label);
+                            if flip.on_hover_text(tip).clicked() {
                                 self.web_console_layout.chat_fullscreen = !chat_full;
                             }
                         });
@@ -1410,15 +1423,16 @@ impl SharedContext {
                         }
                     }
                     Some(RightPanel::ScriptEditor) => {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Script Editor").strong());
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui.button(RichText::new(icons::CLOSE)).on_hover_text("Close panel").clicked() {
-                                    self.web_console_layout.right_panel = None;
-                                }
-                            });
+                        controls::panel_header(ui, svg::CODE, "Script Editor", |ui| {
+                            if IconButton::new(svg::X, IconBox::Sm)
+                                .tip("Close panel")
+                                .show(ui)
+                                .clicked()
+                            {
+                                self.web_console_layout.right_panel = None;
+                            }
                         });
-                        ui.separator();
+                        controls::hairline(ui);
                         self.web_console_layout.right_panel_ui(ui);
                     }
                     None => {}
@@ -1450,7 +1464,7 @@ impl SharedContext {
 
         self.web_console_layout.record_viewer.ui(ui.ctx());
 
-        // ── Batch-action confirm dialog (slice 4) ─────────────────────
+        // ── Batch-action confirm dialog ──────────────────────────────
         //
         // Rendered at the end so it overlays everything else on this
         // tab. The Batch menu sets `pending_batch_action`; this
@@ -1475,7 +1489,8 @@ impl SharedContext {
             // client list — destructive ops shouldn't be easy to
             // mis-click around.
             let mut still_open = true;
-            egui::Window::new(format!("Confirm: {}", action.label()))
+            let title = format!("Confirm: {}", action.label());
+            controls::icon_window(ui.ctx(), batch_icon(action), &title)
                 .id(egui::Id::new("admin_batch_confirm"))
                 .collapsible(false)
                 .resizable(false)
@@ -1495,11 +1510,10 @@ impl SharedContext {
                         .max_width(220.0)
                         .show(ui, |ui| {
                             for name in &target_names {
-                                ui.label(
-                                    RichText::new(format!("• {name}"))
-                                        .small()
-                                        .color(theme::text(ui)),
-                                );
+                                ui.horizontal(|ui| {
+                                    svg::DESKTOP.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
+                                    ui.label(RichText::new(name).small().color(theme::text(ui)));
+                                });
                             }
                         });
                     ui.add_space(8.0);
@@ -1535,20 +1549,21 @@ impl SharedContext {
                         BatchAction::Lock => None,
                     };
                     if let Some(text) = warning {
-                        ui.label(
-                            RichText::new(text).small().italics().color(theme::warn(ui)),
-                        );
+                        IconLabel::new(svg::WARNING, &text).tone(theme::warn(ui)).small(true).wrap(true).show(ui);
                         ui.add_space(8.0);
                     }
 
-                    ui.horizontal(|ui| {
+                    controls::bar(ui, BarKind::Footer, |ui| {
                         let confirm_label = format!("{} all", action.label());
-                        if ui
-                            .button(
-                                RichText::new(confirm_label).color(theme::warn(ui)),
-                            )
-                            .clicked()
-                        {
+                        let role = match action {
+                            BatchAction::Lock | BatchAction::RunWindowsUpdate => Role::Primary,
+                            _ => Role::Danger,
+                        };
+                        let clicked = controls::dialog_buttons(
+                            ui,
+                            &[(role, confirm_label.as_str()), (Role::Cancel, "Cancel")],
+                        );
+                        if clicked == Some(0) {
                             let (ok, err) = self.web_console_layout.dispatch_batch_action(action);
                             let toast = if err == 0 {
                                 crate::ToastMessage::Success(format!(
@@ -1564,7 +1579,7 @@ impl SharedContext {
                             let _ = crate::get_toast_sender().try_send(toast);
                             self.web_console_layout.pending_batch_action = None;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if clicked == Some(1) {
                             self.web_console_layout.pending_batch_action = None;
                         }
                     });

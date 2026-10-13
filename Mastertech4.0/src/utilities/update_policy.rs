@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use super::machine_settings;
+
 /// How long Later holds back the next update prompt.
 pub const SNOOZE: Duration = Duration::from_secs(60 * 60);
 
@@ -59,32 +61,16 @@ fn settings_file() -> PathBuf {
     if let Ok(dir) = std::env::var("MASTERTECH_UPDATE_SETTINGS_DIR") {
         return PathBuf::from(dir).join("update_settings.json");
     }
-    #[cfg(target_os = "windows")]
-    let dir = PathBuf::from(r"C:\ProgramData\Mastertech");
-    #[cfg(not(target_os = "windows"))]
-    let dir = std::env::temp_dir().join("mastertech");
-    dir.join("update_settings.json")
+    machine_settings::dir().join("update_settings.json")
 }
 
 /// This machine's update mode; Prompt when the file is missing or unreadable.
 pub fn load_mode() -> UpdateMode {
-    std::fs::read_to_string(settings_file())
-        .ok()
-        .and_then(|raw| serde_json::from_str::<UpdateSettings>(&raw).ok())
-        .map(|s| s.mode)
-        .unwrap_or_default()
+    machine_settings::load::<UpdateSettings>(&settings_file()).mode
 }
 
 pub fn save_mode(mode: UpdateMode) -> anyhow::Result<()> {
-    let path = settings_file();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(
-        &path,
-        serde_json::to_string_pretty(&UpdateSettings { mode })?,
-    )?;
-    Ok(())
+    machine_settings::save(&settings_file(), &UpdateSettings { mode })
 }
 
 /// Remote catalog script batches running on this client.

@@ -12873,7 +12873,7 @@ query_surrealdb is READ-ONLY and always will be. To write, use surrealql_execute
 === Remote egui (the client needs an admin session: the broker keeps one per connected client) ===
 Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
 - nav.menu.view — click to open the View menu (top bar).
-- nav.tab.<slug> — tab row inside View menu. Slug = tab label lowercased with non-alphanumeric → '_', trim '_' (e.g. KOTH → nav.tab.koth; TUR Sheet → nav.tab.tur_sheet; File Browser 📂 → nav.tab.file_browser). Tab anchors exist only while View menu is open: click nav.menu.view, sleep ~400–500ms, then click nav.tab.* .
+- nav.tab.<slug> — tab row inside View menu. Slug = tab label lowercased with non-alphanumeric → '_', trim '_' (e.g. KOTH → nav.tab.koth; TUR Sheet → nav.tab.tur_sheet; File Browser → nav.tab.file_browser). Tab anchors exist only while View menu is open: click nav.menu.view, sleep ~400–500ms, then click nav.tab.* .
 - TUR Sheet widgets (when that tab is visible): tur.service_number, tur.customer_name, tur.phone_number, tur.customer_email, tur.salesman, tur.tech, tur.checkin_notes, tur.recommendations, tur.pull_order (button — loads the order into the rest of the form from whichever backend has it; the old key tur.get_prestashop_order still hits the same button).
 - **TUR remote typing — service # vs recommendations**: The service order number belongs **only** in `tur.service_number`. Before sending `Text` with digits that look like an SO#, you **must** focus that field: `ClickAnchor` on `tur.service_number` with **placement `top_left`** (clicks inside the text cell; `center` can miss the editable area in a tight grid), then `SleepMs` 200–400, then `Text`. Only after the SO# is correct should you click `tur.recommendations` and type sales copy. If digits appear in the wrong box, click `tur.service_number` again with `top_left`, sleep, re-type the SO#, then fix recommendations.
 
@@ -12891,7 +12891,7 @@ Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → 
 - KOTH — Store “king of the hill” / display board.
 - Sales Tracker — Sales totals and tracking.
 - Scripts — Saved scripts and tooling.
-- File Browser 📂 — File browser / workspace files (includes My Tools via combobox).
+- File Browser — File browser / workspace files (includes My Tools via combobox).
 - Minidump Analysis — Crash dump analysis (Windows; when enabled).
 - Ai — AI playground (models, prompts).
 - Resource Monitor — Live hardware telemetry, machine info, and processes.

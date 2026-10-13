@@ -1,20 +1,146 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Label, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, Ui, Widget};
-use database::{live_data::handle_live_delete, schema::{business_calendar::STORE_TZ, random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::SHORTCUT_ENTER;
-use crate::ui_tools::mention_handler::{mention_label_job, MentionHandler};
-use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
-use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::theme, PlatformSpawner, Spawner, ToastMessage};
+use crate::ui_tools::mention_handler::{MentionHandler, mention_label_job};
+use crate::{
+    PlatformSpawner, Spawner, ToastMessage, get_current_user_from_auth, get_toast_sender,
+    ui_tools::{
+        controls::{
+            self, BarKind, ButtonKind, IconBox, IconButton, Metrics, TextArea, TextButton, Tokens,
+        },
+        icons::svg::{self, Icon},
+        theme,
+    },
+};
+use chrono::Utc;
 use crossbeam::channel::{Receiver, Sender};
-use structdiff::StructDiff;
-use eframe::emath::Vec2;
 use database::schema::RecordId;
+use database::{
+    live_data::handle_live_delete,
+    schema::{
+        RecordIdExt, TASK_NOTE_TABLE, TaskNotePayload, User, business_calendar::STORE_TZ,
+        random_record_id,
+    },
+};
+use eframe::egui::{
+    Align, CentralPanel, CornerRadius, Direction, Frame, Label, Layout, Margin, Popup,
+    PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Stroke, Ui,
+};
 use itertools::Itertools;
 use log::{error, info};
 use serde::Serialize;
-use chrono::Utc;
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    f32,
+};
+use structdiff::StructDiff;
+
+/// Hover warning on a message's delete button.
+pub(crate) const DELETE_TIP: &str = "WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete";
+/// Hover warning on a message's edit button.
+pub(crate) const EDIT_TIP: &str =
+    "Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app";
+/// Widest a message bubble grows.
+const MAX_MSG_WIDTH: f32 = 376.0;
+/// Width of a sender's details popup.
+const SENDER_POPUP_W: f32 = 300.0;
+
+/// What a message bubble's action buttons asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BubbleAction {
+    Delete,
+    Copy,
+    Edit,
+    Save,
+    Cancel,
+}
+
+/// Delete on a double-click, copy, then edit or save and cancel; `None` leaves a button out.
+pub(crate) fn bubble_actions(
+    ui: &mut Ui,
+    delete_tip: Option<&str>,
+    copy_tip: &str,
+    editing: Option<bool>,
+) -> Option<BubbleAction> {
+    let t = Tokens::get(ui.ctx());
+    let mut action = None;
+    if let Some(tip) = delete_tip {
+        let delete = IconButton::new(svg::TRASH, IconBox::Sm)
+            .tint(t.error)
+            .show(ui)
+            .on_hover_text(RichText::new(tip).strong().color(t.error));
+        if delete.double_clicked() {
+            action = Some(BubbleAction::Delete);
+        }
+    }
+    if controls::icon_button(ui, svg::COPY, IconBox::Sm, false, copy_tip).clicked() {
+        action = Some(BubbleAction::Copy);
+    }
+    match editing {
+        Some(true) => {
+            if controls::icon_text_button(ui, svg::FLOPPY_DISK, "Save").clicked() {
+                action = Some(BubbleAction::Save);
+            }
+            let cancel = TextButton::new("Cancel")
+                .icon(svg::X)
+                .kind(ButtonKind::Ghost)
+                .show(ui);
+            if cancel.clicked() {
+                action = Some(BubbleAction::Cancel);
+            }
+        }
+        Some(false) => {
+            let edit = IconButton::new(svg::PENCIL_SIMPLE, IconBox::Sm)
+                .tip(EDIT_TIP)
+                .show(ui);
+            if edit.clicked() {
+                action = Some(BubbleAction::Edit);
+            }
+        }
+        None => {}
+    }
+    action
+}
+
+/// The sender as a chip whose click opens their details popup.
+pub(crate) fn sender_chip(ui: &mut Ui, name: &str, popup_key: &str) -> Response {
+    let chip = controls::pill(ui, svg::USER, name, false);
+    if chip.clicked() {
+        Popup::open_id(ui.ctx(), format!("sub_menu-from-{popup_key}").into());
+    }
+    chip
+}
+
+/// A sent time in the store's zone, faint.
+pub(crate) fn sent_at(ui: &mut Ui, at: &database::schema::Datetime) {
+    let t = Tokens::get(ui.ctx());
+    let text = at
+        .with_timezone(&STORE_TZ)
+        .format("%m/%d @ %I:%M%p")
+        .to_string();
+    ui.label(RichText::new(text).small().color(t.text_faint));
+}
+
+/// One labelled id row in a sender's details popup.
+pub(crate) fn detail_row(ui: &mut Ui, icon: Icon, label: &str, value: &str) {
+    ui.horizontal(|ui| {
+        controls::icon_label(ui, icon, label);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(RichText::new(value).monospace());
+        });
+    });
+}
+
+/// Corner radii of a bubble whose tail points at its sender's side.
+pub(crate) fn bubble_corners(radius: u8, mine: bool) -> CornerRadius {
+    CornerRadius {
+        ne: if mine { 0 } else { radius },
+        nw: if mine { radius } else { 0 },
+        se: radius,
+        sw: radius,
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ChatView{
+pub struct ChatView {
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: User,
@@ -40,7 +166,7 @@ pub struct ChatView{
     #[serde(skip)]
     new_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
-    ui_event_tx: Sender<ChatEvent>, 
+    ui_event_tx: Sender<ChatEvent>,
     #[serde(skip)]
     ui_event_rx: Receiver<ChatEvent>,
 }
@@ -56,8 +182,8 @@ impl Default for ChatView {
             User::default()
         };
 
-        Self { 
-            title: "Chat".to_string(), 
+        Self {
+            title: "Chat".to_string(),
             messages: Vec::new(),
             current_user,
             mention_handler: MentionHandler::default(),
@@ -72,8 +198,10 @@ impl Default for ChatView {
             remove_hovered: None,
             prestashop_only: false,
             note_created_tx: None,
-            new_notes_tx, new_notes_rx,
-            ui_event_tx, ui_event_rx,
+            new_notes_tx,
+            new_notes_rx,
+            ui_event_tx,
+            ui_event_rx,
         }
     }
 }
@@ -87,18 +215,14 @@ pub enum ChatEvent {
 }
 
 impl ChatView {
-    pub fn new(
-        users: Vec<User>, 
-        task_id: RecordId,
-        service_number: Option<String>
-    ) -> Self {
+    pub fn new(users: Vec<User>, task_id: RecordId, service_number: Option<String>) -> Self {
         let (new_notes_tx, new_notes_rx) = crossbeam::channel::unbounded();
-         let (ui_event_tx, ui_event_rx) = crossbeam::channel::unbounded();
+        let (ui_event_tx, ui_event_rx) = crossbeam::channel::unbounded();
         let mut users_set = BTreeSet::new();
 
         for user in users.iter().filter(|u| u.is_active()) {
             let parsed_email = user.get_username();
-            users_set.insert(format!("@{parsed_email}"));   
+            users_set.insert(format!("@{parsed_email}"));
         }
 
         let service_number = if let Some(service_number) = service_number {
@@ -110,7 +234,6 @@ impl ChatView {
         } else {
             None
         };
-
 
         Self {
             current_user: if let Some(user) = get_current_user_from_auth() {
@@ -131,8 +254,10 @@ impl ChatView {
             remove_hovered: None,
             prestashop_only: false,
             note_created_tx: None,
-            new_notes_tx, new_notes_rx,
-            ui_event_tx, ui_event_rx,
+            new_notes_tx,
+            new_notes_rx,
+            ui_event_tx,
+            ui_event_rx,
         }
     }
 
@@ -152,7 +277,8 @@ impl ChatView {
 
     pub fn set_notes(&mut self, notes: Vec<TaskNotePayload>) -> &mut Self {
         // Collect existing IDs from self.messages to check for duplicates
-        let mut seen_ids: HashSet<String> = self.messages
+        let mut seen_ids: HashSet<String> = self
+            .messages
             .iter()
             .map(|note| note.id.key_string())
             .collect();
@@ -180,12 +306,12 @@ impl ChatView {
     pub fn set_users(&mut self, users: Vec<User>) -> &mut Self {
         for user in users.iter().filter(|u| u.is_active()) {
             let parsed_email = user.get_username();
-            self.users.insert(format!("@{parsed_email}"));  
+            self.users.insert(format!("@{parsed_email}"));
         }
         self
     }
 
-    pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
+    pub fn insert_note(&mut self, new_note: &mut TaskNotePayload) {
         // Check that the note belongs to this chat view by matching task_id and service_number.
         // For id_customer_thread, we need to handle private notes specially:
         // - Private notes have id_customer_thread: None even when the task has a thread
@@ -200,46 +326,56 @@ impl ChatView {
                 let task_matches = n.task_id == new_note.task_id;
                 // Service number must match
                 let service_matches = n.service_number == new_note.service_number;
-                // For id_customer_thread: 
+                // For id_customer_thread:
                 // - If new note is private, it won't have a thread, so skip this check
                 // - If existing notes are private (no thread), also skip
                 // - Otherwise, threads should match
-                let thread_matches = new_note.private 
-                    || n.private 
-                    || n.id_customer_thread.is_none() 
+                let thread_matches = new_note.private
+                    || n.private
+                    || n.id_customer_thread.is_none()
                     || new_note.id_customer_thread.is_none()
                     || n.id_customer_thread == new_note.id_customer_thread;
-                
+
                 task_matches && service_matches && thread_matches
             })
         };
 
         if note_belongs_to_chat {
             log::info!("chats/mod.rs -> Note belongs to this chat (task_id, service_number match)");
-            if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id.clone()) {
+            if let Some(existing_note) = self
+                .messages
+                .iter_mut()
+                .find(|n| n.id == new_note.id.clone())
+            {
                 // Apply diffs to the existing note
                 let diffs = existing_note.diff(&new_note);
                 existing_note.apply_mut(diffs);
-                info!("chats/mod.rs -> Updated existing note: {:?}", existing_note.id);
+                info!(
+                    "chats/mod.rs -> Updated existing note: {:?}",
+                    existing_note.id
+                );
             } else {
                 info!("chats/mod.rs -> Inserting new note: {:#?}", new_note.id);
                 self.messages.push(new_note.clone());
             }
-            self.edit_text.insert(new_note.id.key_string(), new_note.clone());
+            self.edit_text
+                .insert(new_note.id.key_string(), new_note.clone());
         } else {
             log::warn!(
                 "chats/mod.rs -> Note does not belong to this chat.\n\
                 Note task_id: {:?}, chat task_id: {:?}\n\
                 Note service_number: {:?}, chat service_number: {:?}\n\
-                Note is private: {}", 
-                new_note.task_id, self.task_id,
-                new_note.service_number, self.service_number,
+                Note is private: {}",
+                new_note.task_id,
+                self.task_id,
+                new_note.service_number,
+                self.service_number,
                 new_note.private
             );
         }
     }
 
-    pub fn delete_note(&mut self, note_to_delete: &TaskNotePayload){
+    pub fn delete_note(&mut self, note_to_delete: &TaskNotePayload) {
         let index = self.messages.iter().position(|n| n == note_to_delete);
         if let Some(idx) = index {
             info!("chats/mod.rs -> Deleting Note @ {idx}");
@@ -263,24 +399,38 @@ impl ChatView {
             .cloned()
             .unwrap_or_default();
 
-        log::info!(r#"Chats/mod.rs -> refresh_notes
+        log::info!(
+            r#"Chats/mod.rs -> refresh_notes
             -> service_number: {}
             -> task_id: {:?}
             -> user: {}
             -> id_customer_thread: {}
-        "#, service_number, task_id, user.get_username(), id_customer_thread);
+        "#,
+            service_number,
+            task_id,
+            user.get_username(),
+            id_customer_thread
+        );
 
         PlatformSpawner::spawn(async move {
             if !service_number.is_empty() {
-                let notes_res = TaskNotePayload::get_prestashop_notes_from_service(&service_number, Some(task_id.clone())).await;
+                let notes_res = TaskNotePayload::get_prestashop_notes_from_service(
+                    &service_number,
+                    Some(task_id.clone()),
+                )
+                .await;
                 match notes_res {
-                    Ok(notes) => {let _ = tx.try_send(notes); },
+                    Ok(notes) => {
+                        let _ = tx.try_send(notes);
+                    }
                     Err(e) => log::error!("Error getting notes from service number: {e:?}"),
                 };
             } else {
                 let notes_res = TaskNotePayload::get_db_notes_from_task_id(task_id.clone()).await;
                 match notes_res {
-                    Ok(notes) => { let _ = tx.try_send(notes); },
+                    Ok(notes) => {
+                        let _ = tx.try_send(notes);
+                    }
                     Err(e) => log::error!("Error getting notes from service number: {e:?}"),
                 };
             }
@@ -289,16 +439,12 @@ impl ChatView {
 
     pub fn receive(&mut self) {
         if let Ok(mut notes) = self.new_notes_rx.try_recv() {
-
             log::info!("Chats/mod.rs -> refresh_notes -> self.new_notes_rx.try_recv(): {notes:?}");
             let mut new_messages = vec![];
 
             // Collect IDs of existing messages for efficient lookup
-            let existing_ids: std::collections::HashSet<_> = self
-                .messages
-                .iter()
-                .map(|msg| msg.id.clone())
-                .collect();
+            let existing_ids: std::collections::HashSet<_> =
+                self.messages.iter().map(|msg| msg.id.clone()).collect();
 
             log::info!("Chats/mod.rs -> refresh_notes -> Existing ID's: {existing_ids:?}");
 
@@ -317,52 +463,60 @@ impl ChatView {
                 self.messages.extend(new_messages);
             }
         }
-    
+
         if let Ok(event) = self.ui_event_rx.try_recv() {
             match event {
                 ChatEvent::SaveNote(task_note) => {
                     if self.allow_edit.contains(&task_note.id.key_string()) {
-                        if let Some(msg) = self.edit_text.get_mut(&task_note.id.key_string()){
+                        if let Some(msg) = self.edit_text.get_mut(&task_note.id.key_string()) {
                             let mut task_note = msg.clone();
                             task_note.note = msg.note.clone();
                             PlatformSpawner::spawn(async move {
                                 match task_note.update_note().await {
-                                    Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
+                                    Ok(res) => {
+                                        info!("chats/mod.rs -> Modify note response:: {res:?}")
+                                    }
                                     Err(e) => {
                                         error!("Error modifying note: {e:?}");
                                         let tx = get_toast_sender();
-                                        let _ = tx.try_send(ToastMessage::Error(
-                                            format!("Failed to update note: {:?}", e)
-                                        ));
-                                    },
+                                        let _ = tx.try_send(ToastMessage::Error(format!(
+                                            "Failed to update note: {:?}",
+                                            e
+                                        )));
+                                    }
                                 }
                             });
                         }
                     }
                     self.allow_edit.remove(&task_note.id.key_string());
-                },
-                ChatEvent::Edit(id) => { self.allow_edit.insert(id.key_string()); },
-                ChatEvent::CancelEdit(id) => { self.allow_edit.remove(&id.key_string()); },
+                }
+                ChatEvent::Edit(id) => {
+                    self.allow_edit.insert(id.key_string());
+                }
+                ChatEvent::CancelEdit(id) => {
+                    self.allow_edit.remove(&id.key_string());
+                }
                 ChatEvent::DeleteNote(note) => {
                     self.delete = Some(note.clone());
                     let mut item = note.clone();
                     PlatformSpawner::spawn(async move {
-                        match item.delete_note().await{
+                        match item.delete_note().await {
                             Ok(_) => info!("chats/mod.rs -> Deleted Note"),
                             Err(e) => {
                                 error!("chats/mod.rs -> Error deleting note: {e:?}");
                                 let tx = get_toast_sender();
-                                let _ = tx.try_send(ToastMessage::Error(
-                                    format!("Failed to delete note: {:?}", e)
-                                ));
-                            },
+                                let _ = tx.try_send(ToastMessage::Error(format!(
+                                    "Failed to delete note: {:?}",
+                                    e
+                                )));
+                            }
                         }
                     })
-                },
+                }
             }
         }
     }
-    
+
     pub fn ui(&mut self, ui: &mut Ui) {
         self.receive();
         let task_id = self.task_id.clone();
@@ -373,25 +527,33 @@ impl ChatView {
             }
         }
 
-        eframe::egui::Panel::top(format!("Top panel header {:?}", task_id)).exact_size(24.).show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                if Button::new(RichText::new("Refresh").strong().heading()).ui(ui).clicked() {
-                    self.refresh_notes();
-                }
+        let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+        eframe::egui::Panel::top(format!("Top panel header {:?}", task_id))
+            .frame(Frame::side_top_panel(&ui.global_style()).inner_margin(Margin::ZERO))
+            .exact_size(m.header_h)
+            .show(ui, |ui| {
+                controls::bar(ui, BarKind::Header, |ui| {
+                    controls::icon_label(ui, svg::NOTEPAD, "Notes");
+                    controls::badge(ui, &self.messages.len().to_string(), t.text_dim);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let refresh =
+                            controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh")
+                                .on_hover_text("Pull the latest notes");
+                        if refresh.clicked() {
+                            self.refresh_notes();
+                        }
+                    });
+                });
             });
-        });
 
         eframe::egui::Panel::bottom(id)
             .default_size(300.)
             // .max_width(500.)
             .resizable(false)
-            .show(ui, |ui| 
+            .show(ui, |ui|
         {
-            ui.visuals_mut().extreme_bg_color= Color32::BLACK;
-            ui.visuals_mut().code_bg_color = Color32::BLACK;
-            ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             let enter_pressed = ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_ENTER));
-            
+
             let mention_handler = &mut self.mention_handler;
             mention_handler.inputs = self.users.clone();
             mention_handler.allow_private = !self.prestashop_only;
@@ -422,8 +584,8 @@ impl ChatView {
                     match usr.get_employee_id().clone() {
                         Some(id_employee) => {
                             let mut new_note = TaskNotePayload {
-                                note: txt, 
-                                task_id: Some(task_id.clone()), 
+                                note: txt,
+                                task_id: Some(task_id.clone()),
                                 username: usr.get_username().to_string(),
                                 user: usr.get_id(),
                                 id_employee: Some(id_employee.to_string()),
@@ -491,35 +653,43 @@ impl ChatView {
         });
 
         CentralPanel::default()
-            .frame(Frame::new().inner_margin(Margin::same(2)).fill(theme::bg_surface(ui)))
-            .show(ui, |ui| 
-        {
-            
-            ScrollArea::vertical()
-                .max_width(f32::INFINITY)
-                .max_width(f32::INFINITY)
-                .auto_shrink(false)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    ui.set_min_height(ui.available_height()/1.1);
-                    self.chat(ui) 
+            .frame(
+                Frame::new()
+                    .inner_margin(Margin::same(2))
+                    .fill(theme::bg_surface(ui)),
+            )
+            .show(ui, |ui| {
+                ScrollArea::vertical()
+                    .max_width(f32::INFINITY)
+                    .max_width(f32::INFINITY)
+                    .auto_shrink(false)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        ui.set_min_height(ui.available_height() / 1.1);
+                        self.chat(ui)
+                    });
+                ui.set_max_height(750.);
             });
-            ui.set_max_height(750.);
-        });
     }
 
     fn chat(&mut self, ui: &mut Ui) {
-        let max_msg_width = 376.;
+        let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+        if self.messages.is_empty() {
+            controls::empty_state(
+                ui,
+                svg::NOTEPAD,
+                "No notes yet",
+                "Notes on this task show up here.",
+                &[],
+            );
+            return;
+        }
+        self.messages
+            .sort_by_key(|message| message.created_at);
 
-        self.messages.sort_by_key(|message| message.created_at.clone() );
+        for item in self.messages.iter_mut() {
+            let is_message_from_myself = item.username == self.current_user.get_username();
 
-        for item in self.messages.iter_mut(){
-            let user = self.current_user.clone();
-            let is_message_from_myself = if item.username == user.get_username() {
-                true
-            } else { false };
-
-            // Messages from the user are right-aligned.
             let layout = if is_message_from_myself {
                 Layout::top_down(Align::Max)
             } else {
@@ -527,278 +697,213 @@ impl ChatView {
             };
 
             let msg_color = if is_message_from_myself {
-                ui.global_style().visuals.widgets.active.bg_fill
+                t.primary_soft
             } else {
-                ui.global_style().visuals.widgets.active.weak_bg_fill
+                t.raised
             };
 
             ui.with_layout(layout, |ui| {
-                ui.set_max_width(max_msg_width);
-                let rounding = 8.;
-                let outer_margin = Margin { left: 1, right: 1, top: 4, bottom: 1 };
-                let inner_margin = Margin { left: 0, right: 0, top: 4, bottom: 0 };
-
-                let rnding = eframe::egui::CornerRadius {
-                    ne: if is_message_from_myself { 0 } else { rounding as u8 },
-                    nw: if is_message_from_myself { rounding as u8 } else { 0 },
-                    se: rounding as u8,
-                    sw: rounding as u8,
+                ui.set_max_width(MAX_MSG_WIDTH);
+                let outer_margin = Margin {
+                    left: 1,
+                    right: 1,
+                    top: 4,
+                    bottom: 1,
                 };
-
-                let style = ui.global_style().clone();
+                let inner_margin = Margin {
+                    left: 0,
+                    right: 0,
+                    top: 4,
+                    bottom: 0,
+                };
+                let rnding = bubble_corners(t.radius_md, is_message_from_myself);
 
                 let (fill, stroke, shadow) = if self.hovered.contains(&item.id) {
                     (
-                        style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 4),
-                        style.visuals.widgets.hovered.fg_stroke,
-                        style.visuals.window_shadow
+                        t.hover,
+                        Stroke::new(1.0, t.primary_border),
+                        ui.visuals().window_shadow,
                     )
                 } else {
                     (
                         msg_color,
-                        style.visuals.widgets.open.bg_stroke,
-                        Shadow::default()
+                        Stroke::new(1.0, t.card_border),
+                        Shadow::default(),
                     )
                 };
 
                 if Frame::new()
-                .corner_radius(rnding)
-                .inner_margin(inner_margin)
-                .outer_margin(outer_margin)
-                .fill(fill)
-                .shadow(shadow)
-                .stroke(stroke)
-                .show(ui, |ui| { // NOTE FRAME SCOPED UI
-                    ui.set_width(max_msg_width);
-                    // Use a vertical layout to stack the name and message content
-                    ui.vertical_centered(|ui| {
-                        if is_message_from_myself {
+                    .corner_radius(rnding)
+                    .inner_margin(inner_margin)
+                    .outer_margin(outer_margin)
+                    .fill(fill)
+                    .shadow(shadow)
+                    .stroke(stroke)
+                    .show(ui, |ui| {
+                        ui.set_width(MAX_MSG_WIDTH);
+                        ui.vertical_centered(|ui| {
+                            let id = item.id.clone();
+                            let popup_key = format!("{:?}", item.id);
+                            let editing = self.allow_edit.contains(&id.key_string());
+                            let (private_icon, private_tip) = if item.private {
+                                (svg::EYE_SLASH, "Private note")
+                            } else {
+                                (svg::CHECK_CIRCLE, "Shared note")
+                            };
+                            let mut action = None;
                             ui.horizontal(|ui| {
-                                let btn_txt_color = ui.global_style().visuals.error_fg_color;
-                                let username_txt_color = ui.global_style().visuals.hyperlink_color;
-                                let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
-                                ui.add_space(5.);
-                                if Button::new(RichText::new("🗙").color(btn_txt_color))
-                                .min_size(Vec2::new(15., 14.))
-                                .ui(ui)
-                                .on_hover_text(
-                                    RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
-                                        .strong()
-                                        .color(Color32::LIGHT_RED)
-                                )
-                                .double_clicked() {
-                                    let _ = self.ui_event_tx.try_send(ChatEvent::DeleteNote(item.clone()));
-                                }
-
-                                if Button::new(RichText::new("🗐").color(btn_txt_color))
-                                .ui(ui)
-                                .on_hover_text(RichText::new("Copy Task Note"))
-                                .clicked() {
-                                    ui.ctx().copy_text(item.note.clone());
-                                }
-                                
-                                let id = &item.id;
-
-                                if self.allow_edit.contains(&id.key_string()) {
-                                    if Button::new(RichText::new("Save").color(btn_txt_color))
-                                    .ui(ui)
-                                    .clicked() {
-                                        let _ = self.ui_event_tx.try_send(ChatEvent::SaveNote(item.clone()));
-                                    }
-
-                                    if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
-                                    .ui(ui)
-                                    .clicked() {
-                                        let _ = self.ui_event_tx.try_send(ChatEvent::CancelEdit(id.clone()));
-                                    }
+                                ui.add_space(m.gap.x / 2.0);
+                                if is_message_from_myself {
+                                    action = bubble_actions(
+                                        ui,
+                                        Some(DELETE_TIP),
+                                        "Copy task note",
+                                        Some(editing),
+                                    );
+                                    private_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, t.text_dim).on_hover_text(private_tip);
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.add_space(m.gap.x / 2.0);
+                                        let from_btn = sender_chip(ui, &item.username, &popup_key);
+                                        popup_widget(&from_btn, item);
+                                        sent_at(ui, &item.created_at);
+                                    });
                                 } else {
-                                        if Button::new(RichText::new("🖊").color(btn_txt_color)).ui(ui)
-                                        .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"))
-                                        .clicked() {
-                                            let _ = self.ui_event_tx.try_send(ChatEvent::Edit(id.clone()));
-                                        }
+                                    let from_btn = sender_chip(ui, &item.username, &popup_key);
+                                    popup_widget(&from_btn, item);
+                                    sent_at(ui, &item.created_at);
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.add_space(m.gap.x / 2.0);
+                                        let admin = self.current_user.is_admin();
+                                        action = ui
+                                            .horizontal(|ui| {
+                                                bubble_actions(
+                                                    ui,
+                                                    admin.then_some(DELETE_TIP),
+                                                    "Copy task note",
+                                                    admin.then_some(editing),
+                                                )
+                                            })
+                                            .inner;
+                                        private_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, t.text_dim).on_hover_text(private_tip);
+                                    });
                                 }
-
-                                ui.add_space(5.);
-                                ui.label(if item.private { "🕶" } else { "✔" });
-
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui|{
-                                    ui.add_space(2.);
-                                    let from_btn = Button::new(from)
-                                        .fill(theme::bg_extreme(ui))
-                                        .min_size(Vec2::new(30., 20.))
-                                        .ui(ui);
-
-                                    if from_btn.clicked(){
-                                        Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into());
-                                    }
-
-                                    popup_widget(from_btn, style.clone(), &item);
-
-                                    ui.add_space(5.);
-
-                                    ui.label(RichText::new(item.created_at.with_timezone(&STORE_TZ).format("%m/%d @ %I:%M%p").to_string()).weak());
-                                });
                             });
-                        } else {
-                            ui.horizontal(|ui| {
-                                let btn_txt_color = ui.global_style().visuals.error_fg_color;
-                                let username_txt_color = ui.global_style().visuals.hyperlink_color;
-                                let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
-                                // ui.set_max_width(max_msg_width);
-                                let id = &item.id;
-                                ui.add_space(2.);
-                                let from_btn = Button::new(from).fill(theme::bg_extreme(ui)).min_size(Vec2::new(30., 20.)).ui(ui);
-                                if from_btn.clicked(){
-                                    Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into());
+                            match action {
+                                Some(BubbleAction::Delete) => {
+                                    let _ = self
+                                        .ui_event_tx
+                                        .try_send(ChatEvent::DeleteNote(item.clone()));
                                 }
+                                Some(BubbleAction::Copy) => ui.ctx().copy_text(item.note.clone()),
+                                Some(BubbleAction::Edit) => {
+                                    let _ = self.ui_event_tx.try_send(ChatEvent::Edit(id.clone()));
+                                }
+                                Some(BubbleAction::Save) => {
+                                    let _ = self
+                                        .ui_event_tx
+                                        .try_send(ChatEvent::SaveNote(item.clone()));
+                                }
+                                Some(BubbleAction::Cancel) => {
+                                    let _ = self
+                                        .ui_event_tx
+                                        .try_send(ChatEvent::CancelEdit(id.clone()));
+                                }
+                                None => {}
+                            }
 
-                                popup_widget(from_btn, style.clone(), &item);
-
-                                ui.add_space(5.);
-                            
-                                ui.label(RichText::new(item.created_at.with_timezone(&STORE_TZ).format("%m/%d @ %I:%M%p").to_string()).weak());
-
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    ui.add_space(5.);
-                                    if self.current_user.is_admin() {
-                                        if self.allow_edit.contains(&id.key_string()) {
-                                            if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
-                                            .ui(ui)
-                                            .clicked() {
-                                                let _ = self.ui_event_tx.try_send(ChatEvent::CancelEdit(id.clone()));
+                            Frame::new()
+                                .fill(theme::bg_surface(ui))
+                                .stroke(Stroke::new(1.0, t.field_border))
+                                .outer_margin(Margin {
+                                    top: 3,
+                                    ..Default::default()
+                                })
+                                .inner_margin(Margin::same(m.gap.x as i8))
+                                .corner_radius(rnding)
+                                .show(ui, |ui| {
+                                    ui.with_layout(
+                                        Layout::from_main_dir_and_cross_align(
+                                            Direction::TopDown,
+                                            Align::Center,
+                                        ),
+                                        |ui| {
+                                            ui.set_width(ui.available_width());
+                                            if self.allow_edit.contains(&item.id.key_string()) {
+                                                if let Some(msg) =
+                                                    self.edit_text.get_mut(&item.id.key_string())
+                                                {
+                                                    TextArea::new(&mut msg.note)
+                                                        .width(MAX_MSG_WIDTH)
+                                                        .show(ui);
+                                                }
+                                            } else {
+                                                let wrap_width = ui.available_width();
+                                                let job =
+                                                    mention_label_job(ui, &item.note, wrap_width);
+                                                ui.add(Label::new(job).selectable(true));
                                             }
-                                            if Button::new(RichText::new("Save").color(btn_txt_color))
-                                            .ui(ui)
-                                            .clicked() {
-                                                let _ = self.ui_event_tx.try_send(ChatEvent::SaveNote(item.clone()));
-                                            }
-                                        } else {
-                                            if Button::new(RichText::new("🖊").color(btn_txt_color)).ui(ui)
-                                            .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"))
-                                            .clicked() {
-                                                let _ = self.ui_event_tx.try_send(ChatEvent::Edit(id.clone()));
-                                            }
-                                        }
-                                    }
-                                    
-                                    if Button::new(RichText::new("🗐").color(btn_txt_color))
-                                    .ui(ui)
-                                    .clicked(){
-                                        ui.ctx().copy_text(item.note.clone());
-                                    }
-                                    
-                                    if self.current_user.is_admin() {
-                                        if  Button::new(RichText::new("🗙").color(btn_txt_color))
-                                        .ui(ui)
-                                        .on_hover_text(
-                                            RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
-                                                .strong()
-                                                .color(Color32::LIGHT_RED)
-                                        )
-                                        .double_clicked() {
-                                            let _ = self.ui_event_tx.try_send(ChatEvent::DeleteNote(item.clone()));
-                                        }
-                                    }
-
-                                    ui.add_space(5.);
-                                    ui.label(if item.private { "🕶" } else { "✔" });
+                                        },
+                                    );
                                 });
-                            });
+                        });
+
+                        let rm = &mut self.remove_hovered;
+                        if rm.is_some() {
+                            *rm = None;
+                            self.hovered.remove(&item.id);
                         }
-
-                        Frame::new() // Frame for the actual note text itself // or for modifying the note
-                            .fill(theme::bg_surface(ui))
-                            .stroke(style.visuals.widgets.inactive.bg_stroke)
-                            .outer_margin(Margin {
-                                top: 3,
-                                ..Default::default()
-                            })
-                            .inner_margin(Margin::symmetric(6, 10))
-                            .corner_radius(rnding)
-                            .show(ui, |ui| 
-                        {
-                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                Direction::TopDown,
-                                Align::Center,
-                            ), |ui| {
-                                ui.set_width(ui.available_width());
-                                if self.allow_edit.contains(&item.id.key_string()) {
-                                    if let Some(msg) = self.edit_text.get_mut(&item.id.key_string()){
-                                        TextEdit::multiline(&mut msg.note)
-                                            .margin(Margin::symmetric(10, 3))
-                                            .desired_width(max_msg_width)
-                                            .show(ui);
-                                    }
-                                } else {
-                                    let wrap_width = ui.available_width();
-                                    let job = mention_label_job(ui, &item.note, wrap_width);
-                                    ui.add(Label::new(job).selectable(true));
-                                }
-                            });
-                        }).response;
-                    });
-
-                    let rm = &mut self.remove_hovered;
-                    if rm.is_some() {
-                        *rm = None;
-                        self.hovered.remove(&item.id);
-                    }
-                })
-                .response
-                .hovered() {
+                    })
+                    .response
+                    .hovered()
+                {
                     self.hovered.insert(item.id.clone());
                 } else {
                     self.remove_hovered = Some(item.id.clone());
                 }
             });
-        };
+        }
     }
 }
 
-
-pub fn popup_widget(btn_response: Response, style: Arc<Style>, item: &TaskNotePayload) {
-    Popup::menu(&btn_response)
-    .width(btn_response.rect.width().min(300.0))
-    .align(RectAlign::BOTTOM)
-    .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-    .show(|ui| {
-        ui.vertical_centered_justified(|ui| {
-            ui.set_width(300.0);
-            ui.horizontal(|ui| {
-                ui.colored_label(style.visuals.hyperlink_color, "ID");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("Task_note:{}", item.id.key_string()));
-                });
-            });
-            ui.horizontal(|ui| {
-                if let Some(task_id) = item.task_id.clone() {
-                    ui.colored_label(style.visuals.hyperlink_color, "Task ID");
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(format!("Task:{}", task_id.key_string()));
-                    });
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.colored_label(style.visuals.hyperlink_color, "Thread ID");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(item.id_customer_thread.clone().unwrap_or_default());
-                });
-            });
-            ui.horizontal(|ui| {
-                ui.colored_label(style.visuals.hyperlink_color, "Employee ID");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(item.id_employee.clone().unwrap_or_default());
-                });
-            });
-            ui.horizontal(|ui| {
-                ui.colored_label(style.visuals.hyperlink_color, "User ID");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("User:{}", item.user.key_string()));
-                });
-            });
+/// The sender's ids in a popup under `btn_response`.
+pub fn popup_widget(btn_response: &Response, item: &TaskNotePayload) {
+    Popup::menu(btn_response)
+        .width(btn_response.rect.width().min(SENDER_POPUP_W))
+        .align(RectAlign::BOTTOM)
+        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_width(SENDER_POPUP_W);
+            detail_row(
+                ui,
+                svg::HASH,
+                "ID",
+                &format!("Task_note:{}", item.id.key_string()),
+            );
+            if let Some(task_id) = item.task_id.clone() {
+                detail_row(
+                    ui,
+                    svg::CLIPBOARD_TEXT,
+                    "Task ID",
+                    &format!("Task:{}", task_id.key_string()),
+                );
+            }
+            detail_row(
+                ui,
+                svg::CHAT_TEXT,
+                "Thread ID",
+                &item.id_customer_thread.clone().unwrap_or_default(),
+            );
+            detail_row(
+                ui,
+                svg::IDENTIFICATION_BADGE,
+                "Employee ID",
+                &item.id_employee.clone().unwrap_or_default(),
+            );
+            detail_row(
+                ui,
+                svg::USER,
+                "User ID",
+                &format!("User:{}", item.user.key_string()),
+            );
         });
-    });
 }
-
-

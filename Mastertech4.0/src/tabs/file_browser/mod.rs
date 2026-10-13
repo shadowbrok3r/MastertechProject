@@ -5,10 +5,15 @@ use self::{
 use crate::app_state::MastertechContext;
 use crossbeam::channel::{self, Receiver, Sender};
 use directories::UserDirs;
-use displays::ui_tools::icons;
+use displays::ui_tools::controls::{
+    self, BarKind, ButtonKind, IconBox, IconButton, Metrics, TextButton, TextField,
+    Tokens,
+};
+use displays::ui_tools::icons::{self, svg::{self, Icon}};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
+use displays::ui_tools::tokens;
 use eframe::egui::Ui;
-use eframe::egui::{collapsing_header::CollapsingState, text::LayoutJob, *};
+use eframe::egui::*;
 use log::{debug, error, info};
 use pollster::block_on;
 use serde::Serialize;
@@ -56,29 +61,63 @@ impl FileSort {
     }
 }
 
+/// Width of the rename field on the mode bar.
+const RENAME_W: f32 = 200.0;
+/// Width of the sort-key dropdown.
+const SORT_W: f32 = 100.0;
+/// Opacity of the error hue in the delete-confirmation fill.
+const DELETE_WASH: f32 = 0.18;
+/// Tallest the multi-selection list grows before it scrolls.
+const SELECTION_LIST_H: f32 = 180.0;
+/// Tallest the clipboard list grows before it scrolls.
+const CLIPBOARD_LIST_H: f32 = 140.0;
+
+/// The SVG icon for `path`: a folder, or the file type's icon.
+fn path_icon(path: &PathBuf) -> Icon {
+    if path.is_dir() {
+        svg::FOLDER
+    } else {
+        Icon::from_glyph(icons::file_icon(get_file_name(path), false)).unwrap_or(svg::FILE)
+    }
+}
+
+/// Tint for a path's icon: folders in the tertiary role, files in the icon colour.
+fn path_tint(t: &Tokens, path: &std::path::Path) -> Color32 {
+    if path.is_dir() {
+        t.tertiary
+    } else {
+        t.icon
+    }
+}
+
+/// A faint sidebar heading led by `icon`.
+/// A path's icon and name on one row, with `suffix` after the name.
+fn path_label(ui: &mut Ui, path: &PathBuf, suffix: &str) {
+    let t = Tokens::get(ui.ctx());
+    let size = Metrics::get(ui.ctx()).icon_sm;
+    ui.horizontal(|ui| {
+        ui.add(path_icon(path).image(size).tint(path_tint(&t, path)));
+        ui.label(format!("{}{suffix}", get_file_name(path)));
+    });
+}
+
 impl MastertechContext {
     pub fn file_browse(&mut self, ui: &mut Ui) {
+        let bar_h = Metrics::get(ui.ctx()).bar_h;
         eframe::egui::Panel::top("file_browser_mode_panel")
-            .exact_size(30.0)
+            .exact_size(bar_h)
+            .frame(Frame::NONE)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    eframe::egui::ComboBox::from_id_salt("files_panel_mode")
-                        .selected_text(match self.files_panel_mode {
-                            FilesPanelMode::FileBrowser => "File Browser",
-                            FilesPanelMode::MyTools => "My Tools",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.files_panel_mode,
-                                FilesPanelMode::FileBrowser,
-                                "File Browser",
-                            );
-                            ui.selectable_value(
-                                &mut self.files_panel_mode,
-                                FilesPanelMode::MyTools,
-                                "My Tools",
-                            );
-                        });
+                controls::bar(ui, BarKind::Tool, |ui| {
+                    let modes = [
+                        (FilesPanelMode::FileBrowser, svg::FOLDER_OPEN, "File Browser"),
+                        (FilesPanelMode::MyTools, svg::TOOLBOX, "My Tools"),
+                    ];
+                    for (mode, icon, label) in modes {
+                        if controls::pill(ui, icon, label, self.files_panel_mode == mode).clicked() {
+                            self.files_panel_mode = mode;
+                        }
+                    }
 
                     if self.files_panel_mode == FilesPanelMode::FileBrowser
                         && !self.show_deferred_viewport.load(Ordering::Relaxed)
@@ -111,34 +150,8 @@ const _GB_FROM_BYTES: u64 = 1024 * 1024 * 1024;
 /// Quick-access sidebar entry resolved to an absolute path.
 struct FolderShortcut {
     name: String,
-    icon: &'static str,
+    icon: Icon,
     path: PathBuf,
-}
-
-/// Full-width, left-aligned selectable row for the sidebar panels.
-fn sidebar_row(
-    ui: &mut Ui,
-    width: f32,
-    height: f32,
-    selected: bool,
-    label: impl Into<String>,
-) -> Response {
-    let label = label.into();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-    let visuals = ui.global_style().interact_selectable(&response, selected);
-    if selected || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
-    }
-    let text_pos = rect.left_center() + Vec2::new(8.0, 0.0);
-    ui.painter().text(
-        text_pos,
-        Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(13.0),
-        visuals.text_color(),
-    );
-    response
 }
 
 #[derive(Serialize)]
@@ -270,20 +283,6 @@ impl FileBrowser {
     pub fn show(&mut self, ui: &mut Ui, copied_items_tx: Sender<String>) {
         let mut total_size = 0;
 
-        ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
-        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =
-            Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-        ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30, 30, 30);
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
-        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke =
-            Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
-
         self.handle_keyboard_events(ui, copied_items_tx.clone());
 
         if self.first_refresh_contents {
@@ -377,7 +376,7 @@ impl FileBrowser {
                     // Send a command to fetch them in the background
                     let command = Command::ReadDirectory(self.path.clone());
                     self.command_tx.send(Some(command)).unwrap();
-                    ui.label("Loading...");
+                    controls::loading_row(ui, "Loading...");
                 },
             },
                 );
@@ -385,42 +384,53 @@ impl FileBrowser {
     }
 
     pub fn top_panel(&mut self, ui: &mut Ui) {
-        eframe::egui::Panel::top("file_browser_top").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(self.path != env::current_dir().unwrap_or_default(), |ui| {
-                    if ui.button(icons::HOME).on_hover_text("Home").clicked() {
-                        let _ = self.command_tx.send(Some(Command::Home));
-                    }
-                });
+        let bar_h = Metrics::get(ui.ctx()).bar_h;
+        let panel = eframe::egui::Panel::top("file_browser_top")
+            .exact_size(bar_h)
+            .frame(Frame::NONE);
+        panel.show(ui, |ui| {
+            controls::bar(ui, BarKind::Tool, |ui| {
+                let away = self.path != env::current_dir().unwrap_or_default();
+                if IconButton::new(svg::HOUSE, IconBox::Md)
+                    .tip("Home")
+                    .enabled(away)
+                    .show(ui)
+                    .clicked()
+                {
+                    let _ = self.command_tx.send(Some(Command::Home));
+                }
 
-                ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
-                    if ui.button(icons::UP).on_hover_text("Parent Folder").clicked() {
-                        let _ = self.command_tx.send(Some(Command::UpDirectory));
-                    }
-                });
+                if IconButton::new(svg::ARROW_UP, IconBox::Md)
+                    .tip("Parent Folder")
+                    .enabled(self.path.parent().is_some())
+                    .show(ui)
+                    .clicked()
+                {
+                    let _ = self.command_tx.send(Some(Command::UpDirectory));
+                }
 
-                if ui.button(icons::REFRESH).on_hover_text("Refresh").clicked() {
+                if controls::icon_button(ui, svg::ARROW_CLOCKWISE, IconBox::Md, false, "Refresh")
+                    .clicked()
+                {
                     let _ = self.command_tx.send(Some(Command::Refresh));
                 }
 
                 self.sort_controls(ui);
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui
-                        .button(icons::FOLDER_PLUS)
-                        .on_hover_text("New Folder")
+                    if controls::icon_button(ui, svg::FOLDER_PLUS, IconBox::Md, false, "New Folder")
                         .clicked()
                     {
                         let _ = self.command_tx.send(Some(Command::CreateDirectory));
                     }
 
-                    let response = ui
-                        .add_sized(
-                            Vec2::new(ui.available_width(), 20.0),
-                            TextEdit::singleline(&mut self.path_edit)
-                                .id(Id::new("path_edit"))
-                                .cursor_at_end(true),
-                        )
+                    let width = ui.available_width();
+                    let response = TextField::new(&mut self.path_edit)
+                        .id_salt("path_edit")
+                        .icon(svg::FOLDER_OPEN)
+                        .mono(true)
+                        .width(width)
+                        .show(ui)
                         .on_hover_text(&self.path_edit);
 
                     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -431,30 +441,25 @@ impl FileBrowser {
                     }
                 });
             });
-            ui.add_space(ui.spacing().item_spacing.y);
         });
     }
 
     /// Sort key picker and direction toggle for the current listing.
     fn sort_controls(&mut self, ui: &mut Ui) {
-        let mut changed = false;
-        ComboBox::from_id_salt("file_browser_sort")
-            .width(90.0)
-            .selected_text(self.sort.as_str())
-            .show_ui(ui, |ui| {
-                for sort in [FileSort::Name, FileSort::Type, FileSort::Size, FileSort::Modified] {
-                    changed |= ui
-                        .selectable_value(&mut self.sort, sort, sort.as_str())
-                        .clicked();
-                }
-            });
+        let options: Vec<(FileSort, &str)> =
+            [FileSort::Name, FileSort::Type, FileSort::Size, FileSort::Modified]
+                .into_iter()
+                .map(|sort| (sort, sort.as_str()))
+                .collect();
+        let mut changed =
+            controls::dropdown(ui, "file_browser_sort", &mut self.sort, &options, SORT_W).changed();
 
-        let arrow = if self.sort_desc { icons::SORT_DESC } else { icons::SORT_ASC };
-        if ui
-            .button(arrow)
-            .on_hover_text(if self.sort_desc { "Descending" } else { "Ascending" })
-            .clicked()
-        {
+        let (arrow, tip) = if self.sort_desc {
+            (svg::SORT_DESCENDING, "Descending")
+        } else {
+            (svg::SORT_ASCENDING, "Ascending")
+        };
+        if controls::icon_button(ui, arrow, IconBox::Md, false, tip).clicked() {
             self.sort_desc = !self.sort_desc;
             changed = true;
         }
@@ -484,12 +489,10 @@ impl FileBrowser {
             }
 
             if self.animated_progress {
-                ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
-                    .show_percentage()
-                    .desired_width(ui.available_size_before_wrap().x / 1.6)
-                    .fill(Color32::from_rgb(255, 77, 210))
-                    .animate(self.animated_progress)
-                    .ui(ui);
+                controls::ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
+                    .percentage(true)
+                    .width(ui.available_size_before_wrap().x / 1.6)
+                    .show(ui);
             }
         });
     }
@@ -498,30 +501,34 @@ impl FileBrowser {
     pub fn rename_row(&mut self, ui: &mut Ui) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let can_rename = self.can_rename();
-            ui.add_enabled_ui(can_rename, |ui| {
-                if ui.button(format!("{} Rename", icons::EDIT)).clicked() {
-                    if let Some(from) = self.single_selection() {
-                        let to = from.with_file_name(&self.filename_edit);
-                        let _ = self.command_tx.send(Some(Command::Rename(from, to)));
-                    }
-                }
-            });
-            ui.add(
-                TextEdit::singleline(&mut self.filename_edit)
-                    .id(Id::new("rename_edit_top"))
-                    .desired_width(200.0)
-                    .hint_text("rename…"),
-            );
+            if TextButton::new("Rename")
+                .icon(svg::PENCIL_SIMPLE)
+                .enabled(can_rename)
+                .show(ui)
+                .clicked()
+                && let Some(from) = self.single_selection()
+            {
+                let to = from.with_file_name(&self.filename_edit);
+                let _ = self.command_tx.send(Some(Command::Rename(from, to)));
+            }
+            TextField::new(&mut self.filename_edit)
+                .id_salt("rename_edit_top")
+                .hint("rename…")
+                .icon(svg::TEXT_AA)
+                .width(RENAME_W)
+                .show(ui);
         });
     }
 
     /// Quick-access and drive navigation sidebar.
     fn left_sidebar(&mut self, ui: &mut Ui) {
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
         let sidebar_frame = Frame::default()
-            .fill(Color32::from_rgb(20, 20, 24))
-            .inner_margin(Margin::same(8))
-            .corner_radius(CornerRadius::same(6))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(60, 60, 70)));
+            .fill(t.sunken)
+            .inner_margin(Margin::same(m.gap.x as i8))
+            .corner_radius(CornerRadius::same(t.radius_md))
+            .stroke(Stroke::new(1.0, t.card_border));
 
         let mut navigate_to: Option<PathBuf> = None;
 
@@ -535,43 +542,36 @@ impl FileBrowser {
                 ScrollArea::vertical()
                     .id_salt("file_browser_sidebar_scroll")
                     .show(ui, |ui| {
-                        const ENTRY_H: f32 = 24.0;
                         let entry_w = ui.available_width();
 
-                        ui.label(
-                            RichText::new(format!("{} Quick Access", icons::STAR))
-                                .strong()
-                                .color(Color32::LIGHT_GRAY),
-                        );
-                        ui.add_space(4.0);
+                        controls::section_label_icon(ui, svg::STAR, "Quick Access");
+                        ui.add_space(m.gap.y / 2.0);
                         for shortcut in &self.shortcuts {
                             let selected = self.path == shortcut.path;
-                            let label = format!("{} {}", shortcut.icon, shortcut.name);
-                            if sidebar_row(ui, entry_w, ENTRY_H, selected, label).clicked() {
+                            if controls::ListItem::new(&shortcut.name).icon(shortcut.icon).selected(selected).width(entry_w).show(ui)
+                                .clicked()
+                            {
                                 navigate_to = Some(shortcut.path.clone());
                             }
                         }
 
                         if !self.drive_letters.is_empty() {
-                            ui.add_space(12.0);
-                            ui.label(
-                                RichText::new("Drives")
-                                    .strong()
-                                    .color(Color32::LIGHT_GRAY),
-                            );
-                            ui.add_space(4.0);
+                            ui.add_space(m.gap.y * 2.0);
+                            controls::section_label_icon(ui, svg::HARD_DRIVES, "Drives");
+                            ui.add_space(m.gap.y / 2.0);
                             for drive in &self.drive_letters {
                                 let selected = self.path == PathBuf::from(drive);
-                                let label = format!("{} {drive}", icons::HARD_DRIVE);
-                                if sidebar_row(ui, entry_w, ENTRY_H, selected, label).clicked() {
+                                if controls::ListItem::new(drive).icon(svg::HARD_DRIVE).selected(selected).width(entry_w).show(ui)
+                                    .clicked()
+                                {
                                     navigate_to = Some(PathBuf::from(drive));
                                 }
                             }
                         }
 
-                        ui.add_space(12.0);
-                        ui.separator();
-                        ui.checkbox(&mut self.read_dirs_only, "Directories Only");
+                        ui.add_space(m.gap.y * 2.0);
+                        controls::hairline(ui);
+                        controls::toggle(ui, &mut self.read_dirs_only, "Directories Only");
                     });
             });
 
@@ -582,11 +582,13 @@ impl FileBrowser {
 
     /// Selection and clipboard panel shown while items are selected or copied.
     fn right_sidebar(&mut self, ui: &mut Ui, is_open: bool, copied_items_tx: Sender<String>) {
+        let t = Tokens::get(ui.ctx());
+        let m = Metrics::get(ui.ctx());
         let sidebar_frame = Frame::default()
-            .fill(Color32::from_rgb(24, 20, 28))
-            .inner_margin(Margin::same(8))
-            .corner_radius(CornerRadius::same(6))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(70, 60, 80)));
+            .fill(t.sunken)
+            .inner_margin(Margin::same(m.gap.x as i8))
+            .corner_radius(CornerRadius::same(t.radius_md))
+            .stroke(Stroke::new(1.0, t.card_border));
 
         let mut selection: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
         selection.sort();
@@ -612,20 +614,14 @@ impl FileBrowser {
                             let path = selection[0].clone();
                             let is_dir = path.is_dir();
                             let name = get_file_name(&path);
-                            let icon = if is_dir {
-                                icons::FOLDER
-                            } else {
-                                icons::file_icon(name, false)
-                            };
-                            ui.label(
-                                RichText::new(format!("{icon} {name}"))
-                                    .strong()
-                                    .color(Color32::WHITE),
-                            );
+                            ui.horizontal(|ui| {
+                                ui.add(path_icon(&path).image(m.icon_lg).tint(path_tint(&t, &path)));
+                                ui.label(RichText::new(name).strong().color(t.text));
+                            });
                             ui.label(
                                 RichText::new(if is_dir { "Folder" } else { "File" })
                                     .italics()
-                                    .color(Color32::LIGHT_GRAY),
+                                    .color(t.text_dim),
                             );
 
                             let size = if is_dir {
@@ -635,10 +631,14 @@ impl FileBrowser {
                             };
                             match size {
                                 Some(sz) => {
-                                    ui.label(format!("Size: {}", format_path_metadata(sz)));
+                                    controls::icon_label(
+                                        ui,
+                                        svg::DATABASE,
+                                        &format!("Size: {}", format_path_metadata(sz)),
+                                    );
                                 }
                                 None => {
-                                    ui.label(RichText::new("Size: calculating…").weak());
+                                    controls::loading_row(ui, "Size: calculating…");
                                     request_meta.push(path.clone());
                                 }
                             }
@@ -646,91 +646,110 @@ impl FileBrowser {
                             if let Ok(meta) = std::fs::metadata(&path) {
                                 if let Ok(modified) = meta.modified() {
                                     let dt: chrono::DateTime<chrono::Local> = modified.into();
-                                    ui.label(format!("Modified: {}", dt.format("%Y-%m-%d %H:%M")));
+                                    controls::icon_label(
+                                        ui,
+                                        svg::CLOCK,
+                                        &format!("Modified: {}", dt.format("%Y-%m-%d %H:%M")),
+                                    );
                                 }
                             }
                             ui.label(RichText::new(path.to_string_lossy()).small().weak());
 
-                            ui.add_space(6.0);
-                            ui.separator();
+                            ui.add_space(m.gap.y);
+                            controls::hairline(ui);
 
                             let can_rename = self.can_rename();
                             ui.horizontal(|ui| {
-                                let field_w = (ui.available_width() - 40.0).max(80.0);
-                                ui.add(
-                                    TextEdit::singleline(&mut self.filename_edit)
-                                        .id(Id::new("rename_edit_panel"))
-                                        .desired_width(field_w)
-                                        .hint_text("rename…"),
-                                );
-                                ui.add_enabled_ui(can_rename, |ui| {
-                                    if ui
-                                        .button(icons::EDIT)
-                                        .on_hover_text("Rename")
-                                        .clicked()
-                                    {
-                                        do_rename = true;
-                                    }
-                                });
+                                let field_w = (ui.available_width()
+                                    - IconBox::Md.side(&m)
+                                    - ui.spacing().item_spacing.x)
+                                    .max(80.0);
+                                TextField::new(&mut self.filename_edit)
+                                    .id_salt("rename_edit_panel")
+                                    .hint("rename…")
+                                    .width(field_w)
+                                    .show(ui);
+                                if IconButton::new(svg::PENCIL_SIMPLE, IconBox::Md)
+                                    .tip("Rename")
+                                    .enabled(can_rename)
+                                    .show(ui)
+                                    .clicked()
+                                {
+                                    do_rename = true;
+                                }
                             });
 
-                            ui.add_space(4.0);
+                            ui.add_space(m.gap.y / 2.0);
                             ui.horizontal(|ui| {
-                                if ui.button(format!("{} Copy", icons::COPY)).clicked() {
+                                if controls::icon_text_button(ui, svg::COPY, "Copy").clicked() {
                                     do_copy = true;
                                 }
-                                if ui.button(format!("{} Delete", icons::TRASH)).clicked() {
+                                if TextButton::new("Delete")
+                                    .icon(svg::TRASH)
+                                    .kind(ButtonKind::Danger)
+                                    .show(ui)
+                                    .clicked()
+                                {
                                     self.pending_delete = Some(selection.clone());
                                 }
                             });
                         } else if selection.len() > 1 {
-                            ui.label(
-                                RichText::new(format!("{} items selected", selection.len()))
-                                    .strong()
-                                    .color(Color32::WHITE),
-                            );
-                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.add(svg::CHECKS.image(m.icon_md).tint(t.primary));
+                                ui.label(
+                                    RichText::new(format!("{} items selected", selection.len()))
+                                        .strong()
+                                        .color(t.text),
+                                );
+                            });
+                            ui.add_space(m.gap.y / 2.0);
                             ScrollArea::vertical()
                                 .id_salt("multi_selection_list")
-                                .max_height(180.0)
+                                .max_height(SELECTION_LIST_H)
                                 .show(ui, |ui| {
                                     for p in &selection {
-                                        let icon = if p.is_dir() {
-                                            icons::FOLDER
-                                        } else {
-                                            icons::file_icon(get_file_name(p), false)
-                                        };
-                                        ui.label(format!("{} {}", icon, get_file_name(p)));
+                                        path_label(ui, p, "");
                                     }
                                 });
-                            ui.add_space(4.0);
+                            ui.add_space(m.gap.y / 2.0);
                             ui.horizontal(|ui| {
-                                if ui.button(format!("{} Copy", icons::COPY)).clicked() {
+                                if controls::icon_text_button(ui, svg::COPY, "Copy").clicked() {
                                     do_copy = true;
                                 }
-                                if ui.button(format!("{} Delete", icons::TRASH)).clicked() {
+                                if TextButton::new("Delete")
+                                    .icon(svg::TRASH)
+                                    .kind(ButtonKind::Danger)
+                                    .show(ui)
+                                    .clicked()
+                                {
                                     self.pending_delete = Some(selection.clone());
                                 }
                             });
                         }
 
                         if let Some(pending) = self.pending_delete.clone() {
-                            ui.add_space(6.0);
+                            ui.add_space(m.gap.y);
                             Frame::default()
-                                .fill(Color32::from_rgb(60, 20, 20))
-                                .inner_margin(Margin::same(6))
-                                .corner_radius(CornerRadius::same(4))
+                                .fill(tokens::composite(t.error.gamma_multiply(DELETE_WASH), t.sunken))
+                                .stroke(Stroke::new(1.0, t.error))
+                                .inner_margin(Margin::same(m.gap.y as i8))
+                                .corner_radius(CornerRadius::same(t.radius_sm))
                                 .show(ui, |ui| {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "Delete {} item(s)? This cannot be undone.",
-                                            pending.len()
-                                        ))
-                                        .color(Color32::from_rgb(255, 180, 180)),
-                                    );
+                                    ui.horizontal_top(|ui| {
+                                        ui.add(svg::WARNING.image(m.icon_md).tint(t.error));
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "Delete {} item(s)? This cannot be undone.",
+                                                pending.len()
+                                            ))
+                                            .color(t.error),
+                                        );
+                                    });
                                     ui.horizontal(|ui| {
-                                        if ui
-                                            .button(RichText::new("Confirm Delete").color(Color32::WHITE))
+                                        if TextButton::new("Confirm Delete")
+                                            .icon(svg::TRASH)
+                                            .kind(ButtonKind::Danger)
+                                            .show(ui)
                                             .clicked()
                                         {
                                             let _ = self
@@ -738,7 +757,7 @@ impl FileBrowser {
                                                 .send(Some(Command::DeleteMany(pending.clone())));
                                             self.pending_delete = None;
                                         }
-                                        if ui.button("Cancel").clicked() {
+                                        if controls::icon_text_button(ui, svg::X, "Cancel").clicked() {
                                             self.pending_delete = None;
                                         }
                                     });
@@ -746,29 +765,26 @@ impl FileBrowser {
                         }
 
                         if !self.copied_items_src.is_empty() {
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} Clipboard — {} item(s) to copy",
-                                    icons::CLIPBOARD,
-                                    self.copied_items_src.len()
-                                ))
-                                .strong()
-                                .color(Color32::from_rgb(200, 180, 255)),
-                            );
-                            ui.add_space(2.0);
+                            ui.add_space(m.gap.y);
+                            controls::hairline(ui);
+                            ui.horizontal(|ui| {
+                                ui.add(svg::CLIPBOARD.image(m.icon_md).tint(t.secondary));
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Clipboard — {} item(s) to copy",
+                                        self.copied_items_src.len()
+                                    ))
+                                    .strong()
+                                    .color(t.secondary),
+                                );
+                            });
+                            ui.add_space(m.gap.y / 2.0);
                             ScrollArea::vertical()
                                 .id_salt("clipboard_list")
-                                .max_height(140.0)
+                                .max_height(CLIPBOARD_LIST_H)
                                 .show(ui, |ui| {
                                     for p in &self.copied_items_src {
                                         let is_dir = p.is_dir();
-                                        let icon = if is_dir {
-                                            icons::FOLDER
-                                        } else {
-                                            icons::file_icon(get_file_name(p), false)
-                                        };
                                         let size = if is_dir {
                                             self.folder_metadata.borrow().get(p).map(|m| m.path_size)
                                         } else {
@@ -777,10 +793,10 @@ impl FileBrowser {
                                         let size_str = size
                                             .map(|s| format!(" ({})", format_path_metadata(s)))
                                             .unwrap_or_default();
-                                        ui.label(format!("{} {}{}", icon, get_file_name(p), size_str));
+                                        path_label(ui, p, &size_str);
                                     }
                                 });
-                            ui.add_space(4.0);
+                            ui.add_space(m.gap.y / 2.0);
                             ui.label(
                                 RichText::new(format!("Destination: {}", self.path.to_string_lossy()))
                                     .small()
@@ -791,23 +807,35 @@ impl FileBrowser {
                                 .copied_items_src
                                 .iter()
                                 .any(|p| p.parent() == Some(self.path.as_path()));
-                            ui.add_space(4.0);
+                            ui.add_space(m.gap.y / 2.0);
                             ui.horizontal(|ui| {
-                                ui.add_enabled_ui(!same_dir, |ui| {
-                                    if ui.button(format!("{} Paste here", icons::CLIPBOARD)).clicked() {
-                                        do_paste = true;
-                                    }
-                                });
-                                if ui.button("Clear").clicked() {
+                                if TextButton::new("Paste here")
+                                    .icon(svg::CLIPBOARD_TEXT)
+                                    .kind(ButtonKind::Primary)
+                                    .enabled(!same_dir)
+                                    .show(ui)
+                                    .clicked()
+                                {
+                                    do_paste = true;
+                                }
+                                if TextButton::new("Clear")
+                                    .icon(svg::X)
+                                    .kind(ButtonKind::Ghost)
+                                    .show(ui)
+                                    .clicked()
+                                {
                                     clear_clipboard = true;
                                 }
                             });
                             if same_dir {
-                                ui.label(
-                                    RichText::new("Can't paste into the source folder.")
-                                        .small()
-                                        .color(Color32::from_rgb(255, 170, 120)),
-                                );
+                                ui.horizontal(|ui| {
+                                    ui.add(svg::WARNING.image(m.icon_sm).tint(t.warn));
+                                    ui.label(
+                                        RichText::new("Can't paste into the source folder.")
+                                            .small()
+                                            .color(t.warn),
+                                    );
+                                });
                             }
                         }
                     });
@@ -891,7 +919,7 @@ impl FileBrowser {
             return;
         };
         let entries: [(&str, &'static str, Option<&std::path::Path>); 7] = [
-            ("Home", icons::HOME, Some(dirs.home_dir())),
+            ("Home", svg::HOUSE.glyph(), Some(dirs.home_dir())),
             ("Desktop", icons::folder_shortcut_icon("Desktop"), dirs.desktop_dir()),
             ("Documents", icons::folder_shortcut_icon("Documents"), dirs.document_dir()),
             ("Downloads", icons::folder_shortcut_icon("Downloads"), dirs.download_dir()),
@@ -904,7 +932,7 @@ impl FileBrowser {
                 if p.exists() {
                     self.shortcuts.push(FolderShortcut {
                         name: name.to_string(),
-                        icon,
+                        icon: Icon::from_glyph(icon).unwrap_or(svg::FOLDER),
                         path: p.to_path_buf(),
                     });
                 }
@@ -912,155 +940,85 @@ impl FileBrowser {
         }
     }
 
-    /**
-        Handles displaying of subcontents of given directory by calling list_subfolders
-        and makes only directories collapsible so we can see its subcontents
-    */
+    /// One tree row for `path`; a directory row lists its contents while open.
     fn display_path(&self, ui: &mut Ui, path: &PathBuf) {
-        let command_sender = self.command_tx.clone();
-        let command_sender2 = self.command_tx.clone();
-        let command_sender3 = self.command_tx.clone();
-        // let command_sender4 = self.command_tx.clone();
-        let command_sender5 = self.command_tx.clone();
-
-        let icon = if path.is_dir() {
-            icons::FOLDER
-        } else {
-            icons::file_icon(get_file_name(path), false)
-        };
-        let label = format!("{icon}   {}", get_file_name(path));
-        let mut formatted_size = "".to_string();
-        ui.horizontal_top(|ui| {
-            if path.is_dir() {
-                let id = ui.make_persistent_id(path.as_path().to_string_lossy());
-                let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
-
-                let contents = match self.dir_contents.borrow().get(path) {
-                    Some(contents) => contents.clone(),
-                    None => {
-                        let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
-                        match command_sender.send(Some(command)) {
-                            Ok(_) => drop(command_sender),
-                            Err(e) => error!("Error: {e:?}"),
-                        }
-                        vec![] // Return an empty Vec for now
+        let t = Tokens::get(ui.ctx());
+        let label = get_file_name(path).to_owned();
+        let modifiers = ui.input(|i| i.modifiers);
+        let is_selected = self.selected_items.borrow().contains(path);
+        let row = controls::ListItem::new(&label)
+            .icon(path_icon(path))
+            .icon_tone(path_tint(&t, path))
+            .selected(is_selected);
+        if path.is_dir() {
+            let contents = match self.dir_contents.borrow().get(path) {
+                Some(contents) => contents.clone(),
+                None => {
+                    let command = Command::ReadDirectory(path.clone());
+                    if let Err(e) = self.command_tx.send(Some(command)) {
+                        error!("Error: {e:?}");
                     }
-                };
-
-                ui.vertical_centered_justified(|ui| {
-                    CollapsingState::load_with_default_open(ui.ctx(), id, false)
-                        .show_header(ui, |ui| {
-                            let is_selected = self.selected_items.borrow().contains(path);
-                            let selectable_label =
-                                ui.selectable_label(is_selected, RichText::new(&label));
-                            if selectable_label.clicked() {
-                                info!("label:path {:?} // {:?}", &label, &path);
-                            }
-                            if selectable_label.secondary_clicked()
-                                && !self.folder_metadata.borrow().contains_key(path)
-                            {
-                                match command_sender5
-                                    .send(Some(Command::ReadMetadata(path.clone())))
-                                {
-                                    Ok(_) => drop(command_sender5),
-                                    Err(e) => log::error!("hovered sender error: {e:?}"),
-                                }
-                            }
-                            if let Some(metadata) = self.folder_metadata.borrow_mut().get(path) {
-                                let path_size = metadata.path_size;
-                                formatted_size = format_path_metadata(path_size);
-                                let mut job = LayoutJob::default();
-                                let mut text_formatting = TextFormat::default();
-                                text_formatting.color = Color32::DARK_GRAY;
-                                text_formatting.italics = true;
-                                job.halign = Align::RIGHT;
-                                job.justify = true;
-                                let text = formatted_size.to_string();
-                                job.append(&text, 30.0, text_formatting);
-                                
-                                let l = Arc::new(job);
-                                let x = WidgetText::LayoutJob(l)
-                                    .small()
-                                    .background_color(ui.style().visuals.error_fg_color);
-                                ui.add_space((ui.available_size_before_wrap().x - 100.0).max(0.0));
-                                ui.add(Label::new(x));
-                            }
-
-                            if selectable_label.clicked() {
-                                // If the item was already selected, deselect it
-                                if self.selected_items.borrow().contains(path) {
-                                    self.selected_items.borrow_mut().remove(path);
-                                }
-                                // If the control key is down and the item was not selected, select it
-                                if modifiers.ctrl {
-                                    self.selected_items.borrow_mut().insert(path.clone());
-                                } else {
-                                    // If the control key is not down, clear previous selection and select the current item
-                                    self.selected_items.borrow_mut().clear();
-                                    self.selected_items.borrow_mut().insert(path.clone());
-                                }
-                            }
-
-                            if selectable_label.double_clicked() {
-                                //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
-                                match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
-                                    Ok(_) => drop(command_sender2),
-                                    Err(e) => error!("Error: {e:?}"),
-                                }
-                            }
-                        })
-                        .body(|ui| {
-                            for sub_path in &contents {
-                                self.display_path(ui, &sub_path);
-                            }
-                        });
-                });
-            } else if !path.is_dir() && !self.read_dirs_only {
-                let is_selected = self.selected_items.borrow().contains(path);
-                let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
-
-                let selectable_label = ui.selectable_label(is_selected, RichText::new(&label));
-                if selectable_label.clicked() {
-                    match command_sender3.send(Some(Command::Select(path.clone()))) {
-                        Ok(_) => drop(command_sender3),
-                        Err(e) => error!("Error: {e:?}"),
-                    }
-                    // If the control key is down and the item was not selected, select it
-                    if modifiers.ctrl {
-                        self.selected_items.borrow_mut().insert(path.clone());
-                    }
-                    if self.selected_items.borrow().contains(path) {
-                        // If the item was already selected, deselect it
-                        self.selected_items.borrow_mut().remove(path);
-                    } else {
-                        // If the control key is not down, clear previous selection and select the current item
-                        self.selected_items.borrow_mut().clear();
-                        self.selected_items.borrow_mut().insert(path.clone());
-                    }
-                } else if selectable_label.secondary_clicked() {
+                    vec![]
                 }
-
-                if let Some(metadata) = self.file_metadata.borrow_mut().get(path) {
-                    let path_size = metadata.path_size;
-                    formatted_size = format_path_metadata(path_size);
-                    let mut job = LayoutJob::default();
-                    let mut text_formatting = TextFormat::default();
-                    text_formatting.color = Color32::DARK_GRAY;
-                    text_formatting.italics = true;
-                    job.halign = Align::RIGHT;
-                    job.justify = true;
-
-                    let text = format!("{}", formatted_size.as_str());
-                    job.append(&text, 30.0, text_formatting);
-
-                    let x = WidgetText::LayoutJob(Arc::new(job))
-                        .small()
-                        .background_color(ui.style().visuals.error_fg_color);
-                    ui.add_space((ui.available_size_before_wrap().x - 100.0).max(0.0));
-                    ui.add(Label::new(x));
+            };
+            let size = self
+                .folder_metadata
+                .borrow()
+                .get(path)
+                .map(|metadata| format_path_metadata(metadata.path_size))
+                .unwrap_or_default();
+            let id_salt = path.as_path().to_string_lossy().into_owned();
+            let (response, _) = row.detail(&size).show_node(ui, id_salt, false, |ui| {
+                for sub_path in &contents {
+                    self.display_path(ui, sub_path);
+                }
+            });
+            if response.secondary_clicked()
+                && !self.folder_metadata.borrow().contains_key(path)
+                && let Err(e) = self.command_tx.send(Some(Command::ReadMetadata(path.clone())))
+            {
+                log::error!("hovered sender error: {e:?}");
+            }
+            if response.clicked() {
+                info!("label:path {:?} // {:?}", label, path);
+                if self.selected_items.borrow().contains(path) {
+                    self.selected_items.borrow_mut().remove(path);
+                }
+                if modifiers.ctrl {
+                    self.selected_items.borrow_mut().insert(path.clone());
+                } else {
+                    self.selected_items.borrow_mut().clear();
+                    self.selected_items.borrow_mut().insert(path.clone());
                 }
             }
-        });
+            if response.double_clicked()
+                && let Err(e) = self.command_tx.send(Some(Command::OpenPath(path.clone())))
+            {
+                error!("Error: {e:?}");
+            }
+        } else if !self.read_dirs_only {
+            let size = self
+                .file_metadata
+                .borrow()
+                .get(path)
+                .map(|metadata| format_path_metadata(metadata.path_size))
+                .unwrap_or_default();
+            let response = row.detail(&size).reserve_caret(true).show(ui);
+            if response.clicked() {
+                if let Err(e) = self.command_tx.send(Some(Command::Select(path.clone()))) {
+                    error!("Error: {e:?}");
+                }
+                if modifiers.ctrl {
+                    self.selected_items.borrow_mut().insert(path.clone());
+                }
+                if self.selected_items.borrow().contains(path) {
+                    self.selected_items.borrow_mut().remove(path);
+                } else {
+                    self.selected_items.borrow_mut().clear();
+                    self.selected_items.borrow_mut().insert(path.clone());
+                }
+            }
+        }
     }
 
     fn _default_filename(mut self, filename: impl Into<String>) -> Self {

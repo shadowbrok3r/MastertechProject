@@ -5,8 +5,15 @@
 //! `ai_popup_modal` and routes the outcome.
 
 use database::schema::{AiTask, RecordIdExt, User};
-use eframe::egui::{Context, Id, Modal, RichText};
-use crate::ui_tools::{icons, theme};
+use eframe::egui::{Context, Id, RichText};
+use crate::ui_tools::{
+    controls::{self, IconLabel, Metrics, ModalWidth, Role},
+    icons::svg,
+    theme,
+};
+
+/// Size of the popup's lead line.
+const LEAD_PT: f32 = 15.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AiPopupKind {
@@ -45,100 +52,92 @@ impl AiAttentionModal {
     }
 
     pub fn show(&self, ctx: &Context, store_users: &[User]) -> Option<AiAttentionOutcome> {
-        let mut outcome: Option<AiAttentionOutcome> = None;
         let task = &self.popup.ai_task;
-        let modal = Modal::new(Id::new(("ai_attention_modal", task.id.key_string())))
-            .show(ctx, |ui| {
-                ui.set_width(380.0);
+        let (title, view_label) = match self.popup.kind {
+            AiPopupKind::TechAttention => ("Requires your attention", "View now"),
+            AiPopupKind::OperatorReview => ("AI task ready for review", "Review now"),
+        };
+        let buttons = [(Role::Primary, view_label), (Role::Cancel, "Later")];
+        let shown = controls::modal(
+            ctx,
+            Id::new(("ai_attention_modal", task.id.key_string())),
+            svg::ROBOT,
+            title,
+            ModalWidth::Narrow,
+            &buttons,
+            |ui| {
+                let m = Metrics::get(ui.ctx());
                 ui.vertical_centered(|ui| {
                     match self.popup.kind {
                         AiPopupKind::TechAttention => {
-                            ui.heading(format!("{} Requires your attention", icons::ROBOT));
-                            ui.separator();
-                            ui.add_space(8.);
                             ui.label(
                                 RichText::new(format!(
                                     "Computer for {} - {} requires your attention",
                                     task.customer_name, task.service_number
                                 ))
-                                .size(16.0)
+                                .size(LEAD_PT)
                                 .strong(),
                             );
-                            ui.add_space(4.);
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} checklist items · requested by {}",
-                                    self.popup.item_count,
-                                    Self::user_name(store_users, &task.requested_by)
-                                ))
-                                .weak()
-                                .small(),
+                            ui.add_space(m.pad.y);
+                            let detail = format!(
+                                "{} checklist items · requested by {}",
+                                self.popup.item_count,
+                                Self::user_name(store_users, &task.requested_by)
                             );
+                            IconLabel::new(svg::LIST_CHECKS, &detail)
+                                .small(true)
+                                .tone(theme::weak_text(ui))
+                                .show(ui);
                         }
                         AiPopupKind::OperatorReview => {
-                            ui.heading(format!("{} AI task ready for review", icons::ROBOT));
-                            ui.separator();
-                            ui.add_space(8.);
                             ui.label(
                                 RichText::new(format!(
                                     "{} — {} - {}",
                                     task.title, task.customer_name, task.service_number
                                 ))
-                                .size(16.0)
+                                .size(LEAD_PT)
                                 .strong(),
                             );
-                            ui.add_space(4.);
+                            ui.add_space(m.pad.y);
                             let completed = task
                                 .completed_at
                                 .as_ref()
                                 .map(|d| d.to_string())
                                 .unwrap_or_default();
-                            ui.label(
-                                RichText::new(format!(
-                                    "All {} steps completed by {} {}",
-                                    self.popup.item_count,
-                                    Self::user_name(store_users, &task.assignee),
-                                    completed
-                                ))
-                                .weak()
-                                .small(),
+                            let detail = format!(
+                                "All {} steps completed by {} {}",
+                                self.popup.item_count,
+                                Self::user_name(store_users, &task.assignee),
+                                completed
                             );
+                            IconLabel::new(svg::CHECK_CIRCLE, &detail)
+                                .small(true)
+                                .tone(theme::weak_text(ui))
+                                .icon_tone(theme::success(ui))
+                                .show(ui);
                         }
                     }
                     if self.queue_remaining > 0 {
-                        ui.add_space(2.);
-                        ui.label(
-                            RichText::new(format!(
-                                "+{} more waiting in your AI Tasks column",
-                                self.queue_remaining
-                            ))
-                            .weak()
-                            .small(),
+                        ui.add_space(m.pad.y / 2.0);
+                        let waiting = format!(
+                            "+{} more waiting in your AI Tasks column",
+                            self.queue_remaining
                         );
+                        IconLabel::new(svg::QUEUE, &waiting)
+                            .small(true)
+                            .tone(theme::weak_text(ui))
+                            .show(ui);
                     }
-                    ui.add_space(12.);
-                    ui.horizontal(|ui| {
-                        let view_label = match self.popup.kind {
-                            AiPopupKind::TechAttention => "View now",
-                            AiPopupKind::OperatorReview => "Review now",
-                        };
-                        let view = ui.button(
-                            RichText::new(view_label).color(theme::success(ui)).strong(),
-                        );
-                        if view.clicked() {
-                            outcome = Some(AiAttentionOutcome::ViewNow(self.popup.clone()));
-                        }
-                        if ui.button("Later").clicked() {
-                            outcome = Some(AiAttentionOutcome::Later(self.popup.clone()));
-                        }
-                    });
                 });
-            });
+            },
+        );
 
-        // ESC / outside click = Later — blocking, not imprisoning.
-        if outcome.is_none() && modal.should_close() {
-            outcome = Some(AiAttentionOutcome::Later(self.popup.clone()));
+        if shown.clicked == Some(0) {
+            return Some(AiAttentionOutcome::ViewNow(self.popup.clone()));
         }
-        outcome
+        // Escape, an outside click or Later acknowledges only.
+        shown
+            .should_close
+            .then(|| AiAttentionOutcome::Later(self.popup.clone()))
     }
 }

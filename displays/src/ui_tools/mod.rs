@@ -1,4 +1,4 @@
-use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, Style, TextFormat, Ui, Widget};
+use eframe::egui::{text::LayoutJob, Color32, FontFamily, FontId, Style, TextFormat, Ui};
 use database::schema::LiveTaskPayload;
 use std::collections::BTreeSet;
 use anyhow::Context;
@@ -14,6 +14,7 @@ pub mod toasts;
 pub mod tokyo_dark;
 pub mod rerun_mtech;
 pub mod mtech_glass;
+pub mod mtech_studio;
 pub mod neon_glass;
 pub mod galactic_glass;
 pub mod soft_glass;
@@ -38,14 +39,23 @@ pub mod info_card;
 pub mod list_row;
 pub mod plots;
 pub mod selection_stats;
-pub mod store_picker;
+#[cfg(test)]
+pub(crate) mod headless_render;
+#[cfg(test)]
+mod kit_tests;
+#[cfg(test)]
+mod ratchet_tests;
+#[cfg(test)]
+mod title_bar_tests;
 
-pub use mtech_ui::{dock_style, egui_logger, theme};
+pub use mtech_ui::{controls, dock_style, egui_logger, fonts, metrics, theme, tokens};
 
 const ZSTD_LEVEL: i32 = 9;
 
 const STYLE_KEY: &str = "style";
 const GLASS_KEY: &str = "glass";
+const DENSITY_KEY: &str = "density";
+const TEXT_SCALE_KEY: &str = "text_scale";
 
 /// A saved theme: the egui `Style` plus the parts of a theme that have no `Style` slot.
 ///
@@ -59,15 +69,34 @@ pub struct SavedTheme {
     /// `egui::Style` file. Callers recover it from the style's matching preset instead of guessing.
     #[serde(default)]
     pub glass: Option<crate::ui_tools::glass_backdrop::GlassParams>,
+    #[serde(default)]
+    pub density: metrics::Density,
+    #[serde(default)]
+    pub text_scale: fonts::TextScale,
 }
 
 impl SavedTheme {
     /// The theme as currently applied to `ctx` — the live style plus the glass material sitting on
     /// the context. This is what Save persists.
     pub fn current(ctx: &eframe::egui::Context) -> Self {
+        let mut style = (*ctx.global_style()).clone();
+        strip_weight_families(&mut style);
         Self {
-            style: (*ctx.global_style()).clone(),
+            style,
             glass: Some(glass_backdrop::params(ctx)),
+            density: metrics::density(ctx),
+            text_scale: fonts::text_scale(ctx),
+        }
+    }
+}
+
+/// Resets text styles in the overlay's weight families to `Proportional`.
+fn strip_weight_families(style: &mut Style) {
+    for font in style.text_styles.values_mut() {
+        if let FontFamily::Name(name) = &font.family
+            && (&**name == fonts::MEDIUM || &**name == fonts::SEMIBOLD)
+        {
+            font.family = FontFamily::Proportional;
         }
     }
 }
@@ -87,7 +116,9 @@ pub fn decode_theme(packet: &[u8]) -> anyhow::Result<SavedTheme> {
 
 /// Serialize a theme to the on-disk/on-record JSON shape, for exporting to a file.
 pub fn theme_to_json(theme: &SavedTheme) -> anyhow::Result<Vec<u8>> {
-    serde_json::to_vec(theme).context("serialize theme to JSON")
+    let mut theme = theme.clone();
+    strip_weight_families(&mut theme.style);
+    serde_json::to_vec(&theme).context("serialize theme to JSON")
 }
 
 /// Read a theme from JSON in either shape: the wrapper this crate writes, or a bare `egui::Style`
@@ -97,19 +128,29 @@ pub fn theme_to_json(theme: &SavedTheme) -> anyhow::Result<Vec<u8>> {
 pub fn theme_from_json(json: &[u8]) -> anyhow::Result<SavedTheme> {
     let value: serde_json::Value =
         serde_json::from_slice(json).context("theme is not valid JSON")?;
-    let (style, glass) = match value {
+    match value {
         serde_json::Value::Object(mut map) if map.contains_key(STYLE_KEY) => {
-            let glass = map
-                .remove(GLASS_KEY)
-                .and_then(|g| serde_json::from_value(g).ok());
-            (map.remove(STYLE_KEY).unwrap_or(serde_json::Value::Null), glass)
+            let glass = take_field(&mut map, GLASS_KEY);
+            let density = take_field(&mut map, DENSITY_KEY).unwrap_or_default();
+            let text_scale = take_field(&mut map, TEXT_SCALE_KEY).unwrap_or_default();
+            let style = map.remove(STYLE_KEY).unwrap_or(serde_json::Value::Null);
+            Ok(SavedTheme { style: style_from_value(style), glass, density, text_scale })
         }
-        bare => (bare, None),
-    };
-    Ok(SavedTheme {
-        style: style_from_value(style),
-        glass,
-    })
+        bare => Ok(SavedTheme {
+            style: style_from_value(bare),
+            glass: None,
+            density: Default::default(),
+            text_scale: Default::default(),
+        }),
+    }
+}
+
+/// Removes `key` from `map` and decodes it, or `None` when absent or malformed.
+fn take_field<T: serde::de::DeserializeOwned>(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<T> {
+    map.remove(key).and_then(|v| serde_json::from_value(v).ok())
 }
 
 /// Deserialize an egui `Style` from JSON, migrating across egui versions.
@@ -208,50 +249,29 @@ pub fn show_notification(
     let matches = find_task_in_description(notification_description, task_names);
 
     // We assume only one match for simplicity; handle multiple matches if necessary
-    if let Some(task_name) = matches.get(0) {
+    if let Some(task_name) = matches.first() {
         // Find where the task name is in the notification description
         if let Some(pos) = notification_description.find(task_name) {
-            // Split the text into before, task name, and after
             let before = &notification_description[..pos];
             let after = &notification_description[pos + task_name.len()..];
-
-            // Display the text parts with different formatting
-            eframe::egui::Frame::new()
-                .fill(ui.style().visuals.window_fill)
-                .corner_radius(eframe::egui::CornerRadius::same(12))
-                .inner_margin(Margin::same(15))
-                .outer_margin(Margin::same(5))
-                .show(ui, |ui| {
-                    // info!("{pos:?}, {before:?}, {task_name:?}, {after:?}");
-                    ui.horizontal_wrapped(|ui| {
-                        // Show the text before the task name
-                        ui.label(RichText::new(before));
-
-                        // Show the task name in a different color (e.g., blue)
-                        let color = Color32::from_rgba_premultiplied(42, 222, 192, 60);
-                        if Button::new(
-                            RichText::new(task_name)
-                                .color(color),
-                        )
-                        .ui(ui)
-                        .clicked()
-                        {
-                            let task = tasks.iter().find(|&x| {
-                                x.task_name == *task_name
-                                    || format!("{}", x.service_number.clone().unwrap_or_default())
-                                        == format!("{}", *task_name)
-                            });
-
-                            if let Some(task) = task {
-                                let _ = ui_actions_tx
-                                    .try_send(TaskUiActions::OpenTaskModal(task.clone()));
-                            }
-                        }
-
-                        // Show the text after the task name
-                        ui.label(after);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(before);
+                let t = tokens::Tokens::get(ui.ctx());
+                let link = controls::IconLink::new(task_name)
+                    .icon(icons::svg::CLIPBOARD_TEXT)
+                    .tone(t.info)
+                    .show(ui);
+                if link.clicked() {
+                    let task = tasks.iter().find(|x| {
+                        x.task_name == *task_name
+                            || x.service_number.as_deref().unwrap_or_default() == task_name.as_str()
                     });
-                });
+                    if let Some(task) = task {
+                        let _ = ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
+                    }
+                }
+                ui.label(after);
+            });
         } else {
             // If no task name is found, display the whole description normally
             ui.label(notification_description);

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use eframe::egui::{
     self, Align, Color32, CornerRadius, FontFamily, FontId, Frame, Id, Layout, Margin, RichText,
-    Sense, Stroke, TextFormat, Ui,
+    Sense, Stroke, TextFormat, Ui, Vec2,
     cache::{ComputerMut, FrameCache},
     text::LayoutJob,
     vec2,
@@ -12,10 +12,14 @@ use eframe::egui::{
 use serde_json::Value;
 
 use super::{ChatStyle, json_tree, shell, wrap_width};
-use crate::ui_tools::icons;
+use crate::ui_tools::controls::{IconBox, IconButton, Metrics};
+use crate::ui_tools::icons::svg;
 
 /// Pixels each list nesting level is inset by.
 const LIST_INDENT: f32 = 12.0;
+/// Inset of a list marker and of quoted text.
+const MARKER_INSET: f32 = 6.0;
+const QUOTE_INSET: f32 = 8.0;
 /// Heading size as a multiple of body text, by level.
 const HEADING_SCALE: [f32; 6] = [1.4, 1.25, 1.12, 1.05, 1.0, 1.0];
 
@@ -420,7 +424,7 @@ pub(crate) fn show(ui: &mut Ui, text: &str, style: &ChatStyle, ink: Color32, id:
         blank = false;
         match block {
             Block::Heading { level, text } => {
-                ui.add_space(2.0);
+                ui.add_space(Metrics::get(ui.ctx()).gap.y / 3.0);
                 let scale = HEADING_SCALE
                     .get(level.saturating_sub(1))
                     .copied()
@@ -438,7 +442,7 @@ pub(crate) fn show(ui: &mut Ui, text: &str, style: &ChatStyle, ink: Color32, id:
             } => {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.add_space(6.0 + depth as f32 * LIST_INDENT);
+                    ui.add_space(MARKER_INSET + depth as f32 * LIST_INDENT);
                     let marker = match marker {
                         Marker::Bullet => "\u{2022}",
                         Marker::Number(n) => n,
@@ -453,7 +457,7 @@ pub(crate) fn show(ui: &mut Ui, text: &str, style: &ChatStyle, ink: Color32, id:
             }
             Block::Quote(text) => {
                 let quoted = ui.horizontal_top(|ui| {
-                    ui.add_space(10.0);
+                    ui.add_space(QUOTE_INSET);
                     spans_label(ui, text, &style.body, style.primary, style);
                 });
                 let r = quoted.response.rect;
@@ -577,24 +581,32 @@ pub(crate) fn code_block(
         }
         return;
     }
+    let m = Metrics::get(ui.ctx());
     Frame::new()
         .fill(style.code_plate)
         .stroke(Stroke::new(1.0, style.rim))
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::symmetric(6, 4))
+        .corner_radius(CornerRadius::same(style.radius))
+        .inner_margin(Margin::symmetric(m.gap.x as i8, (m.gap.y / 2.0) as i8))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
+                let icon = if shell::is_shell_lang(lang) {
+                    svg::TERMINAL_WINDOW
+                } else {
+                    svg::CODE
+                };
+                let (slot, _) = ui.allocate_exact_size(Vec2::splat(m.icon_sm), Sense::hover());
+                icon.paint(ui, slot, m.icon_sm, style.weak);
                 ui.label(
                     RichText::new(if lang.is_empty() { "code" } else { lang })
                         .font(style.small.clone())
                         .color(style.weak),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let copy =
-                        egui::Button::new(RichText::new(icons::COPY).font(style.label.clone()))
-                            .frame(false);
-                    if ui.add(copy).on_hover_text("Copy code").clicked() {
+                    let copy = IconButton::new(svg::COPY, IconBox::Sm)
+                        .tip("Copy code")
+                        .show(ui);
+                    if copy.clicked() {
                         ui.ctx().copy_text(code.to_string());
                     }
                 });

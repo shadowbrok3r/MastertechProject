@@ -5,12 +5,18 @@
 //! links customer/computer/order so the machine-to-order match is recorded
 //! rather than inferred.
 
-use database::schema::{random_record_id, AssistRequest, ConfirmedRequest, Store, ASSIST_REQUEST_TABLE};
+use database::schema::{
+    ASSIST_REQUEST_TABLE, AssistRequest, ConfirmedRequest, Store, random_record_id,
+};
 use displays::plugins::push_widget_anchor;
 use displays::tabs::TabId;
-use displays::ui_tools::icons;
-use displays::{get_toast_sender, ToastMessage};
-use eframe::egui::{Align2, Area, Context, Frame, Order, RichText};
+use displays::ui_tools::{
+    controls::{ButtonKind, Metrics, TextButton, Tokens},
+    fonts,
+    icons::svg::{self, Icon},
+};
+use displays::{ToastMessage, get_toast_sender};
+use eframe::egui::{Align2, Area, Context, Frame, Order, RichText, Sense, Ui, Vec2};
 use log::{info, warn};
 use tokio::spawn;
 
@@ -31,6 +37,22 @@ pub struct PendingAssist {
 
 /// Seconds between offer polls; an offer is not urgent.
 const OFFER_POLL_SECS: u64 = 20;
+/// Narrowest the prompt gets.
+const PROMPT_MIN_W: f32 = 320.0;
+/// Prompt title size.
+const PROMPT_TITLE_PT: f32 = 14.0;
+/// Opacity of the prompt icon's duotone back layer.
+const DUO_ALPHA: f32 = 0.3;
+
+/// A dim detail line led by `icon`.
+fn detail_row(ui: &mut Ui, icon: Icon, text: String) {
+    let t = Tokens::get(ui.ctx());
+    let size = Metrics::get(ui.ctx()).icon_sm;
+    ui.horizontal(|ui| {
+        ui.add(icon.image(size).tint(t.text_faint));
+        ui.label(RichText::new(text).color(t.text_dim));
+    });
+}
 
 impl MastertechContext {
     /// Picks up an assist offer the headless agent wrote for this machine.
@@ -55,19 +77,20 @@ impl MastertechContext {
         let tx = self.assist_offer_tx.clone();
         spawn(async move {
             let sql = "SELECT id, service_number, customer_name, device, checkin_notes FROM assist_offer                        WHERE connection_string = $cs AND status = 'offered'                        AND created_at > time::now() - 4h LIMIT 1";
-            let Ok(mut res) = database::db().query(sql).bind(("cs", cs)).await else { return };
+            let Ok(mut res) = database::db().query(sql).bind(("cs", cs)).await else {
+                return;
+            };
             let rows: Vec<serde_json::Value> = res.take(0).unwrap_or_default();
             let Some(row) = rows.first() else { return };
-            let Some(sn) = row.get("service_number").and_then(|v| v.as_str()) else { return };
-            let id = row
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    database::schema::RecordId::new(
-                        "assist_offer",
-                        s.trim_start_matches("assist_offer:").trim_matches('`'),
-                    )
-                });
+            let Some(sn) = row.get("service_number").and_then(|v| v.as_str()) else {
+                return;
+            };
+            let id = row.get("id").and_then(|v| v.as_str()).map(|s| {
+                database::schema::RecordId::new(
+                    "assist_offer",
+                    s.trim_start_matches("assist_offer:").trim_matches('`'),
+                )
+            });
             let _ = tx.try_send(PendingAssist {
                 service_number: sn.to_string(),
                 order_device: row
@@ -116,7 +139,11 @@ impl MastertechContext {
         self.pending_assist = Some(PendingAssist {
             service_number,
             order_device: device
-                .map(|d| format!("{} {}", d.device_mfg, d.device_model).trim().to_string())
+                .map(|d| {
+                    format!("{} {}", d.device_mfg, d.device_model)
+                        .trim()
+                        .to_string()
+                })
                 .unwrap_or_default(),
             order_serial: device.map(|d| d.device_serial.clone()).unwrap_or_default(),
             customer_name,
@@ -127,7 +154,9 @@ impl MastertechContext {
 
     /// Floating so it survives the tab's ScrollArea; only drawn while armed.
     pub fn render_assist_prompt(&mut self, ctx: &Context) {
-        let Some(pending) = self.pending_assist.clone() else { return };
+        let Some(pending) = self.pending_assist.clone() else {
+            return;
+        };
         let Some(user) = self.shared_ctx.current_user.clone() else {
             self.pending_assist = None;
             return;
@@ -140,14 +169,24 @@ impl MastertechContext {
             .order(Order::Foreground)
             .interactable(true)
             .show(ctx, |ui| {
+                let t = Tokens::get(ui.ctx());
+                let m = Metrics::get(ui.ctx());
                 let resp = Frame::popup(ui.style())
-                    .inner_margin(12.0)
+                    .inner_margin(m.window_margin)
                     .fill(ui.style().visuals.window_fill)
                     .stroke(ui.style().visuals.window_stroke)
                     .show(ui, |ui| {
-                        ui.set_min_width(320.0);
+                        ui.set_min_width(PROMPT_MIN_W);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(icons::ROBOT).size(18.0));
+                            let (slot, _) =
+                                ui.allocate_exact_size(Vec2::splat(m.icon_lg), Sense::hover());
+                            svg::ROBOT.paint_duo(
+                                ui,
+                                slot,
+                                m.icon_lg,
+                                t.primary,
+                                t.primary.gamma_multiply(DUO_ALPHA),
+                            );
                             ui.label(
                                 RichText::new(if pending.offer_id.is_some() {
                                     format!(
@@ -160,41 +199,51 @@ impl MastertechContext {
                                         pending.service_number
                                     )
                                 })
-                                .strong()
-                                .size(14.0),
+                                .font(fonts::semibold(PROMPT_TITLE_PT)),
                             );
                         });
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("Order: {} {}", pending.customer_name, pending.order_device))
-                                .weak(),
+                        ui.add_space(m.gap.y / 2.0);
+                        detail_row(
+                            ui,
+                            svg::RECEIPT,
+                            format!("Order: {} {}", pending.customer_name, pending.order_device),
                         );
                         if !pending.order_serial.is_empty() {
-                            ui.label(RichText::new(format!("Order serial: {}", pending.order_serial)).weak());
+                            detail_row(
+                                ui,
+                                svg::BARCODE,
+                                format!("Order serial: {}", pending.order_serial),
+                            );
                         }
                         if !pending.checkin_notes.is_empty() {
-                            ui.label(
-                                RichText::new(format!(
+                            detail_row(
+                                ui,
+                                svg::CLIPBOARD_TEXT,
+                                format!(
                                     "Checked in for: {}",
                                     pending.checkin_notes.chars().take(120).collect::<String>()
-                                ))
-                                .weak(),
+                                ),
                             );
                         }
-                        ui.label(RichText::new(format!("This machine: {}", self.client_title)).weak());
+                        detail_row(
+                            ui,
+                            svg::DESKTOP_TOWER,
+                            format!("This machine: {}", self.client_title),
+                        );
                         if !self.computer_data.product_serial.is_empty() {
-                            ui.label(
-                                RichText::new(format!(
-                                    "This serial: {}",
-                                    self.computer_data.product_serial
-                                ))
-                                .weak(),
+                            detail_row(
+                                ui,
+                                svg::BARCODE,
+                                format!("This serial: {}", self.computer_data.product_serial),
                             );
                         }
-                        ui.add_space(6.0);
+                        ui.add_space(m.gap.y);
                         ui.horizontal(|ui| {
-                            if ui
-                                .button(format!("{} Yes, get AI help", icons::CHECK))
+                            if TextButton::new("Yes, get AI help")
+                                .icon(svg::CHECK)
+                                .kind(ButtonKind::Primary)
+                                .prominent(true)
+                                .show(ui)
                                 .on_hover_text(
                                     "Links this machine to the order and asks the diagnostic agent to start.",
                                 )
@@ -202,7 +251,12 @@ impl MastertechContext {
                             {
                                 confirm = true;
                             }
-                            if ui.button(format!("{} Not this one", icons::CLOSE)).clicked() {
+                            if TextButton::new("Not this one")
+                                .icon(svg::X)
+                                .prominent(true)
+                                .show(ui)
+                                .clicked()
+                            {
                                 dismiss = true;
                             }
                         });
@@ -211,7 +265,11 @@ impl MastertechContext {
             });
 
         if dismiss {
-            Self::answer_offer(pending.offer_id.clone(), "declined", user.get_email().to_string());
+            Self::answer_offer(
+                pending.offer_id.clone(),
+                "declined",
+                user.get_email().to_string(),
+            );
             self.pending_assist = None;
             return;
         }
@@ -219,16 +277,26 @@ impl MastertechContext {
             return;
         }
         self.pending_assist = None;
-        Self::answer_offer(pending.offer_id.clone(), "accepted", user.get_email().to_string());
+        Self::answer_offer(
+            pending.offer_id.clone(),
+            "accepted",
+            user.get_email().to_string(),
+        );
 
         // The confirmation is the ground truth the auto-link event cannot infer.
         self.create_and_link_only();
 
         let request = random_record_id(ASSIST_REQUEST_TABLE);
-        let label = format!("#{} {}", pending.service_number, self.computer_data.hostname)
-            .trim()
-            .to_string();
-        let session = self.shared_ctx.enhanced_ai_playground.follow_assist_request(label);
+        let label = format!(
+            "#{} {}",
+            pending.service_number, self.computer_data.hostname
+        )
+        .trim()
+        .to_string();
+        let session = self
+            .shared_ctx
+            .enhanced_ai_playground
+            .follow_assist_request(label);
         self.pending_tab_opens.push(TabId::Ai);
         self.pending_activate_tab = Some(TabId::Ai);
 
@@ -247,16 +315,16 @@ impl MastertechContext {
             match AssistRequest::create_confirmed(&request, confirmed).await {
                 Ok(()) => {
                     info!("assist_request queued for service #{service_number}");
-                    let _ = toast_tx.try_send(ToastMessage::Success(
-                        format!("AI assistance requested for #{service_number}"),
-                    ));
+                    let _ = toast_tx.try_send(ToastMessage::Success(format!(
+                        "AI assistance requested for #{service_number}"
+                    )));
                     session.follow(request).await;
                 }
                 Err(e) => {
                     warn!("assist_request failed for #{service_number}: {e}");
-                    let _ = toast_tx.try_send(ToastMessage::Error(
-                        format!("Could not request AI assistance: {e}"),
-                    ));
+                    let _ = toast_tx.try_send(ToastMessage::Error(format!(
+                        "Could not request AI assistance: {e}"
+                    )));
                     session.fail(format!("Could not request AI assistance: {e}"));
                 }
             }

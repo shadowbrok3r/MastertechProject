@@ -5,16 +5,17 @@ use std::str::FromStr;
 
 use chrono::DateTime;
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{
-    Align, Button, Checkbox, ComboBox, Context, Frame, Layout, Margin, ProgressBar, RichText, ScrollArea,
-    Spinner, Ui, Widget,
-};
+use eframe::egui::{Align, Context, Frame, Layout, RichText, ScrollArea, Ui};
 use reqwest::header::{HeaderName, ACCEPT, USER_AGENT};
 use reqwest::Client;
 
 use super::{Asset, GithubRelease, GIT_MASTER_TECH_REPO_BASE};
+use crate::ui_tools::controls::{
+    self, ButtonKind, IconLink, Metrics, ProgressBar, SpinnerSize, TextButton,
+};
+use crate::ui_tools::icons::svg::{self, Icon};
 use crate::ui_tools::list_row::{Lead, ListRow};
-use crate::ui_tools::{glass_card, icons, theme};
+use crate::ui_tools::{glass_card, theme};
 use crate::{PlatformSpawner, Spawner};
 
 /// Releases requested per fetch.
@@ -23,6 +24,8 @@ const RELEASES_PER_PAGE: u32 = 50;
 const LIST_W: f32 = 260.0;
 /// Below this width the release list collapses into a combo box.
 const NARROW_W: f32 = 720.0;
+/// Width of an asset's download progress bar.
+const DOWNLOAD_BAR_W: f32 = 160.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Platform {
@@ -66,11 +69,11 @@ impl Platform {
         }
     }
 
-    fn glyph(self) -> &'static str {
+    fn icon(self) -> Icon {
         match self {
-            Self::Windows => icons::WINDOWS_LOGO,
-            Self::Linux => icons::LINUX_LOGO,
-            Self::Unknown => icons::FILE,
+            Self::Windows => svg::WINDOWS_LOGO,
+            Self::Linux => svg::LINUX_LOGO,
+            Self::Unknown => svg::FILE,
         }
     }
 }
@@ -225,32 +228,24 @@ impl ReleaseBrowser {
             ui.ctx().request_repaint();
         }
 
+        let m = Metrics::get(ui.ctx());
         Frame::new().inner_margin(16.0).show(ui, |ui| {
             self.header(ui);
-            ui.add_space(8.0);
+            ui.add_space(m.gap.y);
 
             let visible_count = self.visible().len();
             match &self.fetch {
                 FetchState::Loading | FetchState::Idle if self.releases.is_empty() => {
-                    centered_message(ui, |ui| {
-                        Spinner::new().size(18.0).ui(ui);
-                        ui.label(RichText::new("Loading releases…").color(theme::weak_text(ui)));
-                    });
+                    controls::loading_state(ui, "Loading releases…");
                     return;
                 }
                 FetchState::Failed(e) if self.releases.is_empty() => {
                     let e = e.clone();
-                    centered_message(ui, |ui| {
-                        ui.label(icons::icon_colored(icons::STATUS_WARN, theme::error(ui)).size(24.0));
-                        ui.label(RichText::new("Couldn't load releases").strong());
-                        ui.label(RichText::new(e).small().color(theme::weak_text(ui)));
-                    });
+                    controls::empty_state(ui, svg::CLOUD_WARNING, "Couldn't load releases", &e, &[]);
                     return;
                 }
                 _ if visible_count == 0 => {
-                    centered_message(ui, |ui| {
-                        ui.label(RichText::new("No releases published yet.").color(theme::weak_text(ui)));
-                    });
+                    controls::empty_state(ui, svg::PACKAGE, "No releases published yet", "", &[]);
                     return;
                 }
                 _ => {}
@@ -266,7 +261,7 @@ impl ReleaseBrowser {
 
             if ui.available_width() < NARROW_W {
                 self.release_combo(ui);
-                ui.add_space(8.0);
+                ui.add_space(m.gap.y);
                 self.release_detail(ui);
             } else {
                 ui.horizontal_top(|ui| {
@@ -287,9 +282,8 @@ impl ReleaseBrowser {
 
     fn header(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.label(icons::icon_colored(icons::DOWNLOAD, theme::accent(ui)).size(22.0));
             ui.vertical(|ui| {
-                ui.label(RichText::new("Downloads").heading().strong().color(theme::strong_text(ui)));
+                controls::heading(ui, svg::CLOUD_ARROW_DOWN, "Downloads");
                 let subtitle = match self.latest_tag() {
                     Some(tag) => format!("{} releases · latest {tag}", self.releases.len()),
                     None => "MasterTech and QC App releases".to_string(),
@@ -299,29 +293,27 @@ impl ReleaseBrowser {
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let loading = matches!(self.fetch, FetchState::Loading);
-                let refresh = ui
-                    .add_enabled(!loading, Button::new(format!("{} Refresh", icons::REFRESH)))
+                let refresh = TextButton::new("Refresh")
+                    .icon(svg::ARROW_CLOCKWISE)
+                    .enabled(!loading)
+                    .show(ui)
                     .on_hover_text("Fetch the release list again");
                 if refresh.clicked() {
                     self.refresh(ui.ctx());
                 }
                 if loading && !self.releases.is_empty() {
-                    Spinner::new().size(14.0).ui(ui);
+                    controls::spinner(ui, SpinnerSize::Sm);
                 }
-                Checkbox::new(&mut self.show_all_platforms, "All platforms").ui(ui);
-                Checkbox::new(&mut self.show_prereleases, "Pre-releases").ui(ui);
+                controls::toggle(ui, &mut self.show_all_platforms, "All platforms");
+                controls::toggle(ui, &mut self.show_prereleases, "Pre-releases");
             });
         });
         if let FetchState::Failed(e) = &self.fetch
             && !self.releases.is_empty()
         {
-            ui.label(
-                RichText::new(format!("{} Refresh failed: {e}", icons::STATUS_WARN))
-                    .small()
-                    .color(theme::error(ui)),
-            );
+            controls::note(ui, svg::WARNING_CIRCLE, &format!("Refresh failed: {e}"), theme::error(ui));
         }
-        glass_card::hairline(ui);
+        controls::hairline(ui);
     }
 
     fn release_list(&mut self, ui: &mut Ui) {
@@ -337,7 +329,7 @@ impl ReleaseBrowser {
                     let title = display_name(release);
                     let lead_color = is_latest.then(|| theme::success(ui));
                     let row = ListRow::new(title)
-                        .lead(Lead::Icon(icons::TAG, lead_color))
+                        .lead(Lead::Icon(svg::TAG, lead_color))
                         .detail(&detail)
                         .selected(self.selected_tag.as_deref() == Some(release.tag_name.as_str()))
                         .show(ui);
@@ -353,22 +345,20 @@ impl ReleaseBrowser {
 
     fn release_combo(&mut self, ui: &mut Ui) {
         let latest = self.latest_tag().map(str::to_owned);
-        let current = self.selected_tag.clone().unwrap_or_default();
-        let mut picked = None;
-        ComboBox::from_id_salt("release_combo")
-            .width(ui.available_width())
-            .selected_text(format!("{} {current}", icons::TAG))
-            .show_ui(ui, |ui| {
-                for release in self.visible() {
-                    let is_latest = latest.as_deref() == Some(release.tag_name.as_str());
-                    let text = format!("{}  ·  {}", display_name(release), release_detail_line(release, is_latest));
-                    if ui.selectable_label(release.tag_name == current, text).clicked() {
-                        picked = Some(release.tag_name.clone());
-                    }
-                }
-            });
-        if picked.is_some() {
-            self.selected_tag = picked;
+        let mut current = self.selected_tag.clone().unwrap_or_default();
+        let labels: Vec<(String, String)> = self
+            .visible()
+            .into_iter()
+            .map(|release| {
+                let is_latest = latest.as_deref() == Some(release.tag_name.as_str());
+                let text = format!("{}  ·  {}", display_name(release), release_detail_line(release, is_latest));
+                (release.tag_name.clone(), text)
+            })
+            .collect();
+        let options: Vec<(String, &str)> = labels.iter().map(|(tag, text)| (tag.clone(), text.as_str())).collect();
+        let width = ui.available_width();
+        if controls::dropdown(ui, "release_combo", &mut current, &options, width).changed() {
+            self.selected_tag = Some(current);
         }
     }
 
@@ -383,18 +373,19 @@ impl ReleaseBrowser {
         };
         let is_latest = self.latest_tag() == Some(release.tag_name.as_str());
         let host = Platform::host();
+        let m = Metrics::get(ui.ctx());
 
         ScrollArea::vertical()
             .id_salt("release_detail")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(display_name(&release)).heading().strong().color(theme::strong_text(ui)));
+                    controls::heading(ui, svg::TAG, display_name(&release));
                     if is_latest {
-                        badge(ui, "Latest", theme::success(ui));
+                        controls::badge(ui, "Latest", theme::success(ui));
                     }
                     if release.prerelease {
-                        badge(ui, "Pre-release", theme::warn(ui));
+                        controls::badge(ui, "Pre-release", theme::warn(ui));
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
@@ -403,16 +394,17 @@ impl ReleaseBrowser {
                         ui.label(RichText::new(&release.tag_name).small().color(weak));
                         ui.label(RichText::new("·").small().color(weak));
                     }
+                    ui.add(svg::CALENDAR_BLANK.image(m.icon_sm).tint(weak));
                     ui.label(RichText::new(format!("Published {}", format_date(release_date(&release)))).small().color(weak));
                     if !release.html_url.is_empty() {
                         ui.label(RichText::new("·").small().color(weak));
-                        ui.hyperlink_to(
-                            RichText::new(format!("{} View on GitHub", icons::GITHUB_LOGO)).small(),
-                            &release.html_url,
-                        );
+                        IconLink::new("View on GitHub")
+                            .icon(svg::GITHUB_LOGO)
+                            .url(&release.html_url)
+                            .show(ui);
                     }
                 });
-                ui.add_space(10.0);
+                ui.add_space(m.gap.y);
 
                 let mut assets: Vec<(Product, Platform, &Asset)> = release
                     .assets
@@ -431,24 +423,24 @@ impl ReleaseBrowser {
                     assets.retain(|(_, p, _)| *p == host || *p == Platform::Unknown);
                 }
 
-                glass_card::titled_card(ui, icons::PACKAGE, "Files", Some(&format!("{} files", release.assets.len())), |ui| {
+                glass_card::titled_card(ui, svg::PACKAGE, "Files", Some(&format!("{} files", release.assets.len())), |ui| {
                     if assets.is_empty() {
-                        ui.label(RichText::new("No files for this platform in this release.").color(theme::weak_text(ui)));
+                        controls::note(ui, svg::FILE_X, "No files for this platform in this release.", theme::weak_text(ui));
                     }
                     for (product, platform, asset) in &assets {
                         self.asset_row(ui, *product, *platform, asset, host);
                     }
                     if hidden > 0 {
                         let text = format!("{hidden} more for other platforms");
-                        if ui.link(RichText::new(text).small()).clicked() {
+                        if TextButton::new(&text).kind(ButtonKind::Ghost).icon(svg::EYE).show(ui).clicked() {
                             self.show_all_platforms = true;
                         }
                     }
                 });
 
-                glass_card::titled_card(ui, icons::FILE_TEXT, "Release notes", None, |ui| {
+                glass_card::titled_card(ui, svg::NOTEBOOK, "Release notes", None, |ui| {
                     if release.body.trim().is_empty() {
-                        ui.label(RichText::new("No release notes.").color(theme::weak_text(ui)));
+                        controls::note(ui, svg::NOTE, "No release notes.", theme::weak_text(ui));
                     } else {
                         release_notes(ui, &release.body);
                     }
@@ -459,16 +451,17 @@ impl ReleaseBrowser {
     fn asset_row(&mut self, ui: &mut Ui, product: Product, platform: Platform, asset: &Asset, host: Platform) {
         let recommended = product == Product::MasterTech && platform == host;
         let key = asset.url.clone();
+        let m = Metrics::get(ui.ctx());
         glass_card::group(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
                 let glyph_color = if recommended { theme::accent_secondary(ui) } else { theme::weak_text(ui) };
-                ui.label(icons::icon_colored(platform.glyph(), glyph_color).size(22.0));
+                ui.add(platform.icon().image(m.icon_lg).tint(glyph_color));
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("{} for {}", product.label(), platform.label())).strong().color(theme::strong_text(ui)));
                         if recommended {
-                            badge(ui, "Recommended", theme::accent_secondary(ui));
+                            controls::badge(ui, "Recommended", theme::accent_secondary(ui));
                         }
                     });
                     ui.label(
@@ -483,33 +476,33 @@ impl ReleaseBrowser {
                     match state {
                         Some(DownloadState::Running { done, total }) => {
                             let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
-                            ProgressBar::new(frac)
-                                .desired_width(160.0)
-                                .text(format!("{} / {}", format_size(done), format_size(total)))
-                                .ui(ui);
+                            let text = format!("{} / {}", format_size(done), format_size(total));
+                            ProgressBar::new(frac).width(DOWNLOAD_BAR_W).text(&text).show(ui);
                         }
                         other => {
-                            let label = match other {
-                                Some(DownloadState::Saved) => format!("{} Download again", icons::DOWNLOAD),
-                                Some(DownloadState::Failed(_)) => format!("{} Retry", icons::REFRESH),
-                                _ => format!("{} Download", icons::DOWNLOAD),
+                            let (icon, label) = match other {
+                                Some(DownloadState::Saved) => (svg::DOWNLOAD_SIMPLE, "Download again"),
+                                Some(DownloadState::Failed(_)) => (svg::ARROWS_CLOCKWISE, "Retry"),
+                                _ => (svg::DOWNLOAD_SIMPLE, "Download"),
                             };
-                            let button = if recommended {
-                                Button::new(RichText::new(label).strong())
-                            } else {
-                                Button::new(label)
-                            };
+                            let kind = if recommended { ButtonKind::Primary } else { ButtonKind::Neutral };
                             let enabled = cfg!(not(any(target_os = "ios", target_os = "android")));
-                            if ui.add_enabled(enabled, button).clicked() {
+                            let clicked = TextButton::new(label)
+                                .kind(kind)
+                                .icon(icon)
+                                .enabled(enabled)
+                                .show(ui)
+                                .clicked();
+                            if clicked {
                                 self.start_download(ui.ctx(), asset.clone());
                             }
                             match other {
                                 Some(DownloadState::Saved) => {
-                                    ui.label(icons::icon_colored(icons::CHECK, theme::success(ui)))
+                                    ui.add(svg::CHECK_CIRCLE.image(m.icon_md).tint(theme::success(ui)))
                                         .on_hover_text("Saved");
                                 }
                                 Some(DownloadState::Failed(e)) => {
-                                    ui.label(icons::icon_colored(icons::STATUS_WARN, theme::error(ui)))
+                                    ui.add(svg::WARNING_CIRCLE.image(m.icon_md).tint(theme::error(ui)))
                                         .on_hover_text(e);
                                 }
                                 _ => {}
@@ -541,34 +534,19 @@ impl ReleaseBrowser {
     }
 }
 
-fn centered_message(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
-    ui.add_space(48.0);
-    ui.vertical_centered(contents);
-}
-
-fn badge(ui: &mut Ui, text: &str, color: eframe::egui::Color32) {
-    Frame::new()
-        .fill(color.gamma_multiply(0.18))
-        .stroke((1.0, color.gamma_multiply(0.6)))
-        .corner_radius(6.0)
-        .inner_margin(Margin::symmetric(6, 1))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).small().strong().color(color));
-        });
-}
-
 /// Renders the markdown subset GitHub release notes use: headings, bullets, emphasis and bare URLs.
 fn release_notes(ui: &mut Ui, body: &str) {
+    let m = Metrics::get(ui.ctx());
     for raw in body.lines() {
         let trimmed = raw.trim_start();
         if trimmed.is_empty() {
-            ui.add_space(4.0);
+            ui.add_space(m.pad.y);
             continue;
         }
         if let Some(heading) = trimmed.strip_prefix('#') {
             let text = strip_emphasis(heading.trim_start_matches('#').trim());
-            ui.add_space(4.0);
-            ui.label(RichText::new(text).strong().color(theme::strong_text(ui)));
+            ui.add_space(m.pad.y);
+            controls::subheading(ui, None, &text);
             continue;
         }
         let bullet = ["- ", "* ", "+ "].iter().find_map(|m| trimmed.strip_prefix(m));
@@ -577,8 +555,9 @@ fn release_notes(ui: &mut Ui, body: &str) {
             ui.spacing_mut().item_spacing.x = 0.0;
             let text = match bullet {
                 Some(rest) => {
-                    ui.add_space(8.0 + indent);
-                    ui.label(RichText::new("•  ").color(theme::accent_secondary(ui)));
+                    ui.add_space(m.gap.x + indent);
+                    ui.add(svg::DOT.image(m.icon_sm).tint(theme::accent_secondary(ui)));
+                    ui.add_space(m.pad.y);
                     rest
                 }
                 None => trimmed,
@@ -600,7 +579,7 @@ fn inline_text(ui: &mut Ui, text: &str) {
             .find(|c: char| c.is_whitespace() || c == ')' || c == ']')
             .unwrap_or(tail.len());
         let url = &tail[..end];
-        ui.hyperlink_to(short_url(url), url);
+        IconLink::new(&short_url(url)).url(url).show(ui);
         rest = &tail[end..];
     }
     if !rest.is_empty() {

@@ -1,17 +1,31 @@
-use database::schema::{
-    utilities::{check_for_duplicates, create_and_link_records, create_full_task_payload},
-    merge_computer, merge_customer, merge_task, merge_ticket,
-    DuplicateCheckResult, FieldDisplay, MergeResolution, RecordIdExt, TaskCreationResult, TaskHistory
-};
-use displays::{get_toast_sender, modals::DuplicateMergeModal, ToastMessage};
 use crate::app_state::{MastertechContext, PendingTurData, TurSubmitState};
-use tokio::spawn;
+use database::schema::{
+    DuplicateCheckResult, FieldDisplay, MergeResolution, RecordIdExt, TaskCreationResult,
+    TaskHistory, merge_computer, merge_customer, merge_task, merge_ticket,
+    utilities::{check_for_duplicates, create_and_link_records, create_full_task_payload},
+};
+use displays::ui_tools::{
+    controls::{ButtonKind, Metrics, TextButton, Tokens},
+    fonts,
+    icons::svg,
+};
+use displays::{ToastMessage, get_toast_sender, modals::DuplicateMergeModal};
+use eframe::egui::{Align, Align2, Area, Frame, Layout, Order, RichText, Sense, Vec2};
 use log::info;
-use eframe::egui::{Align, Align2, Area, Button, Color32, Frame, Layout, Order, RichText, Vec2};
 use std::time::Instant;
+use tokio::spawn;
 
 /// Duration for confirmation countdown (in seconds)
 const CONFIRMATION_COUNTDOWN_SECS: f32 = 5.0;
+
+/// Narrowest the confirmation toast gets.
+const TOAST_MIN_W: f32 = 280.0;
+/// Toast title size.
+const TOAST_TITLE_PT: f32 = 14.0;
+/// Height of the countdown bar.
+const PROGRESS_H: f32 = 4.0;
+/// Opacity of the toast icon's duotone back layer.
+const DUO_ALPHA: f32 = 0.3;
 
 impl MastertechContext {
     /// Main entry point for submitting a TUR sheet.
@@ -32,18 +46,21 @@ impl MastertechContext {
 
         let send_specs = self.send_specs;
         let service_number = ticket_data.service_number.clone();
-        
+
         // Populate task_data fields that need to be set before duplicate check
         task_data.due_date = self.date.into();
         task_data.service_number = Some(service_number.clone());
         task_data.task_name = format!("{} - {}", &customer_data.name, &service_number);
-        
+
         // Set assignee from the TUR form's task_data.assignee (should be set by the form)
         // If it's still a random ID, use current user as fallback
         if task_data.assignee.key_string().contains("-") {
             // Random UUID format - use current user instead
             if let Some(ref user) = self.shared_ctx.current_user {
-                info!("Assignee was random ID, using current user: {:?}", user.get_id());
+                info!(
+                    "Assignee was random ID, using current user: {:?}",
+                    user.get_id()
+                );
                 task_data.assignee = user.get_id();
             }
         }
@@ -102,75 +119,79 @@ impl MastertechContext {
             .order(Order::Foreground)
             .interactable(true)
             .show(ctx, |ui| {
+                let t = Tokens::get(ui.ctx());
+                let m = Metrics::get(ui.ctx());
                 Frame::popup(ui.style())
-                    .inner_margin(12.0)
+                    .inner_margin(m.window_margin)
                     .fill(ui.style().visuals.window_fill)
                     .stroke(ui.style().visuals.window_stroke)
                     .show(ui, |ui| {
-                        ui.set_min_width(280.0);
-                        
+                        ui.set_min_width(TOAST_MIN_W);
+
                         // Header with icon and countdown
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("⏳").size(18.0));
-                            ui.label(RichText::new(format!(
-                                "Creating task in {:.1}s...", 
-                                remaining
-                            )).strong().size(14.0));
+                            let (slot, _) =
+                                ui.allocate_exact_size(Vec2::splat(m.icon_lg), Sense::hover());
+                            svg::HOURGLASS.paint_duo(
+                                ui,
+                                slot,
+                                m.icon_lg,
+                                t.primary,
+                                t.primary.gamma_multiply(DUO_ALPHA),
+                            );
+                            ui.label(
+                                RichText::new(format!("Creating task in {:.1}s...", remaining))
+                                    .font(fonts::semibold(TOAST_TITLE_PT)),
+                            );
                         });
-                        
-                        ui.add_space(6.0);
-                        
+
+                        ui.add_space(m.gap.y);
+
                         // Service number info
                         let service_num = pending.ticket_data.service_number.clone();
-                        ui.label(RichText::new(format!("Service #{}", service_num))
-                            .color(Color32::from_rgb(150, 180, 220)));
-                        
-                        ui.add_space(8.0);
-                        
+                        ui.horizontal(|ui| {
+                            ui.add(svg::RECEIPT.image(m.icon_sm).tint(t.info));
+                            ui.label(
+                                RichText::new(format!("Service #{}", service_num)).color(t.info),
+                            );
+                        });
+
+                        ui.add_space(m.gap.y);
+
                         // Progress bar
-                        let progress_rect = ui.available_rect_before_wrap();
-                        let progress_height = 4.0;
-                        let bar_rect = eframe::egui::Rect::from_min_size(
-                            eframe::egui::pos2(progress_rect.left(), progress_rect.top()),
-                            eframe::egui::vec2(progress_rect.width(), progress_height)
+                        let (bar_rect, _) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), PROGRESS_H),
+                            Sense::hover(),
                         );
-                        
-                        // Background
-                        ui.painter().rect_filled(
-                            bar_rect,
-                            2.0,
-                            Color32::from_rgb(60, 60, 60)
-                        );
-                        
-                        // Progress fill
-                        let fill_width = bar_rect.width() * progress;
+                        ui.painter()
+                            .rect_filled(bar_rect, PROGRESS_H / 2.0, t.field);
                         let fill_rect = eframe::egui::Rect::from_min_size(
                             bar_rect.min,
-                            eframe::egui::vec2(fill_width, progress_height)
+                            Vec2::new(bar_rect.width() * progress, PROGRESS_H),
                         );
-                        ui.painter().rect_filled(
-                            fill_rect,
-                            2.0,
-                            Color32::from_rgb(52, 235, 171)
-                        );
-                        
-                        ui.add_space(progress_height + 10.0);
-                        
+                        ui.painter()
+                            .rect_filled(fill_rect, PROGRESS_H / 2.0, t.success);
+
+                        ui.add_space(m.gap.y * 2.0);
+
                         // Buttons
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.add(
-                                Button::new(RichText::new("Submit Now").color(Color32::LIGHT_GREEN))
-                                    .min_size(Vec2::new(90.0, 28.0))
-                            ).clicked() {
+                            if TextButton::new("Submit Now")
+                                .icon(svg::PAPER_PLANE_TILT)
+                                .kind(ButtonKind::Primary)
+                                .prominent(true)
+                                .show(ui)
+                                .clicked()
+                            {
                                 should_submit = true;
                             }
-                            
-                            ui.add_space(8.0);
-                            
-                            if ui.add(
-                                Button::new(RichText::new("Undo").color(Color32::LIGHT_RED))
-                                    .min_size(Vec2::new(60.0, 28.0))
-                            ).clicked() {
+
+                            if TextButton::new("Undo")
+                                .icon(svg::ARROW_U_UP_LEFT)
+                                .prominent(true)
+                                .show(ui)
+                                .clicked()
+                            {
                                 should_cancel = true;
                             }
                         });
@@ -188,7 +209,7 @@ impl MastertechContext {
             info!("User clicked Undo - cancelling task submission");
             self.tur_submit_state = TurSubmitState::Idle;
             self.pending_tur_data = None;
-            
+
             let toast_tx = get_toast_sender();
             let _ = toast_tx.try_send(ToastMessage::Info("Task submission cancelled".to_string()));
         }
@@ -210,25 +231,34 @@ impl MastertechContext {
 
         // Update state
         self.tur_submit_state = TurSubmitState::CheckingDuplicates;
-        
+
         // Start duplicate check
         let tx = self.duplicate_check_tx.clone();
-        let computer_for_check = if send_specs { Some(computer_data.clone()) } else { None };
-        
+        let computer_for_check = if send_specs {
+            Some(computer_data.clone())
+        } else {
+            None
+        };
+
         spawn(async move {
             info!("Starting duplicate check for service #{}", service_number);
-            
+
             match check_for_duplicates(
                 &service_number,
                 &task_data,
                 &ticket_data,
                 &customer_data,
                 computer_for_check.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 Ok(result) => {
-                    info!("Duplicate check completed: has_conflicts={}", result.has_conflicts());
+                    info!(
+                        "Duplicate check completed: has_conflicts={}",
+                        result.has_conflicts()
+                    );
                     let _ = tx.try_send(result);
-                },
+                }
                 Err(e) => {
                     info!("Duplicate check error: {:?}", e);
                     // Send empty result on error to continue with submission
@@ -242,18 +272,21 @@ impl MastertechContext {
     pub fn process_duplicate_check_results(&mut self) {
         // Check for duplicate check results
         if let Ok(result) = self.duplicate_check_rx.try_recv() {
-            info!("Received duplicate check result for service #{}", result.service_number);
-            
+            info!(
+                "Received duplicate check result for service #{}",
+                result.service_number
+            );
+
             // Store the duplicate check result for later use in resolution
             if let Some(ref mut pending) = self.pending_tur_data {
                 pending.duplicate_check_result = Some(result.clone());
             }
-            
+
             if result.has_conflicts() && !result.all_identical() {
                 // Show merge modal
                 info!("Conflicts found, opening merge modal");
                 let mut modal = DuplicateMergeModal::new(result.clone());
-                
+
                 // Populate user cache for assignee display
                 // Add current user to cache
                 if let Some(ref user) = self.shared_ctx.current_user {
@@ -268,7 +301,7 @@ impl MastertechContext {
                     info!("Existing task assignee: {:?}", task_dup.existing.assignee);
                     info!("New task assignee: {:?}", task_dup.new.assignee);
                 }
-                
+
                 self.duplicate_merge_modal = Some(modal);
                 self.tur_submit_state = TurSubmitState::AwaitingResolution;
             } else {
@@ -287,7 +320,7 @@ impl MastertechContext {
 
         if let Some(ref mut modal) = self.duplicate_merge_modal {
             modal.show(ctx);
-            
+
             if modal.is_confirmed() {
                 info!("User confirmed merge resolution");
                 let resolution = modal.get_resolution().clone();
@@ -298,15 +331,19 @@ impl MastertechContext {
                 self.duplicate_merge_modal = None;
                 self.tur_submit_state = TurSubmitState::Idle;
                 self.pending_tur_data = None;
-                
+
                 let toast_tx = get_toast_sender();
-                let _ = toast_tx.try_send(ToastMessage::Info("Task submission cancelled".to_string()));
+                let _ =
+                    toast_tx.try_send(ToastMessage::Info("Task submission cancelled".to_string()));
             }
         }
     }
 
     /// Proceed with actual submission after duplicate resolution
-    fn proceed_with_submission(&mut self, resolution: Option<database::schema::DuplicateResolution>) {
+    fn proceed_with_submission(
+        &mut self,
+        resolution: Option<database::schema::DuplicateResolution>,
+    ) {
         let Some(pending) = self.pending_tur_data.take() else {
             info!("No pending TUR data to submit");
             self.tur_submit_state = TurSubmitState::Idle;
@@ -317,39 +354,57 @@ impl MastertechContext {
         let toast_tx = get_toast_sender();
 
         // Apply resolution if provided
-        let (mut task_data, ticket_data, customer_data, computer_data) = if let Some(ref res) = resolution {
-            if let Some(ref check_result) = pending.duplicate_check_result {
-                // Apply the user's resolution choices
-                Self::apply_resolution(check_result, &pending, res)
+        let (mut task_data, ticket_data, customer_data, computer_data) =
+            if let Some(ref res) = resolution {
+                if let Some(ref check_result) = pending.duplicate_check_result {
+                    // Apply the user's resolution choices
+                    Self::apply_resolution(check_result, &pending, res)
+                } else {
+                    info!("No duplicate check result found, using pending data as-is");
+                    (
+                        pending.task_data.clone(),
+                        pending.ticket_data.clone(),
+                        pending.customer_data.clone(),
+                        pending.computer_data.clone(),
+                    )
+                }
             } else {
-                info!("No duplicate check result found, using pending data as-is");
-                (pending.task_data.clone(), pending.ticket_data.clone(), 
-                 pending.customer_data.clone(), pending.computer_data.clone())
-            }
-        } else {
-            (pending.task_data.clone(), pending.ticket_data.clone(), 
-             pending.customer_data.clone(), pending.computer_data.clone())
-        };
+                (
+                    pending.task_data.clone(),
+                    pending.ticket_data.clone(),
+                    pending.customer_data.clone(),
+                    pending.computer_data.clone(),
+                )
+            };
 
         // Determine if this is a modification (existing task with UseNew or Merge resolution)
         // and prepare task history data if so
-        let task_history_data: Option<(database::schema::RecordId, serde_json::Value)> = 
+        let task_history_data: Option<(database::schema::RecordId, serde_json::Value)> =
             if let Some(ref res) = resolution {
                 if let Some(ref check_result) = pending.duplicate_check_result {
                     if let Some(ref task_dup) = check_result.task {
                         // Only create history for UseNew or Merge resolutions
-                        if matches!(res.task_resolution, MergeResolution::UseNew | MergeResolution::Merge) {
+                        if matches!(
+                            res.task_resolution,
+                            MergeResolution::UseNew | MergeResolution::Merge
+                        ) {
                             // Build diff JSON from the changes
                             let diff_fields = task_dup.existing.get_differing_fields(&task_data);
                             if !diff_fields.is_empty() {
                                 let mut diff_map = serde_json::Map::new();
                                 for (field_name, old_val, new_val) in diff_fields {
-                                    diff_map.insert(field_name, serde_json::json!({
-                                        "old": old_val,
-                                        "new": new_val
-                                    }));
+                                    diff_map.insert(
+                                        field_name,
+                                        serde_json::json!({
+                                            "old": old_val,
+                                            "new": new_val
+                                        }),
+                                    );
                                 }
-                                Some((task_dup.existing.id.clone(), serde_json::Value::Object(diff_map)))
+                                Some((
+                                    task_dup.existing.id.clone(),
+                                    serde_json::Value::Object(diff_map),
+                                ))
                             } else {
                                 None
                             }
@@ -371,7 +426,10 @@ impl MastertechContext {
         if let Some(ref check_result) = pending.duplicate_check_result {
             if let Some(ref task_dup) = check_result.task {
                 // Always use existing task ID when there's a duplicate - this is an UPDATE
-                info!("Existing task found, using existing task ID for update: {:?}", task_dup.existing.id);
+                info!(
+                    "Existing task found, using existing task ID for update: {:?}",
+                    task_dup.existing.id
+                );
                 task_data.id = task_dup.existing.id.clone();
             }
         }
@@ -387,7 +445,7 @@ impl MastertechContext {
         let current_user = self.shared_ctx.current_user.clone();
 
         let _state_tx = self.duplicate_check_tx.clone();
-        
+
         spawn(async move {
             // Create task history record if we're modifying an existing task
             if let Some((task_id, diff)) = task_history_data {
@@ -424,25 +482,25 @@ impl MastertechContext {
             // Send toast based on result
             match send_payload_result {
                 TaskCreationResult::Created { service_number } => {
-                    let _ = toast_tx.try_send(ToastMessage::Success(
-                        format!("Task created for service #{service_number}")
-                    ));
-                },
+                    let _ = toast_tx.try_send(ToastMessage::Success(format!(
+                        "Task created for service #{service_number}"
+                    )));
+                }
                 TaskCreationResult::AlreadyExists { service_number } => {
-                    let _ = toast_tx.try_send(ToastMessage::Warning(
-                        format!("Task already exists for service #{service_number}")
-                    ));
-                },
+                    let _ = toast_tx.try_send(ToastMessage::Warning(format!(
+                        "Task already exists for service #{service_number}"
+                    )));
+                }
                 TaskCreationResult::Updated { service_number } => {
-                    let _ = toast_tx.try_send(ToastMessage::Info(
-                        format!("Task updated for service #{service_number}")
-                    ));
-                },
+                    let _ = toast_tx.try_send(ToastMessage::Info(format!(
+                        "Task updated for service #{service_number}"
+                    )));
+                }
                 TaskCreationResult::Error { message } => {
-                    let _ = toast_tx.try_send(ToastMessage::Error(
-                        format!("Error creating task: {message}")
-                    ));
-                },
+                    let _ = toast_tx.try_send(ToastMessage::Error(format!(
+                        "Error creating task: {message}"
+                    )));
+                }
             }
         });
 
@@ -466,9 +524,13 @@ impl MastertechContext {
         let connection_string = crate::filesystem::get_client_hash().connection_string;
 
         spawn(async move {
-            let result =
-                create_and_link_records(ticket_data, customer_data, computer_data, connection_string)
-                    .await;
+            let result = create_and_link_records(
+                ticket_data,
+                customer_data,
+                computer_data,
+                connection_string,
+            )
+            .await;
             info!("create_and_link_records result: {result:?}");
             match result {
                 TaskCreationResult::Created { service_number } => {
@@ -500,15 +562,20 @@ impl MastertechContext {
         check_result: &DuplicateCheckResult,
         pending: &PendingTurData,
         resolution: &database::schema::DuplicateResolution,
-    ) -> (database::schema::LiveTaskPayload, database::schema::TicketData, 
-          database::schema::CustomerData, database::schema::ComputerData) {
-        
+    ) -> (
+        database::schema::LiveTaskPayload,
+        database::schema::TicketData,
+        database::schema::CustomerData,
+        database::schema::ComputerData,
+    ) {
         // Apply task resolution
         let task_data = if let Some(ref dup) = check_result.task {
             match resolution.task_resolution {
                 MergeResolution::KeepExisting => dup.existing.clone(),
                 MergeResolution::UseNew => pending.task_data.clone(),
-                MergeResolution::Merge => merge_task(&dup.existing, &pending.task_data, &resolution.task_fields),
+                MergeResolution::Merge => {
+                    merge_task(&dup.existing, &pending.task_data, &resolution.task_fields)
+                }
                 MergeResolution::Cancel => pending.task_data.clone(),
             }
         } else {
@@ -520,7 +587,11 @@ impl MastertechContext {
             match resolution.service_order_resolution {
                 MergeResolution::KeepExisting => dup.existing.clone(),
                 MergeResolution::UseNew => pending.ticket_data.clone(),
-                MergeResolution::Merge => merge_ticket(&dup.existing, &pending.ticket_data, &resolution.service_order_fields),
+                MergeResolution::Merge => merge_ticket(
+                    &dup.existing,
+                    &pending.ticket_data,
+                    &resolution.service_order_fields,
+                ),
                 MergeResolution::Cancel => pending.ticket_data.clone(),
             }
         } else {
@@ -532,7 +603,11 @@ impl MastertechContext {
             match resolution.customer_resolution {
                 MergeResolution::KeepExisting => dup.existing.clone(),
                 MergeResolution::UseNew => pending.customer_data.clone(),
-                MergeResolution::Merge => merge_customer(&dup.existing, &pending.customer_data, &resolution.customer_fields),
+                MergeResolution::Merge => merge_customer(
+                    &dup.existing,
+                    &pending.customer_data,
+                    &resolution.customer_fields,
+                ),
                 MergeResolution::Cancel => pending.customer_data.clone(),
             }
         } else {
@@ -544,7 +619,11 @@ impl MastertechContext {
             match resolution.computer_resolution {
                 MergeResolution::KeepExisting => dup.existing.clone(),
                 MergeResolution::UseNew => pending.computer_data.clone(),
-                MergeResolution::Merge => merge_computer(&dup.existing, &pending.computer_data, &resolution.computer_fields),
+                MergeResolution::Merge => merge_computer(
+                    &dup.existing,
+                    &pending.computer_data,
+                    &resolution.computer_fields,
+                ),
                 MergeResolution::Cancel => pending.computer_data.clone(),
             }
         } else {
@@ -560,7 +639,10 @@ impl MastertechContext {
         if resolution.add_second_computer && check_result.computer.is_some() {
             computer_data = pending.computer_data.clone();
             computer_data.id = crate::filesystem::local_computer_record();
-            info!("Add-as-second-computer: using canonical computer id {:?}", computer_data.id);
+            info!(
+                "Add-as-second-computer: using canonical computer id {:?}",
+                computer_data.id
+            );
         }
 
         (task_data, ticket_data, customer_data, computer_data)

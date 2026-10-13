@@ -3,17 +3,16 @@
 
 use eframe::egui::Ui;
 use egui_json_tree::{
+    DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
     render::{DefaultRender, RenderContext},
     value::BaseValueType,
-    DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
 };
 use serde_json::Value;
 
-use crate::ui_tools::{dump_text, icons, theme};
+use crate::ui_tools::{dump_text, icons::svg, metrics::Metrics, theme, tokens::Tokens};
 
 /// House JSON syntax palette, tracking the active theme preset.
 pub fn json_visuals(ui: &Ui) -> JsonTreeVisuals {
-    let accent = theme::accent(ui);
     JsonTreeVisuals {
         object_key_color: theme::info(ui),
         array_idx_color: theme::weak_text(ui),
@@ -21,12 +20,7 @@ pub fn json_visuals(ui: &Ui) -> JsonTreeVisuals {
         bool_color: theme::accent_secondary(ui),
         number_color: theme::warn(ui),
         string_color: theme::success(ui),
-        highlight_color: eframe::egui::Color32::from_rgba_unmultiplied(
-            accent.r(),
-            accent.g(),
-            accent.b(),
-            80,
-        ),
+        highlight_color: Tokens::get(ui.ctx()).primary_soft,
         punctuation_color: theme::weak_text(ui),
     }
 }
@@ -47,6 +41,7 @@ pub fn dump_json_tree(ui: &mut Ui, id_salt: &str, value: &Value) {
     let number_color = visuals.number_color;
     let lost_color = theme::error(ui);
     let marker_color = theme::warn(ui);
+    let icon_size = Metrics::get(ui.ctx()).icon_sm;
 
     JsonTree::new(id_salt, value)
         .style(JsonTreeStyle::new().visuals(visuals))
@@ -74,7 +69,7 @@ pub fn dump_json_tree(ui: &mut Ui, id_salt: &str, value: &Value) {
                                 )
                                 .on_hover_text(hint);
                                 if wide.is_approximate() {
-                                    ui.colored_label(lost_color, icons::STATUS_WARN)
+                                    ui.add(svg::WARNING.image(icon_size).tint(lost_color))
                                         .on_hover_text(hint);
                                 }
                             });

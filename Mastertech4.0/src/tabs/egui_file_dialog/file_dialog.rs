@@ -7,8 +7,20 @@ use crate::tabs::egui_file_dialog::data::{
     DirectoryContent, DirectoryContentState, DirectoryEntry, DirectoryFilter, Disk, Disks,
     UserDirectories,
 };
-use crate::tabs::egui_file_dialog::modals::{FileDialogModal, ModalAction, ModalState, OverwriteFileModal};
+use crate::tabs::egui_file_dialog::modals::{
+    FileDialogModal, ModalAction, ModalState, OverwriteFileModal,
+};
 use crate::tabs::egui_file_dialog::{FileSystem, NativeFileSystem};
+use displays::ui_tools::{
+    controls::{
+        self, ButtonKind, IconBox, IconButton, MenuButton, Metrics, SpinnerSize, TextButton,
+        TextField, Tokens,
+    },
+    icons::{
+        self,
+        svg::{self, Icon},
+    },
+};
 use egui::text::{CCursor, CCursorRange};
 use std::any::Any;
 use std::fmt::Debug;
@@ -1207,10 +1219,11 @@ impl FileDialog {
 
             // Optionally, show a custom right panel (see `update_with_custom_right_panel`)
             if let Some(f) = right_panel_fn {
-                let mut right_panel = eframe::egui::Panel::right(self.window_id.with("right_panel"))
-                    // Unlike the left panel, we have no control over the contents, so
-                    // we don't restrict the width. It's up to the user to make the UI presentable.
-                    .resizable(true);
+                let mut right_panel =
+                    eframe::egui::Panel::right(self.window_id.with("right_panel"))
+                        // Unlike the left panel, we have no control over the contents, so
+                        // we don't restrict the width. It's up to the user to make the UI presentable.
+                        .resizable(true);
                 if let Some(width) = self.config.right_panel_width {
                     right_panel = right_panel.default_size(width);
                 }
@@ -1369,7 +1382,7 @@ impl FileDialog {
         const BUTTON_SIZE: egui::Vec2 = egui::Vec2::new(25.0, 25.0);
 
         ui.horizontal(|ui| {
-            self.ui_update_nav_buttons(ui, BUTTON_SIZE);
+            self.ui_update_nav_buttons(ui);
 
             let mut path_display_width = ui.available_width();
 
@@ -1398,15 +1411,10 @@ impl FileDialog {
                     || self.config.show_hidden_option
                     || self.config.show_system_files_option)
             {
-                ui.allocate_ui_with_layout(
-                    BUTTON_SIZE,
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        ui.menu_button("☰", |ui| {
-                            self.ui_update_hamburger_menu(ui);
-                        });
-                    },
-                );
+                let _ = MenuButton::new("")
+                    .icon(svg::LIST)
+                    .tip("Options")
+                    .show(ui, |ui| self.ui_update_hamburger_menu(ui));
             }
 
             if self.config.show_search {
@@ -1418,46 +1426,52 @@ impl FileDialog {
     }
 
     /// Updates the navigation buttons like parent or previous directory
-    fn ui_update_nav_buttons(&mut self, ui: &mut egui::Ui, button_size: egui::Vec2) {
+    fn ui_update_nav_buttons(&mut self, ui: &mut egui::Ui) {
         if self.config.show_parent_button {
-            if let Some(x) = self.current_directory() {
-                if self.ui_button_sized(ui, x.parent().is_some(), button_size, "⏶", None) {
-                    self.load_parent_directory();
-                }
-            } else {
-                let _ = self.ui_button_sized(ui, false, button_size, "⏶", None);
+            let has_parent = self
+                .current_directory()
+                .is_some_and(|x| x.parent().is_some());
+            if Self::ui_icon_button(ui, has_parent, svg::ARROW_UP, "Parent directory") {
+                self.load_parent_directory();
             }
         }
 
         if self.config.show_back_button
-            && self.ui_button_sized(
+            && Self::ui_icon_button(
                 ui,
                 self.directory_offset + 1 < self.directory_stack.len(),
-                button_size,
-                "⏴",
-                None,
+                svg::ARROW_LEFT,
+                "Back",
             )
         {
             self.load_previous_directory();
         }
 
         if self.config.show_forward_button
-            && self.ui_button_sized(ui, self.directory_offset != 0, button_size, "⏵", None)
+            && Self::ui_icon_button(ui, self.directory_offset != 0, svg::ARROW_RIGHT, "Forward")
         {
             self.load_next_directory();
         }
 
         if self.config.show_new_folder_button
-            && self.ui_button_sized(
+            && Self::ui_icon_button(
                 ui,
                 !self.create_directory_dialog.is_open(),
-                button_size,
-                "+",
-                None,
+                svg::FOLDER_PLUS,
+                "New folder",
             )
         {
             self.open_new_folder_dialog();
         }
+    }
+
+    /// An icon button that can be disabled; true when clicked.
+    fn ui_icon_button(ui: &mut egui::Ui, enabled: bool, icon: Icon, tip: &str) -> bool {
+        IconButton::new(icon, IconBox::Md)
+            .tip(tip)
+            .enabled(enabled)
+            .show(ui)
+            .clicked()
     }
 
     /// Updates the view to display the current path.
@@ -1509,7 +1523,6 @@ impl FileDialog {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.style_mut().spacing.item_spacing.x /= 2.5;
-                    ui.style_mut().spacing.button_padding = egui::Vec2::new(5.0, 3.0);
 
                     let mut path = PathBuf::new();
 
@@ -1517,18 +1530,23 @@ impl FileDialog {
                         for (i, segment) in data.iter().enumerate() {
                             path.push(segment);
 
-                            let mut segment_str = segment.to_str().unwrap_or_default().to_string();
-
-                            if self.is_pinned(&path) {
-                                segment_str =
-                                    format!("{} {}", &self.config.pinned_icon, segment_str);
-                            }
+                            let segment_str = segment.to_str().unwrap_or_default().to_string();
+                            let icon = if self.is_pinned(&path) {
+                                svg::PUSH_PIN
+                            } else if i == 0 {
+                                svg::HARD_DRIVE
+                            } else {
+                                svg::FOLDER
+                            };
 
                             if i != 0 {
                                 ui.label(self.config.directory_separator.as_str());
                             }
 
-                            let re = ui.button(segment_str);
+                            let re = TextButton::new(&segment_str)
+                                .icon(icon)
+                                .kind(ButtonKind::Ghost)
+                                .show(ui);
 
                             if re.clicked() {
                                 self.load_directory(path.as_path());
@@ -1545,12 +1563,7 @@ impl FileDialog {
             return;
         }
 
-        if ui
-            .add_sized(
-                edit_button_size,
-                egui::Button::new("🖊").fill(egui::Color32::TRANSPARENT),
-            )
-            .clicked()
+        if controls::icon_button(ui, svg::PENCIL_SIMPLE, IconBox::Sm, false, "Edit path").clicked()
         {
             self.open_path_edit();
         }
@@ -1565,10 +1578,9 @@ impl FileDialog {
             .x
             .mul_add(-3.0, width - edit_button_size.x);
 
-        let response = egui::TextEdit::singleline(&mut self.path_edit_value)
-            .desired_width(desired_width)
-            .show(ui)
-            .response;
+        let response = controls::TextField::new(&mut self.path_edit_value)
+            .width(desired_width)
+            .show(ui);
 
         if self.path_edit_activate {
             response.request_focus();
@@ -1581,7 +1593,7 @@ impl FileDialog {
             self.path_edit_request_focus = false;
         }
 
-        let btn_response = ui.add_sized(edit_button_size, egui::Button::new("✔"));
+        let btn_response = controls::icon_button(ui, svg::CHECK, IconBox::Sm, false, "Open path");
 
         if btn_response.clicked() {
             self.submit_path_edit();
@@ -1594,9 +1606,11 @@ impl FileDialog {
 
     /// Updates the hamburger menu containing different options.
     fn ui_update_hamburger_menu(&mut self, ui: &mut egui::Ui) {
-        const SEPARATOR_SPACING: f32 = 2.0;
+        let separator_spacing = Metrics::get(ui.ctx()).gap.y / 2.0;
 
-        if self.config.show_reload_button && ui.button(&self.config.labels.reload).clicked() {
+        if self.config.show_reload_button
+            && controls::menu_item(ui, svg::ARROW_CLOCKWISE, &self.config.labels.reload).clicked()
+        {
             self.refresh();
             ui.close();
         }
@@ -1605,7 +1619,8 @@ impl FileDialog {
 
         if self.config.show_working_directory_button
             && working_dir.is_ok()
-            && ui.button(&self.config.labels.working_directory).clicked()
+            && controls::menu_item(ui, svg::HOUSE_SIMPLE, &self.config.labels.working_directory)
+                .clicked()
         {
             self.load_directory(&working_dir.unwrap_or_default());
             ui.close();
@@ -1614,31 +1629,35 @@ impl FileDialog {
         if (self.config.show_reload_button || self.config.show_working_directory_button)
             && (self.config.show_hidden_option || self.config.show_system_files_option)
         {
-            ui.add_space(SEPARATOR_SPACING);
-            ui.separator();
-            ui.add_space(SEPARATOR_SPACING);
+            ui.add_space(separator_spacing);
+            controls::hairline(ui);
+            ui.add_space(separator_spacing);
         }
 
         if self.config.show_hidden_option
-            && ui
-                .checkbox(
-                    &mut self.storage.show_hidden,
-                    &self.config.labels.show_hidden,
-                )
-                .clicked()
+            && controls::menu_check_item(
+                ui,
+                svg::EYE,
+                &self.config.labels.show_hidden,
+                self.storage.show_hidden,
+            )
+            .clicked()
         {
+            self.storage.show_hidden = !self.storage.show_hidden;
             self.refresh();
             ui.close();
         }
 
         if self.config.show_system_files_option
-            && ui
-                .checkbox(
-                    &mut self.storage.show_system_files,
-                    &self.config.labels.show_system_files,
-                )
-                .clicked()
+            && controls::menu_check_item(
+                ui,
+                svg::GEAR_SIX,
+                &self.config.labels.show_system_files,
+                self.storage.show_system_files,
+            )
+            .clicked()
         {
+            self.storage.show_system_files = !self.storage.show_system_files;
             self.refresh();
             ui.close();
         }
@@ -1646,40 +1665,27 @@ impl FileDialog {
 
     /// Updates the search input
     fn ui_update_search(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::default()
-            .stroke(egui::Stroke::new(
-                1.0,
-                ui.ctx().global_style().visuals.window_stroke.color,
-            ))
-            .inner_margin(egui::Margin::symmetric(4, 4))
-            .corner_radius(egui::CornerRadius::from(4))
-            .show(ui, |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                    ui.add_space(ui.ctx().global_style().spacing.item_spacing.y);
+        let width = ui.available_width();
+        let re = TextField::new(&mut self.search_value)
+            .icon(svg::MAGNIFYING_GLASS)
+            .width(width)
+            .id_salt(self.window_id.with("search"))
+            .show(ui);
 
-                    ui.label(egui::RichText::from("🔍").size(15.0));
+        self.edit_search_on_text_input(ui);
 
-                    let re = ui.add_sized(
-                        egui::Vec2::new(ui.available_width(), 0.0),
-                        egui::TextEdit::singleline(&mut self.search_value),
-                    );
+        if re.changed() || self.init_search {
+            self.selected_item = None;
+            self.select_first_visible_item();
+        }
 
-                    self.edit_search_on_text_input(ui);
+        if self.init_search {
+            re.request_focus();
+            Self::set_cursor_to_end(&re, &self.search_value);
+            self.directory_content.reset_multi_selection();
 
-                    if re.changed() || self.init_search {
-                        self.selected_item = None;
-                        self.select_first_visible_item();
-                    }
-
-                    if self.init_search {
-                        re.request_focus();
-                        Self::set_cursor_to_end(&re, &self.search_value);
-                        self.directory_content.reset_multi_selection();
-
-                        self.init_search = false;
-                    }
-                });
-            });
+            self.init_search = false;
+        }
     }
 
     /// Focuses and types into the search input, if text input without
@@ -1727,7 +1733,8 @@ impl FileDialog {
                     // Update paths pinned to the left sidebar by the user
                     if self.config.show_pinned_folders && self.ui_update_pinned_folders(ui, spacing)
                     {
-                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing =
+                            ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     // Update custom quick access sections
@@ -1736,20 +1743,23 @@ impl FileDialog {
                     for quick_access in &quick_accesses {
                         ui.add_space(spacing);
                         self.ui_update_quick_access(ui, quick_access);
-                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing =
+                            ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     self.config.quick_accesses = quick_accesses;
 
                     // Update native quick access sections
                     if self.config.show_places && self.ui_update_user_directories(ui, spacing) {
-                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing =
+                            ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     let disks = std::mem::take(&mut self.system_disks);
 
                     if self.config.show_devices && self.ui_update_devices(ui, spacing, &disks) {
-                        spacing = ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
+                        spacing =
+                            ui.ctx().global_style().spacing.item_spacing.y * SPACING_MULTIPLIER;
                     }
 
                     if self.config.show_removable_devices
@@ -1770,10 +1780,15 @@ impl FileDialog {
     fn ui_update_left_panel_entry(
         &mut self,
         ui: &mut egui::Ui,
+        icon: Icon,
         display_name: &str,
         path: &Path,
     ) -> egui::Response {
-        let response = ui.selectable_label(self.current_directory() == Some(path), display_name);
+        let selected = self.current_directory() == Some(path);
+        let response = controls::ListItem::new(display_name)
+            .icon(icon)
+            .selected(selected)
+            .show(ui);
 
         if response.clicked() {
             self.load_directory(path);
@@ -1784,10 +1799,10 @@ impl FileDialog {
 
     /// Updates a custom quick access section added to the left panel.
     fn ui_update_quick_access(&mut self, ui: &mut egui::Ui, quick_access: &QuickAccess) {
-        ui.label(&quick_access.heading);
+        controls::section_label(ui, &quick_access.heading);
 
         for entry in &quick_access.paths {
-            self.ui_update_left_panel_entry(ui, &entry.display_name, &entry.path);
+            self.ui_update_left_panel_entry(ui, svg::FOLDER, &entry.display_name, &entry.path);
         }
     }
 
@@ -1801,7 +1816,7 @@ impl FileDialog {
         for (i, pinned) in self.storage.pinned_folders.clone().iter().enumerate() {
             if i == 0 {
                 ui.add_space(spacing);
-                ui.label(self.config.labels.heading_pinned.as_str());
+                controls::section_label(ui, self.config.labels.heading_pinned.as_str());
 
                 visible = true;
             }
@@ -1813,7 +1828,8 @@ impl FileDialog {
 
             let response = self.ui_update_left_panel_entry(
                 ui,
-                &format!("{}  {}", self.config.pinned_icon, &pinned.label),
+                svg::PUSH_PIN,
+                &pinned.label,
                 pinned.path.as_path(),
             );
 
@@ -1855,18 +1871,25 @@ impl FileDialog {
         pinned: &PinnedFolder,
     ) {
         item.context_menu(|ui| {
-            if ui.button(&self.config.labels.unpin_folder).clicked() {
-                self.unpin_path(&pinned.path);
-                ui.close();
-            }
+            controls::menu_body(ui, |ui| {
+                if controls::menu_item(ui, svg::PUSH_PIN_SLASH, &self.config.labels.unpin_folder)
+                    .clicked()
+                {
+                    self.unpin_path(&pinned.path);
+                    ui.close();
+                }
 
-            if ui
-                .button(&self.config.labels.rename_pinned_folder)
+                if controls::menu_item(
+                    ui,
+                    svg::PENCIL_SIMPLE,
+                    &self.config.labels.rename_pinned_folder,
+                )
                 .clicked()
-            {
-                self.begin_rename_pinned_folder(pinned.clone());
-                ui.close();
-            }
+                {
+                    self.begin_rename_pinned_folder(pinned.clone());
+                    ui.close();
+                }
+            });
         });
     }
 
@@ -1885,28 +1908,33 @@ impl FileDialog {
 
         if let Some(dirs) = &user_directories {
             ui.add_space(spacing);
-            ui.label(labels.heading_places.as_str());
+            controls::section_label(ui, labels.heading_places.as_str());
 
             if let Some(path) = dirs.home_dir() {
-                self.ui_update_left_panel_entry(ui, &labels.home_dir, path);
+                self.ui_update_left_panel_entry(ui, svg::HOUSE, &labels.home_dir, path);
             }
             if let Some(path) = dirs.desktop_dir() {
-                self.ui_update_left_panel_entry(ui, &labels.desktop_dir, path);
+                self.ui_update_left_panel_entry(ui, svg::DESKTOP, &labels.desktop_dir, path);
             }
             if let Some(path) = dirs.document_dir() {
-                self.ui_update_left_panel_entry(ui, &labels.documents_dir, path);
+                self.ui_update_left_panel_entry(ui, svg::FILE_TEXT, &labels.documents_dir, path);
             }
             if let Some(path) = dirs.download_dir() {
-                self.ui_update_left_panel_entry(ui, &labels.downloads_dir, path);
+                self.ui_update_left_panel_entry(
+                    ui,
+                    svg::DOWNLOAD_SIMPLE,
+                    &labels.downloads_dir,
+                    path,
+                );
             }
             if let Some(path) = dirs.audio_dir() {
-                self.ui_update_left_panel_entry(ui, &labels.audio_dir, path);
+                self.ui_update_left_panel_entry(ui, svg::MUSIC_NOTES, &labels.audio_dir, path);
             }
             if let Some(path) = dirs.picture_dir() {
-                self.ui_update_left_panel_entry(ui, &labels.pictures_dir, path);
+                self.ui_update_left_panel_entry(ui, svg::IMAGE, &labels.pictures_dir, path);
             }
             if let Some(path) = dirs.video_dir() {
-                self.ui_update_left_panel_entry(ui, &labels.videos_dir, path);
+                self.ui_update_left_panel_entry(ui, svg::VIDEO, &labels.videos_dir, path);
             }
 
             visible = true;
@@ -1928,7 +1956,7 @@ impl FileDialog {
         for (i, disk) in disks.iter().filter(|x| !x.is_removable()).enumerate() {
             if i == 0 {
                 ui.add_space(spacing);
-                ui.label(self.config.labels.heading_devices.as_str());
+                controls::section_label(ui, self.config.labels.heading_devices.as_str());
 
                 visible = true;
             }
@@ -1954,7 +1982,7 @@ impl FileDialog {
         for (i, disk) in disks.iter().filter(|x| x.is_removable()).enumerate() {
             if i == 0 {
                 ui.add_space(spacing);
-                ui.label(self.config.labels.heading_removable_devices.as_str());
+                controls::section_label(ui, self.config.labels.heading_removable_devices.as_str());
 
                 visible = true;
             }
@@ -1967,23 +1995,19 @@ impl FileDialog {
 
     /// Updates a device entry of a device list like "Devices" or "Removable Devices".
     fn ui_update_device_entry(&mut self, ui: &mut egui::Ui, device: &Disk) {
-        let label = if device.is_removable() {
-            format!(
-                "{}  {}",
-                self.config.removable_device_icon,
-                device.display_name()
-            )
+        let icon = if device.is_removable() {
+            svg::USB
         } else {
-            format!("{}  {}", self.config.device_icon, device.display_name())
+            svg::HARD_DRIVE
         };
 
-        self.ui_update_left_panel_entry(ui, &label, device.mount_point());
+        self.ui_update_left_panel_entry(ui, icon, device.display_name(), device.mount_point());
     }
 
     /// Updates the bottom panel showing the selected item and main action buttons.
     fn ui_update_bottom_panel(&mut self, ui: &mut egui::Ui) {
-        const BUTTON_HEIGHT: f32 = 20.0;
-        ui.add_space(5.0);
+        let m = Metrics::get(ui.ctx());
+        ui.add_space(m.pad.y);
 
         // Calculate the width of the action buttons
         let label_submit_width = match self.mode {
@@ -2001,7 +2025,7 @@ impl FileDialog {
         btn_width += ui.spacing().button_padding.x * 4.0;
 
         // The size of the action buttons "cancel" and "open"/"save"
-        let button_size: egui::Vec2 = egui::Vec2::new(btn_width, BUTTON_HEIGHT);
+        let button_size: egui::Vec2 = egui::Vec2::new(btn_width + m.icon_md + m.gap.x, m.button_h);
 
         self.ui_update_selection_preview(ui, button_size);
 
@@ -2056,15 +2080,14 @@ impl FileDialog {
                         .stick_to_right(true)
                         .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
                         .show(ui, |ui| {
-                            ui.colored_label(ui.style().visuals.selection.bg_fill, text);
+                            ui.colored_label(Tokens::get(ui.ctx()).primary, text);
                         });
                 }
                 DialogMode::SaveFile => {
-                    let mut output = egui::TextEdit::singleline(&mut self.file_name_input)
+                    let mut output = controls::TextField::new(&mut self.file_name_input)
                         .cursor_at_end(false)
-                        .margin(egui::Margin::symmetric(4, 3))
-                        .desired_width(scroll_bar_width - item_spacing.x)
-                        .show(ui);
+                        .width(scroll_bar_width - item_spacing.x)
+                        .show_output(ui);
 
                     if self.file_name_input_request_focus {
                         self.highlight_file_name_input(&mut output);
@@ -2153,104 +2176,88 @@ impl FileDialog {
     }
 
     fn ui_update_file_filter_selection(&mut self, ui: &mut egui::Ui, width: f32) {
-        let selected_filter = self.get_selected_file_filter();
-        let selected_text = match selected_filter {
-            Some(f) => &f.name,
-            None => &self.config.labels.file_filter_all_files,
-        };
+        let mut current = self.get_selected_file_filter().map(|f| f.id);
+        let options: Vec<(Option<egui::Id>, &str)> = self
+            .config
+            .file_filters
+            .iter()
+            .map(|f| (Some(f.id), f.name.as_str()))
+            .chain([(None, self.config.labels.file_filter_all_files.as_str())])
+            .collect();
+        let changed = controls::Dropdown::new(
+            self.window_id.with("file_filter_selection"),
+            &mut current,
+            &options,
+        )
+        .width(width)
+        .show(ui)
+        .changed();
 
-        // The item that the user selected inside the drop down.
-        // If none, the user did not change the selected item this frame.
-        let mut select_filter: Option<Option<FileFilter>> = None;
-
-        egui::containers::ComboBox::from_id_salt(self.window_id.with("file_filter_selection"))
-            .width(width)
-            .selected_text(selected_text)
-            .wrap_mode(egui::TextWrapMode::Truncate)
-            .show_ui(ui, |ui| {
-                for filter in &self.config.file_filters {
-                    let selected = selected_filter.is_some_and(|f| f.id == filter.id);
-
-                    if ui.selectable_label(selected, &filter.name).clicked() {
-                        select_filter = Some(Some(filter.clone()));
-                    }
-                }
-
-                if ui
-                    .selectable_label(
-                        selected_filter.is_none(),
-                        &self.config.labels.file_filter_all_files,
-                    )
-                    .clicked()
-                {
-                    select_filter = Some(None);
-                }
-            });
-
-        if let Some(i) = select_filter {
-            self.select_file_filter(i);
+        if changed {
+            let filter = current
+                .and_then(|id| self.config.file_filters.iter().find(|f| f.id == id))
+                .cloned();
+            self.select_file_filter(filter);
         }
     }
 
     fn ui_update_save_extension_selection(&mut self, ui: &mut egui::Ui, width: f32) {
-        let selected_extension = self.get_selected_save_extension();
-        let selected_text = match selected_extension {
-            Some(e) => &e.to_string(),
-            None => &self.config.labels.save_extension_any,
-        };
+        let mut current = self.get_selected_save_extension().map(|e| e.id);
+        let labels: Vec<(egui::Id, String)> = self
+            .config
+            .save_extensions
+            .iter()
+            .map(|e| (e.id, e.to_string()))
+            .collect();
+        let options: Vec<(Option<egui::Id>, &str)> = labels
+            .iter()
+            .map(|(id, label)| (Some(*id), label.as_str()))
+            .collect();
+        let changed = controls::Dropdown::new(
+            self.window_id.with("save_extension_selection"),
+            &mut current,
+            &options,
+        )
+        .width(width)
+        .placeholder(&self.config.labels.save_extension_any)
+        .show(ui)
+        .changed();
 
-        // The item that the user selected inside the drop down.
-        // If none, the user did not change the selected item this frame.
-        let mut select_extension: Option<Option<SaveExtension>> = None;
-
-        egui::containers::ComboBox::from_id_salt(self.window_id.with("save_extension_selection"))
-            .width(width)
-            .selected_text(selected_text)
-            .wrap_mode(egui::TextWrapMode::Truncate)
-            .show_ui(ui, |ui| {
-                for extension in &self.config.save_extensions {
-                    let selected = selected_extension.is_some_and(|s| s.id == extension.id);
-
-                    if ui
-                        .selectable_label(selected, extension.to_string())
-                        .clicked()
-                    {
-                        select_extension = Some(Some(extension.clone()));
-                    }
-                }
-            });
-
-        if let Some(i) = select_extension {
+        if changed {
+            let extension = current
+                .and_then(|id| self.config.save_extensions.iter().find(|e| e.id == id))
+                .cloned();
             self.file_name_input_request_focus = true;
-            self.select_save_extension(i);
+            self.select_save_extension(extension);
         }
     }
 
     /// Updates the action buttons like save, open and cancel
     fn ui_update_action_buttons(&mut self, ui: &mut egui::Ui, button_size: egui::Vec2) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            let label = match &self.mode {
+            let (icon, label) = match &self.mode {
                 DialogMode::PickDirectory | DialogMode::PickFile | DialogMode::PickMultiple => {
-                    self.config.labels.open_button.as_str()
+                    (svg::CHECK, self.config.labels.open_button.as_str())
                 }
-                DialogMode::SaveFile => self.config.labels.save_button.as_str(),
+                DialogMode::SaveFile => (svg::FLOPPY_DISK, self.config.labels.save_button.as_str()),
             };
 
             if self.ui_button_sized(
                 ui,
                 self.is_selection_valid(),
                 button_size,
+                icon,
                 label,
                 self.file_name_input_error.as_deref(),
             ) {
                 self.submit();
             }
 
-            if ui
-                .add_sized(
-                    button_size,
-                    egui::Button::new(self.config.labels.cancel_button.as_str()),
-                )
+            if TextButton::new(self.config.labels.cancel_button.as_str())
+                .icon(svg::X)
+                .prominent(true)
+                .min_width(button_size.x)
+                .show(ui)
                 .clicked()
             {
                 self.cancel();
@@ -2285,7 +2292,7 @@ impl FileDialog {
                     .as_secs_f32()
                     > SHOW_SPINNER_AFTER
                 {
-                    ui.centered_and_justified(egui::Ui::spinner);
+                    ui.centered_and_justified(|ui| controls::spinner(ui, SpinnerSize::Lg));
                 }
 
                 // Prevent egui from not updating the UI when there is no user input
@@ -2294,7 +2301,7 @@ impl FileDialog {
                 true
             }
             DirectoryContentState::Errored(err) => {
-                ui.centered_and_justified(|ui| ui.colored_label(ui.visuals().error_fg_color, err));
+                ui.centered_and_justified(|ui| ui.colored_label(Tokens::get(ui.ctx()).error, err));
                 true
             }
             DirectoryContentState::Finished => {
@@ -2417,13 +2424,9 @@ impl FileDialog {
         let primary_selected = self.is_primary_selected(item);
         let pinned = self.is_pinned(item.as_path());
 
-        let icons = if pinned {
-            format!("{} {} ", item.icon(), self.config.pinned_icon)
-        } else {
-            format!("{} ", item.icon())
-        };
-
-        let icons_width = Self::calc_text_width(ui, &icons);
+        let m = Metrics::get(ui.ctx());
+        let icon_count = if pinned { 2.0 } else { 1.0 };
+        let icons_width = icon_count * (m.icon_md + ui.spacing().icon_spacing);
 
         // Calc available width for the file name and include a small margin
         let available_width = ui.available_width() - icons_width - 15.0;
@@ -2437,8 +2440,17 @@ impl FileDialog {
             file_name.to_owned()
         };
 
-        let mut re =
-            ui.selectable_label(primary_selected || item.selected, format!("{icons}{text}"));
+        let selected = primary_selected || item.selected;
+        let t = Tokens::get(ui.ctx());
+        let tint = if item.is_dir() { t.tertiary } else { t.icon };
+        let mut row = controls::ListItem::new(&text)
+            .icon(Self::entry_icon(item))
+            .icon_tone(tint)
+            .selected(selected);
+        if pinned {
+            row = row.trailing(svg::PUSH_PIN, t.primary);
+        }
+        let mut re = row.show(ui);
 
         if truncate {
             re = re.on_hover_text(file_name);
@@ -2577,37 +2589,45 @@ impl FileDialog {
         }
     }
 
-    /// Helper function to add a sized button that can be enabled or disabled
+    /// The SVG icon for a directory entry: its configured glyph, else a folder or file-type icon.
+    fn entry_icon(item: &DirectoryEntry) -> Icon {
+        Icon::from_glyph(item.icon()).unwrap_or_else(|| {
+            if item.is_dir() {
+                svg::FOLDER
+            } else {
+                Icon::from_glyph(icons::file_icon(item.file_name(), false)).unwrap_or(svg::FILE)
+            }
+        })
+    }
+
+    /// Primary action button at least `size` wide that can be disabled; true when clicked.
     fn ui_button_sized(
         &self,
         ui: &mut egui::Ui,
         enabled: bool,
         size: egui::Vec2,
+        icon: Icon,
         label: &str,
         err_tooltip: Option<&str>,
     ) -> bool {
-        let mut clicked = false;
-
-        ui.add_enabled_ui(enabled, |ui| {
-            let response = ui.add_sized(size, egui::Button::new(label));
-            clicked = response.clicked();
-
-            if let Some(err) = err_tooltip {
-                response.on_disabled_hover_ui(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-
-                        ui.colored_label(
-                            ui.ctx().global_style().visuals.error_fg_color,
-                            format!("{} ", self.config.err_icon),
-                        );
-
-                        ui.label(err);
-                    });
+        let response = TextButton::new(label)
+            .icon(icon)
+            .kind(ButtonKind::Primary)
+            .prominent(true)
+            .min_width(size.x)
+            .enabled(enabled)
+            .show(ui);
+        let clicked = response.clicked();
+        if let Some(err) = err_tooltip {
+            response.on_disabled_hover_ui(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let t = Tokens::get(ui.ctx());
+                    let size = Metrics::get(ui.ctx()).icon_sm;
+                    ui.add(svg::WARNING_CIRCLE.image(size).tint(t.error));
+                    ui.label(err);
                 });
-            }
-        });
-
+            });
+        }
         clicked
     }
 
@@ -2624,17 +2644,27 @@ impl FileDialog {
         }
 
         item.context_menu(|ui| {
-            let pinned = self.is_pinned(path);
+            controls::menu_body(ui, |ui| {
+                let pinned = self.is_pinned(path);
 
-            if pinned {
-                if ui.button(&self.config.labels.unpin_folder).clicked() {
-                    self.unpin_path(path);
+                if pinned {
+                    if controls::menu_item(
+                        ui,
+                        svg::PUSH_PIN_SLASH,
+                        &self.config.labels.unpin_folder,
+                    )
+                    .clicked()
+                    {
+                        self.unpin_path(path);
+                        ui.close();
+                    }
+                } else if controls::menu_item(ui, svg::PUSH_PIN, &self.config.labels.pin_folder)
+                    .clicked()
+                {
+                    self.pin_path(path.to_path_buf());
                     ui.close();
                 }
-            } else if ui.button(&self.config.labels.pin_folder).clicked() {
-                self.pin_path(path.to_path_buf());
-                ui.close();
-            }
+            });
         });
     }
 
@@ -2656,9 +2686,7 @@ impl FileDialog {
 
     /// Calculates the width of a single char.
     fn calc_char_width(ui: &egui::Ui, char: char) -> f32 {
-        ui.fonts_mut(|f| 
-            f.glyph_width(&egui::TextStyle::Body.resolve(ui.style()), char)
-        )
+        ui.fonts_mut(|f| f.glyph_width(&egui::TextStyle::Body.resolve(ui.style()), char))
     }
 
     /// Calculates the width of the specified text using the current font configuration.

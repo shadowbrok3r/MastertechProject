@@ -1,4 +1,11 @@
-use crate::{file_viewer::{ColorTheme, FileViewer, Syntax}, PlatformSpawner, Spawner};
+use crate::{
+    file_viewer::{ColorTheme, FileViewer, Syntax},
+    ui_tools::{
+        controls::{self, BarKind, ButtonKind, TextButton},
+        icons::svg,
+    },
+    PlatformSpawner, Spawner,
+};
 use eframe::egui::{CentralPanel, ScrollArea, Ui};
 use crossbeam::channel::{Receiver, Sender};
 use database::db;
@@ -50,16 +57,22 @@ impl QueryEditor {
                         .show(ui, &mut self.query);
                 });
 
-                if ui.button("Execute Query").clicked() {
-                    let tx = self.query_tx.clone();
-                    let query = self.query.clone();
-                    let ctx = ui.ctx().clone();
-                    PlatformSpawner::spawn(async move {
-                        let res = Self::execute_query(tx, query).await;
-                        log::info!("Response: {:?}", res);
-                        ctx.request_repaint();
-                    });
-                }
+                controls::bar(ui, BarKind::Footer, |ui| {
+                    let execute = TextButton::new("Execute Query")
+                        .icon(svg::PLAY)
+                        .kind(ButtonKind::Primary)
+                        .show(ui);
+                    if execute.clicked() {
+                        let tx = self.query_tx.clone();
+                        let query = self.query.clone();
+                        let ctx = ui.ctx().clone();
+                        PlatformSpawner::spawn(async move {
+                            let res = Self::execute_query(tx, query).await;
+                            log::info!("Response: {:?}", res);
+                            ctx.request_repaint();
+                        });
+                    }
+                });
             });
 
             CentralPanel::default()

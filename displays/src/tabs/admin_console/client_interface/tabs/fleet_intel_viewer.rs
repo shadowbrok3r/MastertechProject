@@ -5,6 +5,7 @@
 //! Driver side: take pnputil snapshots, review snapshot history and drift, and
 //! maintain the `known_bad_driver` blocklist.
 
+use crate::ui_tools::controls::IconLabel;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use database::schema::{
     crash_intel::{CrashIngest, CrashSighting, CrashSignature, CrashVerdict},
@@ -13,19 +14,34 @@ use database::schema::{
     },
     ConnectedClient, RecordId, RecordIdExt,
 };
-use eframe::egui::{
-    Align, Button, CollapsingHeader, Color32, ComboBox, Frame, Layout, Margin, RichText, ScrollArea,
-    TextEdit, Ui, Vec2,
-};
+use eframe::egui::{Align, Color32, Layout, RichText, ScrollArea, Ui, Vec2};
 use std::collections::HashSet;
 
+use crate::ui_tools::controls::badge;
 use crate::ui_tools::info_card::{
-    badge, expandable_text, fmt_date, fmt_date_time, kv_row, markup_leak, section_card,
+    expandable_text, fmt_date, fmt_date_time, kv_row, markup_leak, section_card,
     truncate_chars, wrapped_text,
 };
-use crate::ui_tools::{icons, theme};
+use crate::ui_tools::controls::{
+    self, ButtonKind, Metrics, Section, TextArea, TextButton, TextField,
+};
+use crate::ui_tools::icons::{self, svg};
+use crate::ui_tools::theme;
 use crate::{Cmd, PlatformSpawner, Spawner};
 use crate::ui_tools::glass_card;
+
+/// `items` paired with themselves as dropdown options.
+fn string_options<'a>(items: &[&'a str]) -> Vec<(String, &'a str)> {
+    items.iter().map(|item| (item.to_string(), *item)).collect()
+}
+
+/// An icon in `tone` and strong text on one row.
+fn titled_row(ui: &mut Ui, icon: svg::Icon, title: impl Into<RichText>, tone: Color32) {
+    ui.horizontal(|ui| {
+        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, tone);
+        ui.label(title.into().strong().color(theme::strong_text(ui)));
+    });
+}
 
 const DUMP_DECODE: &str = "com.mastertech.dump-decode";
 const DRIVERSTORE: &str = "com.mastertech.driverstore";
@@ -214,7 +230,7 @@ impl FleetIntelViewer {
             .show(ui, |ui| {
                 self.page_header(ui, client, cmd_tx);
                 if !self.status.is_empty() {
-                    ui.label(RichText::new(&self.status).color(theme::warn(ui)).small());
+                    IconLabel::new(svg::INFO, &self.status).tone(theme::warn(ui)).small(true).wrap(true).show(ui);
                 }
                 ui.add_space(6.0);
                 self.crash_section(ui, client, cmd_tx);
@@ -226,20 +242,19 @@ impl FleetIntelViewer {
     fn page_header(&mut self, ui: &mut Ui, client: &ConnectedClient, cmd_tx: &Sender<Cmd>) {
         glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("{} Fleet Intel", icons::DIAGNOSTICS))
-                        .color(theme::accent(ui))
-                        .heading(),
-                );
+                controls::heading(ui, svg::MICROSCOPE, "Fleet Intel");
                 ui.add_space(12.0);
                 let running = crate::plugins::intake_autopilot::triage_running();
-                let label = if running {
-                    format!("{} Triage running…", icons::STATUS_WAIT)
+                let (icon, label) = if running {
+                    (svg::HOURGLASS_SIMPLE, "Triage running…")
                 } else {
-                    format!("{} Run Intake Triage", icons::LIGHTBULB)
+                    (svg::MT_INTAKE, "Run Intake Triage")
                 };
-                if ui
-                    .add_enabled(!running, Button::new(label))
+                if TextButton::new(label)
+                    .icon(icon)
+                    .kind(ButtonKind::Primary)
+                    .enabled(!running)
+                    .show(ui)
                     .on_hover_text(
                         "Full intake suite: crash survey, driver inventory, DriverStore snapshot, WinDbg batch analysis, fleet-intel matching, and an AI-drafted verdict into the diagnostic session.",
                     )
@@ -251,14 +266,16 @@ impl FleetIntelViewer {
                         self.triage_with_ai,
                     );
                 }
-                ui.checkbox(&mut self.triage_with_ai, "AI verdict draft");
+                svg::SPARKLE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::accent_secondary(ui));
+                controls::toggle(ui, &mut self.triage_with_ai, "AI verdict draft");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
-                        RichText::new(format!("conn: {}", client.connection_string))
+                        RichText::new(&client.connection_string)
                             .small()
                             .monospace()
                             .color(theme::weak_text(ui)),
                     );
+                    svg::PLUGS_CONNECTED.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::weak_text(ui));
                 });
             });
             ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
@@ -266,17 +283,18 @@ impl FleetIntelViewer {
     }
 
     fn crash_section(&mut self, ui: &mut Ui, client: &ConnectedClient, cmd_tx: &Sender<Cmd>) {
-        section_card(ui, icons::DIAGNOSTICS, "Crash Intelligence", None, |ui| {
+        section_card(ui, svg::BUG_BEETLE, "Crash Intelligence", None, |ui| {
             self.crash_toolbar(ui, cmd_tx);
             self.crash_summary_strip(ui);
             let ingests =
                 crate::plugins::crash_intel_hooks::latest_ingests(&client.connection_string);
             if !ingests.is_empty() {
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new("Latest analysis on this client")
-                        .strong()
-                        .color(theme::strong_text(ui)),
+                titled_row(
+                    ui,
+                    svg::CLOCK_CLOCKWISE,
+                    "Latest analysis on this client",
+                    theme::primary(ui),
                 );
                 for ingest in &ingests {
                     self.ingest_row(ui, ingest);
@@ -284,7 +302,13 @@ impl FleetIntelViewer {
             }
             ui.add_space(6.0);
             if self.signatures.is_empty() {
-                ui.colored_label(theme::weak_text(ui), "No fleet crash signatures loaded.");
+                controls::empty_state(
+                    ui,
+                    svg::FINGERPRINT,
+                    "No fleet crash signatures loaded.",
+                    "",
+                    &[],
+                );
                 return;
             }
             if ui.available_width() < CRASH_SPLIT_BREAKPOINT {
@@ -302,8 +326,7 @@ impl FleetIntelViewer {
 
     fn crash_toolbar(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
         ui.horizontal_wrapped(|ui| {
-            if ui
-                .button(format!("{} Analyze dumps", icons::PLAY))
+            if controls::icon_text_button(ui, svg::PLAY, "Analyze dumps")
                 .on_hover_text("Start detached WinDbg batch analysis of the 8 newest minidumps on the client (dump-decode run_analyze_batch).")
                 .clicked()
             {
@@ -311,35 +334,29 @@ impl FleetIntelViewer {
                 self.status =
                     "Batch analysis started on client — fetch results in ~1-2 min.".to_string();
             }
-            if ui
-                .button(format!("{} Fetch results", icons::DOWNLOAD))
+            if controls::icon_text_button(ui, svg::DOWNLOAD_SIMPLE, "Fetch results")
                 .on_hover_text("Read the batch result. Signatures auto-ingest into fleet intel when done.")
                 .clicked()
             {
                 Self::call_remote_tool(cmd_tx, DUMP_DECODE, "read_batch");
             }
-            if ui
-                .button(format!("{} Live-kernel", icons::FLASK))
+            if controls::icon_text_button(ui, svg::FLASK, "Live-kernel")
                 .on_hover_text("Analyze the newest LiveKernelReports dump (GPU/DPC watchdog hangs that never blue-screen).")
                 .clicked()
             {
                 Self::call_remote_tool(cmd_tx, DUMP_DECODE, "run_analyze_livekernel");
             }
-            ui.separator();
-            ui.add(
-                TextEdit::singleline(&mut self.search)
-                    .hint_text("module / bugcheck")
-                    .desired_width(160.0),
-            );
-            if ui.button(format!("{} Search", icons::SEARCH)).clicked() {
+            controls::vline(ui, Metrics::get(ui.ctx()).control_h);
+            controls::search_field(ui, &mut self.search, "module / bugcheck", 160.0);
+            if controls::icon_text_button(ui, svg::MAGNIFYING_GLASS, "Search").clicked() {
                 self.load_signatures(self.search.clone());
             }
-            if ui.button(format!("{} Recent", icons::REFRESH)).clicked() {
+            if controls::icon_text_button(ui, svg::CLOCK_COUNTER_CLOCKWISE, "Recent").clicked() {
                 self.search.clear();
                 self.load_signatures(String::new());
             }
         });
-        ui.separator();
+        controls::hairline(ui);
     }
 
     fn crash_summary_strip(&self, ui: &mut Ui) {
@@ -362,10 +379,10 @@ impl FleetIntelViewer {
             _ => "no data".to_string(),
         };
         let tiles = [
-            (icons::DIAGNOSTICS, "Signatures", self.signatures.len().to_string()),
-            (icons::LIST, "Sightings", sightings.to_string()),
-            (icons::DESKTOP, "Machines", machines.len().to_string()),
-            (icons::STATUS_QUEUED, "Loaded span", span),
+            (svg::FINGERPRINT, "Signatures", self.signatures.len().to_string()),
+            (svg::LIST_BULLETS, "Sightings", sightings.to_string()),
+            (svg::DESKTOP_TOWER, "Machines", machines.len().to_string()),
+            (svg::CALENDAR_DOTS, "Loaded span", span),
         ];
         let cols = if ui.available_width() < STAT_STRIP_BREAKPOINT {
             2
@@ -380,10 +397,11 @@ impl FleetIntelViewer {
     }
 
     fn signature_list(&mut self, ui: &mut Ui) {
-        ui.label(
-            RichText::new(format!("Signatures ({})", self.signatures.len()))
-                .strong()
-                .color(theme::strong_text(ui)),
+        titled_row(
+            ui,
+            svg::FINGERPRINT,
+            format!("Signatures ({})", self.signatures.len()),
+            theme::primary(ui),
         );
         let picked = ScrollArea::vertical()
             .id_salt("crash_sig_list")
@@ -411,11 +429,13 @@ impl FleetIntelViewer {
     fn signature_detail(&mut self, ui: &mut Ui) {
         let count = self.signatures.len();
         let Some(idx) = self.selected_signature.filter(|i| *i < count) else {
-            let weak = theme::weak_text(ui);
             glass_card::group(ui, |ui| {
-                ui.colored_label(
-                    weak,
+                controls::empty_state(
+                    ui,
+                    svg::CURSOR_CLICK,
+                    "No signature selected",
                     "Select a signature to inspect its sightings and verdicts.",
+                    &[],
                 );
                 ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
             });
@@ -449,14 +469,14 @@ impl FleetIntelViewer {
         let strong = theme::strong_text(ui);
         let accent2 = theme::accent_secondary(ui);
         let warn = theme::warn(ui);
-        let (glyph, tint) = if ingest.previously_seen {
-            (icons::STATUS_WARN, warn)
+        let (icon, tint) = if ingest.previously_seen {
+            (svg::WARNING, warn)
         } else {
-            (icons::STATUS_ON, theme::success(ui))
+            (svg::CHECK_CIRCLE, theme::success(ui))
         };
         glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.colored_label(tint, glyph);
+                icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, tint);
                 ui.label(
                     RichText::new(&ingest.signature.bugcheck_code)
                         .strong()
@@ -503,33 +523,27 @@ impl FleetIntelViewer {
 
     fn driver_section(&mut self, ui: &mut Ui, client: &ConnectedClient, cmd_tx: &Sender<Cmd>) {
         self.time_machine_card(ui, client, cmd_tx);
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         self.blocklist_card(ui, client);
     }
 
     fn time_machine_card(&mut self, ui: &mut Ui, client: &ConnectedClient, cmd_tx: &Sender<Cmd>) {
         let mut take_snapshot = false;
         let mut refresh = false;
-        section_card(ui, icons::HARD_DRIVE, "Driver Time Machine", None, |ui| {
+        section_card(ui, svg::CLOCK_COUNTER_CLOCKWISE, "Driver Time Machine", None, |ui| {
             let weak = theme::weak_text(ui);
             let bad = theme::error(ui);
             ui.horizontal_wrapped(|ui| {
-                ComboBox::from_id_salt("snapshot_label")
-                    .width(COMBO_WIDTH)
-                    .selected_text(self.snapshot_label.as_str())
-                    .show_ui(ui, |ui| {
-                        for label in SNAPSHOT_LABELS {
-                            ui.selectable_value(&mut self.snapshot_label, label.to_string(), label);
-                        }
-                    });
-                if ui
-                    .button(format!("{} Snapshot now", icons::PLAY))
+                let labels = string_options(&SNAPSHOT_LABELS);
+                let label = &mut self.snapshot_label;
+                controls::dropdown(ui, "snapshot_label", label, &labels, COMBO_WIDTH);
+                if controls::icon_text_button(ui, svg::CAMERA, "Snapshot now")
                     .on_hover_text("Capture the full DriverStore inventory (pnputil) and persist it as a snapshot.")
                     .clicked()
                 {
                     take_snapshot = true;
                 }
-                if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
+                if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                     refresh = true;
                 }
                 ui.label(
@@ -540,7 +554,7 @@ impl FleetIntelViewer {
             });
             ui.add_space(6.0);
             if self.snapshots.is_empty() {
-                ui.colored_label(weak, "No driver snapshots recorded for this client yet.");
+                controls::note(ui, svg::INFO, "No driver snapshots recorded for this client yet.", weak);
                 return;
             }
             for (idx, snap) in self.snapshots.iter().enumerate() {
@@ -555,7 +569,7 @@ impl FleetIntelViewer {
                 if !hits.is_empty() {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        ui.colored_label(bad, icons::STATUS_WARN);
+                        svg::WARNING_OCTAGON.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, bad);
                         ui.label(
                             RichText::new(format!(
                                 "{} known-bad driver(s) in the newest snapshot",
@@ -587,63 +601,58 @@ impl FleetIntelViewer {
     fn blocklist_card(&mut self, ui: &mut Ui, client: &ConnectedClient) {
         let mut submit = false;
         let title = format!("Blocklist ({} active)", self.blocklist.len());
-        section_card(ui, icons::STATUS_DISABLED, &title, None, |ui| {
+        section_card(ui, svg::PROHIBIT, &title, None, |ui| {
             let weak = theme::weak_text(ui);
-            let strong = theme::strong_text(ui);
             if self.blocklist.is_empty() {
-                ui.colored_label(weak, "No active known-bad drivers in the fleet blocklist.");
+                controls::note(ui, svg::SHIELD_CHECK, "No active known-bad drivers in the fleet blocklist.", weak);
             } else {
                 for entry in &self.blocklist {
                     render_blocklist_card(ui, entry);
                 }
             }
             ui.add_space(8.0);
-            ui.separator();
-            ui.label(
-                RichText::new(format!("{} Add known-bad driver", icons::PLUS))
-                    .strong()
-                    .color(strong),
-            );
+            controls::hairline(ui);
+            titled_row(ui, svg::PLUS_CIRCLE, "Add known-bad driver", theme::primary(ui));
             let full_width = ui.available_width();
             // Two equal fields minus the severity combo and their two spacing gaps.
             let field_width = ((full_width - COMBO_WIDTH - ui.spacing().item_spacing.x * 2.0) / 2.0)
                 .clamp(FIELD_MIN_WIDTH, FIELD_MAX_WIDTH);
             ui.horizontal_wrapped(|ui| {
-                ui.add(
-                    TextEdit::singleline(&mut self.kbd_module)
-                        .hint_text("module (rtwlane)")
-                        .desired_width(field_width),
-                );
-                ui.add(
-                    TextEdit::singleline(&mut self.kbd_versions)
-                        .hint_text("bad versions, comma-separated (blank = every version)")
-                        .desired_width(field_width),
-                );
+                TextField::new(&mut self.kbd_module)
+                    .hint("module (rtwlane)")
+                    .icon(svg::PUZZLE_PIECE)
+                    .width(field_width)
+                    .show(ui);
+                TextField::new(&mut self.kbd_versions)
+                    .hint("bad versions, comma-separated (blank = every version)")
+                    .icon(svg::TAG)
+                    .width(field_width)
+                    .show(ui);
                 severity_combo(ui, &mut self.kbd_severity);
             });
-            ui.add(
-                TextEdit::multiline(&mut self.kbd_symptom)
-                    .hint_text("symptom the tech sees on the bench")
-                    .desired_rows(3)
-                    .desired_width(full_width),
-            );
-            ui.add(
-                TextEdit::multiline(&mut self.kbd_fix)
-                    .hint_text("recommended fix")
-                    .desired_rows(3)
-                    .desired_width(full_width),
-            );
+            TextArea::new(&mut self.kbd_symptom)
+                .hint("symptom the tech sees on the bench")
+                .rows(3)
+                .width(full_width)
+                .show(ui);
+            TextArea::new(&mut self.kbd_fix)
+                .hint("recommended fix")
+                .rows(3)
+                .width(full_width)
+                .show(ui);
             let can_add = !self.kbd_module.trim().is_empty();
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(can_add, Button::new(format!("{} Add to blocklist", icons::PLUS)))
+                if TextButton::new("Add to blocklist")
+                    .icon(svg::PLUS)
+                    .enabled(can_add)
+                    .show(ui)
                     .on_hover_text("Persist a fleet-wide known-bad driver entry.")
                     .clicked()
                 {
                     submit = true;
                 }
                 if !can_add {
-                    ui.colored_label(weak, "module is required");
+                    controls::note(ui, svg::INFO, "module is required", weak);
                 }
             });
         });
@@ -714,12 +723,12 @@ impl FleetIntelViewer {
     }
 }
 
-fn crash_stat_tile(ui: &mut Ui, glyph: &str, label: &str, value: &str) {
+fn crash_stat_tile(ui: &mut Ui, icon: svg::Icon, label: &str, value: &str) {
     let weak = theme::weak_text(ui);
     let strong = theme::strong_text(ui);
     glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.colored_label(theme::accent(ui), glyph);
+            icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::primary(ui));
             ui.label(RichText::new(label).small().color(weak));
         });
         ui.label(RichText::new(value).strong().monospace().color(strong));
@@ -735,7 +744,6 @@ fn signature_row(
     selected: bool,
 ) -> bool {
     let weak = theme::weak_text(ui);
-    let strong = theme::strong_text(ui);
     let accent2 = theme::accent_secondary(ui);
     let good = theme::success(ui);
     let warn = theme::warn(ui);
@@ -748,13 +756,8 @@ fn signature_row(
     let mut clicked = false;
     glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
-            clicked = ui
-                .selectable_label(
-                    selected,
-                    RichText::new(truncate_chars(&title, SIGNATURE_TITLE_CHARS))
-                        .strong()
-                        .color(strong),
-                )
+            let short = truncate_chars(&title, SIGNATURE_TITLE_CHARS);
+            clicked = controls::pill(ui, svg::BUG, &short, selected)
                 .on_hover_text(title.as_str())
                 .clicked();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -807,7 +810,7 @@ fn signature_overview(ui: &mut Ui, sig: &CrashSignature) {
     let strong = theme::strong_text(ui);
     let accent2 = theme::accent_secondary(ui);
     ui.horizontal(|ui| {
-        ui.colored_label(theme::accent(ui), icons::CRITICAL);
+        svg::SKULL.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::primary(ui));
         ui.label(RichText::new(&sig.bugcheck_code).strong().monospace().color(strong));
         if !sig.bugcheck_name.is_empty() {
             ui.label(RichText::new(&sig.bugcheck_name).strong().color(strong));
@@ -844,18 +847,19 @@ fn sightings_block(ui: &mut Ui, sightings: &[CrashSighting]) {
     let strong = theme::strong_text(ui);
     let accent2 = theme::accent_secondary(ui);
     if sightings.is_empty() {
-        ui.colored_label(weak, "No sightings loaded for this signature.");
+        controls::note(ui, svg::INFO, "No sightings loaded for this signature.", weak);
         return;
     }
-    ui.label(
-        RichText::new(format!("Sightings ({})", sightings.len()))
-            .strong()
-            .color(strong),
+    titled_row(
+        ui,
+        svg::CROSSHAIR,
+        format!("Sightings ({})", sightings.len()),
+        theme::primary(ui),
     );
     for s in sightings {
         glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.colored_label(theme::accent(ui), icons::FILE_TEXT);
+                svg::FILE_TEXT.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, theme::primary(ui));
                 ui.label(
                     RichText::new(s.dump_name.as_deref().unwrap_or("-"))
                         .monospace()
@@ -891,30 +895,26 @@ fn sightings_block(ui: &mut Ui, sightings: &[CrashSighting]) {
 fn verdict_block(ui: &mut Ui, verdicts: &[CrashVerdict]) {
     let weak = theme::weak_text(ui);
     let strong = theme::strong_text(ui);
-    let accent = theme::accent(ui);
+    let accent = theme::primary(ui);
     let accent2 = theme::accent_secondary(ui);
     let good = theme::success(ui);
     let warn = theme::warn(ui);
     if verdicts.is_empty() {
-        ui.colored_label(weak, "No verdict recorded for this signature yet.");
+        controls::note(ui, svg::INFO, "No verdict recorded for this signature yet.", weak);
         return;
     }
-    ui.label(
-        RichText::new(format!("Verdicts ({})", verdicts.len()))
-            .strong()
-            .color(strong),
-    );
+    titled_row(ui, svg::SEAL_CHECK, format!("Verdicts ({})", verdicts.len()), accent);
     for v in verdicts {
         let malformed = verdict_is_malformed(v);
         let key = v.id.key_string();
         glass_card::group(ui, |ui| {
             ui.horizontal(|ui| {
-                let (glyph, tint) = if malformed {
-                    (icons::STATUS_WARN, warn)
+                let (icon, tint) = if malformed {
+                    (svg::WARNING, warn)
                 } else {
-                    (icons::STATUS_ON, good)
+                    (svg::CHECK_CIRCLE, good)
                 };
-                ui.colored_label(tint, glyph);
+                icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, tint);
                 let author = if v.author.is_empty() { "unattributed" } else { v.author.as_str() };
                 ui.label(RichText::new(author).strong().color(strong));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -936,15 +936,11 @@ fn verdict_block(ui: &mut Ui, verdicts: &[CrashVerdict]) {
                 });
             });
             if malformed {
-                ui.label(
-                    RichText::new("Stored text contains raw tool-call markup; shown verbatim.")
-                        .small()
-                        .color(warn),
-                );
+                IconLabel::new(svg::WARNING, "Stored text contains raw tool-call markup; shown verbatim.").tone(warn).small(true).wrap(true).show(ui);
             }
             expandable_text(ui, &format!("verdict_{key}"), &v.verdict, PROSE_LINES);
             if !v.fix.is_empty() {
-                ui.label(RichText::new("Fix").small().color(weak));
+                IconLabel::new(svg::WRENCH, "Fix").tone(weak).small(true).wrap(true).show(ui);
                 expandable_text(ui, &format!("verdict_fix_{key}"), &v.fix, PROSE_LINES);
             }
             ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
@@ -959,39 +955,21 @@ fn verdict_is_malformed(v: &CrashVerdict) -> bool {
 
 /// Returns true when the operator clicked save.
 fn verdict_form(ui: &mut Ui, text: &mut String, fix: &mut String, confidence: &mut String) -> bool {
-    let strong = theme::strong_text(ui);
-    ui.separator();
-    ui.label(
-        RichText::new(format!("{} Record verdict", icons::EDIT))
-            .strong()
-            .color(strong),
-    );
+    controls::hairline(ui);
+    titled_row(ui, svg::NOTE_PENCIL, "Record verdict", theme::primary(ui));
     let width = ui.available_width();
-    ui.add(
-        TextEdit::multiline(text)
-            .hint_text("diagnosis")
-            .desired_rows(2)
-            .desired_width(width),
-    );
-    ui.add(
-        TextEdit::multiline(fix)
-            .hint_text("fix that worked")
-            .desired_rows(2)
-            .desired_width(width),
-    );
+    TextArea::new(text).hint("diagnosis").rows(2).width(width).show(ui);
+    TextArea::new(fix).hint("fix that worked").rows(2).width(width).show(ui);
     let mut save = false;
     ui.horizontal(|ui| {
-        ComboBox::from_id_salt("verdict_confidence")
-            .width(COMBO_WIDTH)
-            .selected_text(confidence.as_str())
-            .show_ui(ui, |ui| {
-                for c in ["low", "medium", "high", "confirmed"] {
-                    ui.selectable_value(confidence, c.to_string(), c);
-                }
-            });
+        let levels = string_options(&["low", "medium", "high", "confirmed"]);
+        controls::dropdown(ui, "verdict_confidence", confidence, &levels, COMBO_WIDTH);
         let can_save = !text.trim().is_empty();
-        if ui
-            .add_enabled(can_save, Button::new(format!("{} Save verdict", icons::SAVE)))
+        if TextButton::new("Save verdict")
+            .icon(svg::FLOPPY_DISK)
+            .kind(ButtonKind::Primary)
+            .enabled(can_save)
+            .show(ui)
             .clicked()
         {
             save = true;
@@ -1001,22 +979,16 @@ fn verdict_form(ui: &mut Ui, text: &mut String, fix: &mut String, confidence: &m
 }
 
 fn severity_combo(ui: &mut Ui, severity: &mut String) {
-    ComboBox::from_id_salt("kbd_severity")
-        .width(COMBO_WIDTH)
-        .selected_text(severity.as_str())
-        .show_ui(ui, |ui| {
-            for level in SEVERITIES {
-                ui.selectable_value(severity, level.to_string(), level);
-            }
-        });
+    let levels = string_options(&SEVERITIES);
+    controls::dropdown(ui, "kbd_severity", severity, &levels, COMBO_WIDTH);
 }
 
-fn severity_style(ui: &Ui, severity: &str) -> (&'static str, Color32) {
+fn severity_style(ui: &Ui, severity: &str) -> (svg::Icon, Color32) {
     match severity {
-        "critical" => (icons::CRITICAL, theme::error(ui)),
-        "warn" => (icons::STATUS_WARN, theme::warn(ui)),
-        "info" => (icons::INFO, theme::info(ui)),
-        _ => (icons::STATUS_IDLE, theme::weak_text(ui)),
+        "critical" => (svg::SKULL, theme::error(ui)),
+        "warn" => (svg::WARNING, theme::warn(ui)),
+        "info" => (svg::INFO, theme::info(ui)),
+        _ => (svg::CIRCLE, theme::weak_text(ui)),
     }
 }
 
@@ -1044,13 +1016,13 @@ fn render_snapshot_row(ui: &mut Ui, snap: &DriverSnapshot, newest: bool) {
     let weak = theme::weak_text(ui);
     let strong = theme::strong_text(ui);
     let accent2 = theme::accent_secondary(ui);
-    let (glyph, glyph_color) = if newest {
-        (icons::STATUS_ON, theme::accent(ui))
+    let (icon, icon_color) = if newest {
+        (svg::CHECK_CIRCLE, theme::primary(ui))
     } else {
-        (icons::STATUS_DOT, weak)
+        (svg::DOT, weak)
     };
     ui.horizontal(|ui| {
-        ui.colored_label(glyph_color, glyph);
+        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, icon_color);
         ui.label(RichText::new(fmt_date_time(&snap.taken_at)).monospace().color(strong));
         badge(ui, non_empty(&snap.label, "manual"), accent2);
         ui.label(
@@ -1091,12 +1063,12 @@ fn render_drift(ui: &mut Ui, older: &DriverSnapshot, newer: &DriverSnapshot) {
         non_empty(&newer.label, "manual")
     );
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(accent2, icons::REFRESH);
+        svg::ARROWS_CLOCKWISE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, accent2);
         ui.label(RichText::new("Drift").strong().color(strong));
         ui.label(RichText::new(span).small().monospace().color(weak));
     });
     if diff.is_empty() {
-        ui.colored_label(weak, "No driver drift between these two snapshots.");
+        controls::note(ui, svg::CHECK, "No driver drift between these two snapshots.", weak);
         return;
     }
     ui.horizontal_wrapped(|ui| {
@@ -1104,21 +1076,21 @@ fn render_drift(ui: &mut Ui, older: &DriverSnapshot, newer: &DriverSnapshot) {
         badge(ui, &format!("{} removed", diff.removed.len()), bad);
         badge(ui, &format!("{} changed", diff.changed.len()), warn);
     });
-    drift_group(ui, "drift_changed", icons::REFRESH, warn, "Version changed", diff.changed.len(), |ui| {
+    drift_group(ui, "drift_changed", svg::ARROWS_CLOCKWISE, warn, "Version changed", diff.changed.len(), |ui| {
         for change in diff.changed.iter().take(DRIFT_ROWS_SHOWN) {
             render_driver_change_row(ui, change);
         }
         render_overflow(ui, diff.changed.len());
     });
-    drift_group(ui, "drift_added", icons::PLUS, good, "Installed since", diff.added.len(), |ui| {
+    drift_group(ui, "drift_added", svg::PLUS_CIRCLE, good, "Installed since", diff.added.len(), |ui| {
         for driver in diff.added.iter().take(DRIFT_ROWS_SHOWN) {
-            render_driver_row(ui, driver, icons::PLUS, good);
+            render_driver_row(ui, driver, svg::PLUS, good);
         }
         render_overflow(ui, diff.added.len());
     });
-    drift_group(ui, "drift_removed", icons::TRASH, bad, "Removed since", diff.removed.len(), |ui| {
+    drift_group(ui, "drift_removed", svg::TRASH, bad, "Removed since", diff.removed.len(), |ui| {
         for driver in diff.removed.iter().take(DRIFT_ROWS_SHOWN) {
-            render_driver_row(ui, driver, icons::TRASH, bad);
+            render_driver_row(ui, driver, svg::TRASH, bad);
         }
         render_overflow(ui, diff.removed.len());
     });
@@ -1127,7 +1099,7 @@ fn render_drift(ui: &mut Ui, older: &DriverSnapshot, newer: &DriverSnapshot) {
 fn drift_group(
     ui: &mut Ui,
     id_salt: &str,
-    glyph: &str,
+    icon: svg::Icon,
     color: Color32,
     title: &str,
     count: usize,
@@ -1136,8 +1108,10 @@ fn drift_group(
     if count == 0 {
         return;
     }
-    CollapsingHeader::new(RichText::new(format!("{glyph} {title} ({count})")).color(color))
-        .id_salt(id_salt)
+    let title = format!("{title} ({count})");
+    Section::new(id_salt, &title)
+        .icon(icon)
+        .icon_tone(color)
         .default_open(count <= DRIFT_ROWS_SHOWN)
         .show(ui, add_rows);
 }
@@ -1145,15 +1119,16 @@ fn drift_group(
 fn render_overflow(ui: &mut Ui, total: usize) {
     if total > DRIFT_ROWS_SHOWN {
         let weak = theme::weak_text(ui);
-        ui.colored_label(weak, format!("{} more not shown", total - DRIFT_ROWS_SHOWN));
+        let more = format!("{} more not shown", total - DRIFT_ROWS_SHOWN);
+        controls::note(ui, svg::DOTS_THREE, &more, weak);
     }
 }
 
-fn render_driver_row(ui: &mut Ui, driver: &DriverRecord, glyph: &str, color: Color32) {
+fn render_driver_row(ui: &mut Ui, driver: &DriverRecord, icon: svg::Icon, color: Color32) {
     let weak = theme::weak_text(ui);
     let strong = theme::strong_text(ui);
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(color, glyph);
+        icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, color);
         ui.label(RichText::new(driver.key()).monospace().color(strong));
         if !driver.published_name.is_empty() {
             ui.label(
@@ -1188,7 +1163,7 @@ fn render_driver_change_row(ui: &mut Ui, change: &DriverChange) {
     let strong = theme::strong_text(ui);
     let warn = theme::warn(ui);
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(warn, icons::REFRESH);
+        svg::ARROWS_CLOCKWISE.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, warn);
         ui.label(RichText::new(&change.key).monospace().color(strong));
         if !change.published_name.is_empty() {
             ui.label(
@@ -1199,7 +1174,7 @@ fn render_driver_change_row(ui: &mut Ui, change: &DriverChange) {
             );
         }
         badge(ui, non_empty(&change.old_version, "unknown"), weak);
-        ui.colored_label(weak, icons::ARROW_RIGHT);
+        svg::ARROW_RIGHT.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, weak);
         badge(ui, non_empty(&change.new_version, "unknown"), warn);
         ui.label(
             RichText::new(format!(
@@ -1224,7 +1199,7 @@ fn render_driver_change_row(ui: &mut Ui, change: &DriverChange) {
 }
 
 fn render_known_bad_hit(ui: &mut Ui, hit: &KnownBadHit) {
-    let (glyph, sev_color) = severity_style(ui, &hit.entry.severity);
+    let (sev_icon, sev_color) = severity_style(ui, &hit.entry.severity);
     let weak = theme::weak_text(ui);
     let strong = theme::strong_text(ui);
     let good = theme::success(ui);
@@ -1232,7 +1207,7 @@ fn render_known_bad_hit(ui: &mut Ui, hit: &KnownBadHit) {
     let salt = format!("kbh_{}_{}", hit.entry.id.key_string(), hit.driver.key());
     glass_card::group(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.colored_label(sev_color, glyph);
+            sev_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, sev_color);
             ui.label(RichText::new(hit.driver.key()).strong().monospace().color(strong));
             badge(ui, non_empty(&hit.driver.driver_version, "unknown"), sev_color);
             badge(ui, "installed now", bad);
@@ -1256,14 +1231,11 @@ fn render_known_bad_hit(ui: &mut Ui, hit: &KnownBadHit) {
 }
 
 fn render_blocklist_card(ui: &mut Ui, entry: &KnownBadDriver) {
-    let (glyph, sev_color) = severity_style(ui, &entry.severity);
+    let (sev_icon, sev_color) = severity_style(ui, &entry.severity);
     let weak = theme::weak_text(ui);
     let strong = theme::strong_text(ui);
     let good = theme::success(ui);
     let warn = theme::warn(ui);
-    let faint = theme::bg_faint(ui);
-    let window_stroke = ui.visuals().window_stroke;
-    let corner = ui.visuals().menu_corner_radius;
     let key = entry.id.key_string();
     let dates = format!(
         "added {} — updated {}",
@@ -1272,7 +1244,7 @@ fn render_blocklist_card(ui: &mut Ui, entry: &KnownBadDriver) {
     );
     glass_card::group(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.colored_label(sev_color, glyph);
+            sev_icon.show_tinted(ui, Metrics::get(ui.ctx()).icon_sm, sev_color);
             ui.label(RichText::new(&entry.module).strong().monospace().color(strong));
             if !entry.display_name.is_empty() {
                 ui.label(
@@ -1314,24 +1286,16 @@ fn render_blocklist_card(ui: &mut Ui, entry: &KnownBadDriver) {
             }
         });
         if entry.symptom.is_empty() {
-            ui.colored_label(weak, "No symptom recorded.");
+            controls::note(ui, svg::INFO, "No symptom recorded.", weak);
         } else {
             expandable_text(ui, &format!("kbd_{key}_symptom"), &entry.symptom, PROSE_LINES);
         }
         if !entry.fix.is_empty() {
-            Frame::new()
-                .fill(faint)
-                .stroke(window_stroke)
-                .inner_margin(Margin::symmetric(8, 6))
-                .corner_radius(corner)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(good, icons::WRENCH);
-                        ui.label(RichText::new("Recommended fix").small().strong().color(good));
-                    });
-                    expandable_text(ui, &format!("kbd_{key}_fix"), &entry.fix, PROSE_LINES);
-                    ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
-                });
+            controls::callout(ui, good, svg::WRENCH, |ui| {
+                ui.label(RichText::new("Recommended fix").small().strong().color(good));
+                expandable_text(ui, &format!("kbd_{key}_fix"), &entry.fix, PROSE_LINES);
+                ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
+            });
         }
         ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
     });

@@ -1,4 +1,10 @@
+use eframe::egui::WidgetText;
 use serde::{Deserialize, Serialize};
+
+use crate::ui_tools::{
+    controls,
+    icons::svg::{self, Icon},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -190,6 +196,51 @@ impl TabId {
         matches!(self, Self::ServerConsole)
     }
 
+    /// Icon drawn in front of the tab's title.
+    pub fn icon(self) -> Icon {
+        match self {
+            Self::SessionBoard => svg::KANBAN,
+            Self::TurSheet => svg::CLIPBOARD_TEXT,
+            Self::PartOrder => svg::PACKAGE,
+            Self::Koth => svg::TROPHY,
+            Self::Scripts => svg::SCROLL,
+            Self::MyTools => svg::TOOLBOX,
+            Self::FileBrowser => svg::FOLDER_OPEN,
+            Self::SysInfo => svg::CIRCUITRY,
+            Self::MinidumpAnalysis => svg::BUG_BEETLE,
+            Self::Ai => svg::SPARKLE,
+            Self::StoreTasks => svg::STOREFRONT,
+            Self::MyTasks => svg::LIST_CHECKS,
+            Self::CompletedTasks => svg::CHECK_CIRCLE,
+            Self::BugReport => svg::BUG,
+            Self::Downloads => svg::DOWNLOAD_SIMPLE,
+            Self::TaskAudit => svg::LIST_MAGNIFYING_GLASS,
+            Self::Inventory => svg::BARCODE,
+            Self::SalesTracker => svg::CHART_LINE_UP,
+            Self::Logs => svg::LIST_BULLETS,
+            Self::ResourceMonitor => svg::GAUGE,
+            Self::AdminConsole => svg::SHIELD_CHECK,
+            Self::QueryEditor => svg::CODE_BLOCK,
+            Self::CreateOrder => svg::SHOPPING_CART,
+            Self::Threads => svg::CHAT_CIRCLE_DOTS,
+            Self::Plugins => svg::MT_PLUGIN,
+            Self::DatabaseEditor => svg::DATABASE,
+            Self::FleetDashboard => svg::HARD_DRIVES,
+            Self::StressLab => svg::FLASK,
+            Self::StressTest => svg::MT_STRESS,
+            Self::Terminal => svg::TERMINAL_WINDOW,
+            Self::ShopifyOrders => svg::SHOPPING_BAG,
+            Self::ServerConsole => svg::TERMINAL,
+            Self::AgentAudit => svg::ROBOT,
+            Self::AiAnalytics => svg::CHART_BAR,
+        }
+    }
+
+    /// The tab's icon and title as one label, for tab strips and menus.
+    pub fn label(self, ctx: TabContext) -> WidgetText {
+        controls::tab_title(self.icon(), self.title(ctx))
+    }
+
     pub fn title(self, ctx: TabContext) -> &'static str {
         match self {
             Self::SessionBoard => "Session Board",
@@ -198,7 +249,7 @@ impl TabId {
             Self::Koth => "KOTH",
             Self::Scripts => "Scripts",
             Self::MyTools => "My Tools",
-            Self::FileBrowser => "File Browser 📂",
+            Self::FileBrowser => "File Browser",
             Self::SysInfo => "SysInfo",
             Self::MinidumpAnalysis => "Minidump Analysis",
             Self::Ai => "Ai",
@@ -260,7 +311,7 @@ impl TabId {
             "KOTH" | "Koth" => Some(Self::Koth),
             "Scripts" => Some(Self::Scripts),
             "My Tools" => Some(Self::FileBrowser),
-            "File Browser 📂" => Some(Self::FileBrowser),
+            "File Browser" | "File Browser 📂" => Some(Self::FileBrowser),
             "SysInfo" => Some(Self::ResourceMonitor),
             "Minidump Analysis" => Some(Self::MinidumpAnalysis),
             "QC ☑️" | "Qc" => None,

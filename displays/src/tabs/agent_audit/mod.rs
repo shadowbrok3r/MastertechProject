@@ -7,11 +7,16 @@
 use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{Align, Color32, DragValue, Layout, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{Align, Layout, RichText, ScrollArea, Ui};
 use egui_extras::{Column, TableBuilder};
 use web_time::Instant;
 
-use crate::ui_tools::hex_json;
+use crate::ui_tools::{
+    controls::{self, BarKind, SpinnerSize},
+    hex_json,
+    icons::svg,
+    tokens::Tokens,
+};
 use crate::{PlatformSpawner, Spawner};
 
 const ROW_HEIGHT: f32 = 20.0;
@@ -201,15 +206,18 @@ impl AgentAudit {
             ui.ctx().request_repaint_after(Duration::from_secs(1));
         }
 
-        match &self.health {
+        let t = Tokens::get(ui.ctx());
+        controls::bar(ui, BarKind::Header, |ui| match &self.health {
             None => {
-                ui.label(RichText::new("zeroclaw health: no probe data").weak());
+                controls::IconLabel::new(svg::HEARTBEAT, "zeroclaw health: no probe data")
+                    .tone(t.text_faint)
+                    .show(ui);
             }
             Some(h) if h.status == "ok" && h.age_secs <= HEALTH_STALE_SECS => {
-                ui.label(
-                    RichText::new(format!("zeroclaw ok · {}s ago", h.age_secs))
-                        .color(Color32::from_rgb(120, 200, 140)),
-                );
+                let text = format!("zeroclaw ok · {}s ago", h.age_secs);
+                controls::IconLabel::new(svg::CHECK_CIRCLE, &text)
+                    .tone(t.success)
+                    .show(ui);
             }
             Some(h) => {
                 let text = if h.age_secs == i64::MAX {
@@ -223,48 +231,54 @@ impl AgentAudit {
                         h.detail.as_deref().map(|d| format!(" — {d}")).unwrap_or_default()
                     )
                 };
-                ui.label(RichText::new(text).color(Color32::from_rgb(220, 120, 120)));
+                controls::IconLabel::new(svg::WARNING_OCTAGON, &text)
+                    .tone(t.error)
+                    .show(ui);
             }
-        }
-        ui.separator();
+        });
 
         let mut requery = false;
-        ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+        controls::bar(ui, BarKind::Tool, |ui| {
+            if controls::icon_text_button(ui, svg::ARROW_CLOCKWISE, "Refresh").clicked() {
                 requery = true;
             }
-            ui.checkbox(&mut self.auto_refresh, "Auto");
-            if ui.checkbox(&mut self.failures_only, "Failures only").changed() {
+            controls::toggle(ui, &mut self.auto_refresh, "Auto");
+            if controls::toggle(ui, &mut self.failures_only, "Failures only").changed() {
                 requery = true;
             }
-            ui.label("Tool:");
-            if ui
-                .add(TextEdit::singleline(&mut self.filter_tool).desired_width(180.0))
-                .lost_focus()
-            {
+            crate::tabs::bar_rule(ui);
+            let tool = controls::TextField::new(&mut self.filter_tool)
+                .hint("Tool")
+                .icon(svg::FUNNEL_SIMPLE)
+                .width(180.0)
+                .show(ui);
+            if tool.lost_focus() {
                 requery = true;
             }
-            ui.label("Limit:");
-            if ui.add(DragValue::new(&mut self.limit).range(20..=2000).speed(10)).changed() {
+            ui.label("Limit");
+            if controls::value_field(ui, &mut self.limit, 20..=2000, "rows", 88.0).changed() {
                 requery = true;
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let text = if self.loading { "loading...".to_string() } else { self.status.clone() };
-                ui.label(RichText::new(text).weak());
+                if self.loading {
+                    controls::spinner(ui, SpinnerSize::Sm);
+                } else {
+                    ui.label(RichText::new(&self.status).weak());
+                }
             });
         });
         if requery {
             self.refresh();
         }
-        ui.separator();
 
         if self.rows.is_empty() && !self.loading {
-            ui.label(
-                RichText::new(
-                    "No audit events. Enable hooks.builtin.webhook_audit on the agent host and \
-                     point its url at /api/v1/audit/zeroclaw.",
-                )
-                .weak(),
+            controls::empty_state(
+                ui,
+                svg::LIST_MAGNIFYING_GLASS,
+                "No audit events",
+                "Enable hooks.builtin.webhook_audit on the agent host and point its url at \
+                 /api/v1/audit/zeroclaw.",
+                &[],
             );
             return;
         }
@@ -304,21 +318,18 @@ impl AgentAudit {
                             ui.label(&r.tool);
                         });
                         row.col(|ui| {
-                            let (text, color) = if r.success {
-                                ("ok", Color32::from_rgb(120, 200, 140))
+                            let (icon, text, tone) = if r.success {
+                                (svg::CHECK_CIRCLE, "ok", t.success)
                             } else {
-                                ("failed", Color32::from_rgb(220, 120, 120))
+                                (svg::X_CIRCLE, "failed", t.error)
                             };
-                            ui.label(RichText::new(text).color(color));
+                            controls::IconLabel::new(icon, text).tone(tone).show(ui);
                         });
                         row.col(|ui| {
                             ui.label(RichText::new(r.duration_ms.to_string()).weak());
                         });
                         row.col(|ui| {
-                            ui.label(
-                                RichText::new(r.error.as_deref().unwrap_or(""))
-                                    .color(Color32::from_rgb(220, 120, 120)),
-                            );
+                            ui.label(RichText::new(r.error.as_deref().unwrap_or("")).color(t.error));
                         });
                         if row.response().clicked() {
                             clicked = Some(r.id.clone());
@@ -332,13 +343,13 @@ impl AgentAudit {
         }
 
         if let Some(r) = detail {
-            ui.separator();
+            controls::hairline(ui);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(&r.tool).strong());
+                controls::icon_label(ui, svg::WRENCH, &r.tool);
                 ui.label(RichText::new(format!("· {}", r.created_at)).weak());
                 ui.label(RichText::new(format!("· {}ms", r.duration_ms)).weak());
                 if let Some(e) = &r.error {
-                    ui.label(RichText::new(format!("· {e}")).color(Color32::from_rgb(220, 120, 120)));
+                    ui.label(RichText::new(format!("· {e}")).color(t.error));
                 }
             });
             match &r.args {
@@ -348,10 +359,12 @@ impl AgentAudit {
                         .show(ui, |ui| hex_json::json_tree(ui, "agent_audit_args_tree", args));
                 }
                 None => {
-                    ui.label(
-                        RichText::new("No args recorded (set include_args = true on the hook).")
-                            .weak(),
-                    );
+                    controls::IconLabel::new(
+                        svg::INFO,
+                        "No args recorded (set include_args = true on the hook).",
+                    )
+                    .tone(t.text_faint)
+                    .show(ui);
                 }
             }
         }

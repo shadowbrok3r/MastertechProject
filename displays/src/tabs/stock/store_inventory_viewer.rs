@@ -6,6 +6,7 @@ use database::SurrealValue;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use crate::tabs::stock::{FORECAST_MONTHS, ProductID};
+use crate::ui_tools::theme;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct ExtraInventoryData {
@@ -52,13 +53,13 @@ pub struct StockQuantityViewer {
     pub bins_click_tx: Option<Sender<BinClick>>,
 }
 
-fn qty_color(qty: f64) -> Color32 {
+fn qty_color(ui: &Ui, qty: f64) -> Color32 {
     if qty <= 10.0 {
-        Color32::from_rgb(191, 33, 101)
+        theme::error(ui)
     } else if qty <= 40.0 {
-        Color32::LIGHT_RED
+        theme::warn(ui)
     } else {
-        Color32::from_rgb(51, 255, 189)
+        theme::success(ui)
     }
 }
 
@@ -101,40 +102,11 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
                 ui.horizontal_centered(|ui| {
                     if let Some(splt) = row.name.split_once(']') {
                         let strings = splt.0.split_terminator('/').collect::<Vec<&str>>();
-                        if strings.len() == 2 {
-                            if let Some(s) = strings.get(0) {
-                                ui.colored_label(Color32::LIGHT_GREEN, s.to_string() + "/");
-                            }
-                            if let Some(s) = strings.get(1) {
-                                ui.colored_label(
-                                    Color32::from_rgb(42, 195, 222),
-                                    s.to_string() + "]",
-                                );
-                            }
-                        } else if strings.len() == 3 {
-                            if let Some(s) = strings.get(0) {
-                                ui.colored_label(Color32::LIGHT_GREEN, s.to_string() + "/");
-                            }
-
-                            if let Some(s) = strings.get(1) {
-                                ui.colored_label(Color32::LIGHT_BLUE, s.to_string() + "/");
-                            }
-
-                            if let Some(s) = strings.get(2) {
-                                ui.colored_label(
-                                    Color32::from_rgb(42, 195, 222),
-                                    s.to_string() + "]",
-                                );
-                            }
-                        } else {
-                            if let Some(s) = strings.get(0) {
-                                ui.colored_label(
-                                    Color32::from_rgb(42, 195, 222),
-                                    s.to_string() + "]",
-                                );
-                            }
+                        if !super::code_parts(ui, &strings)
+                            && let Some(s) = strings.first()
+                        {
+                            ui.colored_label(theme::info(ui), s.to_string() + "]");
                         }
-                        ui.add_space(10.);
                         ui.label(splt.1)
                     } else {
                         ui.label(&row.name)
@@ -143,7 +115,7 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
                 .inner
             }
             1 => {
-                let res = Link::new(RichText::new(format!(" {}", row.available)).color(qty_color(row.available)))
+                let res = Link::new(RichText::new(format!(" {}", row.available)).color(qty_color(ui, row.available)))
                     .ui(ui)
                     .on_hover_text(format!(
                         "WAR/Stock and its shelf bins\nCompany-wide: {}\nClick for every bin holding this item",
@@ -155,7 +127,7 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
                 res
             }
             2 => ui
-                .label(RichText::new(format!(" {}", row.virtual_available)).color(qty_color(row.virtual_available)))
+                .label(RichText::new(format!(" {}", row.virtual_available)).color(qty_color(ui, row.virtual_available)))
                 .on_hover_text(format!(
                     "WAR/Stock and its shelf bins\nOn hand + pending moves in - pending moves out\nIgnores moves created over {FORECAST_MONTHS} months ago"
                 )),

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" data-glyph="PACKAGE">
+<path d="M48,128V200a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V128"/>
+<path d="M48,128L32,96M208,128L224,96"/>
+<path d="M128,24V168M92,132L128,168L164,132"/>
+</svg>

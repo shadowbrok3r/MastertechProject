@@ -1,6 +1,7 @@
 use crate::{app_state::SharedContext, modals::{task_modal::ModalAction, ModalType, ModalWindow}};
 use crate::tabs::admin_console::SessionLayout;
-use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId, Window};
+use crate::ui_tools::{controls, icons::svg};
+use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId};
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use database::schema::RecordIdExt;
 use log::info;
@@ -110,7 +111,7 @@ impl SharedContext {
                     }
                 });
             } else {
-                Window::new(title.as_str())
+                controls::icon_window(ctx, svg::DESKTOP_TOWER, &title)
                     .min_size([1100., 950.])
                     .show(ctx, |ui| {
                         CentralPanel::default().show(ui, |ui| {

@@ -1,476 +1,742 @@
-use eframe::egui::{Button, Color32, ComboBox, FontId, Frame, Layout, RichText, Separator, Stroke, Vec2, Widget, vec2};
-use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store}, db};
-use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
-use crate::tabs::github::self_updater::run;
-use crate::utilities::update_policy::{self, UpdateMode};
-use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::{TabContext, WorkMode}, ui_tools::{store_picker::presta_store_options, theme}, TaskUiActions};
-use crate::app_state::MasterTechApp;
+//! The main window's title strip: brand mark, menus, task search, tools, account and captions.
+
+use std::borrow::Cow;
 use std::collections::BTreeSet;
+
+use database::{
+    db,
+    schema::{
+        Store,
+        utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store},
+    },
+};
+use displays::{
+    TaskUiActions,
+    app_state::{AppState, MainPages, default_tree},
+    pages::view_menu,
+    plugins::push_widget_anchor,
+    tabs::{TabContext, TabId, WorkMode},
+    ui_tools::{
+        controls::{
+            self, ButtonKind, IconBox, IconButton, MenuButton, MenuItem, Metrics, TextButton,
+            Tokens,
+        },
+        do_not_disturb,
+        icons::{
+            self,
+            svg::{self, Icon},
+        },
+        theme_config,
+    },
+};
+use eframe::egui::{Rect, Ui, UiKind, ViewportCommand};
 use log::{error, info};
+use mtech_ui::title_bar::{Side, TitleBar};
 use tokio::spawn;
 
+use crate::app_state::MasterTechApp;
+use crate::tabs::github::self_updater::run;
+use crate::utilities::{
+    update_policy::{self, UpdateMode},
+    window_prefs,
+};
+
+/// Window width below which bar labels collapse to icons.
+const COMPACT_BELOW: f32 = 1280.0;
+/// Width of the notifications popup.
+const NOTIFICATIONS_W: f32 = 380.0;
+/// Width of the account menu.
+const ACCOUNT_W: f32 = 270.0;
+/// Width of the store dropdown in the account menu.
+const STORE_W: f32 = 96.0;
+/// Characters of a client name shown in the bar.
+const CLIENT_CHARS: usize = 22;
+const ASK_TIP: &str = "Ask the assistant (Ctrl+K)";
+const LAYOUT_HINT: &str =
+    "Only available in Everything mode - presets always open their own layout.";
+
+/// Work-mode changes the bar asked for this frame, applied once it has drawn.
+#[derive(Default)]
+struct BarActions {
+    switch_to: Option<WorkMode>,
+    back_to_picker: bool,
+}
+
+/// What a Layout menu row asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LayoutAction {
+    Save,
+    Organize,
+    Reset,
+    ResetMemory,
+}
+
+/// A main page the bar can open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Page {
+    Workspace,
+    Preferences,
+    Downloads,
+}
+
+impl Page {
+    fn main_page(self) -> MainPages {
+        match self {
+            Self::Workspace => MainPages::Tasks,
+            Self::Preferences => MainPages::UserPreferences,
+            Self::Downloads => MainPages::Downloads,
+        }
+    }
+}
+
+/// What an account menu row asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AccountAction {
+    Preferences,
+    Downloads,
+    Theme,
+    Refresh,
+    Update,
+    TerminalMode,
+    Logout,
+}
+
+/// The icon a work mode shows, matching the picker's glyph.
+fn mode_icon(mode: WorkMode) -> Icon {
+    Icon::from_glyph(mode.glyph()).unwrap_or(svg::SQUARES_FOUR)
+}
+
+/// Window title of the frameless bar.
+const TITLE: &str = concat!("MasterTech ", database::version_with_build!());
+
+/// `name` cut to [`CLIENT_CHARS`] characters with an ellipsis.
+fn short_name(name: &str) -> Cow<'_, str> {
+    if name.chars().count() <= CLIENT_CHARS {
+        Cow::Borrowed(name)
+    } else {
+        let head: String = name.chars().take(CLIENT_CHARS - 1).collect();
+        Cow::Owned(format!("{head}…"))
+    }
+}
 
 impl MasterTechApp {
-    pub fn menu_bar(&mut self, ui: &mut eframe::egui::Ui) {
-        // Populate inputs with task names and service numbers for search
-        let mut inputs = BTreeSet::new();
-        for task in self.context.shared_ctx.task_index.values() {
-            inputs.insert(task.task_name.clone());
-            inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
+    /// The window's title strip; menus and tools only while `show_menus`.
+    pub fn title_bar(&mut self, ui: &mut Ui, show_menus: bool) {
+        let frameless = self.context.chrome.frameless;
+        if !frameless && !show_menus {
+            return;
         }
-        
-        let mut switch_to = None;
-        let mut back_to_picker = false;
-
-        eframe::egui::Panel::top("egui_dock::MenuBar").show(ui, |ui| {
-            eframe::egui::MenuBar::new()
-            .config(
-                MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
-            )
-            .ui(ui, |ui| {
-                if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
-                    let view_menu_button = ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
-                        let mut anchor = |tab: displays::tabs::TabId, rect: eframe::egui::Rect| {
-                            push_widget_anchor(format!("nav.tab.{}", tab.slug()), rect);
-                        };
-                        view_menu(
-                            ui,
-                            &mut self.dock,
-                            TabContext::MastertechNative,
-                            self.context.work_mode.active.unwrap_or_default(),
-                            Some(&mut anchor),
-                        );
-                    });
-                    push_widget_anchor("nav.menu.view", view_menu_button.response.rect);
-
-                    ui.add_space(6.0);
-
-                    let active = self.context.work_mode.active.unwrap_or_default();
-                    let mode_button = ui.menu_button(
-                        RichText::new(format!("{} {}", active.glyph(), active.title()))
-                            .color(theme::accent(ui))
-                            .heading(),
-                        |ui| {
-                            ui.set_min_width(190.0);
-                            for mode in WorkMode::ALL {
-                                let item = ui.selectable_label(*mode == active, mode.title());
-                                if item.on_hover_text(mode.blurb()).clicked() {
-                                    switch_to = Some(*mode);
-                                    ui.close_kind(UiKind::Menu);
-                                }
-                            }
-                            ui.separator();
-                            if ui.button("Choose again...").clicked() {
-                                back_to_picker = true;
-                                ui.close_kind(UiKind::Menu);
-                            }
-                        },
-                    );
-                    push_widget_anchor("nav.menu.work_mode", mode_button.response.rect);
-                    switch_to = switch_to.filter(|m| *m != active);
-
-                    ui.add_space(10.0);
-
-                    let create_task = Button::new(
-                        RichText::new(format!("Create Task {}", displays::ui_tools::icons::PLUS))
-                            .color(ui.style().visuals.warn_fg_color)
-                            .strong(),
-                    )
-                    .corner_radius(ui.style().visuals.menu_corner_radius)
-                    .ui(ui)
-                    .on_hover_text("Create a new task");
-                    if create_task.clicked() {
-                        let _ = self.context.shared_ctx.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal(None));
-                    }
-
-                    // Global task search
-                    ui.add_space(20.0);
-                    ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
-                    ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                    
-                    displays::ui_data::task_search::search_bar(
-                        ui,
-                        displays::ui_data::task_search::TaskSearchCtx {
-                            state: &mut self.context.shared_ctx.task_search,
-                            input: &mut self.context.shared_ctx.search_input,
-                            results: &mut self.context.shared_ctx.search_results,
-                            index: &mut self.context.shared_ctx.task_index,
-                            tasks: &mut self.context.shared_ctx.tasks,
-                            store_users: &self.context.shared_ctx.store_users,
-                            store_selection: self.context.shared_ctx.store_selection,
-                            actions: &self.context.shared_ctx.ui_actions_tx,
-                        },
-                    );
-                    
-                    ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
-
-                        displays::ui_tools::do_not_disturb::toggle_button(ui);
-                        ui.add_space(4.0);
-                        if displays::ui_tools::command_bar::open_button(ui) {
-                            self.context.shared_ctx.command_bar.request_open();
-                        }
-                        ui.add_space(4.0);
-
-                        // Notification count badges
-                        let unread_count = self.context.shared_ctx.notification_center.unread_count();
-                        let alert_count = self.context.shared_ctx.notification_center.alert_count();
-                        
-                        // Alert badge (red, shown first/rightmost)
-                        if alert_count > 0 {
-                            let alert_badge = RichText::new(format!("⚠ {}", alert_count))
-                                .color(Color32::WHITE)
-                                .small()
-                                .strong();
-                            ui.add(
-                                Button::new(alert_badge)
-                                    .fill(theme::error(ui))
-                                    .corner_radius(10.0)
-                                    .min_size(vec2(28.0, 18.0))
-                            ).on_hover_text(format!("{} unread alerts", alert_count));
-                            ui.add_space(4.0);
-                        }
-                        
-                        // General unread badge (teal)
-                        if unread_count > 0 {
-                            let badge_text = if unread_count > 99 {
-                                "99+".to_string()
-                            } else {
-                                unread_count.to_string()
-                            };
-                            let unread_badge = RichText::new(format!("🔔 {}", badge_text))
-                                .color(Color32::WHITE)
-                                .small()
-                                .strong();
-                            ui.add(
-                                Button::new(unread_badge)
-                                    .fill(theme::success(ui))
-                                    .corner_radius(10.0)
-                                    .min_size(vec2(28.0, 18.0))
-                            ).on_hover_text(format!("{} unread notifications", unread_count));
-                            ui.add_space(4.0);
-                        }
-                        
-                        let txt = RichText::new(usr.get_username()).underline().color(theme::accent(ui));
-
-                        MenuButton::new(txt).config(
-                            MenuConfig::new().style(StyleModifier::new(|s| s.visuals.button_frame = true))
-                                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                        ).ui(ui, |ui| {
-                            ui.set_width(300.0);
-                            ui.set_height(600.0);
-                            ui.vertical_centered_justified(|ui| {
-                                if Button::new(
-                                    RichText::new("Update")
-                                        .monospace()
-                                        .font(FontId::monospace(14.0)),
-                                )
-                                .stroke(Stroke::new(0.5, Color32::LIGHT_RED))
-                                .min_size(Vec2::new(36.0, 20.0))
-                                .ui(ui)
-                                .clicked()
-                                {
-                                    if let Some(pending) = self.context.pending_update.as_mut() {
-                                        pending.accepted = true;
-                                    } else {
-                                        self.context.update_requested = true;
-                                        let client = self.context.client.clone();
-                                        let tx = self.context.bytes_tx.clone();
-
-                                        spawn(async move {
-                                            let _ = run(client, tx.clone()).await;
-                                        });
-                                    }
-                                }
-
-                                let mut auto = self.context.update_mode == UpdateMode::Auto;
-                                if ui
-                                    .checkbox(&mut auto, "Install updates automatically")
-                                    .on_hover_text(
-                                        "Off: a notification asks before updating. Either way, updates wait \
-                                         while remote work or an AI session runs on this computer.",
-                                    )
-                                    .changed()
-                                {
-                                    let mode = if auto { UpdateMode::Auto } else { UpdateMode::Prompt };
-                                    self.context.update_mode = mode;
-                                    if let Err(e) = update_policy::save_mode(mode) {
-                                        error!("menu_bar -> saving the update mode failed: {e}");
-                                        let _ = displays::get_toast_sender().try_send(displays::ToastMessage::Error(
-                                            format!("Couldn't save the update setting: {e}"),
-                                        ));
-                                    }
-                                }
-
-                                if Button::new(
-                                    RichText::new("Terminal Mode")
-                                        .monospace()
-                                        .font(FontId::monospace(14.0)),
-                                )
-                                .stroke(Stroke::new(0.5, Color32::MAGENTA))
-                                .min_size(Vec2::new(36.0, 20.0))
-                                .ui(ui)
-                                .clicked()
-                                {
-                                    let result = crate::utilities::app_restart::restart_in_terminal_mode();
-                                    log::info!("restart_in_terminal_mode: {result:?}");
-                                    ui.ctx().send_viewport_cmd(eframe::egui::ViewportCommand::Close);
-                                }
-                    
-                                ui.add_space(10.0);
-                                Separator::default().shrink(20.0).ui(ui);
-                                ui.add_space(10.0);
-                    
-                                let selected = &mut self.context.shared_ctx.store_selection;
-                                let current = selected.clone();
-                        
-                                // `store_selection` holds a PrestaShop id; the Odoo
-                                // table this used to match against read RIV for
-                                // every store.
-                                let selected_store = Store::from_presta_store_id(&selected.to_string());
-                                let selected_text = selected_store.as_str();
-                        
-                                ui.horizontal(|ui| {
-                                    ui.add_space(ui.available_width()/2.5);
-                                    Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
-                                        ComboBox::new("Store_Selection", "")                    
-                                        .width(60.)
-                                        .close_behavior(PopupCloseBehavior::IgnoreClicks)
-                                        .selected_text(selected_text)
-                                        .show_ui(ui, |ui| presta_store_options(ui, selected, &Store::VALUES));
-                            
-                                        if *selected != current {
-                                            self.context.shared_ctx.store_users.clear();
-                                            self.context.shared_ctx.tasks.clear();
-                                            self.context.shared_ctx.task_index.clear();
-                                            self.context.shared_ctx.live_task_updates.clear();
-                                            self.context.shared_ctx.task_layouts.clear();
-                                            let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
-                                            let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
-                                            let done_tx = self.context.shared_ctx.completed_load_tx.clone();
-                                            let store_selection = Store::from_presta_store_id(&selected.to_string());
-                                            self.context.shared_ctx.completed_loaded_for = None;
-                                            self.context.shared_ctx.completed_pending_for = Some(store_selection);
-
-                                            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
-                                            spawn(async move {
-                                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                                let completed = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                                let _ = done_tx.try_send((store_selection, completed.is_ok()));
-                                                let get_store_users = get_store_users(store_users_tx, store_selection).await;
-
-                                                info!("get_tasks_for_store: {store_tasks:?}");
-                                                info!("get_completed_tasks_for_store: {completed:?}");
-                                                info!("get_store_users: {get_store_users:?}");
-                                            });
-                                        }
-                                    });
-                                });
-
-                                if ui.add(Button::new("Preferences").frame(true).frame_when_inactive(true)).clicked() {
-                                    self.context.shared_ctx.state =
-                                        AppState::Authenticated(MainPages::UserPreferences);
-                                    match self.context.shared_ctx.app_state_tx.try_send(
-                                        AppState::Authenticated(MainPages::UserPreferences),
-                                    ) {
-                                        Ok(_) => self.context.shared_ctx.account_mod.set_user(usr.clone()),
-                                        Err(e) => error!("Error: {e:?}"),
-                                    }
-                                }
-                                
-                                if ui.add(Button::new("Downloads").frame(true).frame_when_inactive(true)).clicked() {
-                                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
-                                    self.context.shared_ctx.release_browser.refresh(ui.ctx());
-
-                                    match self
-                                        .context.shared_ctx
-                                        .app_state_tx
-                                        .try_send(AppState::Authenticated(MainPages::Downloads))
-                                    {
-                                        Ok(_) => info!("Switching to Downloads Page"),
-                                        Err(e) => error!("Error: {e:?}"),
-                                    }
-                                }
-                    
-                                if ui.add(Button::new("Modify Theme").frame(true).frame_when_inactive(true)).clicked() {
-                                    self.context.shared_ctx.modify_theme = true;
-                                    ui.close_kind(UiKind::Menu);
-                                }
-                    
-                                if ui.add(Button::new("Refresh Data").frame(true).frame_when_inactive(true)).clicked() {
-                                    self.context.shared_ctx.first_run = true;
-                                }
-                    
-                                if ui.add(Button::new("Logout").frame(true).frame_when_inactive(true)).clicked() {
-                                    let file_path = "data.enc";
-                                    match std::fs::exists(file_path){
-                                        Ok(exists) => {
-                                            if exists {
-                                                match std::fs::remove_file(file_path){
-                                                    Ok(_) => info!("Removed data file, logged out."),
-                                                    Err(e) => log::error!("Error removing data file: {e:?}"),
-                                                }
-                                            } else {
-                                                info!("Data file does not exist");
-                                            }
-                                        },
-                                        Err(e) => log::error!("*.enc File not found {e:?}"),
-                                    };
-
-                                    self.context.get_settings = true;
-                                    self.context.work_mode = Default::default();
-
-                                    let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Login".to_string()));
-                                    spawn(async move {
-                                        let invalidation = db().invalidate().await;
-                                        info!("invalidated connection: {:?}", invalidation);
-                                    });
-
-                                    let logout_msg = "Logged out".to_string();
-                                    self.context.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
-                                    match self
-                                        .context.shared_ctx
-                                        .app_state_tx
-                                        .try_send(AppState::NoAuth(logout_msg))
-                                    {
-                                        Ok(_) => info!("Logged out"),
-                                        Err(e) => error!("Error: {e:?}"),
-                                    }
-                                }
-                            });
-                    
-                            Separator::default().shrink(20.0).ui(ui);
-                            self.context.shared_ctx.notification_center.ui(
-                                ui, 
-                                &inputs, 
-                                self.context.shared_ctx.ui_actions_tx.clone(), 
-                                &self.context.shared_ctx.tasks
-                            );
-                        });
-                        ui.add_space(1.0);
-                        ui.label("Welcome, ");
-                    
-                        ui.add_space(20.);
-
-                        ui.menu_button(RichText::new("Ui Layout").color(ui.style().visuals.error_fg_color).strong().underline(), |ui| {
-                            ui.vertical_centered_justified(|ui| {
-                                ui.set_width(200.0);    
-                                // ui.set_height(60.0);
-                                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
-                                ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                                let layout_editable =
-                                    self.context.work_mode.active.unwrap_or_default() == WorkMode::Full;
-                                let hint = "Only available in Everything mode - presets always open their own layout.";
-                                let submit = ui
-                                    .add_enabled(
-                                        layout_editable,
-                                        Button::new(RichText::new(" Save Ui Layout ").monospace()),
-                                    );
-                                let submit = if layout_editable { submit } else { submit.on_disabled_hover_text(hint) };
-                                ui.add_space(5.0);
-                                let organize = Button::new(RichText::new(" Organize Windows ").monospace()).ui(ui);
-                                ui.add_space(10.0);
-                                ui.separator();
-                                ui.add_space(10.0);
-                                let reset_ui = ui.add_enabled(
-                                    layout_editable,
-                                    Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()),
-                                );
-                                let reset_ui = if layout_editable { reset_ui } else { reset_ui.on_disabled_hover_text(hint) };
-                                ui.add_space(5.0);
-                                let reset_mem = Button::new(RichText::new(" Reset Memory ").monospace()).ui(ui);
-                                let default_dock = default_tree();
-                                if reset_ui.clicked() {
-                                    let default_layout = default_dock.layout_value();
-                                    usr.set_ui_layout_mastertech(default_layout.clone());
-
-                                    self.dock = default_dock;
-                                    let mut user = usr.clone();
-                                    spawn(async move {
-                                        match user.save_mastertech_ui_layout(default_layout.clone()).await {
-                                            Ok(_) => info!("Updated User Settings"),
-                                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                                        }
-                                    });
-                                }
-                                if submit.clicked() {
-                                    let val = self.dock.layout_value();
-                                    usr.set_ui_layout_mastertech(val.clone());
-
-                                    let mut user = usr.clone();
-                                    spawn(async move {
-                                        match user.save_mastertech_ui_layout(val.clone()).await {
-                                            Ok(_) => info!("Updated User Settings"),
-                                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                                        }
-                                    });
-                                }
-                                if organize.clicked() {
-                                    ui.ctx().memory_mut(|mem| mem.reset_areas());
-                                    ui.ctx().memory_mut(|mem| {
-                                        for layer in mem.areas_mut().visible_layer_ids().iter() {
-                                            info!("Visible layers: {layer:?}");
-                                        }
-                                    })
-                                }
-                                if reset_mem.clicked() {
-                                    ui.ctx().memory_mut(|mem| *mem = Default::default());
-                                }
-                            });
-                        });
-
-                        ui.add_space(20.0);
-                        if !self.context.client_friendly_name.is_empty() {
-                            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new(self.context.client_friendly_name.clone()).monospace());
-                            ui.colored_label(Color32::WHITE, RichText::new("Client: ").monospace());
-                        } else {
-                            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new(self.context.client_title.clone()).monospace());
-                            ui.colored_label(Color32::WHITE, RichText::new("Client ID: ").monospace());
-                        }
-
-                        ui.add_space(ui.available_width() / 5.);
-                        let txt = RichText::new(format!(
-                            "Mastertech Server {}",
-                            database::version_with_build!()
-                        )).underline().heading().color(Color32::WHITE);
-
-                        if ui
-                            .add(Button::new(txt).frame(false))
-                            .clicked()
-                        {
-                            self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
-                            match self
-                                .context
-                                .shared_ctx
-                                .app_state_tx
-                                .try_send(AppState::Authenticated(MainPages::Tasks))
-                            {
-                                Ok(_) => info!("AppState::Authenticated(MainPages::Tasks)"),
-                                Err(e) => error!("Error: {e:?}"),
-                            }
-                        }
-                    });
-                } else {
-                    if Button::new("Login").ui(ui).clicked() {
-                        let _ = self
-                            .context.shared_ctx
-                            .app_state_tx
-                            .send(AppState::NoAuth("Login".to_string()));
-                    }
-                }
-            })
+        let title = if frameless { TITLE } else { "" };
+        let compact = ui.ctx().content_rect().width() < COMPACT_BELOW;
+        let mut acts = BarActions::default();
+        let mut bar = TitleBar::new("mastertech.title_bar", title).frameless(frameless);
+        if frameless {
+            bar = bar.mark(svg::MT_LOGO);
+        }
+        let _ = bar.show(ui, |ui, side| {
+            if !show_menus {
+                return;
+            }
+            match side {
+                Side::Left => self.bar_left(ui, compact, &mut acts),
+                Side::Right => self.bar_right(ui, compact),
+            }
         });
 
-        if let Some(mode) = switch_to {
+        if let Some(mode) = acts.switch_to {
             let ctx = ui.ctx().clone();
             self.apply_work_mode(mode, &ctx);
         }
-        if back_to_picker {
+        if acts.back_to_picker {
             if self.context.work_mode.active == Some(WorkMode::Full) {
                 self.context.work_mode.full_snapshot = Some(self.dock.tree.clone());
             }
             self.context.work_mode.active = None;
         }
     }
+
+    fn bar_left(&mut self, ui: &mut Ui, compact: bool, acts: &mut BarActions) {
+        if self.context.shared_ctx.current_user.is_none() {
+            if TextButton::new("Log in")
+                .icon(svg::SIGN_IN)
+                .show(ui)
+                .clicked()
+            {
+                let _ = self
+                    .context
+                    .shared_ctx
+                    .app_state_tx
+                    .send(AppState::NoAuth("Login".to_string()));
+            }
+            return;
+        }
+        let on_workspace = matches!(
+            self.context.shared_ctx.state,
+            AppState::Authenticated(MainPages::Tasks)
+        );
+        if !on_workspace
+            && TextButton::new("Workspace")
+                .icon(svg::ARROW_LEFT)
+                .kind(ButtonKind::Ghost)
+                .show(ui)
+                .on_hover_text("Back to the workspace")
+                .clicked()
+        {
+            self.open_page(ui, Page::Workspace);
+        }
+        self.view_menu(ui);
+        self.mode_menu(ui, acts);
+        self.layout_menu(ui, compact);
+        let m = Metrics::get(ui.ctx());
+        controls::vline(ui, m.control_h - 8.0);
+        let label = if compact { "New" } else { "New task" };
+        if TextButton::new(label)
+            .icon(icons::CREATE_TASK)
+            .kind(ButtonKind::Primary)
+            .show(ui)
+            .on_hover_text("Create a new task")
+            .clicked()
+        {
+            let _ = self
+                .context
+                .shared_ctx
+                .ui_actions_tx
+                .try_send(TaskUiActions::CreateTaskModal(None));
+        }
+        let shared = &mut self.context.shared_ctx;
+        displays::ui_data::task_search::search_bar(
+            ui,
+            displays::ui_data::task_search::TaskSearchCtx {
+                state: &mut shared.task_search,
+                input: &mut shared.search_input,
+                results: &mut shared.search_results,
+                index: &mut shared.task_index,
+                tasks: &mut shared.tasks,
+                store_users: &shared.store_users,
+                store_selection: shared.store_selection,
+                actions: &shared.ui_actions_tx,
+            },
+        );
+    }
+
+    fn view_menu(&mut self, ui: &mut Ui) {
+        let mode = self.context.work_mode.active.unwrap_or_default();
+        let dock = &mut self.dock;
+        let (button, _) = MenuButton::new("View")
+            .icon(svg::TABS)
+            .tip("Open or close tabs")
+            .show(ui, |ui| {
+                let mut anchor = |tab: TabId, rect: Rect| {
+                    push_widget_anchor(format!("nav.tab.{}", tab.slug()), rect);
+                };
+                view_menu(
+                    ui,
+                    dock,
+                    TabContext::MastertechNative,
+                    mode,
+                    Some(&mut anchor),
+                );
+            });
+        push_widget_anchor("nav.menu.view", button.rect);
+    }
+
+    fn mode_menu(&mut self, ui: &mut Ui, acts: &mut BarActions) {
+        let t = Tokens::get(ui.ctx());
+        let active = self.context.work_mode.active.unwrap_or_default();
+        let (button, _) = MenuButton::new(active.title())
+            .icon(mode_icon(active))
+            .tint(t.primary)
+            .tip("Work mode")
+            .show(ui, |ui| {
+                for &mode in WorkMode::ALL {
+                    let item = controls::menu_check_item(
+                        ui,
+                        mode_icon(mode),
+                        mode.title(),
+                        mode == active,
+                    );
+                    if item.on_hover_text(mode.blurb()).clicked() && mode != active {
+                        acts.switch_to = Some(mode);
+                    }
+                }
+                controls::menu_separator(ui);
+                if controls::menu_item(ui, svg::ARROW_U_UP_LEFT, "Choose again…").clicked() {
+                    acts.back_to_picker = true;
+                }
+            });
+        push_widget_anchor("nav.menu.work_mode", button.rect);
+    }
+
+    fn layout_menu(&mut self, ui: &mut Ui, compact: bool) {
+        let editable = self.context.work_mode.active.unwrap_or_default() == WorkMode::Full;
+        let label = if compact { "" } else { "Layout" };
+        let mut picked = None;
+        let _ = MenuButton::new(label)
+            .icon(svg::LAYOUT)
+            .tip("UI layout")
+            .show(ui, |ui| {
+                let row =
+                    |ui: &mut Ui, icon: Icon, text: &str, action: LayoutAction, enabled: bool| {
+                        let item = MenuItem::new(text).icon(icon).enabled(enabled).show(ui);
+                        if item.on_disabled_hover_text(LAYOUT_HINT).clicked() {
+                            Some(action)
+                        } else {
+                            None
+                        }
+                    };
+                picked = picked
+                    .or(row(
+                        ui,
+                        svg::FLOPPY_DISK,
+                        "Save layout",
+                        LayoutAction::Save,
+                        editable,
+                    ))
+                    .or(row(
+                        ui,
+                        svg::FRAME_CORNERS,
+                        "Organize windows",
+                        LayoutAction::Organize,
+                        true,
+                    ));
+                controls::menu_separator(ui);
+                picked = picked
+                    .or(row(
+                        ui,
+                        svg::ARROW_COUNTER_CLOCKWISE,
+                        "Reset layout",
+                        LayoutAction::Reset,
+                        editable,
+                    ))
+                    .or(row(
+                        ui,
+                        svg::BROOM,
+                        "Reset memory",
+                        LayoutAction::ResetMemory,
+                        true,
+                    ));
+            });
+        if let Some(action) = picked {
+            self.apply_layout_action(ui, action);
+        }
+    }
+
+    fn apply_layout_action(&mut self, ui: &Ui, action: LayoutAction) {
+        match action {
+            LayoutAction::Save | LayoutAction::Reset => {
+                let Some(usr) = self.context.shared_ctx.current_user.as_mut() else {
+                    return;
+                };
+                if action == LayoutAction::Reset {
+                    self.dock = default_tree();
+                }
+                let layout = self.dock.layout_value();
+                usr.set_ui_layout_mastertech(layout.clone());
+                let mut user = usr.clone();
+                spawn(async move {
+                    match user.save_mastertech_ui_layout(layout).await {
+                        Ok(_) => info!("Updated User Settings"),
+                        Err(e) => error!("Error updating User Settings: {e:?}"),
+                    }
+                });
+            }
+            LayoutAction::Organize => {
+                ui.ctx().memory_mut(|mem| mem.reset_areas());
+                ui.ctx().memory_mut(|mem| {
+                    for layer in mem.areas_mut().visible_layer_ids().iter() {
+                        info!("Visible layers: {layer:?}");
+                    }
+                });
+            }
+            LayoutAction::ResetMemory => theme_config::reset_memory(ui.ctx()),
+        }
+    }
+
+    fn bar_right(&mut self, ui: &mut Ui, compact: bool) {
+        let Some(username) = self
+            .context
+            .shared_ctx
+            .current_user
+            .as_ref()
+            .map(|u| u.get_username().to_owned())
+        else {
+            return;
+        };
+        self.account_menu(ui, &username);
+        let m = Metrics::get(ui.ctx());
+        controls::vline(ui, m.control_h - 8.0);
+        self.notifications_button(ui);
+        dnd_button(ui);
+        let ask = if compact {
+            IconButton::new(svg::ROBOT, IconBox::Md)
+                .tip(ASK_TIP)
+                .show(ui)
+        } else {
+            TextButton::new("Ask")
+                .icon(svg::ROBOT)
+                .kind(ButtonKind::Ghost)
+                .show(ui)
+                .on_hover_text(ASK_TIP)
+        };
+        if ask.clicked() {
+            self.context.shared_ctx.command_bar.request_open();
+        }
+        self.client_chip(ui, compact);
+    }
+
+    /// The client's name and ID, whichever is set, with the tooltip prefix for it.
+    fn client_name(&self) -> (&str, &'static str) {
+        if self.context.client_friendly_name.is_empty() {
+            (&self.context.client_title, "Client ID")
+        } else {
+            (&self.context.client_friendly_name, "Client")
+        }
+    }
+
+    /// The client chip; an icon button alone when `compact`.
+    fn client_chip(&self, ui: &mut Ui, compact: bool) {
+        let (name, kind) = self.client_name();
+        if name.is_empty() {
+            return;
+        }
+        let chip = if compact {
+            IconButton::new(svg::DESKTOP_TOWER, IconBox::Md)
+                .tip(kind)
+                .show(ui)
+        } else {
+            controls::pill(ui, svg::DESKTOP_TOWER, &short_name(name), false)
+        };
+        let chip = chip.on_hover_ui(|ui| {
+            ui.label(format!("{kind}: {name}\nClick to copy"));
+        });
+        if chip.clicked() {
+            ui.ctx().copy_text(name.to_owned());
+            let _ = displays::get_toast_sender()
+                .try_send(displays::ToastMessage::Info(format!("Copied {name}")));
+        }
+    }
+
+    fn notifications_button(&mut self, ui: &mut Ui) {
+        let t = Tokens::get(ui.ctx());
+        let center = &self.context.shared_ctx.notification_center;
+        let (unread, alerts) = (center.unread_count(), center.alert_count());
+        let tip: Cow<str> = match (alerts, unread) {
+            (0, 0) => "Notifications".into(),
+            (0, n) => format!("{n} unread notifications").into(),
+            (a, n) => format!("{a} unread alerts, {n} unread notifications").into(),
+        };
+        let mut button = IconButton::new(
+            if alerts > 0 {
+                svg::BELL_RINGING
+            } else {
+                svg::BELL
+            },
+            IconBox::Md,
+        )
+        .tip(&tip);
+        if alerts > 0 {
+            button = button.tint(t.error);
+        }
+        let response = button.show(ui);
+        let (count, tone) = if alerts > 0 {
+            (alerts, t.error)
+        } else {
+            (unread, t.primary)
+        };
+        controls::count_badge(ui, response.rect, count, tone);
+        let shared = &mut self.context.shared_ctx;
+        controls::popup_menu(&response, true, |ui| {
+            ui.reset_style();
+            ui.set_width(NOTIFICATIONS_W);
+            let mut names = BTreeSet::new();
+            for task in shared.task_index.values() {
+                names.insert(task.task_name.clone());
+                names.insert(task.service_number.clone().unwrap_or_default());
+            }
+            shared
+                .notification_center
+                .ui(ui, &names, shared.ui_actions_tx.clone(), &shared.tasks);
+        });
+    }
+
+    fn account_menu(&mut self, ui: &mut Ui, username: &str) {
+        let mut picked = None;
+        let mut store_changed = false;
+        let (_, _) = MenuButton::new(username)
+            .icon(svg::USER_CIRCLE)
+            .tip("Account")
+            .keep_open(true)
+            .show(ui, |ui| {
+                ui.set_width(ACCOUNT_W);
+                controls::menu_inset_row(ui, |ui| {
+                    controls::icon_label(ui, svg::IDENTIFICATION_BADGE, username)
+                });
+                let (client, _) = self.client_name();
+                if !client.is_empty() {
+                    let client = short_name(client);
+                    controls::menu_inset_row(ui, |ui| {
+                        controls::icon_label(ui, svg::DESKTOP_TOWER, &client)
+                    });
+                }
+                store_changed = self.store_row(ui);
+                controls::menu_separator(ui);
+                let mut item = |ui: &mut Ui, icon: Icon, text: &str, action: AccountAction| {
+                    if controls::menu_item(ui, icon, text).clicked() {
+                        picked = Some(action);
+                        ui.close_kind(UiKind::Menu);
+                    }
+                };
+                item(ui, svg::GEAR, "Preferences", AccountAction::Preferences);
+                item(
+                    ui,
+                    svg::DOWNLOAD_SIMPLE,
+                    "Downloads",
+                    AccountAction::Downloads,
+                );
+                item(ui, svg::PALETTE, "Theme", AccountAction::Theme);
+                item(
+                    ui,
+                    svg::ARROW_CLOCKWISE,
+                    "Refresh data",
+                    AccountAction::Refresh,
+                );
+                controls::menu_separator(ui);
+                let update = if self.context.pending_update.is_some() {
+                    "Install update"
+                } else {
+                    "Check for updates"
+                };
+                item(ui, svg::CLOUD_ARROW_DOWN, update, AccountAction::Update);
+                self.update_mode_row(ui);
+                self.title_bar_row(ui);
+                item(
+                    ui,
+                    svg::TERMINAL_WINDOW,
+                    "Restart in terminal mode",
+                    AccountAction::TerminalMode,
+                );
+                controls::menu_separator(ui);
+                item(ui, svg::SIGN_OUT, "Log out", AccountAction::Logout);
+            });
+        if store_changed {
+            self.reload_store();
+        }
+        if let Some(action) = picked {
+            self.apply_account_action(ui, action);
+        }
+    }
+
+    /// The store picker; true when the selection changed.
+    fn store_row(&mut self, ui: &mut Ui) -> bool {
+        let selected = &mut self.context.shared_ctx.store_selection;
+        let before = *selected;
+        let stores: &'static [Store] = &Store::VALUES;
+        let options: Vec<(u64, &str)> = stores
+            .iter()
+            .map(|s| (s.into_store_id() as u64, s.as_str()))
+            .collect();
+        controls::menu_inset_row(ui, |ui| {
+            controls::icon_label(ui, svg::STOREFRONT, "Store");
+            ui.with_layout(
+                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                |ui| {
+                    let m = Metrics::get(ui.ctx());
+                    ui.add_space(m.pad.x);
+                    controls::dropdown(ui, "account.store", selected, &options, STORE_W);
+                },
+            );
+        });
+        *selected != before
+    }
+
+    fn update_mode_row(&mut self, ui: &mut Ui) {
+        let mut auto = self.context.update_mode == UpdateMode::Auto;
+        let toggled = controls::menu_inset_row(ui, |ui| {
+            controls::toggle(ui, &mut auto, "Install updates automatically")
+        })
+        .on_hover_text(
+            "Off: a notification asks before updating. Either way, updates wait \
+                 while remote work or an AI session runs on this computer.",
+        )
+        .changed();
+        if !toggled {
+            return;
+        }
+        let mode = if auto {
+            UpdateMode::Auto
+        } else {
+            UpdateMode::Prompt
+        };
+        self.context.update_mode = mode;
+        if let Err(e) = update_policy::save_mode(mode) {
+            error!("menu_bar -> saving the update mode failed: {e}");
+            let _ = displays::get_toast_sender().try_send(displays::ToastMessage::Error(format!(
+                "Couldn't save the update setting: {e}"
+            )));
+        }
+    }
+
+    fn title_bar_row(&mut self, ui: &mut Ui) {
+        if !self.context.chrome.available {
+            return;
+        }
+        let mut custom = self.context.chrome.frameless;
+        let toggled = controls::menu_inset_row(ui, |ui| {
+            controls::toggle(ui, &mut custom, "MasterTech title bar")
+        })
+        .on_hover_text(
+            "Off: the Windows title bar. --system-titlebar also keeps it for one launch.",
+        )
+        .changed();
+        if !toggled {
+            return;
+        }
+        self.context.chrome.frameless = custom;
+        ui.ctx()
+            .send_viewport_cmd(ViewportCommand::Decorations(!custom));
+        if let Err(e) = window_prefs::save_custom_title_bar(custom) {
+            error!("menu_bar -> saving the title bar setting failed: {e}");
+            let _ = displays::get_toast_sender().try_send(displays::ToastMessage::Error(format!(
+                "Couldn't save the title bar setting: {e}"
+            )));
+        }
+    }
+
+    /// Clears the store's loaded data and fetches the newly selected store's.
+    fn reload_store(&mut self) {
+        let shared = &mut self.context.shared_ctx;
+        shared.store_users.clear();
+        shared.tasks.clear();
+        shared.task_index.clear();
+        shared.live_task_updates.clear();
+        shared.task_layouts.clear();
+        let tasks_tx = shared.initial_tasks_tx.clone();
+        let store_users_tx = shared.store_users_tx.clone();
+        let done_tx = shared.completed_load_tx.clone();
+        let store = Store::from_presta_store_id(&shared.store_selection.to_string());
+        shared.completed_loaded_for = None;
+        shared.completed_pending_for = Some(store);
+
+        info!("Store: {store:?}//{:?}", store.as_str());
+        spawn(async move {
+            let code = store.as_str().to_string();
+            let store_tasks = get_tasks_for_store(tasks_tx.clone(), code.clone()).await;
+            let completed = get_completed_tasks_for_store(tasks_tx, code).await;
+            let _ = done_tx.try_send((store, completed.is_ok()));
+            let store_users = get_store_users(store_users_tx, store).await;
+
+            info!("get_tasks_for_store: {store_tasks:?}");
+            info!("get_completed_tasks_for_store: {completed:?}");
+            info!("get_store_users: {store_users:?}");
+        });
+    }
+
+    /// Switches the main page and tells the state channel.
+    fn open_page(&mut self, ui: &Ui, page: Page) {
+        if page == Page::Downloads {
+            self.context.shared_ctx.release_browser.refresh(ui.ctx());
+        }
+        self.context.shared_ctx.state = AppState::Authenticated(page.main_page());
+        match self
+            .context
+            .shared_ctx
+            .app_state_tx
+            .try_send(AppState::Authenticated(page.main_page()))
+        {
+            Ok(_) => {
+                info!("AppState::Authenticated({:?})", page.main_page());
+                if page == Page::Preferences
+                    && let Some(usr) = self.context.shared_ctx.current_user.clone()
+                {
+                    self.context.shared_ctx.account_mod.set_user(usr);
+                }
+            }
+            Err(e) => error!("Error: {e:?}"),
+        }
+    }
+
+    fn apply_account_action(&mut self, ui: &Ui, action: AccountAction) {
+        match action {
+            AccountAction::Preferences => self.open_page(ui, Page::Preferences),
+            AccountAction::Downloads => self.open_page(ui, Page::Downloads),
+            AccountAction::Theme => self.context.shared_ctx.modify_theme = true,
+            AccountAction::Refresh => self.context.shared_ctx.first_run = true,
+            AccountAction::Update => {
+                if let Some(pending) = self.context.pending_update.as_mut() {
+                    pending.accepted = true;
+                } else {
+                    self.context.update_requested = true;
+                    let client = self.context.client.clone();
+                    let tx = self.context.bytes_tx.clone();
+                    spawn(async move {
+                        let _ = run(client, tx).await;
+                    });
+                }
+            }
+            AccountAction::TerminalMode => {
+                let result = crate::utilities::app_restart::restart_in_terminal_mode();
+                info!("restart_in_terminal_mode: {result:?}");
+                ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+            }
+            AccountAction::Logout => self.logout(),
+        }
+    }
+
+    fn logout(&mut self) {
+        let file_path = "data.enc";
+        match std::fs::exists(file_path) {
+            Ok(true) => match std::fs::remove_file(file_path) {
+                Ok(_) => info!("Removed data file, logged out."),
+                Err(e) => error!("Error removing data file: {e:?}"),
+            },
+            Ok(false) => info!("Data file does not exist"),
+            Err(e) => error!("*.enc File not found {e:?}"),
+        }
+
+        self.context.get_settings = true;
+        self.context.work_mode = Default::default();
+
+        let shared = &mut self.context.shared_ctx;
+        let _ = shared
+            .app_state_tx
+            .try_send(AppState::NoAuth("Login".to_string()));
+        spawn(async move {
+            let invalidation = db().invalidate().await;
+            info!("invalidated connection: {:?}", invalidation);
+        });
+
+        let logout_msg = "Logged out".to_string();
+        shared.state = AppState::NoAuth(logout_msg.clone());
+        match shared.app_state_tx.try_send(AppState::NoAuth(logout_msg)) {
+            Ok(_) => info!("Logged out"),
+            Err(e) => error!("Error: {e:?}"),
+        }
+    }
 }
 
+/// Do Not Disturb as a moon toggle carrying the silenced tally while on.
+fn dnd_button(ui: &mut Ui) {
+    let on = do_not_disturb::is_enabled();
+    let count = do_not_disturb::suppressed_count();
+    let tip: Cow<str> = if on {
+        format!(
+            "Do Not Disturb is on: {count} notification(s) silenced.\nClick to resume notifications."
+        )
+        .into()
+    } else {
+        "Do Not Disturb: silence all notifications until the app restarts.\n\
+         Approval and confirmation dialogs still appear."
+            .into()
+    };
+    let response = IconButton::new(svg::MOON, IconBox::Md)
+        .selected(on)
+        .tip(&tip)
+        .show(ui);
+    if on {
+        let t = Tokens::get(ui.ctx());
+        controls::count_badge(ui, response.rect, count, t.secondary);
+    }
+    if response.clicked() {
+        do_not_disturb::set_enabled(!on);
+    }
+}

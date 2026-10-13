@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use eframe::egui::{text::{CCursor, CCursorRange}, vec2, Color32, CursorIcon, Margin, TextEdit, Ui, UiKind};
+use eframe::egui::{text::{CCursor, CCursorRange}, vec2, CursorIcon, Margin, TextEdit, Ui, UiKind};
 use egui_json_tree::{
     delimiters::ExpandableDelimiter,
     pointer::JsonPointerSegment,
@@ -13,6 +13,11 @@ use egui_json_tree::{
 use serde_json::Value;
 
 use super::QueryEditor;
+use crate::ui_tools::{
+    controls::{self, IconBox, IconButton},
+    icons::svg,
+    tokens::Tokens,
+};
 
 #[derive(Default)]
 pub struct Editor {
@@ -62,23 +67,21 @@ impl Editor {
                         &mut state.request_focus,
                     );
 
-                    ui.add_space(5.0);
-
                     let valid_key = state.key == state.new_key_input
                         || document
                             .pointer(&state.object_pointer)
                             .and_then(|v| v.as_object())
                             .is_some_and(|obj| !obj.contains_key(&state.new_key_input));
 
-                    ui.add_enabled_ui(valid_key, |ui| {
-                        if ui.small_button("✅").clicked() {
-                            edit_events.push(EditEvent::SaveObjectKeyEdit);
-                        }
-                    });
+                    let save = IconButton::new(svg::CHECK, IconBox::Sm)
+                        .tip("Save key")
+                        .enabled(valid_key)
+                        .show(ui);
+                    if save.clicked() {
+                        edit_events.push(EditEvent::SaveObjectKeyEdit);
+                    }
 
-                    ui.add_space(5.0);
-
-                    if ui.small_button("❌").clicked() {
+                    if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Cancel").clicked() {
                         if state.is_new_key {
                             edit_events.push(EditEvent::DeleteFromObject {
                                 object_pointer: state.object_pointer.to_string(),
@@ -108,15 +111,12 @@ impl Editor {
                     &mut state.request_focus,
                 );
 
-                ui.add_space(5.0);
-
-                if ui.small_button("✅").clicked() {
+                if controls::icon_button(ui, svg::CHECK, IconBox::Sm, false, "Save value").clicked()
+                {
                     edit_events.push(EditEvent::SaveValueEdit);
                 }
 
-                ui.add_space(5.0);
-
-                if ui.small_button("❌").clicked() {
+                if controls::icon_button(ui, svg::X, IconBox::Sm, false, "Cancel").clicked() {
                     edit_events.push(EditEvent::CloseValueEdit);
                 }
                 return;
@@ -147,15 +147,19 @@ impl Editor {
         context
             .render_default(ui)
             .on_hover_cursor(CursorIcon::ContextMenu)
-            .context_menu(|ui| {
-                if context.value.is_object() && ui.button("Add to object").clicked() {
+            .context_menu(|ui| controls::menu_body(ui, |ui| {
+                if context.value.is_object()
+                    && controls::menu_item(ui, svg::PLUS, "Add to object").clicked()
+                {
                     self.edit_events.push(EditEvent::AddToObject {
                         pointer: context.pointer.to_json_pointer_string(),
                     });
                     ui.close_kind(UiKind::Menu);
                 }
 
-                if context.value.is_array() && ui.button("Add to array").clicked() {
+                if context.value.is_array()
+                    && controls::menu_item(ui, svg::LIST_PLUS, "Add to array").clicked()
+                {
                     self.edit_events.push(EditEvent::AddToArray {
                         pointer: context.pointer.to_json_pointer_string(),
                     });
@@ -164,7 +168,7 @@ impl Editor {
 
                 if let Some(parent) = context.pointer.parent() {
                     if let JsonPointerSegment::Key(key) = &context.property {
-                        if ui.button("Edit key").clicked() {
+                        if controls::menu_item(ui, svg::PENCIL_SIMPLE, "Edit key").clicked() {
                             self.state = Some(EditState::EditObjectKey(EditObjectKeyState {
                                 key: key.to_string(),
                                 object_pointer: parent.to_json_pointer_string(),
@@ -176,7 +180,7 @@ impl Editor {
                         }
                     }
 
-                    if ui.button("Delete").clicked() {
+                    if controls::menu_item(ui, svg::TRASH, "Delete").clicked() {
                         let event = match context.property {
                             JsonPointerSegment::Key(key) => EditEvent::DeleteFromObject {
                                 object_pointer: parent.to_json_pointer_string(),
@@ -191,7 +195,7 @@ impl Editor {
                         ui.close_kind(UiKind::Menu);
                     }
                 }
-            });
+            }));
     }
 
     fn show_value_context_menu(
@@ -202,8 +206,8 @@ impl Editor {
         context
             .render_default(ui)
             .on_hover_cursor(CursorIcon::ContextMenu)
-            .context_menu(|ui| {
-                if ui.button("Edit value").clicked() {
+            .context_menu(|ui| controls::menu_body(ui, |ui| {
+                if controls::menu_item(ui, svg::PENCIL, "Edit value").clicked() {
                     self.state = Some(EditState::EditValue(EditValueState {
                         pointer: context.pointer.to_json_pointer_string(),
                         new_value_input: context.value.to_string(),
@@ -214,7 +218,7 @@ impl Editor {
 
                 match (context.pointer.parent(), context.pointer.last()) {
                     (Some(parent), Some(JsonPointerSegment::Key(key))) => {
-                        if ui.button("Delete").clicked() {
+                        if controls::menu_item(ui, svg::TRASH, "Delete").clicked() {
                             self.edit_events.push(EditEvent::DeleteFromObject {
                                 object_pointer: parent.to_json_pointer_string(),
                                 key: key.to_string(),
@@ -223,7 +227,7 @@ impl Editor {
                         }
                     }
                     (Some(parent), Some(JsonPointerSegment::Index(idx))) => {
-                        if ui.button("Delete").clicked() {
+                        if controls::menu_item(ui, svg::TRASH, "Delete").clicked() {
                             self.edit_events.push(EditEvent::DeleteFromArray {
                                 array_pointer: parent.to_json_pointer_string(),
                                 idx: *idx,
@@ -233,7 +237,7 @@ impl Editor {
                     }
                     _ => {}
                 };
-            });
+            }));
     }
 
     fn show_expandable_delimiter_context_menu(
@@ -246,27 +250,27 @@ impl Editor {
                 context
                     .render_default(ui)
                     .on_hover_cursor(CursorIcon::ContextMenu)
-                    .context_menu(|ui| {
-                        if ui.button("Add to array").clicked() {
+                    .context_menu(|ui| controls::menu_body(ui, |ui| {
+                        if controls::menu_item(ui, svg::LIST_PLUS, "Add to array").clicked() {
                             self.edit_events.push(EditEvent::AddToArray {
                                 pointer: context.pointer.to_json_pointer_string(),
                             });
                             ui.close_kind(UiKind::Menu);
                         }
-                    });
+                    }));
             }
             ExpandableDelimiter::OpeningObject => {
                 context
                     .render_default(ui)
                     .on_hover_cursor(CursorIcon::ContextMenu)
-                    .context_menu(|ui| {
-                        if ui.button("Add to object").clicked() {
+                    .context_menu(|ui| controls::menu_body(ui, |ui| {
+                        if controls::menu_item(ui, svg::PLUS, "Add to object").clicked() {
                             self.edit_events.push(EditEvent::AddToObject {
                                 pointer: context.pointer.to_json_pointer_string(),
                             });
                             ui.close_kind(UiKind::Menu);
                         }
-                    });
+                    }));
             }
             _ => {
                 context.render_default(ui);
@@ -420,20 +424,21 @@ impl Show for QueryEditor {
     }
 
     fn show(&mut self, ui: &mut Ui) {
+        let t = Tokens::get(ui.ctx());
         JsonTree::new(self.title(), &self.response)
         .default_expand(DefaultExpand::ToLevel(4))
         .on_render(|ui, context| self.editor.show(ui, &self.response, context))
         .style(JsonTreeStyle {
             visuals: Some(
                 JsonTreeVisuals {
-                    bool_color: Color32::from_rgb(255, 105, 180), // hot pink (galactic highlight)
-                    object_key_color: Color32::from_rgb_additive(72, 209, 204), // medium turquoise (ethereal glow)
-                    array_idx_color: Color32::from_rgb(186, 85, 211), // medium orchid (space purple)
-                    number_color: Color32::from_rgba_premultiplied(173, 255, 47, 220), // neon green with glow
-                    string_color: Color32::from_rgb(255, 20, 147), // deep pink (bright and punchy)
-                    highlight_color: Color32::from_rgba_unmultiplied(138, 43, 226, 180), // blueviolet with transparency
-                    punctuation_color: Color32::from_rgba_premultiplied(75, 0, 130, 180), // indigo nebulae
-                    null_color: Color32::from_rgb(255, 140, 0), // dark orange (space bronze)
+                    bool_color: t.secondary,
+                    object_key_color: t.tertiary,
+                    array_idx_color: t.secondary,
+                    number_color: t.success,
+                    string_color: t.primary,
+                    highlight_color: t.primary_soft,
+                    punctuation_color: t.text_faint,
+                    null_color: t.warn,
                 }
             ),
             abbreviate_root: false,

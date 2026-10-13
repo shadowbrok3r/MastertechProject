@@ -477,9 +477,9 @@ pub trait Aesthetix {
     /// stashes the semantic tokens that don't have an egui Visuals slot
     /// (success, accent_secondary) for `theme::*` accessors to read.
     fn apply_to_ctx(&self, ctx: &egui::Context) {
-        ctx.set_global_style(std::sync::Arc::new(self.custom_style()));
         crate::ui_tools::theme::set_success_color(ctx, self.fg_success_text_color_visuals());
         crate::ui_tools::theme::set_accent_secondary(ctx, self.secondary_accent_color_visuals());
+        crate::ui_tools::theme_config::install_style(ctx, self.custom_style());
     }
 }
 

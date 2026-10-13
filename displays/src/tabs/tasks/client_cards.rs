@@ -8,16 +8,19 @@
 //! and (when linked) jump to the related service task.
 
 use crate::TaskUiActions;
-use crate::ui_tools::theme;
-use crate::ui_tools::icons::{self, menu_item};
+use crate::ui_tools::{
+    controls::{self, ButtonKind, Icon, ProgressBar, TextButton},
+    glass_card,
+    icons::svg,
+    metrics::Metrics,
+    theme,
+};
 use crossbeam::channel::Sender;
 use database::schema::{
     client::ClientKind, ComputerData, ConnectedClient, LiveTaskPayload, RecordIdExt,
     SystemInformation,
 };
-use eframe::egui::{
-    Button, Color32, CornerRadius, Frame, Margin, ProgressBar, RichText, Stroke, Ui, Vec2, Widget,
-};
+use eframe::egui::{RichText, Ui, Vec2};
 
 /// Heartbeat-freshness threshold for the header dot.
 ///
@@ -31,6 +34,9 @@ use eframe::egui::{
 /// the flag to `false` shortly after; this threshold is the UI showing
 /// the same conclusion a few seconds earlier.
 const STALE_THRESHOLD_SECS: i64 = 180;
+
+/// Width of a stats-row meter.
+const STAT_BAR_W: f32 = 120.0;
 
 /// Recently-offline machines stay visible in summaries for this long after
 /// their last heartbeat (must match `get_connected_clients` in utilities.rs).
@@ -120,23 +126,18 @@ impl ClientCardData {
     }
 
     pub fn display_client_card(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
-        let card_frame = Frame::default()
-            .fill(ui.style().visuals.faint_bg_color)
-            .stroke(Stroke::new(0.7_f32, ui.style().visuals.weak_text_color()))
-            .inner_margin(Margin::same(8))
-            .corner_radius(CornerRadius::same(6));
-
-        card_frame.show(ui, |ui| {
+        let gap = Metrics::get(ui.ctx()).gap.y;
+        glass_card::group(ui, |ui| {
             ui.set_min_width(420.0);
             ui.vertical(|ui| {
                 self.header_row(ui);
-                ui.add_space(4.0);
+                ui.add_space(gap);
                 self.stats_row(ui);
-                ui.add_space(6.0);
+                ui.add_space(gap);
                 self.button_row(ui, tx);
                 self.open_service_row(ui, tx);
                 if let Some(task) = self.linked_task.as_ref() {
-                    ui.add_space(4.0);
+                    ui.add_space(gap);
                     self.linked_task_chip(ui, task, tx);
                 }
             });
@@ -191,24 +192,12 @@ impl ClientCardData {
             // heartbeat behind a green dot just because we happen to have
             // a TCP session open from before the heartbeat went stale.
             if self.is_ws_connected {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new("• SESSION")
-                        .color(theme::success(ui))
-                        .strong()
-                        .small(),
-                )
-                .on_hover_text("Admin transport session is currently open to this client");
+                controls::badge(ui, "SESSION", theme::success(ui))
+                    .on_hover_text("Admin transport session is currently open to this client");
             }
 
             if self.ai_active {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new("• AI ACTIVE")
-                        .color(theme::warn(ui))
-                        .strong()
-                        .small(),
-                );
+                controls::badge(ui, "AI ACTIVE", theme::warn(ui));
             }
 
             // Show time since last DB heartbeat at the right edge.
@@ -245,89 +234,95 @@ impl ClientCardData {
         });
         let ip_str = self.client.local_ip.as_deref().filter(|s| !s.is_empty());
 
-        match (assigned_name.as_deref(), ip_str) {
-            (Some(name), Some(ip)) => {
-                ui.label(
-                    RichText::new(format!("{name}  •  {ip}"))
-                        .weak()
-                        .small(),
-                );
-            }
-            (Some(name), None) => {
-                ui.label(RichText::new(name).weak().small());
-            }
-            (None, Some(ip)) => {
-                ui.label(RichText::new(ip).weak().small());
-            }
-            _ => {}
+        let weak = theme::weak_text(ui);
+        if assigned_name.is_some() || ip_str.is_some() {
+            ui.horizontal(|ui| {
+                if let Some(name) = assigned_name.as_deref() {
+                    controls::IconLabel::new(svg::USER, name)
+                        .tone(weak)
+                        .small(true)
+                        .show(ui);
+                }
+                if let Some(ip) = ip_str {
+                    controls::IconLabel::new(svg::NETWORK, ip)
+                        .tone(weak)
+                        .small(true)
+                        .show(ui);
+                }
+            });
         }
 
         if let Some(sysinfo) = self.system_info.as_ref() {
-            ui.label(
-                RichText::new(format!("{} • {}", sysinfo.hostname, sysinfo.os_version))
-                    .weak()
-                    .small(),
-            );
+            let text = format!("{} • {}", sysinfo.hostname, sysinfo.os_version);
+            controls::IconLabel::new(svg::DESKTOP_TOWER, &text)
+                .tone(weak)
+                .small(true)
+                .show(ui);
         } else if !self.client.connection_string.is_empty() {
-            ui.label(
-                RichText::new(&self.client.connection_string)
-                    .weak()
-                    .small(),
-            );
+            controls::IconLabel::new(svg::PLUGS_CONNECTED, &self.client.connection_string)
+                .tone(weak)
+                .small(true)
+                .show(ui);
         }
     }
 
     fn stats_row(&self, ui: &mut Ui) {
         let Some(info) = self.system_info.as_ref() else {
-            ui.label(RichText::new("No live stats").weak().small());
+            controls::IconLabel::new(svg::PULSE, "No live stats")
+                .tone(theme::weak_text(ui))
+                .small(true)
+                .show(ui);
             return;
         };
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("CPU").small());
+            stat_label(ui, svg::CPU, "CPU");
             let cpu_pct = (info.cpu_percentage / 100.0).clamp(0.0, 1.0);
+            let cpu_text = format!("{:.0}%", info.cpu_percentage);
             ProgressBar::new(cpu_pct)
-                .desired_width(120.0)
-                .text(format!("{:.0}%", info.cpu_percentage))
-                .ui(ui);
+                .width(STAT_BAR_W)
+                .text(&cpu_text)
+                .show(ui);
 
-            ui.add_space(8.0);
-            ui.label(RichText::new("RAM").small());
+            ui.add_space(Metrics::get(ui.ctx()).gap.x);
+            stat_label(ui, svg::MEMORY, "RAM");
             let ram_pct = if info.total_memory > 0.0 {
                 (info.used_memory / info.total_memory).clamp(0.0, 1.0)
             } else {
                 0.0
             };
+            let ram_text = format!(
+                "{:.1}/{:.1} GB",
+                info.used_memory / 1024.0,
+                info.total_memory / 1024.0
+            );
             ProgressBar::new(ram_pct)
-                .desired_width(120.0)
-                .text(format!(
-                    "{:.1}/{:.1} GB",
-                    info.used_memory / 1024.0,
-                    info.total_memory / 1024.0
-                ))
-                .ui(ui);
+                .width(STAT_BAR_W)
+                .text(&ram_text)
+                .show(ui);
         });
 
         if let Some(gpu) = info.gpu_info.usage.first() {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("GPU").small());
+                stat_label(ui, svg::GRAPHICS_CARD, "GPU");
                 let gpu_pct = (gpu.gpu as f32 / 100.0).clamp(0.0, 1.0);
+                let gpu_text = format!("{}% • {}°C", gpu.gpu, gpu.temperature);
                 ProgressBar::new(gpu_pct)
-                    .desired_width(120.0)
-                    .text(format!("{}% • {}°C", gpu.gpu, gpu.temperature))
-                    .ui(ui);
+                    .width(STAT_BAR_W)
+                    .text(&gpu_text)
+                    .show(ui);
             });
         }
     }
 
     fn button_row(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
         ui.horizontal(|ui| {
-            if Button::new(menu_item(icons::DIAGNOSTICS, "Diagnostics")).small().ui(ui).clicked() {
+            if controls::icon_text_button(ui, svg::STETHOSCOPE, "Diagnostics").clicked() {
                 let _ = tx.try_send(TaskUiActions::OpenClientDiagnostics(
                     self.client.connection_string.clone(),
                 ));
             }
-            if Button::new(menu_item(icons::MONITOR, "Open Console")).small().ui(ui).clicked() {
+            if controls::icon_text_button(ui, svg::TERMINAL_WINDOW, "Open Console").clicked() {
                 let _ = tx.try_send(TaskUiActions::OpenAdminConsole(
                     self.client.connection_string.clone(),
                 ));
@@ -354,31 +349,29 @@ impl ClientCardData {
                 None => return,
             };
 
-        ui.add_space(4.0);
+        ui.add_space(Metrics::get(ui.ctx()).gap.y);
         ui.horizontal_wrapped(|ui| {
             // Customer-name secondary label.
             if let Some(m) = suggestion.match_.as_ref() {
-                ui.label(
-                    RichText::new(format!(
-                        "Customer: {} {}",
-                        m.first_name, m.last_name
-                    ))
-                    .small()
-                    .color(Color32::from_rgb(180, 200, 230)),
-                );
+                let text = format!("Customer: {} {}", m.first_name, m.last_name);
+                controls::IconLabel::new(svg::USER_CIRCLE, &text)
+                    .tone(theme::text(ui))
+                    .small(true)
+                    .show(ui);
             } else {
-                ui.label(
-                    RichText::new("No PrestaShop customer match")
-                        .small()
-                        .weak(),
-                );
+                controls::IconLabel::new(svg::USER_MINUS, "No PrestaShop customer match")
+                    .tone(theme::weak_text(ui))
+                    .small(true)
+                    .show(ui);
             }
 
             // Refresh button — emits an action the AdminConsole drains
             // and turns into a Cmd::RequestOpenServiceCandidates {
             // refresh: true } over the active session's transport.
-            if Button::new(RichText::new("⟳ Refresh").small())
-                .ui(ui)
+            if TextButton::new("Refresh")
+                .icon(svg::ARROW_CLOCKWISE)
+                .kind(ButtonKind::Ghost)
+                .show(ui)
                 .on_hover_text(
                     "Force the client to re-query PrestaShop for the latest open service \
                      orders.  Requires an active admin session.",
@@ -392,11 +385,10 @@ impl ClientCardData {
         });
 
         if suggestion.candidates.is_empty() && suggestion.match_.is_some() {
-            ui.label(
-                RichText::new("No open service orders for this customer")
-                    .small()
-                    .weak(),
-            );
+            controls::IconLabel::new(svg::TRAY, "No open service orders for this customer")
+                .tone(theme::weak_text(ui))
+                .small(true)
+                .show(ui);
             return;
         }
 
@@ -405,11 +397,7 @@ impl ClientCardData {
         ui.horizontal_wrapped(|ui| {
             for (idx, c) in suggestion.candidates.iter().enumerate() {
                 let label = format!("#{} ({}) — {}", c.service_number, c.doc_alias, c.state_name);
-                let chip = Button::new(
-                    RichText::new(label).color(Color32::from_rgb(255, 215, 120)),
-                )
-                .small()
-                .ui(ui);
+                let chip = TextButton::new(&label).icon(svg::TICKET).show(ui);
                 let hover = if c.checkin_notes.trim().is_empty() {
                     format!(
                         "Bind this service order to {}",
@@ -439,11 +427,17 @@ impl ClientCardData {
             Some(s) if !s.is_empty() => format!("Service #{s}"),
             _ => format!("Task {}", task.id.key_string()),
         };
-        let chip = Button::new(RichText::new(label).color(Color32::from_rgb(100, 200, 255)))
-            .small()
-            .ui(ui);
+        let chip = TextButton::new(&label).icon(svg::CLIPBOARD_TEXT).show(ui);
         if chip.clicked() {
             let _ = tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
         }
     }
+}
+
+/// Small icon and label in body text colour.
+fn stat_label(ui: &mut Ui, icon: Icon, text: &str) {
+    controls::IconLabel::new(icon, text)
+        .tone(theme::text(ui))
+        .small(true)
+        .show(ui);
 }

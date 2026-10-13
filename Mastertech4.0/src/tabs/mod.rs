@@ -2,10 +2,13 @@ use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_
 use displays::tabs::{TabContext, TabId};
 use egui_dock::{tab_viewer::OnCloseResponse, NodePath, TabViewer};
 use crate::app_state::MastertechContext;
+use displays::ui_tools::{
+    controls::{self, Role, Tokens},
+    icons::svg,
+};
 use eframe::egui::{Ui, WidgetText};
 use std::sync::atomic::Ordering;
 use log::error;
-use egui::Color32;
 use tokio::spawn;
 
 pub mod file_browser;
@@ -31,13 +34,12 @@ impl MastertechContext {
     pub fn file_browser_popup(&mut self, ui: &mut Ui) {
         let current_state = self.show_deferred_viewport.load(Ordering::Relaxed);
         let new_state = !current_state;
-
-        if current_state {
-            if ui.button("Attach File Browser").clicked() {
-                self.show_deferred_viewport
-                    .store(new_state, Ordering::Relaxed);
-            }
-        } else if ui.button("Detach File Browser").clicked() {
+        let (icon, label) = if current_state {
+            (svg::ARROW_SQUARE_IN, "Attach File Browser")
+        } else {
+            (svg::ARROW_SQUARE_OUT, "Detach File Browser")
+        };
+        if controls::menu_body(ui, |ui| controls::menu_item(ui, icon, label)).clicked() {
             self.show_deferred_viewport
                 .store(new_state, Ordering::Relaxed);
         }
@@ -46,13 +48,16 @@ impl MastertechContext {
     pub fn terminal_tab(&mut self, ui: &mut Ui) {
         // While detached, the viewport window owns the render; show a stub here.
         if self.show_terminal_viewport.load(Ordering::Relaxed) {
-            ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
-                ui.label("Terminal detached to a separate window.");
-                if ui.button("Re-attach").clicked() {
-                    self.show_terminal_viewport.store(false, Ordering::Relaxed);
-                }
-            });
+            let picked = controls::empty_state(
+                ui,
+                svg::TERMINAL_WINDOW,
+                "Terminal detached",
+                "The terminal is running in a separate window.",
+                &[(Role::Primary, "Re-attach")],
+            );
+            if picked.is_some() {
+                self.show_terminal_viewport.store(false, Ordering::Relaxed);
+            }
             return;
         }
         let user = self.shared_ctx.current_user.clone();
@@ -62,12 +67,14 @@ impl MastertechContext {
     }
 
     pub fn terminal_popup(&mut self, ui: &mut Ui) {
-        if self.show_terminal_viewport.load(Ordering::Relaxed) {
-            if ui.button("Attach Terminal").clicked() {
-                self.show_terminal_viewport.store(false, Ordering::Relaxed);
-            }
-        } else if ui.button("Detach Terminal").clicked() {
-            self.show_terminal_viewport.store(true, Ordering::Relaxed);
+        let detached = self.show_terminal_viewport.load(Ordering::Relaxed);
+        let (icon, label) = if detached {
+            (svg::ARROW_SQUARE_IN, "Attach Terminal")
+        } else {
+            (svg::ARROW_SQUARE_OUT, "Detach Terminal")
+        };
+        if controls::menu_body(ui, |ui| controls::menu_item(ui, icon, label)).clicked() {
+            self.show_terminal_viewport.store(!detached, Ordering::Relaxed);
         }
     }
 }
@@ -132,8 +139,8 @@ impl TabViewer for MastertechContext {
             TabId::SalesTracker => self.shared_ctx.sales_tracker.ui(ui),
             TabId::Logs => displays::ui_tools::egui_logger::logger_ui()
                 .log_levels([true, true, true, false, false])
-                .warn_color(Color32::from_rgb(94, 215, 221))
-                .error_color(Color32::from_rgb(255, 55, 102))
+                .warn_color(Tokens::get(ui.ctx()).warn)
+                .error_color(Tokens::get(ui.ctx()).error)
                 .enable_category("eframe".to_string(), false)
                 .enable_category("eframe::native::glow_integration".to_string(), false)
                 .enable_category("egui_glow::shader_version".to_string(), false)
@@ -180,14 +187,14 @@ impl TabViewer for MastertechContext {
             TabId::FileBrowser => self.file_browser_popup(ui),
             TabId::Terminal => self.terminal_popup(ui),
             _ => {
-                ui.label(tab.title(self.tab_context()));
-                ui.label("This is a context menu");
+                controls::icon_label(ui, tab.icon(), tab.title(self.tab_context()));
+                controls::section_label(ui, "No actions for this tab");
             }
         }
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.title(self.tab_context()).into()
+        tab.label(self.tab_context())
     }
 
     fn on_close(&mut self, _tab: &mut Self::Tab) -> OnCloseResponse {

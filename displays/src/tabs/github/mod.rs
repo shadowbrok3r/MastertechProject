@@ -1,11 +1,25 @@
 #![allow(deprecated)]
 use database::schema::User;
-use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
+use eframe::egui::{Align, Layout, Ui};
 use log::{error, info};
 use reqwest::Client;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{app_state::SharedContext, get_toast_sender, PlatformSpawner, Spawner, ToastMessage};
+use crate::{
+    app_state::SharedContext,
+    get_toast_sender,
+    ui_tools::{
+        controls::{self, ButtonKind, TextButton},
+        icons::svg,
+        metrics::Metrics,
+    },
+    PlatformSpawner, Spawner, ToastMessage,
+};
+
+/// Width of the bug-report form fields.
+const FORM_W: f32 = 420.0;
+/// Visible rows of the description box.
+const DESCRIPTION_ROWS: usize = 8;
 
 mod releases;
 pub use releases::ReleaseBrowser;
@@ -30,20 +44,6 @@ pub struct GithubIssue {
 
 impl SharedContext {
     pub fn github(&mut self, ui: &mut Ui) {
-        ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
-        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =
-            Stroke::new(1.0_f32, Color32::from_rgb(80, 80, 80));
-        ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30, 30, 30);
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
-        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke =
-            Stroke::new(1.0_f32, Color32::from_rgb(200, 20, 200));
-
         if let Some(user) = &self.current_user {
             if self.github_issue.user.is_none() {
                 self.github_issue.set_user(user.clone());
@@ -67,25 +67,34 @@ impl GithubIssue {
     }
 
     fn display(&mut self, ui: &mut Ui) {
+        let m = Metrics::get(ui.ctx());
+        controls::panel_header(ui, svg::BUG, "MtechServer Bug Report", |_| {});
+        ui.add_space(m.gap.y);
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            // vertical_centered(|ui| {
-
-            ui.heading("MtechServer Bug Report");
-            TextEdit::singleline(&mut self.github_issue_title)
-                .hint_text("Issue Title")
+            ui.spacing_mut().item_spacing.y = m.gap.y;
+            controls::TextField::new(&mut self.github_issue_title)
+                .hint("Issue Title")
+                .icon(svg::TAG_SIMPLE)
+                .width(FORM_W)
                 .show(ui);
 
-            ui.add_space(12.0);
+            ui.add_space(m.gap.y);
 
-            ui.heading("Description");
-            TextEdit::multiline(&mut self.github_issue_descript)
-                .hint_text("Explain your issue")
+            controls::subheading(ui, svg::NOTE_PENCIL, "Description");
+            controls::TextArea::new(&mut self.github_issue_descript)
+                .hint("Explain your issue")
+                .width(FORM_W)
+                .rows(DESCRIPTION_ROWS)
                 .show(ui);
 
-            let submit = ui.add_enabled(
-                !self.github_issue_descript.is_empty() && !self.github_issue_title.is_empty(),
-                Button::new("Submit"),
-            );
+            let ready =
+                !self.github_issue_descript.is_empty() && !self.github_issue_title.is_empty();
+            let submit = TextButton::new("Submit")
+                .icon(svg::PAPER_PLANE_TILT)
+                .kind(ButtonKind::Primary)
+                .prominent(true)
+                .enabled(ready)
+                .show(ui);
 
             if submit.clicked() {
                 let github_issue_title = self.github_issue_title.clone();

@@ -1,10 +1,28 @@
 use displays::app_state::default_tree;
 use displays::tabs::admin_console::RightPanel;
 use displays::tabs::{DockSession, TabContext, TabId, WorkMode};
-use displays::ui_tools::{framed_controls::selectable_card, glass_card, icons, info_card, theme};
-use eframe::egui::{self, RichText, Ui};
+use displays::ui_tools::{
+    controls::{self, Metrics, Tokens},
+    fonts::{self, RichTextExt},
+    framed_controls::selectable_card,
+    glass_card,
+    icons::svg::{self, Icon},
+    theme,
+};
+use eframe::egui::{self, RichText, Sense, Ui, Vec2};
 
 use crate::app_state::MasterTechApp;
+
+/// Widest the picker card grows.
+const CARD_W: f32 = 620.0;
+/// Size of the picker's brand mark.
+const MARK: f32 = 40.0;
+/// Size of a mode's icon in its row.
+const MODE_ICON: f32 = 24.0;
+/// Opacity of a duotone icon's back layer.
+const DUO_ALPHA: f32 = 0.3;
+/// Picker title size.
+const TITLE_PT: f32 = 18.0;
 
 impl MasterTechApp {
     /// Swaps the dock to `next`. Nothing on the context is touched, so a running stress
@@ -68,28 +86,39 @@ impl MasterTechApp {
         let is_root = displays::tabs::admin_console::current_user_is_root();
         let mut chosen = None;
 
+        let m = Metrics::get(ui.ctx());
+        let t = Tokens::get(ui.ctx());
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(30.0);
+                ui.add_space(m.gap.y * 4.0);
+                let (slot, _) = ui.allocate_exact_size(Vec2::splat(MARK), Sense::hover());
+                svg::MT_LOGO.paint_duo(
+                    ui,
+                    slot,
+                    MARK,
+                    t.primary,
+                    t.primary.gamma_multiply(DUO_ALPHA),
+                );
+                ui.add_space(m.gap.y);
                 ui.label(
                     RichText::new("What are you working on?")
-                        .heading()
+                        .font(fonts::semibold(TITLE_PT))
                         .color(theme::strong_text(ui)),
                 );
-                ui.add_space(4.0);
+                ui.add_space(m.gap.y / 2.0);
                 ui.label(
                     RichText::new("Pick a job and MasterTech opens just the tools for it.")
                         .color(theme::weak_text(ui)),
                 );
-                ui.add_space(20.0);
+                ui.add_space(m.gap.y * 4.0);
             });
 
-            let card_width = ui.available_width().min(620.0);
+            let card_width = ui.available_width().min(CARD_W);
             ui.vertical_centered(|ui| {
                 ui.set_max_width(card_width);
-                glass_card::titled_card(ui, icons::HOME, "Start a session", None, |ui| {
+                glass_card::titled_card(ui, svg::ROCKET_LAUNCH, "Start a session", None, |ui| {
                     for mode in WorkMode::ALL {
-                        ui.add_space(4.0);
+                        ui.add_space(m.gap.y / 2.0);
                         let row = selectable_card(ui, mode.slug(), false, |ui| {
                             mode_row(ui, *mode, is_root);
                         });
@@ -97,9 +126,10 @@ impl MasterTechApp {
                             chosen = Some(*mode);
                         }
                     }
-                    ui.add_space(8.0);
-                    glass_card::hairline(ui);
-                    ui.checkbox(
+                    ui.add_space(m.gap.y);
+                    controls::hairline(ui);
+                    controls::toggle(
+                        ui,
                         &mut self.context.work_mode.remember,
                         "Open this every time, and skip this screen",
                     );
@@ -134,21 +164,31 @@ impl MasterTechApp {
 
 /// One picker row. Every widget here stays non-interactive so the card keeps the click.
 fn mode_row(ui: &mut Ui, mode: WorkMode, is_root: bool) {
+    let m = Metrics::get(ui.ctx());
+    let accent = theme::primary(ui);
     ui.horizontal(|ui| {
-        ui.label(icons::icon_colored(mode.glyph(), theme::accent(ui)).size(22.0));
-        ui.add_space(8.0);
+        let icon = Icon::from_glyph(mode.glyph()).unwrap_or(svg::SQUARES_FOUR);
+        let (slot, _) = ui.allocate_exact_size(Vec2::splat(MODE_ICON), Sense::hover());
+        icon.paint_duo(
+            ui,
+            slot,
+            MODE_ICON,
+            accent,
+            accent.gamma_multiply(DUO_ALPHA),
+        );
+        ui.add_space(m.gap.x);
         ui.vertical(|ui| {
-            ui.label(RichText::new(mode.title()).strong());
+            ui.label(RichText::new(mode.title()).medium());
             ui.label(
                 RichText::new(mode.blurb())
                     .small()
                     .color(theme::weak_text(ui)),
             );
-            ui.add_space(3.0);
+            ui.add_space(m.gap.y / 2.0);
             ui.horizontal_wrapped(|ui| match mode.curated_tabs() {
                 Some(_) => {
                     for tab in mode.visible_tabs(TabContext::MastertechNative, is_root) {
-                        info_card::badge(
+                        controls::badge(
                             ui,
                             tab.title(TabContext::MastertechNative),
                             theme::accent_secondary(ui),
@@ -156,7 +196,7 @@ fn mode_row(ui: &mut Ui, mode: WorkMode, is_root: bool) {
                     }
                 }
                 None => {
-                    info_card::badge(ui, "every tab, your saved layout", theme::weak_text(ui));
+                    controls::badge(ui, "every tab, your saved layout", theme::weak_text(ui));
                 }
             });
         });

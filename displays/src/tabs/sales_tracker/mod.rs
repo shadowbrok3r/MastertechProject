@@ -8,10 +8,29 @@ use database::schema::{
 	sales_tracker::{get_sales_notes_for_user, upsert_sales_note, SalesNote},
 	User,
 };
-use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, Ui, Widget};
+use eframe::egui::{CentralPanel, Ui, Widget};
 use egui_data_table::{DataTable, Renderer};
 
+use crate::ui_tools::{
+	controls::{self, BarKind, Segment},
+	icons::svg,
+	theme,
+};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
+
+/// Order states offered by the state picker.
+const ORDER_STATES: [OrderState; 10] = [
+	OrderState::AcceptedByOdoo,
+	OrderState::Shipped,
+	OrderState::DeliveredToStore,
+	OrderState::DoneShelf,
+	OrderState::OrderPlaced,
+	OrderState::PrePulled,
+	OrderState::ReadyToBuild,
+	OrderState::QcAndBurnin,
+	OrderState::ShipToStore,
+	OrderState::Returned,
+];
 
 mod data;
 mod row_viewer;
@@ -92,58 +111,40 @@ impl Default for SalesTracker {
 impl SalesTracker {
 	pub fn ui(&mut self, ui: &mut Ui) {
 		eframe::egui::Panel::top("SalesTopPanel").show(ui, |ui| {
-			ui.horizontal(|ui| {
-				// search box
-				TextEdit::singleline(&mut self.viewer.filter)
-					.desired_width(150.)
-					.hint_text(" Search")
-					.ui(ui);
+			controls::bar(ui, BarKind::Tool, |ui| {
+				controls::search_field(ui, &mut self.viewer.filter, "Search", 150.0);
 
-				// OrderState selection
-				ComboBox::new("Sales OrderState", "")
-					.selected_text(self.order_state.as_str())
-					.show_ui(ui, |ui| {
-						let selected = &mut self.order_state;
-						ui.selectable_value(selected, OrderState::AcceptedByOdoo, OrderState::AcceptedByOdoo.as_str());
-						ui.selectable_value(selected, OrderState::Shipped, OrderState::Shipped.as_str());
-						ui.selectable_value(selected, OrderState::DeliveredToStore, OrderState::DeliveredToStore.as_str());
-						ui.selectable_value(selected, OrderState::DoneShelf, OrderState::DoneShelf.as_str());
-						ui.selectable_value(selected, OrderState::OrderPlaced, OrderState::OrderPlaced.as_str());
-						ui.selectable_value(selected, OrderState::PrePulled, OrderState::PrePulled.as_str());
-						ui.selectable_value(selected, OrderState::ReadyToBuild, OrderState::ReadyToBuild.as_str());
-						ui.selectable_value(selected, OrderState::QcAndBurnin, OrderState::QcAndBurnin.as_str());
-						ui.selectable_value(selected, OrderState::ShipToStore, OrderState::ShipToStore.as_str());
-						ui.selectable_value(selected, OrderState::Returned, OrderState::Returned.as_str());
-					});
+				let states: Vec<(OrderState, &str)> =
+					ORDER_STATES.iter().map(|s| (s.clone(), s.as_str())).collect();
+				controls::dropdown(ui, "Sales OrderState", &mut self.order_state, &states, 150.0);
 
-				// Pay period
-				ComboBox::new("Sales PayPeriod", "")
-					.selected_text(self.pay_period.as_str())
-					.show_ui(ui, |ui| {
-						let selected = &mut self.pay_period;
-						ui.selectable_value(selected, PayPeriod::Current, PayPeriod::Current.as_str());
-						ui.selectable_value(selected, PayPeriod::Last, PayPeriod::Last.as_str());
-					});
+				let periods = [
+					Segment::new(PayPeriod::Current, PayPeriod::Current.as_str()).icon(svg::CALENDAR_DOTS),
+					Segment::new(PayPeriod::Last, PayPeriod::Last.as_str()).icon(svg::CALENDAR_BLANK),
+				];
+				controls::segmented(ui, &mut self.pay_period, &periods);
 
-				if Button::new(format!("Pull Orders in '{}'", self.order_state.as_str())).ui(ui).clicked() {
+				let pull_label = format!("Pull Orders in '{}'", self.order_state.as_str());
+				if controls::icon_text_button(ui, svg::DOWNLOAD_SIMPLE, &pull_label).clicked() {
 					self.pull_orders(false);
 				}
 
-				if Button::new("Pull ALL orders").ui(ui).clicked() {
+				if controls::icon_text_button(ui, svg::CLOUD_ARROW_DOWN, "Pull ALL orders").clicked() {
 					self.pull_orders(true);
 				}
 
-				ui.separator();
-				TextEdit::singleline(&mut self.import_order_number)
-					.desired_width(120.)
-					.hint_text(" Order #")
-					.ui(ui);
-				if Button::new("Import").ui(ui).clicked() {
+				crate::tabs::bar_rule(ui);
+				controls::TextField::new(&mut self.import_order_number)
+					.hint("Order #")
+					.icon(svg::HASH)
+					.width(120.0)
+					.show(ui);
+				if controls::icon_text_button(ui, svg::TRAY_ARROW_DOWN, "Import").clicked() {
 					self.import_single_order();
 				}
 
-				ui.separator();
-				if Button::new("Save Notes").ui(ui).clicked() {
+				crate::tabs::bar_rule(ui);
+				if controls::icon_text_button(ui, svg::FLOPPY_DISK, "Save Notes").clicked() {
 					self.persist_all_notes();
 				}
 			});
@@ -190,19 +191,29 @@ impl SalesTracker {
 					.sum::<f64>();
 				let ar_financing_ratio = if self.total > 0.0 { (total_financed / self.total) * 10.0 } else { 0.0 };
 
-				ui[0].label(format!("Sales: {total_sales} / Orders: {total_orders}"));
-				ui[1].label(format!("Laptops: {total_laptops} / Desktops: {total_desktops}"));
+				let text = theme::text(&ui[0]);
+				let error = theme::error(&ui[0]);
+				let warn = theme::warn(&ui[0]);
+				let sales = format!("Sales: {total_sales} / Orders: {total_orders}");
+				controls::IconLabel::new(svg::RECEIPT, &sales).tone(text).show(&mut ui[0]);
+				let mix = format!("Laptops: {total_laptops} / Desktops: {total_desktops}");
+				controls::IconLabel::new(svg::LAPTOP, &mix).tone(text).show(&mut ui[1]);
 				ui[2].label("");
 				ui[3].label("");
-				ui[4].colored_label(ui[4].style().visuals.error_fg_color, format!("Finance ratio: {ar_financing_ratio:.2}%"));
+				let ratio = format!("Finance ratio: {ar_financing_ratio:.2}%");
+				controls::IconLabel::new(svg::PERCENT, &ratio).tone(error).show(&mut ui[4]);
 				// warranty ratio
 				let wty_count = my_orders.iter().filter(|order| {
 					order.associations.order_rows.iter().any(|o| o.product_reference.to_lowercase().starts_with("wty/") && !o.product_price.starts_with("0.0"))
 				}).count();
-				ui[5].colored_label(ui[5].style().visuals.error_fg_color, format!("WTY's: {} out of {total_sales} sales", wty_count));
-				ui[6].colored_label(ui[6].style().visuals.warn_fg_color, format!("Total W/Tax: $ {:.2}", self.total_w_tax));
-				ui[7].colored_label(ui[7].style().visuals.warn_fg_color, format!("REVENUE: $ {:.2}", self.total));
-				ui[8].label(format!("Spiffs: $ {:.2}", self.total_spiffs));
+				let wty = format!("WTY's: {wty_count} out of {total_sales} sales");
+				controls::IconLabel::new(svg::SHIELD_CHECK, &wty).tone(error).show(&mut ui[5]);
+				let with_tax = format!("Total W/Tax: $ {:.2}", self.total_w_tax);
+				controls::IconLabel::new(svg::CURRENCY_DOLLAR, &with_tax).tone(warn).show(&mut ui[6]);
+				let revenue = format!("REVENUE: $ {:.2}", self.total);
+				controls::IconLabel::new(svg::CHART_LINE_UP, &revenue).tone(warn).show(&mut ui[7]);
+				let spiffs = format!("Spiffs: $ {:.2}", self.total_spiffs);
+				controls::IconLabel::new(svg::COINS, &spiffs).tone(text).show(&mut ui[8]);
 			});
 		});
 		

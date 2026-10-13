@@ -7,12 +7,16 @@ use database::schema::{
     AgentApproval, AgentDecideOutcome, ApprovalAudience, ApprovalViewer, RecordId, RecordIdExt, User,
     AGENT_APPROVAL_TABLE,
 };
-use eframe::egui::{self, Align, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit};
+use eframe::egui::{self, Align, Grid, Id, Layout, RichText, ScrollArea};
 use serde_json::{json, Value};
 
 use crate::modals::approval_toast::{self, ApprovalNotice, NoticeKind};
+use crate::ui_tools::controls::{
+    self, ButtonKind, IconLabel, Metrics, ModalWidth, SpinnerSize, TextArea, TextButton,
+    TextField, Tokens,
+};
 use crate::ui_tools::toasts::Toasts;
-use crate::ui_tools::{hex_json, icons, theme};
+use crate::ui_tools::{hex_json, icons::svg, theme};
 use crate::{PlatformSpawner, Spawner};
 
 /// Seconds between snapshot polls of the pending set.
@@ -318,127 +322,143 @@ impl AgentApprovalQueue {
         let mut decision: Option<(&'static str, Option<String>, Option<Value>)> = None;
         let mut later = false;
 
-        Modal::new(Id::new("agent_approval_modal")).show(ctx, |ui| {
-            ui.set_width(640.0);
-            let is_question = req.kind == "question";
-            ui.horizontal(|ui| {
-                let heading = if is_question {
-                    format!("{} The AI agent has a question", icons::CHAT)
-                } else {
-                    format!("{} The AI agent needs approval", icons::LOCK)
-                };
-                ui.heading(heading);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if queued > 1 {
-                        ui.label(RichText::new(format!("{queued} waiting")).color(theme::warn(ui)).strong());
-                    }
-                });
-            });
-            ui.separator();
+        let is_question = req.kind == "question";
+        let (icon, title) = if is_question {
+            (svg::CHAT, "The AI agent has a question")
+        } else {
+            (svg::LOCK, "The AI agent needs approval")
+        };
+        controls::modal(ctx, Id::new("agent_approval_modal"), icon, title, ModalWidth::Regular, &[], |ui| {
+            let t = Tokens::get(ui.ctx());
+            let m = Metrics::get(ui.ctx());
+            if queued > 1 {
+                controls::badge(ui, &format!("{queued} waiting"), t.warn);
+            }
 
-            Grid::new("agent_approval_meta").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+            Grid::new("agent_approval_meta").num_columns(2).spacing([2.0 * m.gap.x, m.pad.y]).show(ui, |ui| {
                 if summoned {
-                    ui.label(RichText::new("Deciding as").strong());
+                    ui.colored_label(t.text_dim, "Deciding as");
                     let whose = if req.assignee.is_none() {
                         "Root (no technician on this session)"
                     } else {
                         "Root (another technician's session)"
                     };
-                    ui.label(RichText::new(whose).color(theme::warn(ui)));
+                    controls::status_label(ui, svg::CROWN_SIMPLE, whose, theme::warn(ui));
                     ui.end_row();
                 }
                 if let Some(cs) = req.connection_string.as_deref() {
-                    ui.label(RichText::new("Machine").strong());
-                    ui.label(cs);
+                    ui.colored_label(t.text_dim, "Machine");
+                    IconLabel::new(svg::DESKTOP, cs).selectable(true).show(ui);
                     ui.end_row();
                 }
                 if let Some(tool) = req.tool.as_deref().filter(|_| !is_question) {
-                    ui.label(RichText::new("Tool").strong());
+                    ui.colored_label(t.text_dim, "Tool");
                     ui.label(RichText::new(tool).monospace());
                     ui.end_row();
                 }
-                ui.label(RichText::new("Expires in").strong());
+                ui.colored_label(t.text_dim, "Expires in");
                 let secs = req.secs_remaining();
                 let color = if secs < 60 { theme::error(ui) } else { theme::weak_text(ui) };
-                ui.label(RichText::new(format!("{}m {:02}s", secs / 60, secs % 60)).color(color));
+                let left = format!("{}m {:02}s", secs / 60, secs % 60);
+                IconLabel::new(svg::TIMER, &left).tone(color).show(ui);
                 ui.end_row();
             });
 
-            ui.add_space(6.0);
+            ui.add_space(m.gap.y);
             if is_question {
                 self.question_body(ui, &req);
             } else {
                 ui.label(RichText::new(&req.summary).strong());
                 if let Some(args) = req.arguments.as_ref().filter(|a| a.as_object().is_some_and(|o| !o.is_empty())) {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Arguments").strong().small());
+                    ui.add_space(m.pad.y);
+                    controls::section_label(ui, "Arguments");
                     ScrollArea::vertical().max_height(220.0).id_salt(("approval_args", req.id.key_string())).show(ui, |ui| {
                         hex_json::json_tree(ui, &format!("approval:{}", req.id.key_string()), args);
                     });
                 }
-                ui.add_space(8.0);
-                ui.label(RichText::new("Note to the agent (optional, sent when you decline)").strong().small());
-                ui.add(TextEdit::singleline(&mut self.deny_note).desired_width(f32::INFINITY));
+                ui.add_space(m.gap.y);
+                controls::section_label(ui, "Note to the agent (optional, sent when you decline)");
+                TextField::new(&mut self.deny_note)
+                    .width(ui.available_width())
+                    .icon(svg::NOTE_PENCIL)
+                    .id_salt(("agent_approval_deny_note", req.id.key_string()))
+                    .show(ui);
             }
 
             if let Some(err) = self.last_error.as_ref() {
-                ui.add_space(4.0);
-                ui.label(RichText::new(format!("{} {err}", icons::STATUS_ERR)).color(theme::error(ui)));
+                ui.add_space(m.pad.y);
+                controls::status_label(ui, svg::WARNING_CIRCLE, err, theme::error(ui));
             }
 
-            ui.add_space(10.0);
-            ui.separator();
+            ui.add_space(m.gap.y);
+            controls::hairline(ui);
+            ui.add_space(m.gap.y);
             ui.horizontal_wrapped(|ui| {
-                ui.add_enabled_ui(!busy, |ui| {
-                    if is_question {
-                        if ui.button(RichText::new(format!("{} Answer", icons::CHECK)).color(theme::success(ui))).clicked() {
-                            decision = Some(("answered", None, Some(self.collected_answers(&req))));
-                        }
-                        ui.add_space(6.0);
-                        if ui.button(RichText::new(format!("{} Skip", icons::CLOSE)).color(theme::warn(ui))).clicked() {
-                            decision = Some(("declined", None, None));
-                        }
-                    } else {
-                        if ui.button(RichText::new(format!("{} Approve once", icons::STATUS_ON)).color(theme::success(ui))).clicked() {
-                            decision = Some(("accepted", None, None));
-                        }
-                        if req.may_approve_for_session() {
-                            ui.add_space(4.0);
-                            if ui.button(format!("{} Approve for this session", icons::CHECK)).clicked() {
-                                decision = Some(("accepted_for_session", None, None));
-                            }
-                        }
-                        if req.may_approve_all() {
-                            ui.add_space(4.0);
-                            let label = RichText::new(format!("{} Approve ALL for this session", icons::APPROVE_ALL))
-                                .color(theme::warn(ui))
-                                .strong();
-                            if ui
-                                .button(label)
-                                .on_hover_text("Run every tool call this agent makes on this machine without asking, until the session closes or you turn prompts back on")
-                                .clicked()
-                            {
-                                decision = Some((database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION, None, None));
-                            }
-                        }
-                        ui.add_space(6.0);
-                        if ui.button(RichText::new(format!("{} Decline", icons::STATUS_ERR)).color(theme::error(ui))).clicked() {
-                            let note = (!self.deny_note.trim().is_empty()).then(|| self.deny_note.trim().to_string());
-                            decision = Some(("declined", note, None));
-                        }
-                        ui.add_space(4.0);
-                        if ui.button(RichText::new(format!("{} Stop the agent", icons::STOP)).color(theme::error(ui))).clicked() {
-                            decision = Some(("cancelled", None, None));
-                        }
+                let ready = !busy;
+                if is_question {
+                    let answer = TextButton::new("Answer")
+                        .kind(ButtonKind::Primary)
+                        .icon(svg::PAPER_PLANE_RIGHT)
+                        .enabled(ready);
+                    if answer.show(ui).clicked() {
+                        decision = Some(("answered", None, Some(self.collected_answers(&req))));
                     }
-                    ui.add_space(8.0);
-                    if ui.button("Later").clicked() {
-                        later = true;
+                    let skip = TextButton::new("Skip").icon(svg::CARET_DOUBLE_RIGHT).enabled(ready);
+                    if skip.show(ui).clicked() {
+                        decision = Some(("declined", None, None));
                     }
-                });
+                } else {
+                    let once = TextButton::new("Approve once")
+                        .kind(ButtonKind::Primary)
+                        .icon(svg::CHECK_CIRCLE)
+                        .enabled(ready);
+                    if once.show(ui).clicked() {
+                        decision = Some(("accepted", None, None));
+                    }
+                    if req.may_approve_for_session()
+                        && TextButton::new("Approve for this session")
+                            .icon(svg::CHECK)
+                            .enabled(ready)
+                            .show(ui)
+                            .clicked()
+                    {
+                        decision = Some(("accepted_for_session", None, None));
+                    }
+                    if req.may_approve_all()
+                        && TextButton::new("Approve ALL for this session")
+                            .icon(svg::CHECKS)
+                            .enabled(ready)
+                            .show(ui)
+                            .on_hover_text("Run every tool call this agent makes on this machine without asking, until the session closes or you turn prompts back on")
+                            .clicked()
+                    {
+                        decision = Some((database::schema::agent_approval::ACCEPTED_ALL_FOR_SESSION, None, None));
+                    }
+                    let decline = TextButton::new("Decline")
+                        .kind(ButtonKind::Danger)
+                        .icon(svg::X_CIRCLE)
+                        .enabled(ready);
+                    if decline.show(ui).clicked() {
+                        let note = (!self.deny_note.trim().is_empty()).then(|| self.deny_note.trim().to_string());
+                        decision = Some(("declined", note, None));
+                    }
+                    let stop = TextButton::new("Stop the agent")
+                        .kind(ButtonKind::Danger)
+                        .icon(svg::STOP)
+                        .enabled(ready);
+                    if stop.show(ui).clicked() {
+                        decision = Some(("cancelled", None, None));
+                    }
+                }
+                let later_button = TextButton::new("Later")
+                    .kind(ButtonKind::Ghost)
+                    .icon(svg::ALARM)
+                    .enabled(ready);
+                if later_button.show(ui).clicked() {
+                    later = true;
+                }
                 if busy {
-                    ui.add_space(8.0);
-                    ui.spinner();
+                    controls::spinner(ui, SpinnerSize::Sm);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(RichText::new(req.id.key_string()).small().color(theme::weak_text(ui)));
@@ -470,14 +490,15 @@ impl AgentApprovalQueue {
         if questions.is_empty() {
             ui.label(RichText::new(&req.summary).strong());
             let draft = self.answers.entry("answer".into()).or_default();
-            ui.add(TextEdit::multiline(draft).desired_rows(3).desired_width(f32::INFINITY));
+            TextArea::new(draft).rows(3).show(ui);
             return;
         }
+        let m = Metrics::get(ui.ctx());
         ScrollArea::vertical().max_height(320.0).id_salt(("approval_questions", req.id.key_string())).show(ui, |ui| {
             for (n, q) in questions.iter().enumerate() {
                 let qid = q.get("id").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("q{n}"));
                 if let Some(header) = q.get("header").and_then(Value::as_str) {
-                    ui.label(RichText::new(header).strong().small());
+                    controls::section_label(ui, header);
                 }
                 ui.label(q.get("question").and_then(Value::as_str).unwrap_or(""));
                 let options = q.get("options").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -486,18 +507,26 @@ impl AgentApprovalQueue {
                     let label = opt.get("label").and_then(Value::as_str).unwrap_or("");
                     let description = opt.get("description").and_then(Value::as_str).unwrap_or("");
                     let chosen = draft == label;
-                    let text = if description.is_empty() { label.to_string() } else { format!("{label} — {description}") };
-                    if ui.selectable_label(chosen, text).clicked() {
+                    let mark = if chosen { svg::CHECK_CIRCLE } else { svg::CIRCLE };
+                    if controls::pill(ui, mark, label, chosen).clicked() {
                         *draft = label.to_string();
+                    }
+                    if !description.is_empty() {
+                        ui.label(RichText::new(description).weak().small());
                     }
                 }
                 let free_text = options.is_empty() || q.get("isOther").and_then(Value::as_bool).unwrap_or(true);
                 if free_text {
                     let secret = q.get("isSecret").and_then(Value::as_bool).unwrap_or(false);
-                    let edit = TextEdit::singleline(draft).desired_width(f32::INFINITY).hint_text("Type an answer…");
-                    ui.add(if secret { edit.password(true) } else { edit });
+                    TextField::new(draft)
+                        .width(ui.available_width())
+                        .hint("Type an answer…")
+                        .icon(svg::CHAT_TEXT)
+                        .password(secret)
+                        .id_salt(("approval_answer", req.id.key_string(), qid))
+                        .show(ui);
                 }
-                ui.add_space(6.0);
+                ui.add_space(m.gap.y);
             }
         });
     }
