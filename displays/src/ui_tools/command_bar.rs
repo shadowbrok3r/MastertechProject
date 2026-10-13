@@ -305,21 +305,21 @@ mod tests {
 
     #[test]
     fn service_numbers_are_found_once_each() {
-        let text = "Kayleen Reese - 2154905 is waiting; 2154905 again, and 2155144. Phone 801-564-0173, SO 12345678.";
-        assert_eq!(service_numbers(text), vec!["2154905", "2155144"]);
+        let text = "Jane Sample - 2000001 is waiting; 2000001 again, and 2000002. Phone 801-555-0100, SO 12345678.";
+        assert_eq!(service_numbers(text), vec!["2000001", "2000002"]);
     }
 
     #[test]
     fn the_message_leads_with_the_record_in_view() {
         let task = FocusedTask {
             id: RecordId::new("task", "abc"),
-            name: "Kayleen Reese - 2154905".into(),
-            service_number: Some("2154905".into()),
+            name: "Jane Sample - 2000001".into(),
+            service_number: Some("2000001".into()),
         };
         let text = compose("  remind me tomorrow to call her ", Some(&task), None);
         assert_eq!(
             text,
-            "[Viewing task \"Kayleen Reese - 2154905\", service 2154905, task id abc]\nremind me tomorrow to call her"
+            "[Viewing task \"Jane Sample - 2000001\", service 2000001, task id abc]\nremind me tomorrow to call her"
         );
         assert_eq!(compose("hi", None, Some("DESKTOP-1:abc")), "[Focused client DESKTOP-1:abc]\nhi");
     }

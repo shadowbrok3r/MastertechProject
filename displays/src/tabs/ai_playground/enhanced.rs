@@ -3058,7 +3058,7 @@ mod tests {
             id: RecordId::new("diagnostic_session", "s1"),
             connection_string: "DESKTOP-E94IGME:7034b0fb1".into(),
             hostname: "DESKTOP-E94IGME".into(),
-            customer_name: Some("Jacqueline Hoff".into()),
+            customer_name: Some("Morgan Sample".into()),
             tech: None,
             driven_by: Some("zeroclaw/sweeper".into()),
             status: "escalated".into(),

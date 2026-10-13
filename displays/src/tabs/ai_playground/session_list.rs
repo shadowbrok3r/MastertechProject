@@ -929,11 +929,11 @@ pub(super) mod tests {
             "2155485",
             "running get_client_info",
         ] {
-            assert!(mentions(&row, &roster, needle, Some("Martin Empey")), "{needle}");
+            assert!(mentions(&row, &roster, needle, Some("Alex Sample")), "{needle}");
         }
-        assert!(!mentions(&row, &roster, "tyler", Some("Martin Empey")));
-        assert!(mentions(&row, &roster, "empey", Some("Martin Empey")));
-        assert!(!mentions(&row, &roster, "empey", None));
+        assert!(!mentions(&row, &roster, "tyler", Some("Alex Sample")));
+        assert!(mentions(&row, &roster, "sample", Some("Alex Sample")));
+        assert!(!mentions(&row, &roster, "sample", None));
     }
 
     #[test]

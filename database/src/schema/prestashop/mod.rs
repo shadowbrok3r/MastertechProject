@@ -1480,14 +1480,14 @@ mod tests {
     #[test]
     fn email_and_sort_values_survive_encoding() {
         let mut params = HashMap::new();
-        params.insert("filter[email]", "mike.msquared+tag@gmail.com");
+        params.insert("filter[email]", "jane.sample+tag@example.com");
         params.insert("sort", "[id_DESC]");
         params.insert("limit", "0,25");
 
         let query = query_string("customers", params);
 
         assert!(
-            query.contains("filter[email]=mike.msquared%2Btag@gmail.com"),
+            query.contains("filter[email]=jane.sample%2Btag@example.com"),
             "`+` must not survive as a literal space in {query}"
         );
         assert!(query.contains("sort=%5Bid_DESC%5D"), "in {query}");

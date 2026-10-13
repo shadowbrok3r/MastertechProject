@@ -80,7 +80,7 @@ impl BugReportPanel {
             ui.label("Employee name or ID");
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.employee_input)
-                    .hint_text("e.g. Kellie Boisse or 12345")
+                    .hint_text("e.g. Taylor Sample or 12345")
                     .desired_width(220.0),
             );
             let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

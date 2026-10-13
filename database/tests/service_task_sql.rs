@@ -129,15 +129,15 @@ async fn seed_task(
 async fn tasks_are_found_by_service_number_or_ticket_but_never_by_a_missing_ticket() {
     let db = mem_db().await;
     seed_user(&db).await;
-    let order = seed_order(&db, "2155467", None, None).await;
-    let by_number = seed_task(&db, "by-number", Some("2155467"), None, false).await;
+    let order = seed_order(&db, "2000007", None, None).await;
+    let by_number = seed_task(&db, "by-number", Some("2000007"), None, false).await;
     let by_ticket = seed_task(&db, "by-ticket", None, Some(&order), true).await;
     seed_task(&db, "other", Some("2155113"), None, false).await;
     seed_task(&db, "unlinked", None, None, false).await;
 
     let mut found: Vec<TaskCandidate> = db
         .query(TASKS_FOR_SERVICE_SQL)
-        .bind(("sn", "2155467"))
+        .bind(("sn", "2000007"))
         .bind(("so", Some(order.clone())))
         .await
         .expect("query")
@@ -151,7 +151,7 @@ async fn tasks_are_found_by_service_number_or_ticket_but_never_by_a_missing_tick
 
     let found: Vec<TaskCandidate> = db
         .query(TASKS_FOR_SERVICE_SQL)
-        .bind(("sn", "2155467"))
+        .bind(("sn", "2000007"))
         .bind(("so", None::<RecordId>))
         .await
         .expect("query")
@@ -165,22 +165,22 @@ async fn tasks_are_found_by_service_number_or_ticket_but_never_by_a_missing_tick
 async fn the_order_row_carries_its_customer_name() {
     let db = mem_db().await;
     let customer = rid("customer", "4215");
-    db.query("CREATE customer:`4215` CONTENT { name: 'Barbara Baker', cust_code: '4215' }")
+    db.query("CREATE customer:`4215` CONTENT { name: 'Pat Sample', cust_code: '4215' }")
         .await
         .expect("seed customer")
         .check()
         .expect("customer row");
-    seed_order(&db, "2155467", Some(&customer), None).await;
+    seed_order(&db, "2000007", Some(&customer), None).await;
     let rows: Vec<ServiceOrderRow> = db
         .query(SERVICE_ORDER_BY_NUMBER_SQL)
-        .bind(("sn", "2155467"))
+        .bind(("sn", "2000007"))
         .await
         .expect("query")
         .take(0)
         .expect("order rows");
     let order = rows.into_iter().next().expect("order found");
     assert_eq!(order.customer, Some(customer));
-    assert_eq!(order.customer_name.as_deref(), Some("Barbara Baker"));
+    assert_eq!(order.customer_name.as_deref(), Some("Pat Sample"));
     assert_eq!(order.checkin_notes.as_deref(), Some("CPS and annual tuneup"));
     assert_eq!(order.computer, None);
 }
@@ -189,12 +189,12 @@ async fn the_order_row_carries_its_customer_name() {
 async fn a_new_service_task_satisfies_the_task_schema_and_notifies_the_assignee() {
     let db = mem_db().await;
     seed_user(&db).await;
-    let order = seed_order(&db, "2155467", None, None).await;
+    let order = seed_order(&db, "2000007", None, None).await;
     let order_row = ServiceOrderRow {
         id: order.clone(),
-        service_number: Some("2155467".into()),
+        service_number: Some("2000007".into()),
         customer: None,
-        customer_name: Some("Barbara Baker".into()),
+        customer_name: Some("Pat Sample".into()),
         computer: None,
         checkin_notes: Some("CPS and annual tuneup".into()),
     };
@@ -204,20 +204,20 @@ async fn a_new_service_task_satisfies_the_task_schema_and_notifies_the_assignee(
         email: Some("derek.anderson@pclaptops.com".into()),
         store: Some("MUR".into()),
     };
-    let task = NewServiceTask::for_order(&order_row, "2155467", None, &derek, Utc::now().into());
+    let task = NewServiceTask::for_order(&order_row, "2000007", None, &derek, Utc::now().into());
     let id = rid("task", "agent-created");
     let created: Option<Record> =
         db.create(id.clone()).content(task).await.expect("task passes the schema");
     assert!(created.is_some());
 
     let stored = row(&db, &id).await;
-    assert_eq!(text(&stored, "task_name").as_deref(), Some("Barbara Baker - 2155467"));
-    assert_eq!(text(&stored, "service_number").as_deref(), Some("2155467"));
+    assert_eq!(text(&stored, "task_name").as_deref(), Some("Pat Sample - 2000007"));
+    assert_eq!(text(&stored, "service_number").as_deref(), Some("2000007"));
     assert_eq!(text(&stored, "priority").as_deref(), Some("Normal"));
     assert_eq!(text(&stored, "status").as_deref(), Some("Todo"));
     assert_eq!(text(&stored, "origin").as_deref(), Some("ai"));
     assert_eq!(stored.get("completed"), Some(&Value::Bool(false)));
-    assert_eq!(link(&stored, "service_ticket").as_deref(), Some("2155467"));
+    assert_eq!(link(&stored, "service_ticket").as_deref(), Some("2000007"));
     assert_eq!(link(&stored, "assignee").as_deref(), Some("derek"));
 
     let notified: Vec<Value> = db
@@ -260,7 +260,7 @@ async fn requesters_resolve_by_email_username_or_name_and_skip_inactive_users() 
 async fn order_links_fill_only_what_is_unset() {
     let db = mem_db().await;
     let bench = rid("computer", "BENCH:1");
-    let order = seed_order(&db, "2155467", None, Some(&bench)).await;
+    let order = seed_order(&db, "2000007", None, Some(&bench)).await;
     db.query(FILL_ORDER_LINKS_SQL)
         .bind(("so", order.clone()))
         .bind(("computer", Some(rid("computer", "DESKTOP-787KAB8:8d3db801f"))))
@@ -306,7 +306,7 @@ async fn adopt_session(db: &Surreal<Db>, sid: &RecordId, task: &RecordId, so: &R
     db.query(ADOPT_SESSION_LINKS_SQL)
         .bind(("sid", sid.clone()))
         .bind(("cust", Some(cust.clone())))
-        .bind(("cust_name", Some("Barbara Baker".to_string())))
+        .bind(("cust_name", Some("Pat Sample".to_string())))
         .bind(("task", task.clone()))
         .bind(("svc", so.clone()))
         .await
@@ -318,14 +318,14 @@ async fn adopt_session(db: &Surreal<Db>, sid: &RecordId, task: &RecordId, so: &R
 #[tokio::test]
 async fn a_session_adopts_links_it_lacks_and_keeps_the_ones_it_has() {
     let db = mem_db().await;
-    let (task, so, cust) = (rid("task", "new"), rid("service_order", "2155467"), rid("customer", "4215"));
+    let (task, so, cust) = (rid("task", "new"), rid("service_order", "2000007"), rid("customer", "4215"));
     let bare = seed_session(&db, "bare", None).await;
     adopt_session(&db, &bare, &task, &so, &cust).await;
     let stored = row(&db, &bare).await;
     assert_eq!(link(&stored, "task_ref").as_deref(), Some("new"));
-    assert_eq!(link(&stored, "service_order").as_deref(), Some("2155467"));
+    assert_eq!(link(&stored, "service_order").as_deref(), Some("2000007"));
     assert_eq!(link(&stored, "customer_id").as_deref(), Some("4215"));
-    assert_eq!(text(&stored, "customer_name").as_deref(), Some("Barbara Baker"));
+    assert_eq!(text(&stored, "customer_name").as_deref(), Some("Pat Sample"));
     assert!(stored.get("last_activity_at").is_some_and(|v| !v.is_null()));
 
     let old = (rid("task", "old"), rid("service_order", "2100000"), rid("customer", "1"));
@@ -341,8 +341,8 @@ async fn a_session_adopts_links_it_lacks_and_keeps_the_ones_it_has() {
 async fn adopt_thread(db: &Surreal<Db>, cs: &str) -> Vec<RecordId> {
     db.query(ADOPT_THREAD_LINKS_SQL)
         .bind(("cs", cs.to_string()))
-        .bind(("sn", "2155467".to_string()))
-        .bind(("so", rid("service_order", "2155467")))
+        .bind(("sn", "2000007".to_string()))
+        .bind(("so", rid("service_order", "2000007")))
         .bind(("cust", Some(rid("customer", "4215"))))
         .await
         .expect("adopt")
@@ -372,8 +372,8 @@ async fn only_the_machines_open_thread_on_that_service_number_adopts_the_order()
     }
     assert_eq!(adopt_thread(&db, cs).await, vec![rid("agent_thread", "live")]);
     let live = row(&db, &rid("agent_thread", "live")).await;
-    assert_eq!(text(&live, "service_number").as_deref(), Some("2155467"));
-    assert_eq!(link(&live, "service_order").as_deref(), Some("2155467"));
+    assert_eq!(text(&live, "service_number").as_deref(), Some("2000007"));
+    assert_eq!(link(&live, "service_order").as_deref(), Some("2000007"));
     assert_eq!(link(&live, "customer").as_deref(), Some("4215"));
     assert!(adopt_thread(&db, cs).await.is_empty(), "a thread with both links is not rewritten");
     for key in ["other-order", "closed", "other-machine"] {
@@ -419,7 +419,7 @@ async fn stress_run_claims_stay_inside_the_engagement() {
     let db = mem_db().await;
     let computer = rid("computer", "DESKTOP-787KAB8:8d3db801f");
     let other_pc = rid("computer", "DESKTOP-OTHER:1");
-    let (sid, task, so) = (rid("diagnostic_session", "s1"), rid("task", "t1"), rid("service_order", "2155467"));
+    let (sid, task, so) = (rid("diagnostic_session", "s1"), rid("task", "t1"), rid("service_order", "2000007"));
 
     let inside = seed_run(&db, "inside", &computer, ago(30), RunLinks::default()).await;
     let slack = seed_run(&db, "slack", &computer, ago(70), RunLinks::default()).await;
@@ -466,7 +466,7 @@ async fn stress_run_claims_stay_inside_the_engagement() {
         let stored = row(&db, id).await;
         assert_eq!(link(&stored, "session_ref").as_deref(), Some("s1"));
         assert_eq!(link(&stored, "task_ref").as_deref(), Some("t1"));
-        assert_eq!(link(&stored, "service_order").as_deref(), Some("2155467"));
+        assert_eq!(link(&stored, "service_order").as_deref(), Some("2000007"));
     }
     for id in [&early, &elsewhere, &foreign_order, &foreign_task] {
         assert_eq!(link(&row(&db, id).await, "session_ref"), None, "{id:?} was claimed");
@@ -499,7 +499,7 @@ async fn a_closed_engagement_claims_nothing_after_it_ended() {
 async fn session_runs_gain_the_order_unless_they_belong_to_another_task() {
     let db = mem_db().await;
     let computer = rid("computer", "DESKTOP-787KAB8:8d3db801f");
-    let (sid, task, so) = (rid("diagnostic_session", "s1"), rid("task", "t1"), rid("service_order", "2155467"));
+    let (sid, task, so) = (rid("diagnostic_session", "s1"), rid("task", "t1"), rid("service_order", "2000007"));
     let on_session = |task: Option<RecordId>, order: Option<RecordId>| RunLinks {
         session: Some(sid.clone()),
         order,

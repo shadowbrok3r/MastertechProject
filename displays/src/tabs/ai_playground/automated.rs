@@ -265,7 +265,7 @@ mod tests {
             id: RecordId::new("diagnostic_session", key),
             connection_string: format!("{host}:abc"),
             hostname: host.to_string(),
-            customer_name: Some("Jacqueline Hoff".to_string()),
+            customer_name: Some("Morgan Sample".to_string()),
             tech: None,
             driven_by: driven_by.map(str::to_string),
             status: status.to_string(),
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn the_search_matches_machine_customer_source_status_and_theory() {
         let r = row("a", "DESKTOP-E94IGME", Some("zeroclaw/sweeper"), "escalated");
-        for needle in ["e94igme", "hoff", "sweeper", "escalated", "s0ix", ""] {
+        for needle in ["e94igme", "sample", "sweeper", "escalated", "s0ix", ""] {
             assert!(mentions(&r, needle), "{needle}");
         }
         assert!(!mentions(&r, "green-machine"));

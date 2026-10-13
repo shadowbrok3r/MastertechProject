@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn qcs_follow_the_qc_skill_and_skip_scans_and_unrequested_tests() {
-        let text = developer_instructions(&cfg(), &thread(Some("2141021")), &[], &[], false, None, &[]);
+        let text = developer_instructions(&cfg(), &thread(Some("2000003")), &[], &[], false, None, &[]);
         assert!(text.contains("Load the qc-new-computer skill"), "{text}");
         assert!(text.contains("QCs never get the Webroot or SuperAntiSpyware scans"), "{text}");
         assert!(text.contains("only when the technician asks, after everything else"), "{text}");

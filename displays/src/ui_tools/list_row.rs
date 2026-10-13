@@ -203,8 +203,8 @@ mod tests {
     fn a_progress_bar_adds_its_height_below_the_text() {
         let mut heights = Vec::new();
         run(240.0, |ui| {
-            let plain = ListRow::new("Martin Empey - 2141021").detail("detail").show(ui);
-            let barred = ListRow::new("Martin Empey - 2141021").detail("detail").progress(0.4).show(ui);
+            let plain = ListRow::new("Alex Sample - 2000003").detail("detail").show(ui);
+            let barred = ListRow::new("Alex Sample - 2000003").detail("detail").progress(0.4).show(ui);
             heights.push((plain.rect.height(), barred.rect.height()));
         });
         let (plain, barred) = heights[0];

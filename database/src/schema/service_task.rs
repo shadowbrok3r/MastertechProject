@@ -492,7 +492,7 @@ mod tests {
     fn candidate(key: &str, completed: Option<bool>, created: Option<Datetime>) -> TaskCandidate {
         TaskCandidate {
             id: RecordId::new(TASK_TABLE, key),
-            task_name: Some(format!("{key} - 2155467")),
+            task_name: Some(format!("{key} - 2000007")),
             completed,
             created_at: created,
         }
@@ -500,10 +500,10 @@ mod tests {
 
     fn order() -> ServiceOrderRow {
         ServiceOrderRow {
-            id: RecordId::new(TICKET_TABLE, "2155467"),
-            service_number: Some("2155467".into()),
+            id: RecordId::new(TICKET_TABLE, "2000007"),
+            service_number: Some("2000007".into()),
             customer: Some(RecordId::new(CUSTOMER_TABLE, "4215")),
-            customer_name: Some("Barbara Baker".into()),
+            customer_name: Some("Pat Sample".into()),
             computer: None,
             checkin_notes: Some("CPS and annual tuneup".into()),
         }
@@ -521,12 +521,12 @@ mod tests {
     #[test]
     fn service_numbers_normalize_or_are_refused() {
         assert_eq!(
-            normalize_service_number(" 2155467 ").as_deref(),
-            Some("2155467")
+            normalize_service_number(" 2000007 ").as_deref(),
+            Some("2000007")
         );
         assert_eq!(
-            normalize_service_number("#2155467").as_deref(),
-            Some("2155467")
+            normalize_service_number("#2000007").as_deref(),
+            Some("2000007")
         );
         assert_eq!(
             normalize_service_number("SO-12345").as_deref(),
@@ -536,9 +536,9 @@ mod tests {
             "",
             "   ",
             "#",
-            "2155 467",
-            "2155467;DELETE task",
-            "21554`67",
+            "2000 007",
+            "2000007;DELETE task",
+            "20000`07",
         ] {
             assert_eq!(normalize_service_number(bad), None, "{bad:?}");
         }
@@ -547,8 +547,8 @@ mod tests {
     #[test]
     fn the_first_usable_service_number_wins() {
         assert_eq!(
-            first_service_number([None, Some("  "), Some("#2155467"), Some("2155113")]).as_deref(),
-            Some("2155467")
+            first_service_number([None, Some("  "), Some("#2000007"), Some("2155113")]).as_deref(),
+            Some("2000007")
         );
         assert_eq!(first_service_number([None, Some("bad number")]), None);
     }
@@ -556,20 +556,20 @@ mod tests {
     #[test]
     fn task_names_follow_the_customer_dash_number_form() {
         assert_eq!(
-            service_task_name(Some("Barbara Baker"), "2155467"),
-            "Barbara Baker - 2155467"
+            service_task_name(Some("Pat Sample"), "2000007"),
+            "Pat Sample - 2000007"
         );
         assert_eq!(
-            service_task_name(Some("  brayden humphreys "), "2155359"),
-            "brayden humphreys - 2155359"
+            service_task_name(Some("  jamie sample "), "2000008"),
+            "jamie sample - 2000008"
         );
         assert_eq!(
-            service_task_name(Some(""), "2155467"),
-            "Unknown customer - 2155467"
+            service_task_name(Some(""), "2000007"),
+            "Unknown customer - 2000007"
         );
         assert_eq!(
-            service_task_name(None, "2155467"),
-            "Unknown customer - 2155467"
+            service_task_name(None, "2000007"),
+            "Unknown customer - 2000007"
         );
     }
 
@@ -615,10 +615,10 @@ mod tests {
     #[test]
     fn a_new_task_carries_the_order_links_and_the_agent_origin() {
         let now = at(1_758_820_000).expect("valid timestamp");
-        let task = NewServiceTask::for_order(&order(), "2155467", None, &derek(), now);
-        assert_eq!(task.task_name, "Barbara Baker - 2155467");
+        let task = NewServiceTask::for_order(&order(), "2000007", None, &derek(), now);
+        assert_eq!(task.task_name, "Pat Sample - 2000007");
         assert_eq!(task.service_ticket, order().id);
-        assert_eq!(task.service_number, "2155467");
+        assert_eq!(task.service_number, "2000007");
         assert_eq!(task.assignee, derek().id);
         assert_eq!(task.priority, Priority::Normal);
         assert_eq!(task.status, Status::Todo);
@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(task.origin, AGENT_TASK_ORIGIN);
         assert_eq!(
             task.task_description,
-            "Created by the Mastertech diagnostic agent for Derek Anderson: service #2155467 had no task.\nCheck-in notes: CPS and annual tuneup"
+            "Created by the Mastertech diagnostic agent for Derek Anderson: service #2000007 had no task.\nCheck-in notes: CPS and annual tuneup"
         );
     }
 
@@ -640,7 +640,7 @@ mod tests {
             Value::Object(obj) => ["priority", "status", "completed"].map(|k| obj.get(k).cloned()),
             other => panic!("task should store as an object, got {other:?}"),
         };
-        let agent = NewServiceTask::for_order(&order(), "2155467", None, &derek(), now);
+        let agent = NewServiceTask::for_order(&order(), "2000007", None, &derek(), now);
         let modal = crate::schema::LiveTaskPayload::default();
         assert_eq!(
             fields(agent.clone().into_value()),
@@ -656,16 +656,16 @@ mod tests {
     fn the_order_customer_name_beats_the_session_one() {
         let now = at(0).expect("epoch");
         let task =
-            NewServiceTask::for_order(&order(), "2155467", Some("Session Name"), &derek(), now);
-        assert_eq!(task.task_name, "Barbara Baker - 2155467");
+            NewServiceTask::for_order(&order(), "2000007", Some("Session Name"), &derek(), now);
+        assert_eq!(task.task_name, "Pat Sample - 2000007");
         let nameless = ServiceOrderRow {
             customer_name: None,
             checkin_notes: None,
             ..order()
         };
         let task =
-            NewServiceTask::for_order(&nameless, "2155467", Some("Session Name"), &derek(), now);
-        assert_eq!(task.task_name, "Session Name - 2155467");
+            NewServiceTask::for_order(&nameless, "2000007", Some("Session Name"), &derek(), now);
+        assert_eq!(task.task_name, "Session Name - 2000007");
         assert!(!task.task_description.contains("Check-in notes"));
     }
 

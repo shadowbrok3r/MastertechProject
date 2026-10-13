@@ -116,7 +116,7 @@ pub struct CreateTaskParams {
     #[serde(default)]
     pub assignee: Option<String>,
     #[schemars(
-        description = "Short imperative title, at most 120 characters, e.g. \"Call Kayleen back about her SSD\"."
+        description = "Short imperative title, at most 120 characters, e.g. \"Call Jane back about her SSD\"."
     )]
     pub title: String,
     #[schemars(description = "Optional details, at most 1000 characters.")]
