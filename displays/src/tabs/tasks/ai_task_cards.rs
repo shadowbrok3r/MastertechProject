@@ -12,6 +12,7 @@ use crate::ui_tools::controls::{
     self, ButtonKind, IconBox, IconButton, IconLabel, MenuButton, Metrics, Section, TextButton,
     Tokens,
 };
+use crate::ui_tools::glass_card::FixedWidthFrame;
 use crate::ui_tools::icons::svg;
 use crate::ui_tools::theme;
 use crate::TaskUiActions;
@@ -58,19 +59,18 @@ impl AiTaskCardView {
         let done = self.items.len() > 0 && self.items.iter().all(|i| i.checked);
 
         let m = Metrics::get(ui.ctx());
-        let mut frame = Frame::default()
+        let frame = Frame::default()
             .fill(style.visuals.extreme_bg_color)
             .inner_margin(Margin::same(8))
             .outer_margin(Margin::same(4))
             .corner_radius(eframe::egui::CornerRadius::same(Tokens::get(ui.ctx()).radius_md))
-            .shadow(Shadow::NONE)
-            .begin(ui);
+            .stroke(style.visuals.widgets.open.bg_stroke)
+            .shadow(Shadow::NONE);
+        let width = ui.available_width();
+        let mut frame = FixedWidthFrame::begin(ui, frame, width);
 
         {
             let ui = &mut frame.content_ui;
-            let available = ui.available_width();
-            const CARD_MARGIN: f32 = 8.0;
-            ui.set_width(available - CARD_MARGIN * 2.0);
             ui.set_min_height(67.0);
 
             ui.horizontal(|ui| {
@@ -149,7 +149,7 @@ impl AiTaskCardView {
 
             controls::hairline(ui);
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 // Assignee combo — reassignment clears the attention ack.
                 let assignee_name = user_name(store_users, &task.assignee);
                 ui.push_id(("ai_assignee", &key), |ui| {
@@ -275,8 +275,6 @@ impl AiTaskCardView {
         } else if response.hovered() {
             frame.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
             frame.frame.shadow = style.visuals.window_shadow;
-        } else {
-            frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
         }
         frame.paint(ui);
     }
