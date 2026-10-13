@@ -20,7 +20,7 @@ use database::schema::{
     client::ClientKind, ComputerData, ConnectedClient, LiveTaskPayload, RecordIdExt,
     SystemInformation,
 };
-use eframe::egui::{RichText, Ui, Vec2};
+use eframe::egui::{Align, Label, Layout, RichText, Ui, Vec2};
 
 /// Heartbeat-freshness threshold for the header dot.
 ///
@@ -127,8 +127,7 @@ impl ClientCardData {
 
     pub fn display_client_card(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
         let gap = Metrics::get(ui.ctx()).gap.y;
-        glass_card::group(ui, |ui| {
-            ui.set_min_width(420.0);
+        glass_card::row_card(ui, |ui| {
             ui.vertical(|ui| {
                 self.header_row(ui);
                 ui.add_space(gap);
@@ -183,26 +182,12 @@ impl ClientCardData {
                 .friendly_name
                 .clone()
                 .unwrap_or_else(|| self.client.connection_string.clone());
-            ui.label(RichText::new(title).strong());
 
-            // Separate "live admin session" indicator. Distinct from the
-            // dot above because we want operators to see at a glance both
-            // (a) is the agent alive (dot), and (b) am I already wired in
-            // to it (chip). Conflating the two would hide a dying
-            // heartbeat behind a green dot just because we happen to have
-            // a TCP session open from before the heartbeat went stale.
-            if self.is_ws_connected {
-                controls::badge(ui, "SESSION", theme::success(ui))
-                    .on_hover_text("Admin transport session is currently open to this client");
-            }
-
-            if self.ai_active {
-                controls::badge(ui, "AI ACTIVE", theme::warn(ui));
-            }
-
-            // Show time since last DB heartbeat at the right edge.
-            if let Some(ref dt) = self.client.last_update {
-                if let Ok(t) = chrono::DateTime::parse_from_rfc3339(&dt.to_string()) {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // Show time since last DB heartbeat at the right edge.
+                if let Some(ref dt) = self.client.last_update
+                    && let Ok(t) = chrono::DateTime::parse_from_rfc3339(&dt.to_string())
+                {
                     let secs = (chrono::Utc::now()
                         - t.with_timezone(&chrono::Utc))
                     .num_seconds()
@@ -214,14 +199,28 @@ impl ClientCardData {
                     } else {
                         format!("{}h ago", secs / 3600)
                     };
-                    ui.with_layout(
-                        eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-                        |ui| {
-                            ui.label(RichText::new(ago).weak().small());
-                        },
-                    );
+                    ui.label(RichText::new(ago).weak().small());
                 }
-            }
+
+                if self.ai_active {
+                    controls::badge(ui, "AI ACTIVE", theme::warn(ui));
+                }
+
+                // Separate "live admin session" indicator. Distinct from the
+                // dot above because we want operators to see at a glance both
+                // (a) is the agent alive (dot), and (b) am I already wired in
+                // to it (chip). Conflating the two would hide a dying
+                // heartbeat behind a green dot just because we happen to have
+                // a TCP session open from before the heartbeat went stale.
+                if self.is_ws_connected {
+                    controls::badge(ui, "SESSION", theme::success(ui))
+                        .on_hover_text("Admin transport session is currently open to this client");
+                }
+
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(Label::new(RichText::new(&title).strong()).truncate());
+                });
+            });
         });
 
         // Sub-line: assigned username + IP (when available)
@@ -236,7 +235,7 @@ impl ClientCardData {
 
         let weak = theme::weak_text(ui);
         if assigned_name.is_some() || ip_str.is_some() {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if let Some(name) = assigned_name.as_deref() {
                     controls::IconLabel::new(svg::USER, name)
                         .tone(weak)
@@ -257,11 +256,13 @@ impl ClientCardData {
             controls::IconLabel::new(svg::DESKTOP_TOWER, &text)
                 .tone(weak)
                 .small(true)
+                .truncate(true)
                 .show(ui);
         } else if !self.client.connection_string.is_empty() {
             controls::IconLabel::new(svg::PLUGS_CONNECTED, &self.client.connection_string)
                 .tone(weak)
                 .small(true)
+                .truncate(true)
                 .show(ui);
         }
     }
@@ -275,7 +276,7 @@ impl ClientCardData {
             return;
         };
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             stat_label(ui, svg::CPU, "CPU");
             let cpu_pct = (info.cpu_percentage / 100.0).clamp(0.0, 1.0);
             let cpu_text = format!("{:.0}%", info.cpu_percentage);
@@ -316,7 +317,7 @@ impl ClientCardData {
     }
 
     fn button_row(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if controls::icon_text_button(ui, svg::STETHOSCOPE, "Diagnostics").clicked() {
                 let _ = tx.try_send(TaskUiActions::OpenClientDiagnostics(
                     self.client.connection_string.clone(),

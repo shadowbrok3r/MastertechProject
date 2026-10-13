@@ -99,6 +99,7 @@ impl eframe::App for app_state::MasterTechApp {
         // Composited mask a later Failed.
         let frost = displays::ui_tools::glass_backdrop::poll_outcome();
         log_frame_health(ctx, frost);
+        log_window_geometry(ctx, self.context.chrome.frameless);
 
         self.receive_logic(ctx, frame);
 
@@ -320,6 +321,53 @@ fn log_frame_health(
     );
 }
 
+/// The main viewport's sizes and window state, compared frame to frame.
+#[derive(Clone, Copy, PartialEq)]
+struct WindowShape {
+    inner: Option<egui::Vec2>,
+    outer: Option<egui::Vec2>,
+    maximized: Option<bool>,
+    minimized: Option<bool>,
+    fullscreen: Option<bool>,
+    frameless: bool,
+}
+
+/// Logs the main viewport's rects when its size or window state changes, at most once per second.
+fn log_window_geometry(ctx: &egui::Context, frameless: bool) {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<Option<(WindowShape, Instant)>> = Mutex::new(None);
+
+    let (shape, inner, outer) = ctx.input(|i| {
+        let v = i.viewport();
+        let shape = WindowShape {
+            inner: v.inner_rect.map(|r| r.size()),
+            outer: v.outer_rect.map(|r| r.size()),
+            maximized: v.maximized,
+            minimized: v.minimized,
+            fullscreen: v.fullscreen,
+            frameless,
+        };
+        (shape, v.inner_rect, v.outer_rect)
+    });
+    let Ok(mut last) = LAST.lock() else {
+        return;
+    };
+    if let Some((prev, at)) = *last
+        && (prev == shape || at.elapsed() < Duration::from_secs(1))
+    {
+        return;
+    }
+    *last = Some((shape, Instant::now()));
+    log::info!(
+        "window geometry: inner_rect={inner:?} outer_rect={outer:?} viewport_rect={:?} maximized={:?} minimized={:?} fullscreen={:?} frameless={frameless}",
+        ctx.viewport_rect(),
+        shape.maximized,
+        shape.minimized,
+        shape.fullscreen,
+    );
+}
+
 /// What one launch resolved from the command line and the console it was started with.
 #[derive(Clone, Copy, Debug)]
 struct LaunchOptions {
@@ -451,6 +499,10 @@ async fn run_gui(opts: LaunchOptions, minidump: MinidumpArgs) -> eframe::Result<
             },
             Box::new(move |cc| {
                 egui_extras::install_image_loaders(&cc.egui_ctx);
+                #[cfg(target_os = "windows")]
+                if !utilities::windows::client_area::install(cc) {
+                    log::warn!("client_area: WM_NCCALCSIZE subclass not installed");
+                }
                 let mut app = app_state::MasterTechApp::new(cc, glow_minidump);
                 app.context.chrome = utilities::window_prefs::Chrome {
                     frameless,

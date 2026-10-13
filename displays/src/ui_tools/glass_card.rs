@@ -16,8 +16,9 @@
 //! plain tinted pane — which is what [`glass_backdrop::GlassParams::tint`] is for.
 
 use eframe::egui::{
-    Align, AsIdSalt, Color32, CornerRadius, Frame, InnerResponse, Layout, Margin, RichText, Stroke,
-    Ui,
+    Align, AsIdSalt, Color32, CornerRadius, Frame, InnerResponse, Layout, Margin, Rangef, Rect,
+    Response, RichText, Sense, Shape, Stroke, Ui, UiBuilder, epaint::MarginF32, layers::ShapeIdx,
+    pos2, vec2,
 };
 
 use super::glass_backdrop;
@@ -128,6 +129,95 @@ pub fn card<R>(
 /// [`Ui::group`]: eframe::egui::Ui::group
 pub fn group<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
     card_frame(ui).show(ui, contents)
+}
+
+/// A [`group`] exactly `ui.available_width()` wide whatever it holds; plain while unbounded.
+pub fn row_card<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+    let width = ui.available_width();
+    if ui.is_sizing_pass() || !width.is_finite() {
+        return group(ui, contents);
+    }
+    let frame = card_frame(ui);
+    let mut card = FixedWidthFrame::begin(ui, frame, width);
+    let inner = contents(&mut card.content_ui);
+    InnerResponse::new(inner, card.end(ui))
+}
+
+/// A [`Frame`] of fixed outer width; wider content is clipped instead of widening it or its parent.
+pub struct FixedWidthFrame {
+    /// Fill, stroke and shadow are read when painting; margins are fixed by [`Self::begin`].
+    pub frame: Frame,
+    /// The `Ui` the frame's contents go in.
+    pub content_ui: Ui,
+    background: ShapeIdx,
+    outer_left: f32,
+    outer_top: f32,
+    outer_width: f32,
+    margin: MarginF32,
+    outer_margin: Margin,
+}
+
+impl FixedWidthFrame {
+    /// Starts `frame` at the cursor, `width` wide including its outer margin.
+    pub fn begin(ui: &mut Ui, frame: Frame, width: f32) -> Self {
+        debug_assert!(
+            width.is_finite(),
+            "a fixed-width frame needs a finite width"
+        );
+        let background = ui.painter().add(Shape::Noop);
+        let available = ui.available_rect_before_wrap();
+        let outer = Rect::from_min_size(available.min, vec2(width.max(0.0), available.height()));
+        let margin = frame.total_margin();
+        let mut content = outer - margin;
+        content.max.x = content.max.x.max(content.min.x);
+        content.max.y = content.max.y.max(content.min.y);
+
+        let mut content_ui = ui.new_child(UiBuilder::new().max_rect(content));
+        content_ui.set_width(content.width());
+        let visible = outer - frame.outer_margin;
+        content_ui.shrink_clip_rect(Rect::from_x_y_ranges(visible.x_range(), Rangef::EVERYTHING));
+
+        Self {
+            frame,
+            content_ui,
+            background,
+            outer_left: outer.left(),
+            outer_top: outer.top(),
+            outer_width: outer.width(),
+            margin,
+            outer_margin: frame.outer_margin,
+        }
+    }
+
+    /// The locked width by the content's height plus the margins.
+    pub fn outer_rect(&self) -> Rect {
+        let content_top = self.outer_top + self.margin.top;
+        let bottom = self.content_ui.min_rect().bottom().max(content_top) + self.margin.bottom;
+        Rect::from_min_max(
+            pos2(self.outer_left, self.outer_top),
+            pos2(self.outer_left + self.outer_width, bottom),
+        )
+    }
+
+    /// Allocates [`Self::outer_rect`] in `ui`.
+    pub fn allocate_space(&self, ui: &mut Ui) -> Response {
+        ui.allocate_rect(self.outer_rect(), Sense::hover())
+    }
+
+    /// Paints the frame behind the contents; its edge stays put whatever the stroke width.
+    pub fn paint(&self, ui: &Ui) {
+        let visible = self.outer_rect() - self.outer_margin;
+        if ui.is_rect_visible(visible) {
+            let content = (visible - self.frame.inner_margin).shrink(self.frame.stroke.width);
+            ui.painter().set(self.background, self.frame.paint(content));
+        }
+    }
+
+    /// Paints and allocates the frame.
+    pub fn end(self, ui: &mut Ui) -> Response {
+        self.paint(ui);
+        self.allocate_space(ui)
+    }
 }
 
 /// A themed card with an accent glyph, a title, and an optional right-aligned subtitle.
@@ -265,6 +355,34 @@ mod tests {
                 preset.as_str(),
             );
         }
+    }
+
+    #[test]
+    fn a_fixed_width_frame_keeps_its_width_whatever_it_holds() {
+        let (parent, rects) = with_preset(PresetStyles::MtechStudio, |ui| {
+            let mut column = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(Rect::from_min_size(pos2(10.0, 10.0), vec2(300.0, 600.0))),
+            );
+            let rects: Vec<Rect> = [40.0, 900.0, 120.0]
+                .into_iter()
+                .map(|content_w| {
+                    let frame =
+                        card_frame(&column).stroke(Stroke::new(1.0, card_stroke(&column).color));
+                    let width = column.available_width();
+                    let mut card = FixedWidthFrame::begin(&mut column, frame, width);
+                    card.content_ui
+                        .allocate_exact_size(vec2(content_w, 20.0), Sense::hover());
+                    card.frame.stroke = Stroke::new(3.0, card.frame.stroke.color);
+                    card.end(&mut column).rect
+                })
+                .collect();
+            (column.min_rect(), rects)
+        });
+        for rect in &rects {
+            assert_eq!((rect.left(), rect.right()), (10.0, 310.0), "card {rect:?}");
+        }
+        assert_eq!(parent.right(), 310.0, "a wide card widened its column");
     }
 
     // A glass theme's card has to stay translucent, or the frost behind it is wasted work.

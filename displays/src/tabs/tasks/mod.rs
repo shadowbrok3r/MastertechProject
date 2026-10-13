@@ -15,6 +15,8 @@ pub mod client_cards;
 pub mod ai_task_cards;
 pub mod pending;
 pub mod complete_button;
+#[cfg(test)]
+mod card_width_tests;
 
 /// Column key for completed tasks surfaced by a search on a board that
 /// otherwise only shows open work. Matches `Status::Complete.as_str()`.

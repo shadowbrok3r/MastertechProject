@@ -27,7 +27,7 @@ inline = []
 # stack (Windows PE). Off by default: `cargo build`/`cargo run` skip skia-bindings
 # entirely, avoiding its from-source compile (ninja, Developer Mode, long build
 # times -- see BUILD.md). Enable with --features skia-render.
-skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit", "dep:raw-window-handle"]
+skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit"]
 
 [dependencies]
 eframe = { version="0.36", features=["persistence", "serde",  "default_fonts", "glow", "x11", "accesskit", "links"], default-features=false }
@@ -82,7 +82,6 @@ egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", features = ["wi
 skia-safe = { version = "0.99", optional = true }
 softbuffer = { version = "0.4", optional = true }
 winit = { version = "0.30", default-features = false, features = ["rwh_06"], optional = true }
-raw-window-handle = { version = "0.6", optional = true }
 
 # nvme = "0.2.2"
 
@@ -160,6 +159,7 @@ windows = {version = "0.62", features = [
     "Win32_UI_HiDpi"
 ]}
 winapi = { version = "0.3", features = ["processthreadsapi"] }
+raw-window-handle = "0.6"
 minidump-processor = { version = "0.27", features = ["http"] }
 breakpad-symbols = { version = "0.27" }
 minidump-common = { version = "0.27" }

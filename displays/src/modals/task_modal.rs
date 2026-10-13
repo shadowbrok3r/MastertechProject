@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Direction, Id, Layout, RichText, ScrollArea, Ui, UiBuilder, Vec2};
+use eframe::egui::{Align, Direction, Id, Label, Layout, RichText, ScrollArea, Ui, UiBuilder, Vec2};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use crate::ui_tools::{
     controls::{
@@ -977,15 +977,21 @@ impl TaskModal {
                     );
                 }
                 for task in &self.service_history_tasks {
-                    glass_card::group(ui, |ui| {
+                    glass_card::row_card(ui, |ui| {
                         ui.horizontal(|ui| {
-                            controls::icon_label(ui, svg::CLIPBOARD_TEXT, &task.task_name);
-                            if let Some(sn) = &task.service_number {
-                                IconLabel::new(svg::RECEIPT, &format!("Order: {sn}"))
-                                    .tone(t.text_dim)
-                                    .show(ui);
-                            }
-                            controls::badge(ui, task.status.as_str(), t.tertiary);
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                controls::badge(ui, task.status.as_str(), t.tertiary);
+                                if let Some(sn) = &task.service_number {
+                                    IconLabel::new(svg::RECEIPT, &format!("Order: {sn}"))
+                                        .tone(t.text_dim)
+                                        .show(ui);
+                                }
+                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                    IconLabel::new(svg::CLIPBOARD_TEXT, &task.task_name)
+                                        .truncate(true)
+                                        .show(ui);
+                                });
+                            });
                         });
                     });
                 }
@@ -1123,23 +1129,33 @@ impl TaskModal {
                             "No address".to_string()
                         };
 
-                        glass_card::group(ui, |ui| {
+                        glass_card::row_card(ui, |ui| {
+                            let select = TextButton::new("Select").icon(svg::CHECK);
+                            let reserve = select.size(ui).x + ui.spacing().item_spacing.x;
                             ui.horizontal(|ui| {
                                 ui.vertical(|ui| {
+                                    ui.set_max_width((ui.available_width() - reserve).max(0.0));
                                     let weak = theme::weak_text(ui);
-                                    ui.label(RichText::new(format!("[{}] {}", customer.id, name)).strong());
+                                    ui.add(
+                                        Label::new(
+                                            RichText::new(format!("[{}] {}", customer.id, name)).strong(),
+                                        )
+                                        .truncate(),
+                                    );
                                     IconLabel::new(svg::ENVELOPE, &customer.email)
                                         .small(true)
                                         .tone(weak)
+                                        .truncate(true)
                                         .show(ui);
                                     IconLabel::new(svg::MAP_PIN, &addr_info)
                                         .small(true)
                                         .tone(weak)
+                                        .truncate(true)
                                         .show(ui);
                                 });
 
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if controls::icon_text_button(ui, svg::CHECK, "Select").clicked() {
+                                    if select.show(ui).clicked() {
                                         // Update order with new customer
                                         if let Some(service_number) = self.task.service_number.clone() {
                                             let order_id = service_number.clone();
