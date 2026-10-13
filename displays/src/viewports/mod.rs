@@ -34,6 +34,7 @@ impl SharedContext {
         ui.horizontal(|ui| {
             crate::tabs::admin_console::AdminConsole::client_header(
                 ui,
+                crate::tabs::admin_console::ui::CLIENT_ROW_W,
                 ws_layout.ui_actions_channel.0.clone(),
                 client,
                 ws_layout.session_layout.clone(),
@@ -46,6 +47,7 @@ impl SharedContext {
                 ws_layout.security_inventory.get(client_id).map(|v| v.as_slice()),
                 reachability.get(client_id),
                 session.map(|w| (w.transport.kind(), w.is_connected)),
+                session.and_then(|w| w.client_version.as_deref()),
             );
         });
     }

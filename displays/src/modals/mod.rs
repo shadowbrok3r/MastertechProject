@@ -1,7 +1,7 @@
 
 use eframe::egui::{Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText, Shadow, Ui, Widget, Window};
 use crate::{chats::ChatView, DisplayModal};
-use task_modal::{ModalAction, TaskModal};
+use task_modal::{ModalAction, TASK_MODAL_W, TaskModal};
 use create_task_modal::CreateTaskModal;
 use serde::Serialize;
 use std::ops::Deref;
@@ -67,12 +67,19 @@ impl ModalWindow for ModalType {
             modal_action = Some(action); // Capture the action
         };
 
+        let frame = Frame::default()
+            .inner_margin(Margin::symmetric(4, 4))
+            .stroke(style.window_stroke)
+            .fill(style.window_fill)
+            .corner_radius(style.menu_corner_radius)
+            .shadow(shadow);
+
         // Window width matches the active modal's fixed content width plus the frame margins.
         let window_width = match self {
             ModalType::CreateTaskModal(create_task_modal) => {
                 create_task_modal.min_width.unwrap_or(500.0) + 8.0
             }
-            _ => 723.0,
+            _ => TASK_MODAL_W + frame.total_margin().sum().x,
         };
 
         // Strict height cap: runaway content must scroll/clip inside the
@@ -82,14 +89,7 @@ impl ModalWindow for ModalType {
 
         Window::new(title_color)
             .title_frame(Frame::window(&ctx.global_style()))
-            .frame(
-                Frame::default()
-                .inner_margin(Margin::symmetric(4, 4))
-                .stroke(style.window_stroke)
-                .fill(style.window_fill)
-                .corner_radius(style.menu_corner_radius)
-                .shadow(shadow)
-            )
+            .frame(frame)
             .drag_to_scroll(eframe::egui::scroll_area::DragScroll::Never)
             .pivot(Align2::CENTER_CENTER)
             .default_height(715.)

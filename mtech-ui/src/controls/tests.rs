@@ -598,3 +598,15 @@ fn a_checkbox_row_flips_from_its_label_and_holds_the_control_height() {
     });
     assert!(on);
 }
+
+#[test]
+fn an_icon_link_reports_the_width_it_allocates() {
+    let ctx = context(Density::Regular);
+    for (text, small) in [("Link", true), ("customer:abc123", false)] {
+        let (reported, drawn) = run(&ctx, 2, |ui| {
+            let link = IconLink::new(text).icon(crate::icon_pack::LINK).small(small);
+            (link.width(ui), link.show(ui).rect.width())
+        });
+        assert_eq!(reported, drawn, "{text}");
+    }
+}

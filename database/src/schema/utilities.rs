@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ClientScope, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, UserAuthorization, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, db};
 #[allow(unused_imports)]
-use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
+use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TaskUpdate, TicketData};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
 use std::{collections::HashMap, fmt::Debug};
 use serde::{Deserialize, Serialize};
@@ -810,21 +810,21 @@ pub async fn create_full_task_payload(
         for task in check_task_record.iter() {
             if task.id == task_data.id {
                 // Same task ID - this is an update
-                let upsert_result: std::result::Result<Option<Record>, surrealdb::Error> = db()
-                    .update(task.id.clone())
-                    .content(LiveTaskPayload {
-                        id: task.id.clone(),
-                        ..task_data.clone()
-                    }).await;
+                let upsert_result = TaskUpdate::replace(LiveTaskPayload {
+                    id: task.id.clone(),
+                    ..task_data.clone()
+                })
+                .run(db().as_ref(), None)
+                .await;
 
                 match upsert_result {
-                    Ok(record) => {
+                    Ok(rows) => {
                         for note in task_notes.iter_mut() {
                             if note.task_id == Some(task_data.id.clone()) && note.task_id != Some(task.id.clone()) {
                                 note.task_id = Some(task.id.clone());
                             }
                         }
-                        debug!("schema/utilities.rs -> upsert_task_record: {record:?}");
+                        debug!("schema/utilities.rs -> updated {rows} task row(s)");
                         updated = true;
                     },
                     Err(e) => return TaskCreationResult::Error { message: format!("Failed to update task: {e}") },

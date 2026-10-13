@@ -511,6 +511,10 @@ impl MtechServer {
                     .ws_clients
                     .get(&client.connection_string)
                     .map(|w| (w.transport.kind(), w.is_connected));
+                let client_version = layout
+                    .ws_clients
+                    .get(&client.connection_string)
+                    .and_then(|w| w.client_version.clone());
 
                 let mut is_open = true;
                 // MtechServer2.0 is the wasm-only browser admin and has no
@@ -547,6 +551,7 @@ impl MtechServer {
                             ui.horizontal(|ui| {
                                 AdminConsole::client_header(
                                     ui,
+                                    displays::tabs::admin_console::ui::CLIENT_ROW_W,
                                     tx,
                                     client,
                                     session_layout,
@@ -559,6 +564,7 @@ impl MtechServer {
                                     inventory.as_deref(),
                                     None,
                                     transport,
+                                    client_version.as_deref(),
                                 );
                             });
                             if let Some(ws_client) =

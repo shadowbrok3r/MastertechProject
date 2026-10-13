@@ -1,7 +1,7 @@
 use crate::app_state::{MastertechContext, PendingTurData, TurSubmitState};
 use database::schema::{
-    DuplicateCheckResult, FieldDisplay, MergeResolution, RecordIdExt, TaskCreationResult,
-    TaskHistory, merge_computer, merge_customer, merge_task, merge_ticket,
+    DuplicateCheckResult, MergeResolution, RecordIdExt, TaskCreationResult, merge_computer,
+    merge_customer, merge_task, merge_ticket,
     utilities::{check_for_duplicates, create_and_link_records, create_full_task_payload},
 };
 use displays::ui_tools::{
@@ -377,50 +377,6 @@ impl MastertechContext {
                 )
             };
 
-        // Determine if this is a modification (existing task with UseNew or Merge resolution)
-        // and prepare task history data if so
-        let task_history_data: Option<(database::schema::RecordId, serde_json::Value)> =
-            if let Some(ref res) = resolution {
-                if let Some(ref check_result) = pending.duplicate_check_result {
-                    if let Some(ref task_dup) = check_result.task {
-                        // Only create history for UseNew or Merge resolutions
-                        if matches!(
-                            res.task_resolution,
-                            MergeResolution::UseNew | MergeResolution::Merge
-                        ) {
-                            // Build diff JSON from the changes
-                            let diff_fields = task_dup.existing.get_differing_fields(&task_data);
-                            if !diff_fields.is_empty() {
-                                let mut diff_map = serde_json::Map::new();
-                                for (field_name, old_val, new_val) in diff_fields {
-                                    diff_map.insert(
-                                        field_name,
-                                        serde_json::json!({
-                                            "old": old_val,
-                                            "new": new_val
-                                        }),
-                                    );
-                                }
-                                Some((
-                                    task_dup.existing.id.clone(),
-                                    serde_json::Value::Object(diff_map),
-                                ))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
         // IMPORTANT: When there's an existing task, ALWAYS use the existing task's ID
         // The resolution determines which DATA to use, but we always update the existing record
         if let Some(ref check_result) = pending.duplicate_check_result {
@@ -441,31 +397,9 @@ impl MastertechContext {
         let send_specs = pending.send_specs
             && database::schema::entity_link::computer_has_minimal_hardware(&computer_data);
 
-        // Get current user info for task history
-        let current_user = self.shared_ctx.current_user.clone();
-
         let _state_tx = self.duplicate_check_tx.clone();
 
         spawn(async move {
-            // Create task history record if we're modifying an existing task
-            if let Some((task_id, diff)) = task_history_data {
-                // Get current user for the history record
-                if let Some(user) = &current_user {
-                    let history = TaskHistory::new(
-                        task_id,
-                        user.get_id(),
-                        user.get_username().to_string(),
-                        diff,
-                    );
-                    match history.save().await {
-                        Ok(_) => info!("Task history record created"),
-                        Err(e) => log::error!("Failed to create task history record: {:?}", e),
-                    }
-                } else {
-                    info!("No current user available for task history");
-                }
-            }
-
             let send_payload_result = create_full_task_payload(
                 ticket_data,
                 customer_data,

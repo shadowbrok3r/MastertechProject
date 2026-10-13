@@ -18,7 +18,7 @@ use database::schema::{
     ComputerData, CustomerData, RecordId, RecordIdExt, TicketData, COMPUTER_TABLE, CUSTOMER_TABLE,
 };
 use database::db;
-use eframe::egui::{Align, Context, Grid, Layout, RichText, ScrollArea, Ui, Vec2};
+use eframe::egui::{Align, Context, Grid, Layout, RichText, ScrollArea, Ui};
 
 use crate::ui_tools::{
     controls::{self, BarKind, ButtonKind, IconLabel, Metrics, Role, TextButton, TextField, Tokens},
@@ -728,7 +728,6 @@ impl EntityLinkResolutionModal {
                                 ui,
                                 Some(&mut self.ticket),
                                 Some(&mut self.computer),
-                                Vec2::new(ui.available_width(), 400.0),
                             );
                         }
                     });

@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Direction, Id, Label, Layout, RichText, ScrollArea, Ui, UiBuilder, Vec2};
+use eframe::egui::{Align, Direction, Id, Label, Layout, RichText, ScrollArea, Ui, UiBuilder, Vec2, vec2};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use crate::ui_tools::{
     controls::{
@@ -9,7 +9,7 @@ use crate::ui_tools::{
     icons::svg,
     theme,
 };
-use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, StressTestRun, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
+use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, StressTestRun, TaskHistory, TaskHistoryLoad, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
 use database::schema::prestashop::{Customer, Address};
 use database::schema::prestashop_schema::PrestashopPayload;
 use database::schema::helper_traits::parse_email_user;
@@ -25,6 +25,10 @@ use bytes::Bytes;
 use core::f32;
 use log::info;
 
+/// Content width of the task modal's window.
+pub(crate) const TASK_MODAL_W: f32 = 715.0;
+/// Height of the task modal's body.
+const BODY_H: f32 = 700.0;
 /// Tallest a picker list in a task sub-modal grows before it scrolls.
 const LIST_MAX_H: f32 = 240.0;
 /// Width of the import-computer search field.
@@ -83,11 +87,11 @@ pub struct TaskModal {
     #[serde(skip)]
     pub initial_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
-    pub task_history_tx: Sender<Vec<TaskHistory>>,
+    pub task_history_tx: Sender<TaskHistoryLoad>,
     #[serde(skip)]
-    pub task_history_rx: Receiver<Vec<TaskHistory>>,
+    pub task_history_rx: Receiver<TaskHistoryLoad>,
     /// Cached task history records
-    pub task_history: Vec<TaskHistory>,
+    pub task_history: TaskHistoryLoad,
     /// SEB check channels
     #[serde(skip)]
     pub seb_tx: Sender<Vec<CarboniteResponse>>,
@@ -253,6 +257,28 @@ pub enum ModalAction {
     None,
 }
 
+impl ModalAction {
+    /// Whether the page is inset by the gutter.
+    fn is_inset(&self) -> bool {
+        matches!(
+            self,
+            Self::TicketInfoPage
+                | Self::SoftwareInfoPage
+                | Self::ComputerInfoPage
+                | Self::JobBuilderPage
+                | Self::TaskHistoryPage
+        )
+    }
+
+    /// Whether the page scrolls through `tabs::page_scroll`.
+    fn scrolls(&self) -> bool {
+        matches!(
+            self,
+            Self::SoftwareInfoPage | Self::ComputerInfoPage | Self::TaskHistoryPage
+        )
+    }
+}
+
 impl TaskModal {
     pub fn new(chat_view: ChatView, task: LiveTaskPayload) -> Self {
         let (service_ticket_tx, service_ticket_rx) = crossbeam::channel::unbounded();
@@ -301,7 +327,7 @@ impl TaskModal {
                 Err(e) => log::error!("Error getting notes from task ID: {e:?}"),
             }
             // Fetch task history
-            match TaskHistory::get_history_for_task(id.clone()).await {
+            match TaskHistory::load_for_task(id.clone()).await {
                 Ok(history) => { let _ = history_tx.try_send(history); },
                 Err(e) => log::error!("Error getting task history: {e:?}"),
             }
@@ -341,7 +367,7 @@ impl TaskModal {
             computer_tx, computer_rx,
             initial_notes_tx, initial_notes_rx,
             task_history_tx, task_history_rx,
-            task_history: Vec::new(),
+            task_history: TaskHistoryLoad::default(),
             seb_tx, seb_rx,
             seb_checking: false,
             prestashop_data: None,
@@ -436,7 +462,7 @@ impl TaskModal {
         }
         
         if let Ok(history) = self.task_history_rx.try_recv() {
-            log::info!("Received task history: {} records", history.len());
+            log::info!("Received task history: {} records", history.rows.len());
             self.task_history = history;
         }
         
@@ -918,7 +944,7 @@ impl TaskModal {
                 let size = Vec2::new(ui.available_width(), body_h);
                 ui.allocate_ui(size, |ui| {
                     ui.set_max_height(body_h);
-                    display_computer_page_with_search(ui, None, Some(comp), size, None, None);
+                    display_computer_page_with_search(ui, None, Some(comp), None, None);
                 });
             },
         );
@@ -1212,10 +1238,9 @@ impl TaskModal {
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
         self.receive();
-        let avail_size = Vec2::new(700.0, 700.0);
-        let max_space = Vec2::new(715.0, 700.0);
-        ui.set_min_size(max_space);
-        ui.set_max_size(max_space);
+        let avail_size = Vec2::new(700.0, BODY_H);
+        ui.set_min_height(BODY_H);
+        ui.set_max_height(BODY_H);
         let t = Tokens::get(ui.ctx());
         let m = Metrics::get(ui.ctx());
 
@@ -1305,30 +1330,14 @@ impl DisplayModal for TaskModal {
         });
 
         ui.add_space(m.gap.y);
-        ui.scope_builder(
-        UiBuilder::new()
-        .layout(Layout::from_main_dir_and_cross_align(Direction::LeftToRight, Align::Max)), 
-        |ui| {
+        let gutter = if self.current_page_state.is_inset() { m.pad.x } else { 0.0 };
+        let mut page = ui.available_rect_before_wrap().shrink2(vec2(gutter, 0.0));
+        if self.current_page_state.scrolls() {
+            // The scroll bar's allocated width, up to the gutter.
+            page.max.x += ui.spacing().scroll.allocated_width().min(gutter);
+        }
+        ui.scope_builder(UiBuilder::new().max_rect(page), |ui| {
             let is_sizing_pass = ui.is_sizing_pass();
-            let available_width = 715.;
-            let total_content_width = match self.current_page_state {
-                ModalAction::TicketInfoPage => 670.,
-                ModalAction::SoftwareInfoPage => 670.,
-                ModalAction::ComputerInfoPage => 670.,
-                ModalAction::JobBuilderPage => 670.,
-                ModalAction::TaskNotePage => 715.,
-                ModalAction::TaskHistoryPage => 670.,
-                ModalAction::DiagnosticsPage => 715.,
-                ModalAction::StressTestsPage => 715.,
-                _ => 715.
-            };
-
-            // In the rendering pass, add spacing to center the content
-            if !is_sizing_pass && available_width > total_content_width {
-                let padding = (available_width - total_content_width) / 2.0;
-                ui.add_space(padding);
-            }
-
             let store_users = self.store_users.clone();
             match self.current_page_state {
                 ModalAction::TicketInfoPage   => display_ticket_page(
@@ -1362,7 +1371,6 @@ impl DisplayModal for TaskModal {
                         ui,
                         self.service_ticket.as_mut(),
                         self.computer.as_mut(),
-                        avail_size,
                         Some(search_data),
                         Some(&mut self.open_computer_service_history),
                     );
@@ -1388,10 +1396,10 @@ impl DisplayModal for TaskModal {
                         self.import_error = None;
                     }
                 },
-                ModalAction::SoftwareInfoPage => display_software_page(ui, self.computer.as_mut().unwrap_or(&mut ComputerData::default()), avail_size),
+                ModalAction::SoftwareInfoPage => display_software_page(ui, self.computer.as_mut().unwrap_or(&mut ComputerData::default())),
                 ModalAction::JobBuilderPage   => display_job_builder_page(ui),
                 ModalAction::TaskNotePage     => self.chat_view.ui(ui),
-                ModalAction::TaskHistoryPage  => display_history_page(ui, &self.task_history, avail_size),
+                ModalAction::TaskHistoryPage  => display_history_page(ui, &self.task_history),
                 ModalAction::DiagnosticsPage  => {
                     self.kickoff_diagnostics_load();
                     // Auto-poll while any loaded session is still open.
@@ -1851,3 +1859,6 @@ mod scaffold_location_tests {
         assert_eq!(scaffold_location_id(Store::Unknown), None);
     }
 }
+
+#[cfg(test)]
+mod layout_tests;

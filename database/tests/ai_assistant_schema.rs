@@ -2,11 +2,11 @@
 
 use chrono::{Duration, Utc};
 use database::schema::assistant::{
-    COMPLETE_ASSISTANT_TASK_SQL, CREATE_ASSIGNED_TASK_SQL, OVERDUE_ASSIGNED_SQL, OverdueTask, POST_BRIEF_SQL,
-    UNSNOOZE_SQL,
+    CREATE_ASSIGNED_TASK_SQL, OVERDUE_ASSIGNED_SQL, OverdueTask, POST_BRIEF_SQL, UNSNOOZE_SQL,
+    complete_assistant_task_on,
 };
 use database::schema::task_schedule::{CLAIM_RUN_SQL, DUE_SCHEDULES_SQL, SCHEMA_APPLIED_SQL, TaskSchedule};
-use database::schema::{AiProfile, Datetime, RecordId};
+use database::schema::{AiProfile, Datetime, HistoryAuthor, RecordId};
 use serde_json::{Value, json};
 use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, Mem};
@@ -274,21 +274,12 @@ async fn job_sql_claims_once_and_rows_deserialize() {
     assert_eq!(overdue.len(), 1);
     assert_eq!(overdue[0].store.as_deref(), Some("RIV"));
 
-    let ticket: Vec<RecordId> = db
-        .query(COMPLETE_ASSISTANT_TASK_SQL)
-        .bind(("id", RecordId::new("task", "ticket")))
+    let author = Some(HistoryAuthor { user: user("sam"), username: "sam".into() });
+    let ticket = complete_assistant_task_on(&db, &RecordId::new("task", "ticket"), author.clone())
         .await
-        .expect("complete")
-        .take(0)
-        .expect("ids");
-    let chore: Vec<RecordId> = db
-        .query(COMPLETE_ASSISTANT_TASK_SQL)
-        .bind(("id", RecordId::new("task", "chore")))
-        .await
-        .expect("complete")
-        .take(0)
-        .expect("ids");
-    assert_eq!((ticket.len(), chore.len()), (0, 1), "only assistant tasks complete from a notification");
+        .expect("complete");
+    let chore = complete_assistant_task_on(&db, &RecordId::new("task", "chore"), author).await.expect("complete");
+    assert_eq!((ticket, chore), (false, true), "only assistant tasks complete from a notification");
 }
 
 #[tokio::test]

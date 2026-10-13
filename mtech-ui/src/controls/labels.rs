@@ -665,16 +665,27 @@ impl<'a> IconLink<'a> {
         self
     }
 
-    pub fn show(self, ui: &mut Ui) -> Response {
-        let (t, m) = kit(ui);
-        let ink = self.tone.unwrap_or(t.info);
+    /// The text galley and the width of the icon slot before it.
+    fn parts(&self, ui: &Ui, icon_sm: f32) -> (Arc<Galley>, f32) {
         let style = if self.small {
             TextStyle::Small
         } else {
             TextStyle::Body
         };
         let galley = text_galley(ui, self.text, style.resolve(ui.style()));
-        let icon_w = self.icon.map_or(0.0, |_| m.icon_sm + INNER_GAP);
+        (galley, self.icon.map_or(0.0, |_| icon_sm + INNER_GAP))
+    }
+
+    /// Width [`Self::show`] allocates.
+    pub fn width(&self, ui: &Ui) -> f32 {
+        let (galley, icon_w) = self.parts(ui, kit(ui).1.icon_sm);
+        whole(icon_w + galley.size().x)
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let (t, m) = kit(ui);
+        let ink = self.tone.unwrap_or(t.info);
+        let (galley, icon_w) = self.parts(ui, m.icon_sm);
         let height = galley.size().y.max(m.icon_sm);
         let size = vec2(whole(icon_w + galley.size().x), height);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());

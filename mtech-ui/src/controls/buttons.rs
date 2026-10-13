@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use eframe::egui::{
-    Color32, Galley, Rect, Response, Sense, TextStyle, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
+    Color32, FontId, Galley, Rect, Response, Sense, TextStyle, Ui, Vec2, WidgetInfo, WidgetType,
+    pos2, vec2,
 };
 
 use super::{
-    Icon, Metrics, State, Tokens, focus_ring, kit, medium_font, mix, paint_box, state_of,
+    Icon, Metrics, State, Tokens, elided, focus_ring, kit, medium_font, mix, paint_box, state_of,
     text_galley, whole,
 };
 
@@ -46,6 +47,7 @@ pub struct TextButton<'a> {
     kind: ButtonKind,
     prominent: bool,
     min_width: f32,
+    max_width: f32,
     ink: Option<Color32>,
     enabled: bool,
     mono: bool,
@@ -59,6 +61,7 @@ impl<'a> TextButton<'a> {
             kind: ButtonKind::Neutral,
             prominent: false,
             min_width: 0.0,
+            max_width: f32::INFINITY,
             ink: None,
             enabled: true,
             mono: false,
@@ -83,6 +86,12 @@ impl<'a> TextButton<'a> {
 
     pub fn min_width(mut self, min_width: f32) -> Self {
         self.min_width = min_width;
+        self
+    }
+
+    /// Widest the button gets; a longer label is cut with '…' and shown whole on hover.
+    pub fn max_width(mut self, max_width: f32) -> Self {
+        self.max_width = max_width;
         self
     }
 
@@ -118,20 +127,35 @@ impl<'a> TextButton<'a> {
         } else {
             m.control_h
         };
+        let widest = self.max_width.max(self.min_width);
         vec2(
-            whole(text_w + icon_w + 2.0 * m.pad.x).max(self.min_width),
+            whole(text_w + icon_w + 2.0 * m.pad.x)
+                .max(self.min_width)
+                .min(widest),
             h,
         )
     }
 
-    /// The label laid out in the button's face.
+    /// The label laid out in the button's face, cut to fit [`Self::max_width`].
     pub(crate) fn label_galley(&self, ui: &Ui) -> Arc<Galley> {
-        galley(ui, self.label, self.mono)
+        let font = face(ui, self.mono);
+        if !self.max_width.is_finite() {
+            return text_galley(ui, self.label, font);
+        }
+        let (_, m) = kit(ui);
+        let icon_w = self.icon.map_or(0.0, |_| m.icon_md + ICON_GAP);
+        elided(ui, self.label, font, self.max_width - icon_w - 2.0 * m.pad.x)
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
         let text = self.label_galley(ui);
-        self.show_galley(ui, text)
+        let (cut, label) = (text.elided, self.label);
+        let response = self.show_galley(ui, text);
+        if cut {
+            response.on_hover_text(label)
+        } else {
+            response
+        }
     }
 
     /// Draws the button around a label galley from [`Self::label_galley`].
@@ -175,14 +199,13 @@ impl<'a> TextButton<'a> {
     }
 }
 
-/// Button label on one row in the theme's medium button face, or monospace.
-fn galley(ui: &Ui, label: &str, mono: bool) -> Arc<Galley> {
-    let font = if mono {
+/// The theme's medium button face, or monospace.
+fn face(ui: &Ui, mono: bool) -> FontId {
+    if mono {
         crate::fonts::mono(TextStyle::Monospace.resolve(ui.style()).size)
     } else {
         medium_font(ui, TextStyle::Button)
-    };
-    text_galley(ui, label, font)
+    }
 }
 
 /// Fill, border and ink for a button of `kind` in `state`.
@@ -399,4 +422,55 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, size: IconBox, selected: bool, tip: 
         .selected(selected)
         .tip(tip)
         .show(ui)
+}
+
+#[cfg(test)]
+mod max_width_tests {
+    use super::*;
+    use crate::metrics::{self, Density};
+    use eframe::egui::{CentralPanel, Context, FontDefinitions, Pos2, RawInput, Style};
+
+    fn context() -> Context {
+        let ctx = Context::default();
+        let mut fonts = FontDefinitions::default();
+        crate::icons::install_fonts(&mut fonts);
+        crate::fonts::install(&mut fonts);
+        ctx.set_fonts(fonts);
+        metrics::set_density(&ctx, Density::Regular);
+        metrics::install_overlaid_style(&ctx, Style::default());
+        ctx
+    }
+
+    /// The width `button` draws at and whether its label was cut, after two frames.
+    fn drawn(ctx: &Context, button: impl Fn() -> TextButton<'static>) -> (f32, bool) {
+        let mut out = (0.0, false);
+        for _ in 0..2 {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0))),
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                CentralPanel::default().show(ui, |ui| {
+                    let cut = button().label_galley(ui).elided;
+                    out = (button().show(ui).rect.width(), cut);
+                });
+            });
+            full.textures_delta.clear();
+        }
+        out
+    }
+
+    #[test]
+    fn a_long_label_is_cut_to_the_max_width_and_a_short_one_is_not() {
+        let ctx = context();
+        let long = "[88412] Dana Whitfield-Montgomery of the Northern Valley";
+        let (free, free_cut) = drawn(&ctx, || TextButton::new(long).icon(crate::icon_pack::GEAR));
+        let (capped, capped_cut) =
+            drawn(&ctx, || TextButton::new(long).icon(crate::icon_pack::GEAR).max_width(160.0));
+        let (short, short_cut) =
+            drawn(&ctx, || TextButton::new("Dana").icon(crate::icon_pack::GEAR).max_width(160.0));
+        assert!(free > 160.0 && !free_cut, "uncapped: {free}");
+        assert!(capped <= 160.0 && capped_cut, "capped: {capped}");
+        assert!(short < 160.0 && !short_cut, "short: {short}");
+    }
 }

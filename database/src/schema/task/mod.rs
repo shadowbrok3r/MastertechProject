@@ -1,5 +1,8 @@
-use crate::{schema::{Record, User, TASK_TABLE}, db};
+use std::collections::{BTreeSet, HashMap};
+
+use crate::{schema::{Record, RecordIdExt, User, TASK_TABLE}, db};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use surrealdb::{Connection, Surreal};
 use structdiff::{Difference, StructDiff};
 use facet::Facet;
 use chrono::Utc;
@@ -14,6 +17,7 @@ pub mod search;
 pub use filter::*;
 pub use sort::*;
 pub use search::*;
+pub use update::{HistoryAuthor, RETURN_CHANGE, SYSTEM_AUTHOR, TaskChange, TaskUpdate};
 
 /// The task fields a card control can stage for a deferred batch write.
 /// Text fields are excluded: they save on focus loss, not on a timer.
@@ -304,19 +308,19 @@ impl LiveTaskPayload {
         if !check_task_record.is_empty() {
             for task in check_task_record.iter() {
                 if task.id == task_data.id {
-                    let upsert_task_record: Option<Record> = db()
-                        .update(task.id.clone())
-                        .content(LiveTaskPayload {
-                            id: task.id.clone(),
-                            ..task_data.clone()
-                        }).await?;
-    
+                    let updated = TaskUpdate::replace(LiveTaskPayload {
+                        id: task.id.clone(),
+                        ..task_data.clone()
+                    })
+                    .run(db().as_ref(), None)
+                    .await?;
+
                     for note in task_notes.iter_mut() {
                         if note.task_id == Some(task_data.id.clone()) && note.task_id != Some(task.id.clone()) {
                             note.task_id = Some(task.id.clone());
                         }
                     }
-                    log::debug!("schema/utilities.rs -> upsert_task_record: {upsert_task_record:?}");
+                    log::debug!("schema/utilities.rs -> updated {updated} task row(s)");
                 }
     
             } 
@@ -621,6 +625,10 @@ pub struct TaskHistory {
     pub diff: serde_json::Value,
     /// When the change was made
     pub created_at: Datetime,
+    /// Written by the session that made the change; false on legacy rows.
+    #[serde(default)]
+    #[surreal(default)]
+    pub from_writer: bool,
 }
 
 impl Default for TaskHistory {
@@ -632,6 +640,7 @@ impl Default for TaskHistory {
             username: String::new(),
             diff: serde_json::Value::Null,
             created_at: Utc::now().into(),
+            from_writer: false,
         }
     }
 }
@@ -645,7 +654,7 @@ pub struct DescriptionChange {
 }
 
 impl TaskHistory {
-    /// Create a new TaskHistory record from diff data
+    /// A history row written by the session that made the change.
     pub fn new(
         task_id: RecordId,
         user_id: RecordId,
@@ -659,17 +668,73 @@ impl TaskHistory {
             username,
             diff,
             created_at: Utc::now().into(),
+            from_writer: true,
         }
     }
 
-    /// Save this history record to the database
-    pub async fn save(&self) -> anyhow::Result<Option<Record>, anyhow::Error> {
-        let record: Option<Record> = db()
-            .create(TASK_HISTORY_TABLE)
-            .content(self.clone())
-            .await?;
-        log::debug!("Created task history record: {:?}", record);
-        Ok(record)
+    /// Diff fields whose values are `user` record keys.
+    pub const USER_FIELDS: &'static [&'static str] = &["assignee", "assigned_by"];
+
+    /// Saves this row; the database stamps `created_at`.
+    pub async fn save(&self) -> anyhow::Result<(), anyhow::Error> {
+        self.save_on(db().as_ref()).await
+    }
+
+    /// Saves this row on `db`; the database stamps `created_at`.
+    pub async fn save_on<C: Connection>(&self, db: &Surreal<C>) -> anyhow::Result<(), anyhow::Error> {
+        db.query(
+            "CREATE $id CONTENT { task_id: $task_id, user: $user, username: $username, \
+             diff: $diff, from_writer: $from_writer }",
+        )
+        .bind(("id", self.id.clone()))
+        .bind(("task_id", self.task_id.clone()))
+        .bind(("user", self.user.clone()))
+        .bind(("username", self.username.clone()))
+        .bind(("diff", self.diff.clone()))
+        .bind(("from_writer", self.from_writer))
+        .await?
+        .check()?;
+        Ok(())
+    }
+
+    /// Keys of the users the diffs of `rows` name in [`Self::USER_FIELDS`].
+    pub fn user_keys(rows: &[Self]) -> BTreeSet<String> {
+        rows.iter()
+            .filter_map(|row| row.diff.as_object())
+            .flat_map(|diff| Self::USER_FIELDS.iter().filter_map(|field| diff.get(*field)))
+            .flat_map(|change| [change.get("old"), change.get("new")])
+            .filter_map(|side| side?.as_str())
+            .map(|key| key.strip_prefix("user:").unwrap_or(key))
+            .filter(|key| !key.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Usernames, by user key, of the users the diffs of `rows` name, inactive users included.
+    pub async fn usernames_on<C: Connection>(
+        db: &Surreal<C>,
+        rows: &[Self],
+    ) -> anyhow::Result<HashMap<String, String>, anyhow::Error> {
+        let ids: Vec<RecordId> = Self::user_keys(rows)
+            .into_iter()
+            .map(|key| RecordId::new(USER_TABLE, key))
+            .collect();
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let users: Vec<UserEmail> = db
+            .query("SELECT id, email FROM $ids")
+            .bind(("ids", ids))
+            .await?
+            .check()?
+            .take(0)?;
+        Ok(users
+            .into_iter()
+            .filter_map(|user| {
+                let name = user.email.split('@').next().filter(|name| !name.is_empty())?;
+                Some((user.id.key_string(), name.to_string()))
+            })
+            .collect())
     }
 
     /// Description edits on the authenticated user's own open tasks, newest
@@ -698,6 +763,32 @@ impl TaskHistory {
             .take(0)?;
         Ok(history)
     }
+
+    /// A task's history with the usernames of the users its diffs name; a failed name lookup is logged.
+    pub async fn load_for_task(task_id: RecordId) -> anyhow::Result<TaskHistoryLoad, anyhow::Error> {
+        let rows = Self::get_history_for_task(task_id).await?;
+        let usernames = Self::usernames_on(db().as_ref(), &rows)
+            .await
+            .inspect_err(|e| log::warn!("task history usernames failed to load: {e:?}"))
+            .unwrap_or_default();
+        Ok(TaskHistoryLoad { rows, usernames })
+    }
+}
+
+/// A task's history rows and the usernames, by user key, of the users their diffs name.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TaskHistoryLoad {
+    pub rows: Vec<TaskHistory>,
+    pub usernames: HashMap<String, String>,
+}
+
+/// A user row's id and email.
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
+struct UserEmail {
+    id: RecordId,
+    #[serde(default)]
+    #[surreal(default)]
+    email: String,
 }
 
 #[cfg(test)]
