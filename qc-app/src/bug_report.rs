@@ -88,7 +88,7 @@ impl BugReportPanel {
         ui.horizontal(|ui| {
             ui.label("Employee name or ID");
             let resp = TextField::new(&mut self.employee_input)
-                .hint("e.g. Kellie Boisse or 12345")
+                .hint("e.g. Taylor Sample or 12345")
                 .icon(svg::USER)
                 .width(EMPLOYEE_W)
                 .show(ui);

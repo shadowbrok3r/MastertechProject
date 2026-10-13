@@ -1561,55 +1561,55 @@ mod tests {
     }
 
     fn typed_order() -> CustomerCandidate {
-        CustomerCandidate::new("201989", "Seth Grover", "2152279", CustomerSource::ServiceOrder)
+        CustomerCandidate::new("100001", "Chris Sample", "2000004", CustomerSource::ServiceOrder)
     }
 
     fn prior_owner() -> CustomerCandidate {
-        CustomerCandidate::new("2095832", "ron zuiderweg", "2095832", CustomerSource::Serial)
+        CustomerCandidate::new("2000006", "terry sample", "2000006", CustomerSource::Serial)
     }
 
     #[test]
     fn typed_order_beats_serial_match() {
-        let m = modal("2152279", Some(typed_order()), Some(prior_owner()));
+        let m = modal("2000004", Some(typed_order()), Some(prior_owner()));
 
         assert!(m.resolution().is_conflict());
         let chosen = m.chosen_candidate().expect("a customer is chosen");
-        assert_eq!(chosen.customer_key, "201989");
-        assert_eq!(chosen.order_number, "2152279");
+        assert_eq!(chosen.customer_key, "100001");
+        assert_eq!(chosen.order_number, "2000004");
         assert!(m.typed_order_not_looked_up().is_none());
     }
 
     #[test]
     fn friendly_name_and_customer_come_from_one_choice() {
-        let mut m = modal("2152279", Some(typed_order()), Some(prior_owner()));
+        let mut m = modal("2000004", Some(typed_order()), Some(prior_owner()));
         m.sync_form_to_chosen_candidate();
 
-        assert_eq!(m.customer.id.key_string(), "201989");
-        assert_eq!(m.customer.name, "Seth Grover");
-        assert_eq!(m.commit_friendly_name(), "Seth Grover - 2152279");
+        assert_eq!(m.customer.id.key_string(), "100001");
+        assert_eq!(m.customer.name, "Chris Sample");
+        assert_eq!(m.commit_friendly_name(), "Chris Sample - 2000004");
 
         // Picking the other side moves both together, never just one.
         m.prefer_serial = true;
         m.sync_form_to_chosen_candidate();
-        assert_eq!(m.customer.id.key_string(), "2095832");
-        assert_eq!(m.commit_friendly_name(), "ron zuiderweg - 2095832");
+        assert_eq!(m.customer.id.key_string(), "2000006");
+        assert_eq!(m.commit_friendly_name(), "terry sample - 2000006");
     }
 
     #[test]
     fn serial_match_alone_still_resolves() {
         let m = modal("", None, Some(prior_owner()));
         assert!(!m.resolution().is_conflict());
-        assert_eq!(m.chosen_candidate().unwrap().customer_key, "2095832");
+        assert_eq!(m.chosen_candidate().unwrap().customer_key, "2000006");
     }
 
     #[test]
     fn typed_order_without_a_lookup_is_flagged() {
-        let m = modal("2152279", None, Some(prior_owner()));
-        assert_eq!(m.typed_order_not_looked_up().as_deref(), Some("2152279"));
+        let m = modal("2000004", None, Some(prior_owner()));
+        assert_eq!(m.typed_order_not_looked_up().as_deref(), Some("2000004"));
 
         // Editing the field after a lookup re-flags it.
-        let mut edited = modal("2152279", Some(typed_order()), Some(prior_owner()));
-        edited.service_number = "2152280".into();
-        assert_eq!(edited.typed_order_not_looked_up().as_deref(), Some("2152280"));
+        let mut edited = modal("2000004", Some(typed_order()), Some(prior_owner()));
+        edited.service_number = "2000005".into();
+        assert_eq!(edited.typed_order_not_looked_up().as_deref(), Some("2000005"));
     }
 }

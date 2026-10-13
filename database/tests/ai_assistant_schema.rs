@@ -146,7 +146,7 @@ async fn the_task_event_names_the_sender_and_links_the_task() {
     create_assigned(&db, Some(user("logan")), None).await;
     let part = json!({ "part": "1TB NVMe", "quantity": 1, "from_store": "SAN", "to_store": "RIV" });
     create_assigned(&db, Some(user("ana")), Some(part)).await;
-    db.query("CREATE task CONTENT { task_name: 'Kayleen Reese - 2154905', assignee: user:sam }")
+    db.query("CREATE task CONTENT { task_name: 'Jane Sample - 2000001', assignee: user:sam }")
         .await
         .expect("create")
         .check()
@@ -243,7 +243,7 @@ async fn job_sql_claims_once_and_rows_deserialize() {
     let back: Vec<RecordId> = db.query(UNSNOOZE_SQL).await.expect("unsnooze").take(0).expect("ids");
     assert_eq!(back.len(), 1);
 
-    db.query("CREATE task:ticket CONTENT { task_name: 'Kayleen Reese - 2154905', assignee: user:sam, service_number: '2154905' }; \
+    db.query("CREATE task:ticket CONTENT { task_name: 'Jane Sample - 2000001', assignee: user:sam, service_number: '2000001' }; \
                CREATE task:chore CONTENT { task_name: 'Count paste', assignee: user:sam, assigned_by: user:logan, due_date: time::now() - 3h }")
         .await
         .expect("create")
@@ -255,7 +255,7 @@ async fn job_sql_claims_once_and_rows_deserialize() {
             .bind(("note", "Now: x\nFound: y\nTell the customer: z"))
             .bind(("author_name", "AI brief"))
             .bind(("author", user("sam")))
-            .bind(("sn", "2154905"))
+            .bind(("sn", "2000001"))
             .await
             .expect("brief")
             .check()
@@ -301,7 +301,7 @@ async fn the_rollout_applies_over_existing_tables_and_rolls_back() {
     db.query(rollout_step("remove_ai_assistant_tools")).await.expect("rollback").check().expect("rollback statements");
     let gone = json_rows(&db, "RETURN (INFO FOR DB).tables.task_schedule = NONE").await;
     assert_eq!(gone, vec![json!(true)]);
-    db.query("CREATE task CONTENT { task_name: 'Kayleen Reese - 2154905', assignee: user:sam }")
+    db.query("CREATE task CONTENT { task_name: 'Jane Sample - 2000001', assignee: user:sam }")
         .await
         .expect("create")
         .check()

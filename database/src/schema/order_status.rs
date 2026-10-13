@@ -307,7 +307,7 @@ pub fn parse_day(raw: &str, today: NaiveDate) -> Option<NaiveDate> {
     }
 }
 
-/// The digits of a spoken service number: "SO-2155144" and "#2155144" both give "2155144".
+/// The digits of a spoken service number: "SO-2000011" and "#2000011" both give "2000011".
 pub fn service_digits(raw: &str) -> String {
     raw.chars().filter(char::is_ascii_digit).collect()
 }
@@ -675,22 +675,22 @@ mod tests {
         OrderMatch {
             id: RecordId::new("service_order", sn),
             service_number: Some(sn.to_string()),
-            customer: Some("Andrea Brandon".into()),
+            customer: Some("Casey Sample".into()),
             created_at: at(2026, 9, 23, 17),
         }
     }
 
     #[test]
     fn digits_come_out_of_spoken_numbers() {
-        assert_eq!(service_digits("SO-2155144"), "2155144");
-        assert_eq!(service_digits("#21 55 144"), "2155144");
-        assert_eq!(service_digits("to 155144"), "155144");
+        assert_eq!(service_digits("SO-2000011"), "2000011");
+        assert_eq!(service_digits("#20 00 011"), "2000011");
+        assert_eq!(service_digits("to 000011"), "000011");
     }
 
     #[test]
     fn one_partial_match_resolves_and_several_are_offered() {
         assert_eq!(pick_match(vec![]), OrderLookup::Missing);
-        assert_eq!(pick_match(vec![order("2155144")]), OrderLookup::Found(RecordId::new("service_order", "2155144")));
+        assert_eq!(pick_match(vec![order("2000011")]), OrderLookup::Found(RecordId::new("service_order", "2000011")));
         let many: Vec<OrderMatch> = (0..8).map(|i| order(&format!("21{i}5144"))).collect();
         match pick_match(many) {
             OrderLookup::Several(rows) => assert_eq!(rows.len(), MAX_MATCHES),
@@ -701,8 +701,8 @@ mod tests {
     #[test]
     fn status_json_uses_store_time_and_drops_empty_fields() {
         let head = OrderHead {
-            service_number: Some("2155144".into()),
-            customer: Some("Andrea Brandon".into()),
+            service_number: Some("2000011".into()),
+            customer: Some("Casey Sample".into()),
             hostname: Some("Owner-PC".into()),
             checkin_notes: Some("x".repeat(1000)),
             ..Default::default()
@@ -720,9 +720,9 @@ mod tests {
             current_theory: Some("EXPO profile instability".into()),
             ..Default::default()
         }];
-        let placed = Placement::from_order(&ps_order("2155144", "2", "8", "239", "2026-09-18 16:55:19"));
+        let placed = Placement::from_order(&ps_order("2000011", "2", "8", "239", "2026-09-18 16:55:19"));
         let v = order_status_json(&head, Some(&placed), &tasks, &diagnoses, &[], now());
-        assert_eq!(v["customer"], "Andrea Brandon");
+        assert_eq!(v["customer"], "Casey Sample");
         assert_eq!(v["computer"]["hostname"], "Owner-PC");
         assert_eq!(v["placed"], "Fri Sep 18 16:55");
         assert_eq!((v["kind"].as_str(), v["store"].as_str()), (Some("service"), Some("LTN")));

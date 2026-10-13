@@ -7,8 +7,8 @@
         "name": "#1003",
         "createdAt": "2026-05-26T15:56:35Z",
         "customer": {
-          "name": "tyson@frawstedcreations.com",
-          "email": "tyson@frawstedcreations.com"
+          "name": "buyer@example.com",
+          "email": "buyer@example.com"
         },
         "buildName": "X-6 Performance Build",
         "buildSerial": "SEED-967041",
@@ -55,8 +55,8 @@
         "name": "#1004",
         "createdAt": "2026-05-26T15:56:40Z",
         "customer": {
-          "name": "tyson@frawstedcreations.com",
-          "email": "tyson@frawstedcreations.com"
+          "name": "buyer@example.com",
+          "email": "buyer@example.com"
         },
         "buildName": "X-2 Entry Build",
         "buildSerial": "SEED-900808",
@@ -79,8 +79,8 @@
         "name": "#1005",
         "createdAt": "2026-05-26T15:56:45Z",
         "customer": {
-          "name": "tyson@frawstedcreations.com",
-          "email": "tyson@frawstedcreations.com"
+          "name": "buyer@example.com",
+          "email": "buyer@example.com"
         },
         "buildName": "X-10 Flagship Build",
         "buildSerial": "SEED-963132",
@@ -103,8 +103,8 @@
         "name": "#1014",
         "createdAt": "2026-05-26T21:17:23Z",
         "customer": {
-          "name": "Reid Laitinen TEST",
-          "email": "REIDLAITINEN@GMAIL.COM"
+          "name": "Sample Buyer TEST",
+          "email": "SAMPLEBUYER@EXAMPLE.COM"
         },
         "buildName": "X-6 RX 9060XT + RYZEN 7 7700X TENRAI WHITE",
         "buildSerial": "2144370",
@@ -367,8 +367,8 @@
         "name": "#1030",
         "createdAt": "2026-06-08T18:10:16Z",
         "customer": {
-          "name": "Compliance Surveillance",
-          "email": "james.payne1@syf.com"
+          "name": "Sample Reviewer",
+          "email": "reviewer@example.com"
         },
         "buildName": "—",
         "buildSerial": "XBS-001030",
@@ -391,8 +391,8 @@
         "name": "#1031",
         "createdAt": "2026-06-12T20:39:37Z",
         "customer": {
-          "name": "Timothy Koptan (cash_4_gpu)",
-          "email": "bounce-c19-wrttty@mail.codisto.com"
+          "name": "Sample Seller (sample_store)",
+          "email": "bounce-c19-sample@mail.example.com"
         },
         "buildName": "—",
         "buildSerial": "XBS-001031",

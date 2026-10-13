@@ -1483,7 +1483,7 @@ impl DisplayModal for TaskModal {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SpecialPartOrder {
-    customer_name: String,              //  "kathleen Hoffmon",
+    customer_name: String,              //  "jane sample",
     customer_phone_number: String,      //  "801-888-8888",
     application_comment: String,        //  "These are some notes",
     system_order_number: String,        //  "123456",

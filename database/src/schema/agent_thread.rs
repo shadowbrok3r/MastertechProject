@@ -842,13 +842,13 @@ mod tests {
         let mut row = thread(None, None);
         row.connection_string = "DESKTOP-VD05O1K:6003b2f63".into();
         row.hostname = Some("DESKTOP-VD05O1K".into());
-        assert_eq!(row.list_label(Some("Martin Empey")), "DESKTOP-VD05O1K:6003b2f63", "no service number");
-        row.service_number = Some("2141021".into());
-        assert_eq!(row.list_label(None), "#2141021 DESKTOP-VD05O1K");
-        assert_eq!(row.list_label(Some(" ")), "#2141021 DESKTOP-VD05O1K");
-        assert_eq!(row.list_label(Some(" Martin Empey ")), "Martin Empey - 2141021");
-        row.title = Some("Empey data move".into());
-        assert_eq!(row.list_label(Some("Martin Empey")), "Empey data move", "a rename wins");
+        assert_eq!(row.list_label(Some("Alex Sample")), "DESKTOP-VD05O1K:6003b2f63", "no service number");
+        row.service_number = Some("2000003".into());
+        assert_eq!(row.list_label(None), "#2000003 DESKTOP-VD05O1K");
+        assert_eq!(row.list_label(Some(" ")), "#2000003 DESKTOP-VD05O1K");
+        assert_eq!(row.list_label(Some(" Alex Sample ")), "Alex Sample - 2000003");
+        row.title = Some("Sample data move".into());
+        assert_eq!(row.list_label(Some("Alex Sample")), "Sample data move", "a rename wins");
     }
 
     #[test]

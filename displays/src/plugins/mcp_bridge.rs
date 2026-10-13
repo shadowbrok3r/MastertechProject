@@ -1881,7 +1881,7 @@ pub struct LinkConnectedClientParams {
     pub connection_string: String,
     #[schemars(description = "Customer id to link. Accepts `customer:key`, bare key, or SurrealQL `customer:`key``.")]
     pub customer_id: String,
-    #[schemars(description = "Optional friendly_name for the client row (e.g. 'Kellie Boisse - 2147807'). Omit to leave any existing name unchanged.")]
+    #[schemars(description = "Optional friendly_name for the client row (e.g. 'Taylor Sample - 2000010'). Omit to leave any existing name unchanged.")]
     pub friendly_name: Option<String>,
 }
 
@@ -1902,7 +1902,7 @@ pub struct CreateDiagnosticSessionParams {
     pub task_id: Option<String>,
     #[schemars(description = "Optional service order record id (`service_order:key` or SurrealQL quoted form).")]
     pub service_order_id: Option<String>,
-    #[schemars(description = "Service number the machine is in for, when you know it (e.g. '2155467'). Defaults to the one on this machine's agent thread or assist request. When no task exists for it, one is created and assigned to requested_by.")]
+    #[schemars(description = "Service number the machine is in for, when you know it (e.g. '2000007'). Defaults to the one on this machine's agent thread or assist request. When no task exists for it, one is created and assigned to requested_by.")]
     #[serde(default)]
     pub service_number: Option<String>,
     #[schemars(description = "Omit: filled from the resolved customer.")]
@@ -1922,7 +1922,7 @@ pub struct CreateDiagnosticSessionParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct EnsureServiceTaskParams {
-    #[schemars(description = "Service number of the order the machine is in for (e.g. '2155467').")]
+    #[schemars(description = "Service number of the order the machine is in for (e.g. '2000007').")]
     pub service_number: String,
     #[schemars(description = "Web Console connection_string of the machine. Its open diagnostic session is linked to the task.")]
     #[serde(default)]
@@ -14203,7 +14203,7 @@ mod broker_tool_tests {
     #[test]
     fn a_service_task_needs_only_the_service_number() {
         let p: EnsureServiceTaskParams =
-            serde_json::from_value(serde_json::json!({ "service_number": "2155467" })).expect("parses");
+            serde_json::from_value(serde_json::json!({ "service_number": "2000007" })).expect("parses");
         assert!(p.connection_string.is_none() && p.session_id.is_none() && p.requested_by.is_none());
         let schema = serde_json::to_value(schemars::schema_for!(EnsureServiceTaskParams)).expect("schema");
         assert_eq!(schema["required"], serde_json::json!(["service_number"]));
@@ -14213,13 +14213,13 @@ mod broker_tool_tests {
         use database::schema::{RecordId, ServiceOrderRow};
         database::schema::EnsuredServiceTask {
             task: RecordId::new("task", "t1"),
-            task_name: Some("Barbara Baker - 2155467".into()),
+            task_name: Some("Pat Sample - 2000007".into()),
             created,
             order: ServiceOrderRow {
-                id: RecordId::new("service_order", "2155467"),
-                service_number: Some("2155467".into()),
+                id: RecordId::new("service_order", "2000007"),
+                service_number: Some("2000007".into()),
                 customer: customer.map(|c| RecordId::new("customer", c)),
-                customer_name: Some("Barbara Baker".into()),
+                customer_name: Some("Pat Sample".into()),
                 computer: None,
                 checkin_notes: None,
             },
@@ -14248,9 +14248,9 @@ mod broker_tool_tests {
     #[test]
     fn a_session_on_another_task_or_order_is_left_alone() {
         use database::schema::RecordId;
-        let (task, order) = (RecordId::new("task", "t1"), RecordId::new("service_order", "2155467"));
+        let (task, order) = (RecordId::new("task", "t1"), RecordId::new("service_order", "2000007"));
         assert_eq!(conflicting_link(&session(None, None, None), &task, &order), None);
-        assert_eq!(conflicting_link(&session(Some("t1"), Some("2155467"), None), &task, &order), None);
+        assert_eq!(conflicting_link(&session(Some("t1"), Some("2000007"), None), &task, &order), None);
         assert_eq!(
             conflicting_link(&session(Some("t0"), None, None), &task, &order),
             Some(RecordId::new("task", "t0"))
@@ -14281,10 +14281,10 @@ mod broker_tool_tests {
     #[test]
     fn a_session_can_be_opened_for_a_service_number() {
         let p: CreateDiagnosticSessionParams = serde_json::from_value(
-            serde_json::json!({ "connection_string": "DESKTOP-1:abc", "service_number": "2155467" }),
+            serde_json::json!({ "connection_string": "DESKTOP-1:abc", "service_number": "2000007" }),
         )
         .expect("parses");
-        assert_eq!(p.service_number.as_deref(), Some("2155467"));
+        assert_eq!(p.service_number.as_deref(), Some("2000007"));
     }
 }
 

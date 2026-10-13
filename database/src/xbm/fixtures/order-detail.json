@@ -5,8 +5,8 @@
       "id": "gid://shopify/Order/6955440373986",
       "name": "#1003",
       "customer": {
-        "name": "tyson@frawstedcreations.com",
-        "email": "tyson@frawstedcreations.com",
+        "name": "buyer@example.com",
+        "email": "buyer@example.com",
         "phone": null
       },
       "shippingAddress": null,
@@ -16,7 +16,7 @@
       "financialStatus": "PENDING",
       "fulfillmentStatus": "UNFULFILLED",
       "pullPriority": 1,
-      "clientIp": "66.85.16.74",
+      "clientIp": "203.0.113.74",
       "salesRep": null
     },
     "config": {
