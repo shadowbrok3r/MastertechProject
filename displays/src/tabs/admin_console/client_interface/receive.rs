@@ -24,6 +24,13 @@ fn entry_bytes(entry: &History) -> usize {
     entry.from.len() + entry.message.len() + entry.timestamp.len()
 }
 
+/// Transfer-bar label for a remote self-update of `file_name`.
+#[cfg(not(target_arch = "wasm32"))]
+fn self_update_label(file_name: &str) -> String {
+    let name = if file_name.is_empty() { "MasterTech" } else { file_name };
+    format!("{name} (self-update)")
+}
+
 /// Drops the oldest entries until both caps hold; returns (entries, bytes) dropped.
 fn trim_transcript(entries: &mut Vec<History>) -> (usize, usize) {
     let mut dropped = 0;
@@ -194,10 +201,18 @@ impl WebSocketClient {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(rx) = &self.self_update_rx {
             let mut done = false;
-            while let Ok(cmd) = rx.try_recv() {
+            loop {
+                let cmd = match rx.try_recv() {
+                    Ok(cmd) => cmd,
+                    Err(crossbeam::channel::TryRecvError::Empty) => break,
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                };
                 if let Cmd::MastertechSelfUpdateChunk { chunk_index, total_chunks, .. } = &cmd {
                     self.file_transfer_progress = Some((
-                        "MasterTech.exe (self-update)".to_string(),
+                        self_update_label(&self.self_update_file),
                         chunk_index + 1,
                         *total_chunks,
                     ));
@@ -1415,6 +1430,14 @@ mod transcript_tests {
         let retained: usize = log.iter().map(entry_bytes).sum();
         assert!(retained <= MAX_HISTORY_BYTES, "retained {retained} bytes");
         assert!(dropped > 0 && dropped_bytes > 0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn self_update_label_names_the_pushed_binary() {
+        assert_eq!(self_update_label("Mastertech-linux"), "Mastertech-linux (self-update)");
+        assert_eq!(self_update_label("MasterTech.exe"), "MasterTech.exe (self-update)");
+        assert_eq!(self_update_label(""), "MasterTech (self-update)");
     }
 
     #[test]

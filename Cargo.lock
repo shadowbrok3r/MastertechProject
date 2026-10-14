@@ -55,6 +55,7 @@ dependencies = [
  "minidump-unwind",
  "mtech-tui",
  "mtech-ui",
+ "mtech-update",
  "multi_log",
  "num-format",
  "num-traits",
@@ -6707,6 +6708,14 @@ dependencies = [
  "serde",
  "serde_json",
  "stress-runner",
+]
+
+[[package]]
+name = "mtech-update"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tempfile",
 ]
 
 [[package]]

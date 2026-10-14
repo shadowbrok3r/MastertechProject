@@ -170,7 +170,7 @@ impl eframe::App for app_state::MasterTechApp {
                     .context
                     .shared_ctx
                     .account_settings_page(ui, self.context.shared_ctx.app_state_tx.clone()),
-                _ => {}
+                MainPages::Downloads => self.context.downloads_page(ui),
             },
             AppState::CreateAccount => self.context.shared_ctx.signup_page(
                 ui,
@@ -541,11 +541,14 @@ async fn run_gui(opts: LaunchOptions, minidump: MinidumpArgs) -> eframe::Result<
         }
         #[cfg(target_os = "windows")]
         utilities::windows::watchdog::set_terminal_mode();
+        utilities::run_mode::set_terminal();
         if let Err(e) = terminal_mode::run_terminal_mode().await {
             error!("Error running terminal app: {e:?}");
         }
         #[cfg(target_os = "windows")]
         utilities::windows::watchdog::remove_on_exit();
+        #[cfg(unix)]
+        utilities::safe_swap::exec_requested_restart();
     }
     Ok(())
 }
@@ -630,6 +633,9 @@ async fn main() -> eframe::Result<()> {
     // opens no stray window; terminal mode allocates later when this found nothing.
     let console_attached = console::attach_parent();
 
+    let matches = cli().get_matches();
+    let minidump = MinidumpArgs::from_matches(&matches);
+
     // Correct a stale clock (Windows PE boots ~years in the past) before any TLS
     // handshake, or rustls rejects valid certs as "not valid yet".
     if let Err(e) = database::clock_sync::ensure_system_clock_sane() {
@@ -657,9 +663,6 @@ async fn main() -> eframe::Result<()> {
         // Without a WER LocalDumps key an AppCrash keeps metadata only and no .mdmp.
         tokio::spawn(utilities::windows::crash_dumps::apply_policy_when_ready());
     }
-
-    let matches = cli().get_matches();
-    let minidump = MinidumpArgs::from_matches(&matches);
 
     let opts = LaunchOptions {
         mirror_to_console: console_attached,
@@ -722,10 +725,13 @@ async fn main() -> eframe::Result<()> {
             utilities::windows::watchdog::set_terminal_mode();
             utilities::windows::watchdog::log_launch();
         }
+        utilities::run_mode::set_terminal();
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
         #[cfg(target_os = "windows")]
         utilities::windows::watchdog::remove_on_exit();
+        #[cfg(unix)]
+        utilities::safe_swap::exec_requested_restart();
     } else {
         run_gui(opts, minidump).await?;
     }

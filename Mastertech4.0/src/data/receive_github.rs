@@ -1,14 +1,18 @@
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use displays::modals::update_toast::{self, UpdateChoice};
 use displays::{ToastMessage, get_toast_sender};
 use egui::{UserAttentionType, ViewportCommand};
 use log::{debug, error, info};
+use mtech_update::HostOs;
 use semver::Version;
 use tokio::spawn;
 
+use crate::app_state::{MasterTechApp, MastertechContext};
+use crate::tabs::github::self_updater::{newer_release, run_release};
 use crate::utilities::update_policy::{Activity, PendingUpdate, SNOOZE, UpdateStep, next_step};
-use crate::{app_state::MasterTechApp, tabs::github::self_updater::run};
 
 impl MasterTechApp {
     pub fn receive_github(&mut self, ctx: &eframe::egui::Context) {
@@ -44,6 +48,7 @@ impl MasterTechApp {
             }
 
             if res.1 > 0 && res.0 == res.1 {
+                self.context.update_download_active.store(false, Ordering::Release);
                 self.context.progress = (0.0, 0.0);
                 let version = self
                     .context
@@ -56,37 +61,23 @@ impl MasterTechApp {
                 self.context.next_update_check = None;
             }
         }
+        if !self.context.update_busy() {
+            self.context.update_requested = false;
+        }
 
         self.drive_pending_update(ctx);
 
         if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
             debug!("Releases: {releases:?}");
-            let os = std::env::consts::OS;
             let current_version =
                 Version::parse(env!("CARGO_PKG_VERSION")).expect("Invalid version format");
 
-            for release in releases.iter().filter(|r| !r.draft && !r.prerelease) {
-                let Ok(github_release_version) =
-                    Version::parse(release.tag_name.trim_start_matches('v'))
-                else {
-                    debug!("skipping release with unparseable tag {:?}", release.tag_name);
-                    continue;
-                };
-                if current_version >= github_release_version {
-                    continue;
-                }
-
-                let has_compatible_asset = release.assets.iter().any(|asset| match os {
-                    "windows" => asset.name.ends_with(".exe"),
-                    "linux" => asset.name.ends_with("-linux"),
-                    _ => false,
-                });
-                if !has_compatible_asset {
-                    continue;
-                }
-
+            let newer = newer_release(&releases, &current_version, HostOs::current());
+            if let Some((release, github_release_version)) = newer
+                && !self.context.update_busy()
+            {
                 let client = self.context.client.clone();
-                info!("Found a new release! {:?}", &github_release_version);
+                info!("Found a new release! {github_release_version:?}");
                 self.context.announced_release = Some(github_release_version.to_string());
 
                 let toast_tx = get_toast_sender();
@@ -96,12 +87,15 @@ impl MasterTechApp {
                 )));
 
                 let tx = self.context.bytes_tx.clone();
+                let release = release.clone();
+                let active = Arc::clone(&self.context.update_download_active);
+                active.store(true, Ordering::Release);
                 spawn(async move {
-                    if let Err(e) = run(client, tx.clone()).await {
+                    if let Err(e) = run_release(client, tx, release).await {
                         error!("self-update download failed: {e:?}");
+                        active.store(false, Ordering::Release);
                     }
                 });
-                break;
             }
             self.context.github_releases = releases;
         }
@@ -162,40 +156,42 @@ impl MasterTechApp {
     }
 }
 
+impl MastertechContext {
+    /// True while an update downloads or waits to install.
+    pub(crate) fn update_busy(&self) -> bool {
+        self.update_download_active.load(Ordering::Acquire) || self.pending_update.is_some()
+    }
+}
+
 /// Swaps in the staged executable and relaunches MasterTech.
 fn install_update(ctx: &eframe::egui::Context, size: u64) {
-    #[cfg(target_os = "windows")]
-    {
-        use crate::utilities::safe_swap;
-        let toast_tx = get_toast_sender();
-        let applied = safe_swap::staged_update_path()
-            .and_then(|staged| safe_swap::apply_staged_update(&staged, size));
-        match applied {
-            Ok(exe) => match safe_swap::relaunch(&exe, &[]) {
-                Ok(()) => {
-                    let _ = toast_tx.try_send(ToastMessage::Success(
-                        "Update installed! Restarting...".to_string(),
-                    ));
-                    ctx.send_viewport_cmd(ViewportCommand::Close);
-                }
-                Err(e) => {
-                    log::error!("update installed but relaunch failed: {e:?}");
-                    let _ = toast_tx.try_send(ToastMessage::Warning(
-                        "Update installed — restart MasterTech to finish.".to_string(),
-                    ));
-                }
-            },
-            Err(e) => {
-                log::error!("self-update failed: {e:?}");
-                if let Ok(staged) = safe_swap::staged_update_path() {
-                    let _ = std::fs::remove_file(staged);
-                }
-                let _ = toast_tx.try_send(ToastMessage::Error(format!(
-                    "Update failed — still running the current version. {e}"
-                )));
+    use crate::utilities::safe_swap;
+    let toast_tx = get_toast_sender();
+    let applied = safe_swap::staged_update_path()
+        .and_then(|staged| safe_swap::apply_staged_update(&staged, size));
+    match applied {
+        Ok(exe) => match safe_swap::relaunch(&exe, &[]) {
+            Ok(()) => {
+                let _ = toast_tx.try_send(ToastMessage::Success(
+                    "Update installed! Restarting...".to_string(),
+                ));
+                ctx.send_viewport_cmd(ViewportCommand::Close);
             }
+            Err(e) => {
+                log::error!("update installed but relaunch failed: {e:?}");
+                let _ = toast_tx.try_send(ToastMessage::Warning(
+                    "Update installed — restart MasterTech to finish.".to_string(),
+                ));
+            }
+        },
+        Err(e) => {
+            log::error!("self-update failed: {e:?}");
+            if let Ok(staged) = safe_swap::staged_update_path() {
+                let _ = std::fs::remove_file(staged);
+            }
+            let _ = toast_tx.try_send(ToastMessage::Error(format!(
+                "Update failed — still running the current version. {e}"
+            )));
         }
     }
-    #[cfg(not(target_os = "windows"))]
-    let _ = (ctx, size);
 }

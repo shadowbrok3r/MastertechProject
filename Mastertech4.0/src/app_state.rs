@@ -170,6 +170,8 @@ pub struct MastertechContext {
     pub pending_update: Option<crate::utilities::update_policy::PendingUpdate>,
     /// The menu's Update was clicked, so the next finished download installs without a prompt.
     pub update_requested: bool,
+    /// Set while an update check or download runs and until its completion is drained.
+    pub update_download_active: Arc<AtomicBool>,
     pub update_mode: crate::utilities::update_policy::UpdateMode,
     pub chrome: crate::utilities::window_prefs::Chrome,
     pub next_update_check: Option<std::time::Instant>,
@@ -399,6 +401,7 @@ impl MasterTechApp {
             announced_release: None,
             pending_update: None,
             update_requested: false,
+            update_download_active: Default::default(),
             update_mode: crate::utilities::update_policy::load_mode(),
             chrome: Default::default(),
             next_update_check: None,

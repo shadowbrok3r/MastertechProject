@@ -1,7 +1,6 @@
 //! Release browser for the Downloads page: every release, every asset, per-asset download progress.
 
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use chrono::DateTime;
 use crossbeam::channel::{Receiver, Sender};
@@ -26,6 +25,8 @@ const LIST_W: f32 = 260.0;
 const NARROW_W: f32 = 720.0;
 /// Width of an asset's download progress bar.
 const DOWNLOAD_BAR_W: f32 = 160.0;
+/// GitHub REST API version header.
+const GITHUB_API_VERSION: HeaderName = HeaderName::from_static("x-github-api-version");
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Platform {
@@ -186,7 +187,8 @@ impl ReleaseBrowser {
         });
     }
 
-    fn receive(&mut self) {
+    /// Applies finished fetches and download progress without drawing.
+    pub fn poll(&mut self) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Releases(Ok(releases)) => {
@@ -220,7 +222,7 @@ impl ReleaseBrowser {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
-        self.receive();
+        self.poll();
         if matches!(self.fetch, FetchState::Idle) {
             self.refresh(ui.ctx());
         }
@@ -657,7 +659,7 @@ async fn fetch_releases() -> anyhow::Result<Vec<GithubRelease>> {
     let releases = Client::new()
         .get(format!("{GIT_MASTER_TECH_REPO_BASE}/releases?per_page={RELEASES_PER_PAGE}"))
         .header(ACCEPT, "application/vnd.github+json")
-        .header(HeaderName::from_str("X-GitHub-Api-Version")?, "2022-11-28")
+        .header(GITHUB_API_VERSION, "2022-11-28")
         .header(USER_AGENT, "shadowbrok3r/Mastertech")
         .send()
         .await?
@@ -681,7 +683,7 @@ async fn download_asset(asset: &Asset, key: &str, tx: &Sender<Event>, ctx: &Cont
         .get(super::proxied_github_asset_url(&asset.url))
         .header(ACCEPT, "application/octet-stream")
         .header(USER_AGENT, "shadowbrok3r/Mastertech")
-        .header(HeaderName::from_str("X-GitHub-Api-Version")?, "2022-11-28")
+        .header(GITHUB_API_VERSION, "2022-11-28")
         .send()
         .await?
         .error_for_status()?;
@@ -719,6 +721,91 @@ async fn download_asset(_: &Asset, _: &str, _: &Sender<Event>, _: &Context) -> a
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release(tag: &str, draft: bool) -> GithubRelease {
+        GithubRelease {
+            tag_name: tag.to_string(),
+            draft,
+            ..GithubRelease::default()
+        }
+    }
+
+    #[test]
+    fn poll_drains_release_events() {
+        let mut browser = ReleaseBrowser {
+            fetch: FetchState::Loading,
+            ..ReleaseBrowser::default()
+        };
+        browser
+            .tx
+            .send(Event::Releases(Ok(vec![release("5.0.1", false), release("5.0.2-draft", true)])))
+            .unwrap();
+
+        browser.poll();
+        assert!(matches!(browser.fetch, FetchState::Loaded));
+        assert_eq!(browser.releases.len(), 1);
+        assert_eq!(browser.latest_tag(), Some("5.0.1"));
+    }
+
+    #[test]
+    fn poll_records_fetch_error() {
+        let mut browser = ReleaseBrowser {
+            fetch: FetchState::Loading,
+            ..ReleaseBrowser::default()
+        };
+        browser.tx.send(Event::Releases(Err("502".into()))).unwrap();
+
+        browser.poll();
+        assert!(matches!(browser.fetch, FetchState::Failed(ref e) if e == "502"));
+        assert!(browser.releases.is_empty());
+    }
+
+    #[test]
+    fn parses_github_release_json() {
+        let json = r#"[{
+            "url": "https://api.github.com/repos/o/r/releases/1",
+            "html_url": "https://github.com/o/r/releases/tag/5.0.1",
+            "tag_name": "5.0.1",
+            "name": null,
+            "body": null,
+            "published_at": null,
+            "created_at": "2026-10-01T12:00:00Z",
+            "draft": false,
+            "author": {"login": "someone"},
+            "assets": [
+                {"name": "Mastertech.exe", "url": "https://api.github.com/a/1", "size": 153387008},
+                {"name": "Mastertech-linux", "url": "https://api.github.com/a/2", "size": 98000000},
+                {"name": "qc_app.exe", "url": "https://api.github.com/a/3", "size": 1000}
+            ]
+        }]"#;
+        let releases: Vec<GithubRelease> = serde_json::from_str(json).unwrap();
+        let release = &releases[0];
+        assert_eq!(release.name, "");
+        assert_eq!(release.body, "");
+        assert_eq!(release.published_at, "");
+        assert!(!release.prerelease && !release.draft);
+        assert_eq!(display_name(release), "5.0.1");
+        assert_eq!(release_date(release), "2026-10-01T12:00:00Z");
+        let kinds: Vec<_> = release.assets.iter().map(|a| classify(&a.name)).collect();
+        assert_eq!(
+            kinds,
+            [
+                (Product::MasterTech, Platform::Windows),
+                (Product::MasterTech, Platform::Linux),
+                (Product::QcApp, Platform::Windows),
+            ]
+        );
+        assert_eq!(release.assets[0].size, 153_387_008);
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[tokio::test]
+    #[ignore = "network"]
+    async fn live_release_list_parses() {
+        let releases = fetch_releases().await.unwrap();
+        let first = releases.iter().find(|r| !r.draft).expect("a published release");
+        assert!(first.assets.iter().any(|a| a.name == "Mastertech.exe"), "{:?}", first.assets);
+    }
 
     #[test]
     fn classifies_release_assets() {

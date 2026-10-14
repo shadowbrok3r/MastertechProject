@@ -7,6 +7,7 @@ members = [
     "displays",
     "mtech-ui",
     "mtech-tui",
+    "mtech-update",
     "tcp_protocol",
     "stress-kit",
     "stress-runner",
@@ -43,6 +44,7 @@ default-members = [
     "displays",
     "mtech-ui",
     "mtech-tui",
+    "mtech-update",
     "tcp_protocol",
     "stress-kit",
     "stress-runner",
@@ -91,6 +93,7 @@ stress-kit = { path = "stress-kit" }
 stress-runner = { path = "stress-runner" }
 mtech-ui = { path = "mtech-ui" }
 mtech-tui = { path = "mtech-tui" }
+mtech-update = { path = "mtech-update" }
 database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.36", features=["serde",  "default_fonts", "glow", "links"], default-features=false }

@@ -222,6 +222,9 @@ pub struct WebSocketClient {
     /// Channel receiving `MastertechSelfUpdateChunk` Cmds for a remote self-update
     #[cfg(not(target_arch = "wasm32"))]
     pub self_update_rx: Option<Receiver<Cmd>>,
+    /// File name of the binary being pushed by the remote self-update.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub self_update_file: String,
     /// Transcript occupancy and drop counters for the buffer census.
     transcript_gauge: std::sync::Arc<crate::buffer_census::QueueStats>,
     /// True when the client reported a mismatched `Cmd` shape fingerprint.
@@ -430,6 +433,8 @@ impl WebSocketClient {
             file_transfer_rx: None,
             #[cfg(not(target_arch = "wasm32"))]
             self_update_rx: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            self_update_file: String::new(),
             transcript_gauge: crate::buffer_census::QueueStats::register(
                 format!("client_interface.transcript[{}]", client_cs),
                 receive::MAX_HISTORY,

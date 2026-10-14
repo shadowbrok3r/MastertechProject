@@ -10,6 +10,7 @@ pub mod scripts;
 pub mod machine_settings;
 pub mod network;
 pub mod no_window;
+pub mod run_mode;
 pub mod update_policy;
 pub mod window_prefs;
 

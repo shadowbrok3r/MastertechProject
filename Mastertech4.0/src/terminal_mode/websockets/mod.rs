@@ -4449,10 +4449,13 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         crate::remote_self_update::apply_and_relaunch(bytes)
                     })
                     .await;
-                    let (success, message) = match apply_result {
-                        Ok(pair) => pair,
-                        Err(e) => (false, format!("apply task failed: {e}")),
+                    let applied = match apply_result {
+                        Ok(applied) => applied,
+                        Err(e) => crate::remote_self_update::Applied::failed(format!(
+                            "apply task failed: {e}"
+                        )),
                     };
+                    let (success, message) = (applied.success, applied.message);
                     log::info!("[self-update] result: success={success} message={message}");
                     let result_cmd = displays::Cmd::MastertechSelfUpdateResult { success, message };
                     if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {
@@ -4460,7 +4463,10 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                     }
                     if success {
                         std::thread::sleep(std::time::Duration::from_millis(500));
-                        std::process::exit(0);
+                        match applied.exec_after_reply {
+                            Some(exe) => crate::utilities::safe_swap::request_restart(exe),
+                            None => std::process::exit(0),
+                        }
                     }
                 }
             }
