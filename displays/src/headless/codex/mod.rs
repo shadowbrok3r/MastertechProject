@@ -19,6 +19,7 @@ use crate::plugins::PluginManager;
 mod busy;
 mod coalesce;
 mod dispatch;
+mod fleet_route;
 mod parse_check;
 mod prompt;
 mod queue;
@@ -251,7 +252,7 @@ pub(super) fn manager() -> Option<Arc<RwLock<PluginManager>>> {
     MANAGER.get().cloned()
 }
 
-/// Starts the broker tasks: resume of open threads, the turn watcher, the approval reaper and the queue pump.
+/// Starts the broker tasks: resume of open threads, the turn watcher, the approval reaper, the queue pump and the fleet route poller.
 pub fn spawn_codex_broker(manager: Arc<RwLock<PluginManager>>) {
     let Some(cfg) = config() else {
         log::info!("codex: MTECH_CODEXD_URL unset; broker disabled");
@@ -273,6 +274,7 @@ pub fn spawn_codex_broker(manager: Arc<RwLock<PluginManager>>) {
         tokio::spawn(async move { dispatch::start_for_connection(cfg, &cs, by.as_deref()).await });
     }
     tokio::spawn(queue_pump(cfg));
+    fleet_route::spawn();
 }
 
 /// Reattaches to threads that had a turn in progress; an idle thread gets a runner on its next turn.

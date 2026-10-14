@@ -105,7 +105,7 @@ pub use provenance::{Harness, Provenance, UNKNOWN_ACTOR};
 pub use business_calendar::{business_seconds, open_days_between, OPEN_SECS_PER_DAY};
 pub use roi::{DataGaps, RoiSummary, ShelfCandidate, TurnaroundStats, TECH_RATE_HIGH, TECH_RATE_LOW};
 pub use assist::{AssistRequest, ConfirmedRequest, ASSIST_REQUEST_TABLE};
-pub use agent_thread::{clean_title, general_connection, is_general, AgentActivity, AgentThread, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE, CREATE_THREAD_SQL, MAY_STEER_SQL};
+pub use agent_thread::{clean_title, general_connection, is_general, AgentActivity, AgentThread, FleetStamp, NewAgentThread, AGENT_THREAD_OPEN_STATUSES, AGENT_THREAD_TABLE, CREATE_THREAD_SQL, MAY_STEER_SQL};
 pub use agent_event::{event_key, AgentEvent, AGENT_EVENT_TABLE};
 pub use agent_plan::{Plan, PlanStatus, PlanStep, PLAN_ITEM_TYPE};
 pub use agent_problem::{AgentProblem, ProblemKind};

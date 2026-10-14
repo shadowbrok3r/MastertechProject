@@ -82,6 +82,15 @@ spec:
             secretKeyRef:
               name: zeroclaw-gateway
               key: token
+        # Read-only fleet relay on the zeroclaw box: inference node and quant per agent thread.
+        - name: MTECH_FLEET_RELAY_URL
+          value: "http://192.168.22.7:7431"
+        - name: MTECH_FLEET_RELAY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: fleet-relay
+              key: token
+              optional: true
         # Signin failure is non-fatal — the daemon continues as guest — so these
         # are optional. The agent tables are PERMISSIONS FULL, so guest works;
         # set them to attribute the daemon's writes to a service account.

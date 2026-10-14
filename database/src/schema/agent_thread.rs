@@ -105,6 +105,15 @@ pub const ADOPT_THREAD_LINKS_SQL: &str = "UPDATE agent_thread SET service_order 
      AND (service_order = NONE OR (customer = NONE AND $cust != NONE)) \
      RETURN VALUE id";
 
+/// Sets the `fleet_*` fields of `$id` without touching `updated_at`.
+pub const SET_FLEET_STAMP_SQL: &str = "UPDATE $id SET fleet_node = $node, fleet_route = $route, \
+     fleet_quant = $quant, fleet_model = $model, fleet_served_at = $served RETURN NONE";
+
+/// Open threads with a codex thread id that are working, were updated in the last two hours, or have no fleet node.
+pub const FLEET_WATCH_SQL: &str = "SELECT * FROM agent_thread WHERE status NOT IN ['closed', 'failed'] \
+     AND codex_thread_id != NONE \
+     AND (status IN $working OR updated_at > time::now() - 2h OR fleet_node = NONE)";
+
 /// Inserts a `starting` row whose assignee is the user matching `$requested_by`, ignoring case.
 pub const CREATE_THREAD_SQL: &str = "LET $assignee = IF $requested_by THEN (SELECT VALUE id FROM user \
      WHERE string::lowercase(email) = string::lowercase($requested_by) LIMIT 1)[0] END; \
@@ -331,6 +340,25 @@ pub struct AgentThread {
     #[serde(default)]
     #[surreal(default)]
     pub broker_node: Option<String>,
+    /// Inference node that served the latest request; the broker writes every `fleet_*` field.
+    #[serde(default)]
+    #[surreal(default)]
+    pub fleet_node: Option<String>,
+    /// Fleet routing reason of that request, e.g. `pinned` or `compaction`.
+    #[serde(default)]
+    #[surreal(default)]
+    pub fleet_route: Option<String>,
+    /// Quant the node serves, e.g. `Q8_0`.
+    #[serde(default)]
+    #[surreal(default)]
+    pub fleet_quant: Option<String>,
+    /// Model file or directory the node serves.
+    #[serde(default)]
+    #[surreal(default)]
+    pub fleet_model: Option<String>,
+    #[serde(default)]
+    #[surreal(default)]
+    pub fleet_served_at: Option<Datetime>,
     #[serde(default)]
     #[surreal(default)]
     pub allow_box_shell: bool,
@@ -405,6 +433,37 @@ impl AgentThreadState {
     /// True for a starting or running write without an error; saving it clears the stored error.
     pub fn clears_error(&self) -> bool {
         self.error.is_none() && matches!(self.status.as_deref(), Some("starting" | "running"))
+    }
+}
+
+/// The `fleet_*` fields of a thread: where its latest request was served.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FleetStamp {
+    pub node: Option<String>,
+    pub route: Option<String>,
+    pub quant: Option<String>,
+    pub model: Option<String>,
+    pub served_at: Option<Datetime>,
+}
+
+impl FleetStamp {
+    /// The stamp to store over `stored`, or `None` if unchanged; a stamped request or an unprobed node keeps the stored quant and model.
+    pub fn update_over(&self, stored: &FleetStamp) -> Option<FleetStamp> {
+        let same_node = self.node == stored.node;
+        let same_request = same_node
+            && self.served_at == stored.served_at
+            && (stored.quant.is_some() || stored.model.is_some());
+        let unprobed = same_node && self.quant.is_none() && self.model.is_none();
+        let next = if same_request || unprobed {
+            FleetStamp {
+                quant: stored.quant.clone(),
+                model: stored.model.clone(),
+                ..self.clone()
+            }
+        } else {
+            self.clone()
+        };
+        (next != *stored).then_some(next)
     }
 }
 
@@ -609,6 +668,40 @@ impl AgentThread {
         is_general(&self.connection_string)
             && !matches!(self.status.as_str(), "running" | "waiting_approval")
             && self.tools_hash.as_deref() != Some(current)
+    }
+
+    /// The stored `fleet_*` fields.
+    pub fn fleet_stamp(&self) -> FleetStamp {
+        FleetStamp {
+            node: self.fleet_node.clone(),
+            route: self.fleet_route.clone(),
+            quant: self.fleet_quant.clone(),
+            model: self.fleet_model.clone(),
+            served_at: self.fleet_served_at,
+        }
+    }
+
+    /// Writes only the `fleet_*` fields; `updated_at` is left as it is.
+    pub async fn set_fleet_stamp(id: &RecordId, stamp: &FleetStamp) -> anyhow::Result<()> {
+        db().query(SET_FLEET_STAMP_SQL)
+            .bind(("id", id.clone()))
+            .bind(("node", stamp.node.clone()))
+            .bind(("route", stamp.route.clone()))
+            .bind(("quant", stamp.quant.clone()))
+            .bind(("model", stamp.model.clone()))
+            .bind(("served", stamp.served_at))
+            .await?
+            .check()?;
+        Ok(())
+    }
+
+    /// Open threads with a codex thread that are working, were updated in the last two hours, or have no fleet node.
+    pub async fn fleet_watch_list() -> anyhow::Result<Vec<Self>> {
+        let mut res = db()
+            .query(FLEET_WATCH_SQL)
+            .bind(("working", AGENT_THREAD_WORKING_STATUSES.map(String::from).to_vec()))
+            .await?;
+        Ok(res.take(0)?)
     }
 
     /// Moves the thread to `status`; terminal statuses also stamp `closed_at`.
@@ -877,6 +970,11 @@ mod tests {
             title: None,
             error: None,
             broker_node: None,
+            fleet_node: None,
+            fleet_route: None,
+            fleet_quant: None,
+            fleet_model: None,
+            fleet_served_at: None,
             allow_box_shell: false,
             approve_all: None,
             tokens_used: used,
@@ -955,6 +1053,114 @@ mod tests {
         json.as_object_mut().expect("object").remove("approve_all");
         let back: AgentThread = serde_json::from_value(json).expect("serde fills a missing approve_all");
         assert_eq!(back.approve_all, None);
+    }
+
+    #[test]
+    fn a_row_written_before_the_fleet_fields_existed_still_loads() {
+        use surrealdb::types::Value;
+        let mut row = thread(None, None);
+        row.fleet_node = Some("node-7900".into());
+        row.fleet_served_at = Some(Datetime::from_timestamp(1_760_000_000, 0).expect("valid"));
+        let mut v = row.into_value();
+        if let Value::Object(obj) = &mut v {
+            for key in ["fleet_node", "fleet_route", "fleet_quant", "fleet_model", "fleet_served_at"] {
+                obj.remove(key);
+            }
+        }
+        let back = AgentThread::from_value(v).expect("a row without fleet fields must deserialize");
+        assert_eq!(back.fleet_stamp(), FleetStamp::default());
+    }
+
+    fn stamp(node: &str, route: &str, quant: Option<&str>, secs: i64) -> FleetStamp {
+        FleetStamp {
+            node: Some(node.into()),
+            route: Some(route.into()),
+            quant: quant.map(str::to_string),
+            model: quant.map(|q| format!("Qwen3.8-27B-{q}.gguf")),
+            served_at: Datetime::from_timestamp(secs, 0),
+        }
+    }
+
+    #[test]
+    fn an_unchanged_fleet_stamp_writes_nothing() {
+        let seen = stamp("node-7900", "pinned", Some("Q8_0"), 100);
+        assert_eq!(
+            seen.update_over(&FleetStamp::default()),
+            Some(seen.clone()),
+            "a first stamp is written"
+        );
+        assert_eq!(seen.update_over(&seen), None);
+    }
+
+    #[test]
+    fn a_new_request_node_or_route_changes_the_stamp() {
+        let stored = stamp("node-7900", "pinned", Some("Q8_0"), 100);
+        let later = stamp("node-7900", "pinned", Some("Q8_0"), 160);
+        assert_eq!(later.update_over(&stored), Some(later.clone()));
+        let moved = stamp("node-128", "pinned", Some("Q6_K_P"), 160);
+        assert_eq!(moved.update_over(&stored), Some(moved.clone()));
+        let compaction = stamp("r9700", "compaction", Some("MXFP4"), 100);
+        assert_eq!(compaction.update_over(&stored), Some(compaction.clone()));
+    }
+
+    #[test]
+    fn an_unreachable_node_keeps_its_stored_quant() {
+        let stored = stamp("node-128", "pinned", Some("Q6_K_P"), 100);
+        let unknown = stamp("node-128", "pinned", None, 100);
+        assert_eq!(
+            unknown.update_over(&stored),
+            None,
+            "the same request with no quant changes nothing"
+        );
+        let next = unknown
+            .clone()
+            .update_over(&stamp("node-128", "pinned", Some("Q6_K_P"), 50));
+        assert_eq!(
+            next.as_ref().and_then(|s| s.quant.as_deref()),
+            Some("Q6_K_P")
+        );
+        let elsewhere = stamp("node-7900", "pinned", None, 160);
+        assert_eq!(
+            elsewhere.update_over(&stored),
+            Some(elsewhere.clone()),
+            "another node's quant is not carried over"
+        );
+    }
+
+    #[test]
+    fn a_model_swap_does_not_relabel_a_stamped_request() {
+        let stored = stamp("node-7900", "pinned", Some("Q6_K_P"), 100);
+        assert_eq!(
+            stamp("node-7900", "pinned", Some("Q8_0"), 100).update_over(&stored),
+            None
+        );
+        let next = stamp("node-7900", "pinned", Some("Q8_0"), 160);
+        assert_eq!(
+            next.update_over(&stored),
+            Some(next.clone()),
+            "the next request takes the new quant"
+        );
+    }
+
+    #[test]
+    fn a_request_stamped_before_its_node_was_probed_takes_the_probe() {
+        let blind = stamp("node-128", "pinned", None, 100);
+        let probed = stamp("node-128", "pinned", Some("Q6_K_P"), 100);
+        assert_eq!(probed.update_over(&blind), Some(probed.clone()));
+    }
+
+    #[test]
+    fn a_new_model_is_never_paired_with_the_old_quant() {
+        let stored = stamp("node-7900", "pinned", Some("Q6_K_P"), 100);
+        let unparsed = FleetStamp {
+            model: Some("custom-merge.gguf".into()),
+            ..stamp("node-7900", "pinned", None, 160)
+        };
+        let next = unparsed.update_over(&stored).expect("a new request writes");
+        assert_eq!(
+            (next.quant, next.model.as_deref()),
+            (None, Some("custom-merge.gguf"))
+        );
     }
 
     #[test]
