@@ -158,7 +158,7 @@ pub fn signup_message_text(message: &str) -> String {
     GENERIC_SIGNUP_ERROR.to_string()
 }
 
-fn strip_thrown_prefix(message: &str) -> &str {
+pub(crate) fn strip_thrown_prefix(message: &str) -> &str {
     let message = message.trim();
     message
         .strip_prefix(THROWN_PREFIX)

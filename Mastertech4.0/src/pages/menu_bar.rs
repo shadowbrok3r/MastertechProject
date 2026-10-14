@@ -98,6 +98,7 @@ enum AccountAction {
     Downloads,
     Theme,
     Refresh,
+    ResetPassword,
     Update,
     TerminalMode,
     Logout,
@@ -462,6 +463,9 @@ impl MasterTechApp {
     }
 
     fn account_menu(&mut self, ui: &mut Ui, username: &str) {
+        let resets = displays::tabs::user_admin::ResetCodeDialog::available_to(
+            self.context.shared_ctx.current_user.as_ref(),
+        );
         let mut picked = None;
         let mut store_changed = false;
         let (_, _) = MenuButton::new(username)
@@ -502,6 +506,14 @@ impl MasterTechApp {
                     "Refresh data",
                     AccountAction::Refresh,
                 );
+                if resets {
+                    item(
+                        ui,
+                        svg::KEY,
+                        "Reset a password…",
+                        AccountAction::ResetPassword,
+                    );
+                }
                 controls::menu_separator(ui);
                 let update = if self.context.pending_update.is_some() {
                     "Install update"
@@ -663,6 +675,7 @@ impl MasterTechApp {
             AccountAction::Downloads => self.open_page(ui, Page::Downloads),
             AccountAction::Theme => self.context.shared_ctx.modify_theme = true,
             AccountAction::Refresh => self.context.shared_ctx.first_run = true,
+            AccountAction::ResetPassword => self.context.shared_ctx.reset_code_dialog.open(),
             AccountAction::Update => {
                 if let Some(pending) = self.context.pending_update.as_mut() {
                     pending.accepted = true;

@@ -5,8 +5,11 @@ use crate::db;
 
 use super::{random_record_id, Bytes, RecordId, Status, Store, SurrealValue, USER_TABLE};
 
+pub mod admin;
 pub mod chats;
 pub mod employee_directory;
+pub mod employee_profile;
+pub mod password_reset;
 pub mod signup;
 pub mod staff_email;
 pub use chats::*;
@@ -32,6 +35,9 @@ pub struct User {
     sales: Option<Vec<RecordId>>,
     #[serde(default)]
     mcp_settings: Option<McpSettings>,
+    /// Tab slugs an admin hid from this user.
+    #[serde(default)]
+    hidden_tabs: Option<Vec<String>>,
     /// Skipped by serde; read from the database only.
     #[serde(skip)]
     ai_profile: Option<AiProfile>,
@@ -54,6 +60,7 @@ impl Default for User {
             authorization: UserAuthorization::User,
             sales: None,
             mcp_settings: None,
+            hidden_tabs: None,
             ai_profile: None,
         }
     }
@@ -221,6 +228,9 @@ impl UserSettings {
 }
 
 impl UserAuthorization {
+    /// Every role, in the order pickers list them.
+    pub const ALL: [Self; 4] = [Self::User, Self::Warehouse, Self::Manager, Self::Root];
+
     pub fn as_str(&self) -> &str {
         match self {
             Self::User => "User",
@@ -367,6 +377,11 @@ impl User {
 
     pub fn get_custom_statuses(&self) -> Vec<Status> {
        self.user_statuses.clone().unwrap_or_default()
+    }
+
+    /// Tab slugs an admin hid from this user.
+    pub fn hidden_tabs(&self) -> &[String] {
+        self.hidden_tabs.as_deref().unwrap_or_default()
     }
 
     pub fn get_custom_statuses_mut(&mut self) -> Option<&mut Vec<Status>> {

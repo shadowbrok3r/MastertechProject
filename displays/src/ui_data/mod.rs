@@ -995,6 +995,7 @@ impl crate::app_state::SharedContext {
         self.command_bar.ui(ctx, self.current_user.as_ref(), &open_tasks, focused_client, self.ui_actions_tx.clone());
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
+        self.reset_code_dialog.ui(ctx, self.current_user.as_ref());
         self.client_diagnostics_popup_ui(ctx);
         self.connection_status_pill(ctx);
         for text in self.toasts.show(ctx) {

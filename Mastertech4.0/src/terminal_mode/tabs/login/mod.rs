@@ -93,6 +93,7 @@ impl <'a> LoginTab <'a> {
                         save_encrypted_user_data(&Login {
                             username: login.username.clone(),
                             password: login.password.clone(),
+                            reset: None,
                         }, HASH)?;
                         data_tx.send(Box::new(Notification::new(
                             NotificationType::Info, 
@@ -124,6 +125,7 @@ impl <'a> LoginTab <'a> {
                             save_encrypted_user_data(&Login {
                                 username: login.username.clone(),
                                 password: login.password.clone(),
+                                reset: None,
                             }, HASH)?;
 
                             let res = data_tx.send(Box::new(

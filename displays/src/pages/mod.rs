@@ -5,7 +5,7 @@ pub mod signup_page;
 pub mod login_page;
 pub mod menu_bar;
 
-use crate::tabs::{TabContext, TabId, WorkMode};
+use crate::tabs::{TabAccess, TabContext, TabId, WorkMode};
 
 pub fn view_menu(
     ui: &mut Ui,
@@ -14,9 +14,9 @@ pub fn view_menu(
     mode: WorkMode,
     mut anchor: Option<&mut dyn FnMut(TabId, Rect)>,
 ) {
-    let is_root = crate::tabs::admin_console::current_user_is_root();
+    let access = TabAccess::current();
     crate::ui_tools::controls::menu_body(ui, |ui| {
-        for tab in mode.visible_tabs(tab_ctx, is_root) {
+        for tab in mode.visible_tabs(tab_ctx, &access) {
             let item = crate::ui_tools::controls::menu_check_item(
                 ui,
                 tab.icon(),
@@ -81,6 +81,8 @@ impl crate::app_state::SharedContext {
             self.pending_activate_tab = Some(TabId::Ai);
         }
 
+        let access = TabAccess::for_user(self.current_user.as_ref());
+        self.pending_tab_opens.retain(|tab| access.allows(*tab));
         for tab in self.pending_tab_opens.drain(..) {
             if tree.find_tab(&tab).is_none() {
                 tree.push_to_focused_leaf(tab);

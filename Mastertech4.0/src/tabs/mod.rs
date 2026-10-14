@@ -1,5 +1,5 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, FilterLiveTasks, Store};
-use displays::tabs::{TabContext, TabId};
+use displays::tabs::{TabAccess, TabContext, TabId};
 use egui_dock::{tab_viewer::OnCloseResponse, NodePath, TabViewer};
 use crate::app_state::MastertechContext;
 use displays::ui_tools::{
@@ -87,6 +87,10 @@ impl TabViewer for MastertechContext {
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+        if !TabAccess::for_user(self.shared_ctx.current_user.as_ref()).allows(*tab) {
+            displays::tabs::hidden_tab_state(ui);
+            return;
+        }
         match *tab {
             TabId::TurSheet => self.tur_sheet(ui),
             TabId::PartOrder => self.special_part_order(ui),
@@ -152,6 +156,10 @@ impl TabViewer for MastertechContext {
             TabId::ServerConsole => self.shared_ctx.server_console.ui(ui),
             TabId::AgentAudit => self.shared_ctx.agent_audit.ui(ui),
             TabId::AiAnalytics => self.shared_ctx.ai_analytics.ui(ui),
+            TabId::UserAdmin => {
+                let user = self.shared_ctx.current_user.clone();
+                self.shared_ctx.user_admin.ui(ui, user.as_ref());
+            }
             TabId::FleetDashboard => self.shared_ctx.fleet_dashboard(ui),
             TabId::StressLab => self.shared_ctx.stress_lab.ui(ui),
             TabId::SessionBoard => self.shared_ctx.session_board.ui(ui),

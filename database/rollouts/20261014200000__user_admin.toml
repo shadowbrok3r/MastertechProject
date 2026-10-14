@@ -1,0 +1,55 @@
+# user.user_statuses: writable by an active Root as well as the owner.
+# user.hidden_tabs: tab slugs hidden from that user; written by an active Root, never on their own row.
+# password_reset: one-time reset codes issued by Root (anyone else) or a Manager (User/Warehouse, same store).
+# admin_action: append-only log of User Admin changes; Root only.
+# ACCESS password_reset: SIGNIN redeems a code and sets the password; separate from the `user` access.
+id = "20261014200000__user_admin"
+name = "user_admin"
+state = "completed"
+source_schema_hash = "ac45df5f1566dfe23cdc76aa99b7cad2236ae3a280cfdfee6d90f523bcb91a44"
+target_schema_hash = "49844c35c1189b93b0173466e6318c6c7d048682eda27566db9fb6d1acd4ce93"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_user_admin"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE user_statuses ON user TYPE none | array<string> DEFAULT [] PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true);
+DEFINE FIELD OVERWRITE user_statuses.* ON user TYPE string PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true);
+DEFINE FIELD OVERWRITE hidden_tabs ON user TYPE none | array<string> PERMISSIONS FOR select, create FULL, FOR update WHERE id != $auth.id AND $auth.authorization = 'Root' AND $auth.active = true;
+DEFINE FIELD OVERWRITE hidden_tabs.* ON user TYPE string PERMISSIONS FOR select, create FULL, FOR update WHERE id != $auth.id AND $auth.authorization = 'Root' AND $auth.active = true;
+DEFINE TABLE OVERWRITE password_reset TYPE NORMAL SCHEMAFULL PERMISSIONS FOR select WHERE $access = 'user' AND $auth.active = true AND ($auth.authorization = 'Root' OR issued_by = $auth.id), FOR create WHERE $access = 'user' AND $auth.active = true AND user != $auth.id AND ($auth.authorization = 'Root' OR ($auth.authorization = 'Manager' AND user.store = $auth.store AND user.authorization NOT IN ['Root', 'Manager'])), FOR update NONE, FOR delete WHERE $access = 'user' AND $auth.active = true AND ($auth.authorization = 'Root' OR issued_by = $auth.id);
+DEFINE FIELD OVERWRITE user ON password_reset TYPE record<user>;
+DEFINE FIELD OVERWRITE issued_by ON password_reset TYPE record<user> VALUE $before ?? $auth.id;
+DEFINE FIELD OVERWRITE code_hash ON password_reset TYPE string PERMISSIONS FOR select NONE, FOR create, update FULL;
+DEFINE FIELD OVERWRITE created_at ON password_reset TYPE datetime VALUE $before ?? time::now();
+DEFINE FIELD OVERWRITE expires_at ON password_reset TYPE datetime VALUE $before ?? (time::now() + 1h);
+DEFINE FIELD OVERWRITE attempts ON password_reset TYPE int DEFAULT 0 ASSERT $value >= 0;
+DEFINE FIELD OVERWRITE used_at ON password_reset TYPE none | datetime;
+DEFINE INDEX OVERWRITE password_reset_user ON password_reset FIELDS user, created_at;
+DEFINE TABLE OVERWRITE admin_action TYPE NORMAL SCHEMAFULL PERMISSIONS FOR select, create WHERE $access = 'user' AND $auth.authorization = 'Root' AND $auth.active = true, FOR update, delete NONE;
+DEFINE FIELD OVERWRITE actor ON admin_action TYPE record<user> VALUE $before ?? $auth.id;
+DEFINE FIELD OVERWRITE target ON admin_action TYPE record<user>;
+DEFINE FIELD OVERWRITE action ON admin_action TYPE string;
+DEFINE FIELD OVERWRITE detail ON admin_action TYPE object FLEXIBLE DEFAULT {};
+DEFINE FIELD OVERWRITE created_at ON admin_action TYPE datetime VALUE $before ?? time::now();
+DEFINE INDEX OVERWRITE admin_action_target ON admin_action FIELDS target, created_at;
+DEFINE ACCESS OVERWRITE password_reset ON DATABASE TYPE RECORD SIGNIN { IF string::len(<string> ($new_password ?? '')) < 8 { THROW 'The new password must be at least 8 characters.'; }; LET $target = (SELECT id, active FROM user WHERE email = string::lowercase(string::trim(<string> ($email ?? ''))) LIMIT 1)[0]; LET $grant = IF $target != NONE AND $target.active == true { (SELECT id, code_hash, attempts, expires_at, used_at, created_at FROM password_reset WHERE user = $target.id ORDER BY created_at DESC LIMIT 1)[0] } ELSE { NONE }; LET $live = $grant != NONE AND $grant.used_at == NONE AND $grant.expires_at > time::now() AND $grant.attempts < 5; LET $match = IF $live { crypto::argon2::compare($grant.code_hash, string::trim(<string> ($code ?? ''))) } ELSE { false }; IF $live AND !$match { UPDATE $grant.id SET attempts += 1; }; IF $match { UPDATE $grant.id SET used_at = time::now(); UPDATE $target.id SET password = crypto::argon2::generate(<string> $new_password); CREATE audit_log CONTENT { password_reset: { user: $target.id, code: $grant.id }, time: time::now() }; }; RETURN IF $match { $target.id } ELSE { NONE }; } DURATION FOR TOKEN 1m, FOR SESSION 1m;
+"""
+
+# Restores the pre-rollout user_statuses definitions captured from surrealdb-dev on 2026-10-14.
+[[steps]]
+id = "drop_user_admin"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE ACCESS IF EXISTS password_reset ON DATABASE;
+REMOVE TABLE IF EXISTS admin_action;
+REMOVE TABLE IF EXISTS password_reset;
+REMOVE FIELD IF EXISTS hidden_tabs.* ON user;
+REMOVE FIELD IF EXISTS hidden_tabs ON user;
+DEFINE FIELD OVERWRITE user_statuses ON user TYPE none | array<string> DEFAULT [] PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id;
+DEFINE FIELD OVERWRITE user_statuses.* ON user TYPE string PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id;
+"""

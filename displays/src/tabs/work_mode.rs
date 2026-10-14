@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::ui_tools::icons::p;
 
 use super::dock_session::{DockSession, EJECT_LABEL, default_dock_session_native};
-use super::tab_id::{TabContext, TabId};
+use super::tab_id::{TabAccess, TabContext, TabId};
 
 /// What the technician is doing. `Full` is the uncurated app.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -123,16 +123,16 @@ impl WorkMode {
         }
     }
 
-    /// What the View menu lists: the curated set only, clamped by context and the root gate.
-    pub fn visible_tabs(self, ctx: TabContext, is_root: bool) -> Vec<TabId> {
+    /// What the View menu lists: the curated set only, clamped by context and `access`.
+    pub fn visible_tabs(self, ctx: TabContext, access: &TabAccess) -> Vec<TabId> {
         match self.curated_tabs() {
-            None => TabId::visible_for_user(ctx, is_root),
+            None => TabId::visible_for_user(ctx, access),
             Some(curated) => {
                 let in_context = TabId::visible_for(ctx);
                 curated
                     .iter()
                     .copied()
-                    .filter(|t| (is_root || !t.requires_root()) && in_context.contains(t))
+                    .filter(|t| access.allows(*t) && in_context.contains(t))
                     .collect()
             }
         }
@@ -290,7 +290,7 @@ mod work_mode_tests {
             );
             assert!(
                 !mode
-                    .visible_tabs(TabContext::MastertechNative, false)
+                    .visible_tabs(TabContext::MastertechNative, &TabAccess::default())
                     .contains(&TabId::StressLab),
                 "{} must not list Stress Lab in the View menu",
                 mode.title()
@@ -308,7 +308,7 @@ mod work_mode_tests {
         for mode in WorkMode::ALL {
             assert!(
                 !mode
-                    .visible_tabs(TabContext::MastertechNative, false)
+                    .visible_tabs(TabContext::MastertechNative, &TabAccess::default())
                     .iter()
                     .any(|t| t.requires_root()),
                 "{} leaked a root-only tab",
