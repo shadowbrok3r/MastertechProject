@@ -2,6 +2,10 @@
   "version": 1,
   "files": [
     {
+      "path": "database/schema/admin_action.surql",
+      "hash": "793dc1d837819d4e54ee97870e3c50b23b4ae2a4cca112fbebc426e5075a6375"
+    },
+    {
       "path": "database/schema/agent_approval.surql",
       "hash": "0a312d6d91aba71f3afcaa01297a74b1b8032d71463b270313e4abb4acb4287f"
     },
@@ -138,6 +142,10 @@
       "hash": "dd14211595efc0be8bff36cb770aed6fe8bcaff53bc4354cf174dc872fc2964e"
     },
     {
+      "path": "database/schema/password_reset.surql",
+      "hash": "fe8f391d8df7e26e629556c29f08db77df1f0043512ffffb05233c05c89fa7ae"
+    },
+    {
       "path": "database/schema/plugin_registry.surql",
       "hash": "0502cf53a18f4b4f65f55151757e336ec146b92afbe330a073305b1a217bd340"
     },
@@ -207,7 +215,7 @@
     },
     {
       "path": "database/schema/user.surql",
-      "hash": "b0f02bd60b287534f151de419e4b71d0235e1900c74cab061308deec73e6580b"
+      "hash": "b969972a270c4d479ccf81baae1ada73296c82ccb3a689a2452e9cd50c422c0b"
     },
     {
       "path": "database/schema/user_message.surql",

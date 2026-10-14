@@ -1,3 +1,4 @@
+use database::schema::user::{User, UserAuthorization};
 use eframe::egui::WidgetText;
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +44,7 @@ pub enum TabId {
     AgentAudit,
     AiAnalytics,
     SessionBoard,
+    UserAdmin,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +95,7 @@ const MT_SERVER_WASM: &[TabId] = &[
     TabId::CreateOrder,
     TabId::StressLab,
     TabId::ServerConsole,
+    TabId::UserAdmin,
 ];
 
 const MT_NATIVE: &[TabId] = &[
@@ -128,6 +131,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::AgentAudit,
     TabId::AiAnalytics,
     TabId::SessionBoard,
+    TabId::UserAdmin,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -150,6 +154,45 @@ const WH_NATIVE: &[TabId] = &[
 ];
 
 pub const WAREHOUSE_DEFAULT_OPEN: &[TabId] = &[TabId::FleetDashboard, TabId::AdminConsole];
+
+/// Which tabs the signed-in user may open: Root-only tabs and the ones an admin hid from them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TabAccess {
+    is_root: bool,
+    hidden: Vec<TabId>,
+}
+
+impl TabAccess {
+    /// Access for `user`; an active Root sees every tab and no user sees no Root tab.
+    pub fn for_user(user: Option<&User>) -> Self {
+        let Some(user) = user else {
+            return Self::default();
+        };
+        let is_root = user.get_authorization() == UserAuthorization::Root && user.is_active();
+        let hidden = if is_root {
+            Vec::new()
+        } else {
+            user.hidden_tabs()
+                .iter()
+                .filter_map(|slug| TabId::from_slug(slug))
+                .collect()
+        };
+        Self { is_root, hidden }
+    }
+
+    /// Access for the signed-in user.
+    pub fn current() -> Self {
+        Self::for_user(crate::get_current_user_from_auth().as_ref())
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.is_root
+    }
+
+    pub fn allows(&self, tab: TabId) -> bool {
+        (self.is_root || !tab.requires_root()) && !self.hidden.contains(&tab)
+    }
+}
 
 impl TabId {
     pub fn slug(self) -> &'static str {
@@ -188,12 +231,27 @@ impl TabId {
             Self::ServerConsole => "server_console",
             Self::AgentAudit => "agent_audit",
             Self::AiAnalytics => "ai_analytics",
+            Self::UserAdmin => "user_admin",
         }
     }
 
     /// Tabs hidden from the View menu and refused at render for anyone but Root.
     pub fn requires_root(self) -> bool {
-        matches!(self, Self::ServerConsole)
+        matches!(self, Self::ServerConsole | Self::UserAdmin)
+    }
+
+    /// Tabs an admin may hide from a user: every listed tab except the Root-only ones.
+    pub fn hideable() -> Vec<TabId> {
+        let mut tabs: Vec<TabId> = Vec::new();
+        for list in [MT_NATIVE, MT_SERVER_WASM, WH_NATIVE, WH_WASM] {
+            for tab in list {
+                if !tab.requires_root() && !tabs.contains(tab) {
+                    tabs.push(*tab);
+                }
+            }
+        }
+        tabs.sort_by_key(|t| t.title(TabContext::MastertechNative));
+        tabs
     }
 
     /// Icon drawn in front of the tab's title.
@@ -233,6 +291,7 @@ impl TabId {
             Self::ServerConsole => svg::TERMINAL,
             Self::AgentAudit => svg::ROBOT,
             Self::AiAnalytics => svg::CHART_BAR,
+            Self::UserAdmin => svg::USER_GEAR,
         }
     }
 
@@ -280,15 +339,16 @@ impl TabId {
             Self::ServerConsole => "Server Console",
             Self::AgentAudit => "Agent Audit",
             Self::AiAnalytics => "AI Analytics",
+            Self::UserAdmin => "User Admin",
         }
     }
 
-    /// [`visible_for`] minus the Root-only tabs when the operator is not Root.
-    pub fn visible_for_user(ctx: TabContext, is_root: bool) -> Vec<TabId> {
+    /// [`visible_for`] filtered to the tabs `access` allows.
+    pub fn visible_for_user(ctx: TabContext, access: &TabAccess) -> Vec<TabId> {
         Self::visible_for(ctx)
             .iter()
             .copied()
-            .filter(|t| is_root || !t.requires_root())
+            .filter(|t| access.allows(*t))
             .collect()
     }
 
@@ -343,11 +403,12 @@ impl TabId {
             "Server Console" => Some(Self::ServerConsole),
             "Agent Audit" => Some(Self::AgentAudit),
             "AI Analytics" => Some(Self::AiAnalytics),
+            "User Admin" => Some(Self::UserAdmin),
             _ => None,
         }
     }
 
-    fn from_slug(s: &str) -> Option<Self> {
+    pub fn from_slug(s: &str) -> Option<Self> {
         match s {
             "websockets" | "scene_editor" | "web_console" | "zeroclaw" | "zero_claw" | "agent_sessions" => None,
             "tur_sheet" => Some(Self::TurSheet),
@@ -385,6 +446,7 @@ impl TabId {
             "server_console" => Some(Self::ServerConsole),
             "agent_audit" => Some(Self::AgentAudit),
             "ai_analytics" => Some(Self::AiAnalytics),
+            "user_admin" => Some(Self::UserAdmin),
             _ => None,
         }
     }
@@ -456,6 +518,64 @@ mod tab_id_tests {
                 .any(|t| t.slug() == "qc"),
             "the retired tab must not be listed in any visible set"
         );
+    }
+
+    fn user(role: UserAuthorization, active: bool, hidden: &[&str]) -> User {
+        let mut value = surrealdb_types::SurrealValue::into_value(User::default());
+        if let surrealdb_types::Value::Object(ref mut row) = value {
+            row.insert(
+                "authorization".to_string(),
+                surrealdb_types::Value::String(role.as_str().into()),
+            );
+            row.insert("active".to_string(), surrealdb_types::Value::Bool(active));
+            row.insert(
+                "hidden_tabs".to_string(),
+                surrealdb_types::SurrealValue::into_value(
+                    hidden.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                ),
+            );
+        }
+        surrealdb_types::SurrealValue::from_value(value).expect("user decodes")
+    }
+
+    #[test]
+    fn root_only_tabs_need_an_active_root() {
+        let root = TabAccess::for_user(Some(&user(UserAuthorization::Root, true, &[])));
+        let off = TabAccess::for_user(Some(&user(UserAuthorization::Root, false, &[])));
+        let tech = TabAccess::for_user(Some(&user(UserAuthorization::User, true, &[])));
+        for tab in [TabId::ServerConsole, TabId::UserAdmin] {
+            assert!(root.allows(tab), "{tab:?}");
+            assert!(!off.allows(tab), "{tab:?}");
+            assert!(!tech.allows(tab), "{tab:?}");
+            assert!(!TabAccess::default().allows(tab), "{tab:?}");
+        }
+    }
+
+    #[test]
+    fn hidden_tabs_are_refused_except_for_root() {
+        let hidden = ["stress_lab", "terminal", "not_a_tab"];
+        let tech = TabAccess::for_user(Some(&user(UserAuthorization::User, true, &hidden)));
+        assert!(!tech.allows(TabId::StressLab));
+        assert!(!tech.allows(TabId::Terminal));
+        assert!(tech.allows(TabId::MyTasks));
+        let visible = TabId::visible_for_user(TabContext::MastertechNative, &tech);
+        assert!(!visible.contains(&TabId::StressLab));
+        assert!(visible.contains(&TabId::Ai));
+        let root = TabAccess::for_user(Some(&user(UserAuthorization::Root, true, &hidden)));
+        assert!(root.allows(TabId::StressLab));
+    }
+
+    #[test]
+    fn hideable_tabs_exclude_root_only_ones_and_repeat_none() {
+        let tabs = TabId::hideable();
+        assert!(!tabs.iter().any(|t| t.requires_root()));
+        let unique: std::collections::HashSet<TabId> = tabs.iter().copied().collect();
+        assert_eq!(unique.len(), tabs.len());
+        for list in [MT_NATIVE, MT_SERVER_WASM, WH_NATIVE, WH_WASM] {
+            for tab in list.iter().filter(|t| !t.requires_root()) {
+                assert!(tabs.contains(tab), "{tab:?} cannot be hidden");
+            }
+        }
     }
 
     /// The ZeroClaw and Agent Sessions tabs moved into the Ai tab, so layouts that still name them drop the pane.

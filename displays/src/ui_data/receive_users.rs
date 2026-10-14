@@ -8,6 +8,9 @@ impl SharedContext {
         if let Ok((action, user)) = self.live_user_rx.try_recv() {
             if let Action::Update = action {
                 if self.current_user.as_ref().is_some_and(|cu| cu.get_id() == user.get_id()) {
+                    if let Ok(mut signed_in) = database::CURRENT_USER_INFO.try_lock() {
+                        *signed_in = Some(user.clone());
+                    }
                     self.current_user = Some(user);
                     self.layout_configs = None;
                     self.init_layout_configs();

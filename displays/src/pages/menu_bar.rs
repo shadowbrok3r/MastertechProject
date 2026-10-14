@@ -54,6 +54,7 @@ enum AccountAction {
     Downloads,
     Theme,
     Refresh,
+    ResetPassword,
     Logout,
 }
 
@@ -306,6 +307,7 @@ impl SharedContext {
         };
         let name = user.get_name().to_owned();
         let is_admin = user.is_admin();
+        let resets = crate::tabs::user_admin::ResetCodeDialog::available_to(Some(user));
         let mut picked = None;
         let note = &mut self.admin_notification_text;
         let _ = MenuButton::new(&name)
@@ -338,6 +340,14 @@ impl SharedContext {
                     "Refresh data",
                     AccountAction::Refresh,
                 );
+                if resets {
+                    item(
+                        ui,
+                        svg::KEY,
+                        "Reset a password…",
+                        AccountAction::ResetPassword,
+                    );
+                }
                 if is_admin {
                     controls::menu_separator(ui);
                     controls::menu_inset_row(ui, |ui| admin_notification(ui, note));
@@ -379,6 +389,7 @@ impl SharedContext {
             }
             AccountAction::Theme => self.modify_theme = true,
             AccountAction::Refresh => self.first_run = true,
+            AccountAction::ResetPassword => self.reset_code_dialog.open(),
             AccountAction::Logout => self.logout(),
         }
     }

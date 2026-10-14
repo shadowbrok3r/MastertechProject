@@ -729,8 +729,21 @@ impl<'a> Prestashop<'a> {
     }
 }
 
+/// A localised field's text: `[{id, value}, …]`, or a bare string from a single-language shop.
+pub fn localized_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(s) => Some(s.clone()).filter(|s| !s.trim().is_empty()),
+        Value::Array(items) => items
+            .iter()
+            .find_map(|i| i.get("value").and_then(|v| v.as_str()))
+            .map(str::to_string)
+            .filter(|s| !s.trim().is_empty()),
+        _ => None,
+    }
+}
+
 /// Caps an error body so a full HTML page cannot flood the log.
-fn truncate_body(body: &str) -> String {
+pub(crate) fn truncate_body(body: &str) -> String {
     const LIMIT: usize = 600;
     let trimmed = body.trim();
     match trimmed.char_indices().nth(LIMIT) {

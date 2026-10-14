@@ -2,7 +2,7 @@ use eframe::egui::Ui;
 use egui_dock::DockArea;
 
 use crate::app_state::{MastertechContext, MasterTechApp};
-use displays::tabs::{TabContext, TabId, WorkMode};
+use displays::tabs::{TabAccess, TabContext, TabId, WorkMode};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 
 pub mod menu_bar;
@@ -26,6 +26,7 @@ impl MasterTechApp {
             .show_inside(ui, &mut self.context);
 
         let mode = self.context.work_mode.active.unwrap_or_default();
+        let access = TabAccess::for_user(self.context.shared_ctx.current_user.as_ref());
 
         if !self.context.pending_tab_removes.is_empty() || !self.context.pending_tab_adds.is_empty()
         {
@@ -35,6 +36,9 @@ impl MasterTechApp {
                 }
             }
             for (path, tab) in std::mem::take(&mut self.context.pending_tab_adds) {
+                if !access.allows(tab) {
+                    continue;
+                }
                 if !mode.allows(tab) {
                     refuse(&mut self.context, mode, tab);
                     continue;
@@ -62,6 +66,10 @@ impl MasterTechApp {
         }
 
         for tab in std::mem::take(&mut self.context.pending_tab_opens) {
+            if !access.allows(tab) {
+                log::debug!("{tab:?} is turned off for this account; not opening it");
+                continue;
+            }
             if !mode.allows(tab) {
                 refuse(&mut self.context, mode, tab);
                 continue;

@@ -64,6 +64,7 @@ pub fn save_encrypted_user_data(user_data: &Login, password: &[u8])
     let login = &Login {
         username: email.clone(),
         password: user_data.password.clone(),
+        reset: None,
     };
 
     let salt = generate_salt();

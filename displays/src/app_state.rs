@@ -425,6 +425,12 @@ pub struct SharedContext {
     /// AI diagnostics ROI aggregates; fetched only while drawn.
     #[serde(skip)]
     pub ai_analytics: crate::tabs::ai_analytics::AiAnalytics,
+    /// Root account administration; fetched only while drawn.
+    #[serde(skip)]
+    pub user_admin: crate::tabs::user_admin::UserAdmin,
+    /// The account-menu dialog Managers and Root issue reset codes from.
+    #[serde(skip)]
+    pub reset_code_dialog: crate::tabs::user_admin::ResetCodeDialog,
     /// {Widgets / Modals / Ui for portions throughout the app}
     pub search_input: String,
     // Miscellaneous Fields
@@ -833,6 +839,8 @@ impl SharedContext {
             agent_notify: Default::default(),
             agent_problems: Default::default(),
             ai_analytics: Default::default(),
+            user_admin: Default::default(),
+            reset_code_dialog: Default::default(),
             notification_center: NotificationCenter::default(),
             command_bar: Default::default(),
             user_settings: UserSettings::default(),
@@ -891,6 +899,11 @@ impl SharedContext {
             AppState::Authenticated(MainPages::UserPreferences) => Some(&mut self.account_mod),
             _ => None,
         }
+    }
+
+    /// Whether the sign-in page shows the reset-code form.
+    pub fn resetting_password(&self) -> bool {
+        self.login.reset.is_some()
     }
 
     pub fn login_mut(&mut self) -> Option<&mut Login> {

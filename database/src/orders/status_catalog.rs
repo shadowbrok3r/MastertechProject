@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use crate::schema::prestashop::localized_text;
+
 static CATALOG: RwLock<Option<HashMap<i64, String>>> = RwLock::new(None);
 
 /// Name for a legacy status id from the loaded catalog. `None` when the
@@ -117,7 +119,7 @@ async fn fetch_prestashop_states() -> anyhow::Result<HashMap<i64, String>> {
     let mut out = HashMap::new();
     for row in rows {
         let Some(id) = row.get("id").and_then(json_i64) else { continue };
-        if let Some(name) = localized_name(row.get("name")) {
+        if let Some(name) = localized_text(row.get("name")) {
             out.insert(id, name);
         }
     }
@@ -128,20 +130,6 @@ fn json_i64(value: &serde_json::Value) -> Option<i64> {
     value
         .as_i64()
         .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-}
-
-/// A PrestaShop localised field is `[{id, value}, …]`, but a single-language
-/// shop can return a bare string.
-fn localized_name(value: Option<&serde_json::Value>) -> Option<String> {
-    match value? {
-        serde_json::Value::String(s) => Some(s.clone()).filter(|s| !s.trim().is_empty()),
-        serde_json::Value::Array(items) => items
-            .iter()
-            .find_map(|i| i.get("value").and_then(|v| v.as_str()))
-            .map(str::to_string)
-            .filter(|s| !s.trim().is_empty()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -172,14 +160,14 @@ mod tests {
     #[test]
     fn localized_name_handles_both_shapes() {
         let array = serde_json::json!([{ "id": 1, "value": "Shipped" }]);
-        assert_eq!(localized_name(Some(&array)).as_deref(), Some("Shipped"));
+        assert_eq!(localized_text(Some(&array)).as_deref(), Some("Shipped"));
 
         let bare = serde_json::json!("Delivered");
-        assert_eq!(localized_name(Some(&bare)).as_deref(), Some("Delivered"));
+        assert_eq!(localized_text(Some(&bare)).as_deref(), Some("Delivered"));
 
-        assert_eq!(localized_name(Some(&serde_json::json!([]))), None);
-        assert_eq!(localized_name(Some(&serde_json::json!(""))), None);
-        assert_eq!(localized_name(None), None);
+        assert_eq!(localized_text(Some(&serde_json::json!([]))), None);
+        assert_eq!(localized_text(Some(&serde_json::json!(""))), None);
+        assert_eq!(localized_text(None), None);
     }
 
     #[test]

@@ -1,8 +1,11 @@
 #![allow(deprecated)]
 use crate::{PlatformSpawner, Spawner};
 use anyhow::{Error, Result};
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender};
 use database::Database;
+use database::schema::user::password_reset::{
+    MIN_PASSWORD_CHARS, RESET_CODE_DIGITS, normalize_reset_code, redeem_reset_code,
+};
 use database::schema::{COMPANY_EMAIL_DOMAINS, domain_suffix, normalize_email_with};
 use eframe::egui::{
     Align, Align2, CentralPanel, Direction, FontId, Frame, Id, Key, Layout, Modifiers, Rect,
@@ -36,6 +39,9 @@ const ICON_GAP: f32 = 6.0;
 pub struct Login {
     pub username: String,
     pub password: String,
+    /// The reset-code form, shown in place of sign-in while set.
+    #[serde(skip)]
+    pub reset: Option<ResetForm>,
 }
 
 impl Default for Login {
@@ -43,7 +49,65 @@ impl Default for Login {
         Self {
             username: Default::default(),
             password: Default::default(),
+            reset: None,
         }
+    }
+}
+
+/// "Forgot password?": a code from a Manager or Root plus a new password.
+pub struct ResetForm {
+    pub username: String,
+    code: String,
+    password: String,
+    confirm: String,
+    busy: bool,
+    error: Option<String>,
+    tx: Sender<Result<String, String>>,
+    rx: Receiver<Result<String, String>>,
+}
+
+impl std::fmt::Debug for ResetForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResetForm")
+            .field("username", &self.username)
+            .field("busy", &self.busy)
+            .field("error", &self.error)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ResetForm {
+    pub fn new(username: String) -> Self {
+        let (tx, rx) = crossbeam::channel::unbounded();
+        Self {
+            username,
+            code: String::new(),
+            password: String::new(),
+            confirm: String::new(),
+            busy: false,
+            error: None,
+            tx,
+            rx,
+        }
+    }
+
+    /// The first problem with the typed values, if any.
+    fn problem(&self, domain: &str) -> Option<String> {
+        if normalize_email_with(&self.username, domain).is_none() {
+            return Some("Enter your username or email.".to_string());
+        }
+        if normalize_reset_code(&self.code).is_none() {
+            return Some(format!("The code is {RESET_CODE_DIGITS} digits."));
+        }
+        if self.password.chars().count() < MIN_PASSWORD_CHARS {
+            return Some(format!(
+                "Use at least {MIN_PASSWORD_CHARS} characters for the new password."
+            ));
+        }
+        if self.password != self.confirm {
+            return Some("The two passwords don't match.".to_string());
+        }
+        None
     }
 }
 
@@ -176,20 +240,29 @@ impl SharedContext {
                                             ui.add_space(ui.available_height() / 2.5);
                                             let font = TextStyle::Body.resolve(ui.style());
 
+                                            let subtitle = match self.resetting_password() {
+                                                true => "Reset your password",
+                                                false => "Please log in",
+                                            };
                                             ui.label(
-                                                RichText::new("Please log in")
+                                                RichText::new(subtitle)
                                                     .font(fonts::medium(SUBTITLE_PT)),
                                             );
                                             ui.add_space(m.gap.y * 2.0);
                                             let mut refresh = self.refresh;
                                             if let Some(login) = self.login_mut() {
-                                                refresh |= login_form(
-                                                    ui,
-                                                    login,
-                                                    &font,
-                                                    &db_tx,
-                                                    &appstate_tx,
-                                                );
+                                                refresh |= match login.reset.is_some() {
+                                                    true => {
+                                                        reset_form(ui, login, &db_tx, &appstate_tx)
+                                                    }
+                                                    false => login_form(
+                                                        ui,
+                                                        login,
+                                                        &font,
+                                                        &db_tx,
+                                                        &appstate_tx,
+                                                    ),
+                                                };
 
                                                 if refresh {
                                                     controls::loading_state(ui, "Logging in…");
@@ -332,6 +405,15 @@ fn login_form(
         }
     }
 
+    let forgot = TextButton::new("Forgot password?")
+        .icon(svg::KEY)
+        .kind(ButtonKind::Ghost)
+        .min_width(LOGIN_FIELD_WIDTH)
+        .show(ui);
+    if forgot.clicked() {
+        login.reset = Some(ResetForm::new(login.username.clone()));
+    }
+
     let mut started = false;
     if (submit || (enter && password_focused))
         && !login.password.is_empty()
@@ -365,6 +447,136 @@ fn login_form(
         controls::status_label(ui, svg::WARNING_CIRCLE, &text, t.error);
     }
     started
+}
+
+/// The domain a bare username is completed with, as the sign-in form last chose it.
+fn chosen_domain(ui: &Ui) -> &'static str {
+    let idx = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<usize>(Id::new("login_domain")))
+        .filter(|idx| *idx < COMPANY_EMAIL_DOMAINS.len())
+        .unwrap_or(0);
+    COMPANY_EMAIL_DOMAINS[idx]
+}
+
+/// Username, reset code and new password; true while the new password signs in.
+fn reset_form(
+    ui: &mut Ui,
+    login: &mut Login,
+    db_tx: &Sender<anyhow::Result<Database, anyhow::Error>>,
+    appstate_tx: &Sender<AppState>,
+) -> bool {
+    let (t, m) = (Tokens::get(ui.ctx()), Metrics::get(ui.ctx()));
+    let domain = chosen_domain(ui);
+    let Some(form) = login.reset.as_mut() else {
+        return false;
+    };
+    while let Ok(result) = form.rx.try_recv() {
+        form.busy = false;
+        match result {
+            Ok(email) => {
+                login.username = email;
+                login.password.clear();
+                login.reset = None;
+                return true;
+            }
+            Err(e) => form.error = Some(e),
+        }
+    }
+
+    ui.label(
+        RichText::new("Ask your store manager for a reset code, then choose a new password.")
+            .color(t.text_dim),
+    );
+    ui.add_space(m.gap.y);
+    TextField::new(&mut form.username)
+        .hint("Username")
+        .icon(svg::USER)
+        .width(LOGIN_FIELD_WIDTH)
+        .show(ui);
+    ui.add_space(m.gap.y);
+    TextField::new(&mut form.code)
+        .hint("6-digit code")
+        .icon(svg::KEY)
+        .mono(true)
+        .char_limit(RESET_CODE_DIGITS + 2)
+        .width(LOGIN_FIELD_WIDTH)
+        .show(ui);
+    ui.add_space(m.gap.y);
+    TextField::new(&mut form.password)
+        .hint("New password")
+        .icon(svg::LOCK)
+        .password(true)
+        .width(LOGIN_FIELD_WIDTH)
+        .show(ui);
+    ui.add_space(m.gap.y);
+    let confirm = TextField::new(&mut form.confirm)
+        .hint("New password again")
+        .icon(svg::LOCK)
+        .password(true)
+        .width(LOGIN_FIELD_WIDTH)
+        .show(ui);
+    let enter = confirm.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+    ui.add_space(m.gap.y * 3.0);
+
+    let label = if form.busy {
+        "Setting password…"
+    } else {
+        "Set password and sign in"
+    };
+    let submit = TextButton::new(label)
+        .icon(svg::CHECK_CIRCLE)
+        .kind(ButtonKind::Primary)
+        .prominent(true)
+        .enabled(!form.busy)
+        .min_width(LOGIN_FIELD_WIDTH)
+        .show(ui)
+        .clicked();
+    ui.add_space(m.gap.y);
+    let back = TextButton::new("Back to sign in")
+        .icon(svg::ARROW_LEFT)
+        .kind(ButtonKind::Ghost)
+        .enabled(!form.busy)
+        .min_width(LOGIN_FIELD_WIDTH)
+        .show(ui)
+        .clicked();
+
+    if (submit || enter) && !form.busy {
+        match form.problem(domain) {
+            Some(problem) => form.error = Some(problem),
+            None => {
+                let email = normalize_email_with(&form.username, domain).unwrap_or_default();
+                let (code, password) = (form.code.clone(), form.password.clone());
+                let (tx, db_tx, app_tx) = (form.tx.clone(), db_tx.clone(), appstate_tx.clone());
+                form.busy = true;
+                form.error = None;
+                PlatformSpawner::spawn(async move {
+                    match redeem_reset_code(&email, &code, &password).await {
+                        Ok(()) => {
+                            let _ = tx.send(Ok(email.clone()));
+                            let res = Login::login(email, password, db_tx, app_tx).await;
+                            log::info!("Sign-in after password reset: {res:?}");
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(e.to_string()));
+                        }
+                    }
+                });
+            }
+        }
+    }
+    if form.busy {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(250));
+    }
+    if let Some(text) = &form.error {
+        ui.add_space(m.gap.y);
+        controls::status_label(ui, svg::WARNING_CIRCLE, text, t.error);
+    }
+    if back {
+        login.reset = None;
+    }
+    false
 }
 
 /// Paints the username field box and its icon; returns the rect the text fills.
@@ -434,6 +646,7 @@ mod login_form_tests {
         let mut login = Login {
             username: username.into(),
             password: String::new(),
+            reset: None,
         };
         pass(&ctx, &mut login, vec![]);
         ctx.memory_mut(|m| m.request_focus(Id::new("login_username")));
@@ -449,6 +662,70 @@ mod login_form_tests {
         let (ctx, login) = focus_then_tab("bob@x");
         assert_eq!(login.username, "bob@xidax.com");
         assert!(ctx.memory(|m| m.has_focus(Id::new("login_username"))));
+    }
+
+    #[test]
+    fn a_reset_form_checks_each_field_in_order() {
+        let mut form = ResetForm::new("bob".into());
+        assert!(form.problem("pclaptops.com").unwrap().contains("digits"));
+        form.code = "123 456".into();
+        assert!(
+            form.problem("pclaptops.com")
+                .unwrap()
+                .contains("characters")
+        );
+        form.password = "long-enough".into();
+        form.confirm = "different!!".into();
+        assert!(form.problem("pclaptops.com").unwrap().contains("match"));
+        form.confirm = "long-enough".into();
+        assert_eq!(form.problem("pclaptops.com"), None);
+        form.username = " ".into();
+        assert!(form.problem("pclaptops.com").unwrap().contains("username"));
+    }
+
+    /// Writes the reset form; run with `-- --ignored render_reset_form`.
+    #[test]
+    #[ignore = "writes PNG previews; set MTECH_RENDER_DIR"]
+    fn render_reset_form() {
+        use crate::ui_tools::{
+            headless_render::Headless, metrics::Density, theme_config::PresetStyles,
+        };
+        let dir = std::env::var_os("MTECH_RENDER_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("mtech-renders"));
+        std::fs::create_dir_all(&dir).expect("render directory");
+        let (db_tx, _db_rx) = crossbeam::channel::unbounded();
+        let (app_tx, _app_rx) = crossbeam::channel::unbounded();
+        let mut login = Login {
+            username: String::new(),
+            password: String::new(),
+            reset: Some(ResetForm::new("sam.tech".into())),
+        };
+        if let Some(form) = login.reset.as_mut() {
+            form.code = "482 913".into();
+            form.error =
+                Some("That code is wrong, expired or already used. Ask for a new one.".into());
+        }
+        let mut h = Headless::new(vec2(420.0, 420.0), 1.0);
+        h.theme(PresetStyles::MtechStudio, Density::Regular);
+        let (_, image) = h.render(4, |ui| {
+            ui.vertical_centered(|ui| reset_form(ui, &mut login, &db_tx, &app_tx))
+        });
+        image
+            .save(dir.join("login_reset_form.png"))
+            .expect("write png");
+    }
+
+    #[test]
+    fn a_reset_form_never_prints_secrets() {
+        let mut form = ResetForm::new("bob".into());
+        form.code = "123456".into();
+        form.password = "hunter22-secret".into();
+        let printed = format!("{form:?}");
+        assert!(
+            !printed.contains("123456") && !printed.contains("hunter22"),
+            "{printed}"
+        );
     }
 
     #[test]

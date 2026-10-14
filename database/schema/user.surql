@@ -1,5 +1,5 @@
 -- ============================================================
--- TABLE: user                     last changed: ai_assistant_tools
+-- TABLE: user                     last changed: user_admin
 -- Managed by surrealkit. Edit here, then `rollout plan`.
 -- ============================================================
 -- SCHEMAFULL. Rust source of truth: `database::schema::user::User`.
@@ -35,6 +35,11 @@ DEFINE FIELD id_store          ON user TYPE none | string DEFAULT ''
 DEFINE FIELD name              ON user TYPE string
     PERMISSIONS FOR select, create FULL, FOR update WHERE id != $auth.id AND $auth.authorization = 'Root' AND $auth.active = true;
 DEFINE FIELD store             ON user TYPE string
+    PERMISSIONS FOR select, create FULL, FOR update WHERE id != $auth.id AND $auth.authorization = 'Root' AND $auth.active = true;
+-- Tab slugs hidden from this user in MasterTech and the web console.
+DEFINE FIELD hidden_tabs       ON user TYPE none | array<string>
+    PERMISSIONS FOR select, create FULL, FOR update WHERE id != $auth.id AND $auth.authorization = 'Root' AND $auth.active = true;
+DEFINE FIELD hidden_tabs.*     ON user TYPE string
     PERMISSIONS FOR select, create FULL, FOR update WHERE id != $auth.id AND $auth.authorization = 'Root' AND $auth.active = true;
 
 -- Secrets: MinIO keys readable by the owner only, the password hash by no record user.
@@ -94,10 +99,11 @@ DEFINE FIELD ai_profile.about_me       ON user TYPE none | string ASSERT $value 
 DEFINE FIELD ai_profile.morning_brief  ON user TYPE none | bool
     PERMISSIONS FOR select WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true), FOR create FULL, FOR update WHERE id = $auth.id;
 
+-- Owner- or admin-managed.
 DEFINE FIELD user_statuses    ON user TYPE none | array<string> DEFAULT []
-    PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id;
+    PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true);
 DEFINE FIELD user_statuses.*  ON user TYPE string
-    PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id;
+    PERMISSIONS FOR select, create FULL, FOR update WHERE id = $auth.id OR ($auth.authorization = 'Root' AND $auth.active = true);
 
 -- Indexes come after the fields they cover: a file is applied in order, and an
 -- index on a not-yet-defined field aborts the sync.

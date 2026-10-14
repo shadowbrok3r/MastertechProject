@@ -93,6 +93,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
                                             Login {
                                                 username: username.to_string(),
                                                 password: password.to_string(),
+                                                reset: None,
                                             }, 
                                             tx, 
                                             data_tx

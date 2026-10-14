@@ -47,6 +47,7 @@ impl <'a> ActionHandler for LoginTab <'a> {
                                 Login {
                                     username: username.to_string(),
                                     password: password.to_string(),
+                                    reset: None,
                                 }, 
                                 tx, 
                                 data_tx

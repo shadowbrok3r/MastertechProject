@@ -42,10 +42,22 @@ pub mod zeroclaw;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
 pub mod session_board;
+pub mod user_admin;
 
 pub use dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession};
-pub use tab_id::{TabContext, TabId, WAREHOUSE_DEFAULT_OPEN};
+pub use tab_id::{TabAccess, TabContext, TabId, WAREHOUSE_DEFAULT_OPEN};
 pub use work_mode::WorkMode;
+
+/// Placeholder drawn in place of a tab the signed-in user may not open.
+pub fn hidden_tab_state(ui: &mut Ui) {
+    controls::empty_state(
+        ui,
+        svg::EYE_SLASH,
+        "This tab is turned off for your account",
+        "Ask a Root user to turn it back on from User Admin.",
+        &[],
+    );
+}
 
 /// A vertical rule sized for a toolbar row.
 pub(crate) fn bar_rule(ui: &mut Ui) -> Response {
@@ -113,6 +125,10 @@ impl egui_dock::TabViewer for SharedContext {
     }
 
     fn ui(&mut self, ui: &mut egui_dock::egui::Ui, tab: &mut Self::Tab) {
+        if !TabAccess::for_user(self.current_user.as_ref()).allows(*tab) {
+            hidden_tab_state(ui);
+            return;
+        }
         let is_admin = self
             .current_user
             .as_ref()
@@ -149,6 +165,7 @@ impl egui_dock::TabViewer for SharedContext {
             TabId::ServerConsole => self.server_console.ui(ui),
             TabId::AgentAudit => self.agent_audit.ui(ui),
             TabId::AiAnalytics => self.ai_analytics.ui(ui),
+            TabId::UserAdmin => self.user_admin.ui(ui, self.current_user.as_ref()),
             TabId::Ai => {
                 // No client is focused here, so chat lands in the agent's records-only session.
                 self.enhanced_ai_playground.self_diagnosis = true;
@@ -242,9 +259,9 @@ impl egui_dock::TabViewer for SharedContext {
 
     fn add_popup(&mut self, ui: &mut Ui, path: egui_dock::NodePath) {
         let tab_ctx = self.tab_context();
-        let is_root = crate::tabs::admin_console::current_user_is_root();
+        let access = TabAccess::for_user(self.current_user.as_ref());
         controls::menu_body(ui, |ui| {
-            for tab in TabId::visible_for_user(tab_ctx, is_root) {
+            for tab in TabId::visible_for_user(tab_ctx, &access) {
                 let open = self.dock.is_open(tab);
                 if controls::menu_check_item(ui, tab.icon(), tab.title(tab_ctx), open).clicked() {
                     if !open {

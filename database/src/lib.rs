@@ -484,29 +484,35 @@ impl DatabaseSelection {
     }
 }
 
+/// Connects the shared client to this build's database and selects the namespace and database.
+pub async fn connect_and_use() {
+    let dbh = db();
+    if cfg!(debug_assertions) {
+        match dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await {
+            Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
+            Err(e) => log::error!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
+        }
+    } else {
+        match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+            Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
+            Err(e) => log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
+        }
+    }
+
+    match dbh.use_ns(NS).use_db(DB).await {
+        Ok(_) => log::debug!("Using NS {NS:?} / DB {DB:?}"),
+        Err(e) => log::error!("Failed using NS {NS:?} / DB {DB:?}: {e:?}"),
+    }
+}
+
 impl Database {
     pub async fn new(
         email: String,
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
+        connect_and_use().await;
         let dbh = db();
-        if cfg!(debug_assertions) {
-            match dbh.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await {
-                Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
-                Err(e) => log::error!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
-            }
-        } else {
-            match dbh.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
-                Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
-                Err(e) => log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
-            }
-        }
-
-        match dbh.use_ns(NS).use_db(DB).await {
-            Ok(_) => log::debug!("Using NS {NS:?} / DB {DB:?}"),
-            Err(e) => log::error!("Failed using NS {NS:?} / DB {DB:?}: {e:?}"),
-        }
 
         match jwt {
             Some(jwt) => {

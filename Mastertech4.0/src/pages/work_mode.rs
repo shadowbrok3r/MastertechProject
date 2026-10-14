@@ -1,6 +1,6 @@
 use displays::app_state::default_tree;
 use displays::tabs::admin_console::RightPanel;
-use displays::tabs::{DockSession, TabContext, TabId, WorkMode};
+use displays::tabs::{DockSession, TabAccess, TabContext, TabId, WorkMode};
 use displays::ui_tools::{
     controls::{self, Metrics, Tokens},
     fonts::{self, RichTextExt},
@@ -83,7 +83,7 @@ impl MasterTechApp {
     }
 
     pub fn work_mode_picker(&mut self, ui: &mut Ui) {
-        let is_root = displays::tabs::admin_console::current_user_is_root();
+        let access = TabAccess::for_user(self.context.shared_ctx.current_user.as_ref());
         let mut chosen = None;
 
         let m = Metrics::get(ui.ctx());
@@ -120,7 +120,7 @@ impl MasterTechApp {
                     for mode in WorkMode::ALL {
                         ui.add_space(m.gap.y / 2.0);
                         let row = selectable_card(ui, mode.slug(), false, |ui| {
-                            mode_row(ui, *mode, is_root);
+                            mode_row(ui, *mode, &access);
                         });
                         if row.response.clicked() {
                             chosen = Some(*mode);
@@ -163,7 +163,7 @@ impl MasterTechApp {
 }
 
 /// One picker row. Every widget here stays non-interactive so the card keeps the click.
-fn mode_row(ui: &mut Ui, mode: WorkMode, is_root: bool) {
+fn mode_row(ui: &mut Ui, mode: WorkMode, access: &TabAccess) {
     let m = Metrics::get(ui.ctx());
     let accent = theme::primary(ui);
     ui.horizontal(|ui| {
@@ -187,7 +187,7 @@ fn mode_row(ui: &mut Ui, mode: WorkMode, is_root: bool) {
             ui.add_space(m.gap.y / 2.0);
             ui.horizontal_wrapped(|ui| match mode.curated_tabs() {
                 Some(_) => {
-                    for tab in mode.visible_tabs(TabContext::MastertechNative, is_root) {
+                    for tab in mode.visible_tabs(TabContext::MastertechNative, access) {
                         controls::badge(
                             ui,
                             tab.title(TabContext::MastertechNative),
