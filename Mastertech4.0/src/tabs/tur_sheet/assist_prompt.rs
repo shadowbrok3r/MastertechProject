@@ -287,12 +287,12 @@ impl MastertechContext {
         self.create_and_link_only();
 
         let request = random_record_id(ASSIST_REQUEST_TABLE);
-        let label = format!(
-            "#{} {}",
-            pending.service_number, self.computer_data.hostname
+        let label = database::schema::agent_thread::machine_title(
+            Some(&pending.service_number),
+            Some(&self.computer_data.hostname),
+            Some(&pending.customer_name),
         )
-        .trim()
-        .to_string();
+        .unwrap_or_default();
         let session = self
             .shared_ctx
             .enhanced_ai_playground

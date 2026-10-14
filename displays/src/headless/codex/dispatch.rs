@@ -139,7 +139,8 @@ pub async fn dispatch(req: AssistRequest) {
         release_idle_runners(&req.connection_string).await;
     }
 
-    let title = database::schema::agent_thread::session_title(&req);
+    let customer = request_customer(&req).await;
+    let title = database::schema::agent_thread::session_title(&req, customer.as_deref());
     let new = NewAgentThread {
         assist_request: Some(req.id.clone()),
         connection_string: req.connection_string.clone(),
@@ -182,6 +183,16 @@ pub async fn dispatch(req: AssistRequest) {
     }
     log::info!("codex: starting thread {} for {}", thread_id.key_string(), req.connection_string);
     runner::spawn(cfg, thread, Some(opening));
+}
+
+/// The customer on the service order of a machine request, when the order names one.
+async fn request_customer(req: &AssistRequest) -> Option<String> {
+    let sn = req.service_number.as_deref().filter(|_| !super::is_general(&req.connection_string))?;
+    database::schema::agent_thread::customer_name(sn)
+        .await
+        .inspect_err(|e| log::warn!("codex: customer lookup for {sn} failed: {e}"))
+        .ok()
+        .flatten()
 }
 
 /// Links the request to the machine's working session, or fails it when its requester may not steer that session.

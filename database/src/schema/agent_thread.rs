@@ -48,9 +48,28 @@ pub async fn customer_names(sns: &[String]) -> anyhow::Result<Vec<(String, Strin
         .collect())
 }
 
+/// The customer named on service order `service_number`, when it links one.
+pub async fn customer_name(service_number: &str) -> anyhow::Result<Option<String>> {
+    let names = customer_names(&[service_number.to_string()]).await?;
+    Ok(names.into_iter().next().map(|(_, name)| name))
+}
+
 /// A session title in the task-name form, `Customer Name - 2155035`.
 pub fn customer_label(name: &str, service_number: &str) -> String {
     format!("{} - {}", name.trim(), service_number.trim())
+}
+
+/// A machine session's title: `Customer Name - SN` when `customer` is known, else `#SN HOST`, `#SN` or the hostname.
+pub fn machine_title(service_number: Option<&str>, hostname: Option<&str>, customer: Option<&str>) -> Option<String> {
+    fn present(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
+    match (present(customer), present(service_number), present(hostname)) {
+        (Some(name), Some(sn), _) => Some(customer_label(name, sn)),
+        (_, Some(sn), Some(host)) => Some(format!("#{sn} {host}")),
+        (_, Some(sn), None) => Some(format!("#{sn}")),
+        (_, None, host) => host.map(str::to_string),
+    }
 }
 
 /// The newest open thread for `$cs` that is working (`$working`) or was opened or asked something in the last 30 minutes.
@@ -116,15 +135,10 @@ pub fn clean_title(raw: &str) -> Option<String> {
     (!line.is_empty()).then(|| line.chars().take(TITLE_MAX_CHARS).collect())
 }
 
-/// Title of the session `req` opens: its first message for a voice or records session, else its machine.
-pub fn session_title(req: &AssistRequest) -> Option<String> {
+/// Title of the session `req` opens: its first message for a voice or records session, else its [`machine_title`].
+pub fn session_title(req: &AssistRequest, customer: Option<&str>) -> Option<String> {
     if !is_general(&req.connection_string) {
-        return match (&req.service_number, &req.hostname) {
-            (Some(sn), Some(host)) => Some(format!("#{sn} {host}")),
-            (Some(sn), None) => Some(format!("#{sn}")),
-            (None, Some(host)) => Some(host.clone()),
-            (None, None) => None,
-        };
+        return machine_title(req.service_number.as_deref(), req.hostname.as_deref(), customer);
     }
     let asked = req
         .tech_note
@@ -430,9 +444,21 @@ impl AgentThread {
         }
     }
 
+    /// True when the title is unset or the [`machine_title`] the session got before its customer was known.
+    pub fn has_default_title(&self) -> bool {
+        let Some(title) = self.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
+            return true;
+        };
+        let host = self.hostname.as_deref();
+        [machine_title(self.service_number.as_deref(), host, None), machine_title(None, host, None)]
+            .into_iter()
+            .flatten()
+            .any(|default| default == title)
+    }
+
     /// The rename when there is one, else `Customer Name - SN` once `customer` is known, else [`Self::label`].
     pub fn list_label(&self, customer: Option<&str>) -> String {
-        if self.title.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+        if !self.has_default_title() {
             return self.label();
         }
         let customer = customer.map(str::trim).filter(|c| !c.is_empty());
@@ -629,7 +655,7 @@ impl AgentThread {
         Ok(())
     }
 
-    /// Fills the service order, customer and service number a machine's open thread lacks; returns the threads written.
+    /// Fills an open machine thread's missing order links and default title; returns the threads written.
     pub async fn adopt_service_links(
         connection_string: &str,
         service_number: &str,
@@ -644,7 +670,34 @@ impl AgentThread {
             .bind(("cust", customer.cloned()))
             .await?;
         let ids: Vec<RecordId> = res.take(0)?;
+        if customer.is_some()
+            && !ids.is_empty()
+            && let Err(e) = Self::title_for_customer(&ids, service_number).await
+        {
+            log::warn!("agent thread titles for {connection_string} not written: {e}");
+        }
         Ok(ids.len())
+    }
+
+    /// Gives each of `ids` still under its default title the `Customer Name - SN` title of order `service_number`.
+    async fn title_for_customer(ids: &[RecordId], service_number: &str) -> anyhow::Result<()> {
+        let Some(name) = customer_name(service_number).await? else {
+            return Ok(());
+        };
+        let title = customer_label(&name, service_number);
+        for id in ids {
+            let Some(thread) = Self::get(id).await? else { continue };
+            if !thread.has_default_title() {
+                continue;
+            }
+            db().query("UPDATE $id SET title = $title WHERE title = $was")
+                .bind(("id", id.clone()))
+                .bind(("title", title.clone()))
+                .bind(("was", thread.title.clone()))
+                .await?
+                .check()?;
+        }
+        Ok(())
     }
 
     /// Threads the broker should be attached to, oldest first.
@@ -1023,7 +1076,7 @@ mod tests {
     fn a_voice_session_is_titled_by_its_question() {
         let req = request("general:voice:guest:1790000000000", None, Some(VOICE_NOTE));
         assert_eq!(
-            session_title(&req).as_deref(),
+            session_title(&req, None).as_deref(),
             Some("Voice \u{00b7} What is the difference between an SSD and hard drive?")
         );
         assert!(is_voice(&req.connection_string) && is_general(&req.connection_string));
@@ -1035,7 +1088,7 @@ mod tests {
     fn a_records_session_is_titled_by_its_first_message_on_one_line() {
         let tech = "jacob.hardy@pclaptops.com";
         let cs = general_connection(tech);
-        let title = |note: &str| session_title(&request(&cs, Some(tech), Some(note)));
+        let title = |note: &str| session_title(&request(&cs, Some(tech), Some(note)), None);
         assert_eq!(
             title("  What parts were\n ordered   for SO 2155485?  ").as_deref(),
             Some("What parts were ordered for SO 2155485?")
@@ -1066,7 +1119,7 @@ mod tests {
             Some("```\ncode only\n```"),
         ] {
             assert_eq!(
-                session_title(&request(&cs, Some("t@x.com"), note)).as_deref(),
+                session_title(&request(&cs, Some("t@x.com"), note), None).as_deref(),
                 Some("General \u{00b7} t@x.com"),
                 "{note:?}"
             );
@@ -1077,13 +1130,13 @@ mod tests {
             Some("Voice mode: reply briefly.\n\n  "),
         );
         assert_eq!(
-            session_title(&guest).as_deref(),
+            session_title(&guest, None).as_deref(),
             Some("General \u{00b7} technician")
         );
         let mut auto = request(&cs, Some("t@x.com"), Some("Summarize the waiting queue"));
         auto.trigger_source = "auto".into();
         assert_eq!(
-            session_title(&auto).as_deref(),
+            session_title(&auto, None).as_deref(),
             Some("General \u{00b7} t@x.com")
         );
     }
@@ -1095,7 +1148,7 @@ mod tests {
             "why is the fan so loud ".repeat(10)
         );
         let title =
-            session_title(&request("general:voice:guest:1", None, Some(&long))).expect("a title");
+            session_title(&request("general:voice:guest:1", None, Some(&long)), None).expect("a title");
         assert!(title.chars().count() <= TITLE_MAX_CHARS, "{title}");
         assert!(
             title.starts_with("Voice \u{00b7} why is the fan so loud"),
@@ -1106,11 +1159,11 @@ mod tests {
             "{title}"
         );
         let wide = "\u{00e9}t\u{00e9} ".repeat(60);
-        let title = session_title(&request("general:t@x.com", None, Some(&wide))).expect("a title");
+        let title = session_title(&request("general:t@x.com", None, Some(&wide)), None).expect("a title");
         assert_eq!(title.chars().count(), TITLE_MAX_CHARS);
         let exact = "x".repeat(TITLE_MAX_CHARS);
         assert_eq!(
-            session_title(&request("general:t@x.com", None, Some(&exact))),
+            session_title(&request("general:t@x.com", None, Some(&exact)), None),
             Some(exact)
         );
     }
@@ -1125,16 +1178,47 @@ mod tests {
         req.service_number = Some("2155485".into());
         req.hostname = Some("JeffsComputer".into());
         assert_eq!(
-            session_title(&req).as_deref(),
+            session_title(&req, None).as_deref(),
             Some("#2155485 JeffsComputer")
         );
         req.hostname = None;
-        assert_eq!(session_title(&req).as_deref(), Some("#2155485"));
+        assert_eq!(session_title(&req, None).as_deref(), Some("#2155485"));
         req.service_number = None;
         req.hostname = Some("JeffsComputer".into());
-        assert_eq!(session_title(&req).as_deref(), Some("JeffsComputer"));
+        assert_eq!(session_title(&req, None).as_deref(), Some("JeffsComputer"));
         req.hostname = None;
-        assert_eq!(session_title(&req), None);
+        assert_eq!(session_title(&req, None), None);
+    }
+
+    #[test]
+    fn machine_sessions_with_a_known_customer_are_titled_like_a_task() {
+        let mut req = request("DESKTOP-AB12CD3:1a2b3c4d5", Some("t@x.com"), None);
+        req.service_number = Some("2000004".into());
+        req.hostname = Some("DESKTOP-AB12CD3".into());
+        assert_eq!(session_title(&req, Some(" Alex Sample ")).as_deref(), Some("Alex Sample - 2000004"));
+        assert_eq!(session_title(&req, Some(" ")).as_deref(), Some("#2000004 DESKTOP-AB12CD3"));
+        req.service_number = None;
+        assert_eq!(session_title(&req, Some("Alex Sample")).as_deref(), Some("DESKTOP-AB12CD3"));
+        let general = request("general:t@x.com", Some("t@x.com"), Some("Who is waiting?"));
+        assert_eq!(session_title(&general, Some("Alex Sample")).as_deref(), Some("Who is waiting?"));
+    }
+
+    #[test]
+    fn default_machine_titles_are_not_renames() {
+        let mut row = thread(None, None);
+        row.connection_string = "DESKTOP-AB12CD3:1a2b3c4d5".into();
+        row.hostname = Some("DESKTOP-AB12CD3".into());
+        row.service_number = Some("2000004".into());
+        for title in ["#2000004 DESKTOP-AB12CD3", "DESKTOP-AB12CD3", " ", ""] {
+            row.title = Some(title.into());
+            assert!(row.has_default_title(), "{title:?}");
+            assert_eq!(row.list_label(Some("Alex Sample")), "Alex Sample - 2000004", "{title:?}");
+        }
+        for title in ["Alex Sample - 2000004", "Sample data move"] {
+            row.title = Some(title.into());
+            assert!(!row.has_default_title(), "{title:?}");
+            assert_eq!(row.list_label(Some("Someone Else")), title);
+        }
     }
 
     #[test]
