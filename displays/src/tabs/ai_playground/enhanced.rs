@@ -808,7 +808,7 @@ impl EnhancedAiPlayground {
             .find(|t| {
                 t.id.key_string() == id && t.title.as_deref().is_some_and(|t| !t.trim().is_empty())
             })
-            .map(AgentThread::label);
+            .map(|t| t.list_label(self.session_customer(t)));
         session
             .or_else(|| self.chat_title.get(id).cloned())
             .unwrap_or_else(|| {
