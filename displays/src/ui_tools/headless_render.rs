@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use eframe::egui::{
     CentralPanel, Color32, ColorImage, Context, Event, ImageData, Pos2, RawInput, Rect, TextureId,
     TexturesDelta, Ui, Vec2,
-    epaint::{ClippedPrimitive, Primitive, Vertex},
+    epaint::{ClippedPrimitive, ClippedShape, Primitive, Vertex},
 };
 
 use super::{
@@ -38,6 +38,11 @@ impl Headless {
         }
     }
 
+    /// Sets the screen size of later frames.
+    pub fn resize(&mut self, size: Vec2) {
+        self.size = size;
+    }
+
     /// Installs `preset` at `density` the way the theme editor does.
     pub fn theme(&self, preset: PresetStyles, density: Density) {
         metrics::set_density(&self.ctx, density);
@@ -67,15 +72,25 @@ impl Headless {
     pub fn frame_root<R>(
         &mut self,
         events: Vec<Event>,
-        mut f: impl FnMut(&mut Ui) -> R,
+        f: impl FnMut(&mut Ui) -> R,
     ) -> (R, Vec<ClippedPrimitive>) {
+        let (out, shapes) = self.frame_shapes(events, f);
+        (out, self.ctx.tessellate(shapes, self.ppp))
+    }
+
+    /// One pass of `f` on the root Ui; returns its result and the shapes drawn, untessellated.
+    pub fn frame_shapes<R>(
+        &mut self,
+        events: Vec<Event>,
+        mut f: impl FnMut(&mut Ui) -> R,
+    ) -> (R, Vec<ClippedShape>) {
         let mut out = None;
         let mut full = self.ctx.run_ui(self.input(events), |ui| out = Some(f(ui)));
         self.fold(&mut full.textures_delta);
-        let prims = self
-            .ctx
-            .tessellate(std::mem::take(&mut full.shapes), self.ppp);
-        (out.expect("the ui closure ran"), prims)
+        (
+            out.expect("the ui closure ran"),
+            std::mem::take(&mut full.shapes),
+        )
     }
 
     /// Runs `passes` frames of `f` and rasterises the last; returns its result and the image.

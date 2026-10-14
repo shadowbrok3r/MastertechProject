@@ -17,8 +17,8 @@
 
 use eframe::egui::{
     Align, AsIdSalt, Color32, CornerRadius, Frame, InnerResponse, Layout, Margin, Rangef, Rect,
-    Response, RichText, Sense, Shape, Stroke, Ui, UiBuilder, epaint::MarginF32, layers::ShapeIdx,
-    pos2, vec2,
+    Response, RichText, Sense, Shape, Stroke, Ui, UiBuilder, UiKind, UiStackInfo,
+    epaint::MarginF32, layers::ShapeIdx, pos2, vec2,
 };
 
 use super::glass_backdrop;
@@ -172,7 +172,11 @@ impl FixedWidthFrame {
         content.max.x = content.max.x.max(content.min.x);
         content.max.y = content.max.y.max(content.min.y);
 
-        let mut content_ui = ui.new_child(UiBuilder::new().max_rect(content));
+        let mut content_ui = ui.new_child(
+            UiBuilder::new()
+                .ui_stack_info(UiStackInfo::new(UiKind::Frame).with_frame(frame))
+                .max_rect(content),
+        );
         content_ui.set_width(content.width());
         let visible = outer - frame.outer_margin;
         content_ui.shrink_clip_rect(Rect::from_x_y_ranges(visible.x_range(), Rangef::EVERYTHING));
