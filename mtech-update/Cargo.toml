@@ -1,0 +1,12 @@
+[package]
+name = "mtech-update"
+version = "0.1.0"
+edition = "2024"
+description = "MasterTech self-update core: release asset selection, executable header checks and the Unix probe/swap/exec."
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile = "3.19"

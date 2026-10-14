@@ -2,6 +2,8 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use database::{
     db,
@@ -666,11 +668,9 @@ impl MasterTechApp {
                     pending.accepted = true;
                 } else {
                     self.context.update_requested = true;
-                    let client = self.context.client.clone();
-                    let tx = self.context.bytes_tx.clone();
-                    spawn(async move {
-                        let _ = run(client, tx).await;
-                    });
+                    if !self.context.update_busy() {
+                        self.spawn_update_check();
+                    }
                 }
             }
             AccountAction::TerminalMode => {
@@ -680,6 +680,29 @@ impl MasterTechApp {
             }
             AccountAction::Logout => self.logout(),
         }
+    }
+
+    /// Downloads the newest release for this OS, or toasts that MasterTech is up to date.
+    fn spawn_update_check(&self) {
+        let client = self.context.client.clone();
+        let tx = self.context.bytes_tx.clone();
+        let active = Arc::clone(&self.context.update_download_active);
+        active.store(true, Ordering::Release);
+        spawn(async move {
+            match run(client, tx).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    active.store(false, Ordering::Release);
+                    let _ = displays::get_toast_sender().try_send(displays::ToastMessage::Info(
+                        "MasterTech is up to date.".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    active.store(false, Ordering::Release);
+                    error!("update check failed: {e:?}");
+                }
+            }
+        });
     }
 
     fn logout(&mut self) {

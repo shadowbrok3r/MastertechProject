@@ -254,7 +254,9 @@ impl <'a>TerminalApp<'a> {
             crate::tcp_listener::spawn_direct_tcp_listener(tcp_client_id).await;
         }));
         loop {
-            if self.handle_events(None, None, false) { 
+            if self.handle_events(None, None, false)
+                || crate::utilities::safe_swap::restart_requested()
+            {
                 // Signal process-wide shutdown so the TCP accept loop also
                 // exits cleanly (it waits on displays::wait_for_shutdown).
                 displays::signal_shutdown();

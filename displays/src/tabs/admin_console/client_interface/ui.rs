@@ -429,25 +429,28 @@ impl WebSocketClient {
                                     }
                                     ui.close();
                                 }
-                                let deploy = controls::menu_item(
-                                    ui,
-                                    svg::ROCKET_LAUNCH,
-                                    "Deploy MasterTech Update…",
-                                );
+                                let deploy = controls::MenuItem::new("Deploy MasterTech Update…")
+                                    .icon(svg::ROCKET_LAUNCH)
+                                    .enabled(self.self_update_rx.is_none())
+                                    .show(ui)
+                                    .on_disabled_hover_text("A MasterTech update is already being sent");
                                 if deploy
                                     .on_hover_text(
-                                        "Push a new MasterTech.exe to this remote client.\nIt will replace itself and relaunch automatically.",
+                                        "Push a new MasterTech binary (MasterTech.exe or Mastertech-linux) to this remote client.\nIt will replace itself and relaunch automatically.",
                                     )
                                     .clicked()
                                 {
                                     if let Some(path) = rfd::FileDialog::new()
-                                        .add_filter("Executable", &["exe"])
-                                        .set_title("Select new MasterTech.exe to deploy")
+                                        .set_title("Select the MasterTech binary to deploy (MasterTech.exe or Mastertech-linux)")
                                         .pick_file()
                                     {
                                         let path_str = path.display().to_string();
                                         let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
                                         self.self_update_rx = Some(rx);
+                                        self.self_update_file = path
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().into_owned())
+                                            .unwrap_or_default();
                                         std::thread::spawn(move || {
                                             Self::chunk_and_send_self_update(&path_str, tx);
                                         });

@@ -459,6 +459,7 @@ impl crate::app_state::SharedContext {
             crate::ui_tools::theme_config::bootstrap_startup_theme(ctx);
         }
         self.drain_reachability_events();
+        self.release_browser.poll();
 
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
 
