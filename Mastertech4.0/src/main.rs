@@ -95,9 +95,8 @@ impl eframe::App for app_state::MasterTechApp {
             });
         }
 
-        // Read-and-clear the previous frame's frost result; skipping frames lets a stale
-        // Composited mask a later Failed.
-        let frost = displays::ui_tools::glass_backdrop::poll_outcome();
+        // Reads and clears the previous frame's frost result on pass 0; later passes return None.
+        let frost = displays::ui_tools::glass_backdrop::poll_outcome(ctx);
         log_frame_health(ctx, frost);
         log_window_geometry(ctx, self.context.chrome.frameless);
 

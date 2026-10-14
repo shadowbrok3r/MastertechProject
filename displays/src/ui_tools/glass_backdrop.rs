@@ -45,6 +45,7 @@ const FAILED_FRAMES_BEFORE_DISABLE: u32 = 3;
 
 static DISABLED: AtomicBool = AtomicBool::new(false);
 static CONSECUTIVE_FAILURES: AtomicU32 = AtomicU32::new(0);
+static FIRST_COMPOSITE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 fn params_id() -> Id {
     Id::new(PARAMS_KEY)
@@ -154,10 +155,28 @@ pub fn frost(ui: &Ui, rect: Rect) -> bool {
 /// [`frost`] with an explicit material, for a surface that overrides the theme (a heavier scrim
 /// behind a modal, a tint carrying a status color).
 pub fn frost_with(ui: &Ui, rect: Rect, params: GlassParams) -> bool {
-    if is_disabled() || !params.is_visible() || !rect.is_positive() {
+    frost_gated(ui, rect, params, backend::frost)
+}
+
+/// Calls `enqueue` when frosting is on, `params` is visible and `rect` paints.
+fn frost_gated(
+    ui: &Ui,
+    rect: Rect,
+    params: GlassParams,
+    enqueue: impl FnOnce(&Ui, Rect, GlassParams) -> bool,
+) -> bool {
+    if is_disabled() || !params.is_visible() || !rect.is_positive() || !paints(ui, rect) {
         return false;
     }
-    backend::frost(ui, rect, params)
+    enqueue(ui, rect, params)
+}
+
+/// Whether a shape added to `ui` over `rect` reaches the painted output.
+fn paints(ui: &Ui, rect: Rect) -> bool {
+    ui.is_visible()
+        && ui.opacity() > 0.0
+        && ui.clip_rect().intersect(rect).is_positive()
+        && ui.ctx().input(|i| i.viewport().visible().unwrap_or(true))
 }
 
 /// Frost the backdrop behind every floating surface open this frame. Call once per frame from the
@@ -180,8 +199,16 @@ pub fn frost_open_windows(ctx: &Context) -> usize {
     if !params.is_visible() || !is_available() {
         return 0;
     }
+    floating_surfaces(ctx)
+        .into_iter()
+        .filter(|(id, rect)| frost_behind_floating(ctx, *id, *rect, params))
+        .count()
+}
+
+/// Layer id and last-frame rect of every visible floating surface with a positive rect.
+fn floating_surfaces(ctx: &Context) -> Vec<(Id, Rect)> {
     // Collected before frosting: each frost opens an Area, which would re-enter `ctx.memory`.
-    let surfaces: Vec<(Id, Rect)> = ctx.memory(|m| {
+    ctx.memory(|m| {
         m.areas()
             .visible_layer_ids()
             .into_iter()
@@ -192,13 +219,9 @@ pub fn frost_open_windows(ctx: &Context) -> usize {
                 )
             })
             .filter_map(|layer| m.area_rect(layer.id).map(|rect| (layer.id, rect)))
+            .filter(|(_, rect)| rect.is_positive())
             .collect()
-    });
-    surfaces
-        .into_iter()
-        .filter(|(_, rect)| rect.is_positive())
-        .filter(|(id, rect)| frost_behind_floating(ctx, *id, *rect, params))
-        .count()
+    })
 }
 
 /// Frost `rect` behind one floating surface.
@@ -216,6 +239,17 @@ pub fn frost_open_windows(ctx: &Context) -> usize {
 /// Fixing it needs a frost interleaved between two sibling layers, and egui keeps area-order
 /// insertion `pub(crate)`.
 fn frost_behind_floating(ctx: &Context, surface_id: Id, rect: Rect, params: GlassParams) -> bool {
+    frost_behind_floating_with(ctx, surface_id, rect, params, backend::frost)
+}
+
+/// [`frost_behind_floating`] through [`frost_gated`] with `enqueue`.
+fn frost_behind_floating_with(
+    ctx: &Context,
+    surface_id: Id,
+    rect: Rect,
+    params: GlassParams,
+    enqueue: impl FnOnce(&Ui, Rect, GlassParams) -> bool,
+) -> bool {
     let mut frosted = false;
     Area::new(surface_id.with("mtech.glass.backdrop"))
         .order(Order::Background)
@@ -225,7 +259,7 @@ fn frost_behind_floating(ctx: &Context, surface_id: Id, rect: Rect, params: Glas
         .constrain(false)
         .show(ctx, |ui| {
             ui.set_clip_rect(rect);
-            frosted = frost_with(ui, rect, params);
+            frosted = frost_gated(ui, rect, params, enqueue);
         });
     frosted
 }
@@ -333,12 +367,13 @@ pub fn preview(ui: &mut Ui, params: GlassParams) -> Response {
     response
 }
 
-/// Read and clear the strongest result any frost reached since the last call, logging a wiring
-/// warning once if frosts were enqueued but no callback ever ran. Call once per frame.
-///
-/// Repeated failures trip [`disable`]: a cosmetic effect that cannot run must cost the blur, not
-/// the frame it is enqueued in front of.
-pub fn poll_outcome() -> Option<FrostReport> {
+/// Reads and clears the last painted frame's strongest frost result; call at the start of every pass.
+pub fn poll_outcome(ctx: &Context) -> Option<FrostReport> {
+    // Drops the enqueues of the discarded pass before this one.
+    if ctx.current_pass_index() > 0 {
+        backend::discard_pass_enqueues();
+        return None;
+    }
     let report = backend::poll_outcome()?;
     match report {
         FrostReport::Failed => {
@@ -350,6 +385,11 @@ pub fn poll_outcome() -> Option<FrostReport> {
         }
         FrostReport::Composited | FrostReport::ClippedEmpty => {
             CONSECUTIVE_FAILURES.store(0, Ordering::Relaxed);
+            if report == FrostReport::Composited
+                && !FIRST_COMPOSITE_LOGGED.swap(true, Ordering::Relaxed)
+            {
+                log::info!("backdrop blur composited its first surface");
+            }
         }
         FrostReport::DidNotFire => {}
     }
@@ -378,8 +418,11 @@ mod backend {
         Tint,
     };
     use eframe::egui::{Rect, Ui};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use std::sync::{Arc, RwLock};
+
+    /// Polls with frosts enqueued, since the last fired callback, before the wiring warning.
+    const SILENT_POLLS_BEFORE_WARN: u32 = 3;
 
     /// One GL context per process, and `eframe::App::on_exit` hands back the context without an
     /// egui `Context`, so the renderer lives here rather than in `Context::data`.
@@ -387,6 +430,8 @@ mod backend {
     /// Frosts enqueued since the last poll, so a never-fired callback can be told apart from a
     /// frame that asked for no glass.
     static ENQUEUED: AtomicUsize = AtomicUsize::new(0);
+    /// Polls with frosts enqueued since the last fired callback.
+    static SILENT_POLLS: AtomicU32 = AtomicU32::new(0);
     /// Latches the "enqueued but never fired" warning to once per process.
     static WIRING_WARNED: AtomicBool = AtomicBool::new(false);
 
@@ -473,18 +518,34 @@ mod backend {
         true
     }
 
+    pub(super) fn discard_pass_enqueues() {
+        ENQUEUED.store(0, Ordering::Relaxed);
+    }
+
+    /// Advances the silent-poll run; true on the poll that reaches the warning threshold.
+    fn note_silent_poll(streak: &AtomicU32, enqueued: usize, outcome: FrostOutcome) -> bool {
+        match outcome {
+            FrostOutcome::DidNotFire if enqueued > 0 => {
+                streak.fetch_add(1, Ordering::Relaxed) + 1 == SILENT_POLLS_BEFORE_WARN
+            }
+            FrostOutcome::DidNotFire => false,
+            FrostOutcome::ClippedEmpty | FrostOutcome::Failed | FrostOutcome::Composited => {
+                streak.store(0, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+
     pub(super) fn poll_outcome() -> Option<FrostReport> {
         let renderer = renderer()?;
         let enqueued = ENQUEUED.swap(0, Ordering::Relaxed);
         let outcome = renderer.take_frost_outcome();
-        if enqueued > 0
-            && outcome == FrostOutcome::DidNotFire
+        if note_silent_poll(&SILENT_POLLS, enqueued, outcome)
             && !WIRING_WARNED.swap(true, Ordering::Relaxed)
         {
             log::warn!(
-                "backdrop blur enqueued {enqueued} surface(s) but no paint callback ran; \
-                 panels render unfrosted. Cause is unconfirmed — `cargo tree -i egui_glow` \
-                 resolves a single 0.36, so this is not the duplicate-egui_glow case"
+                "backdrop blur enqueued frosts on {SILENT_POLLS_BEFORE_WARN} frames with no paint \
+                 callback run in between ({enqueued} surface(s) on the last)"
             );
         }
         Some(match outcome {
@@ -493,6 +554,119 @@ mod backend {
             FrostOutcome::Failed => FrostReport::Failed,
             FrostOutcome::Composited => FrostReport::Composited,
         })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::tests::{add_callback, callbacks, frost_stand_in, glass, input};
+        use super::super::{floating_surfaces, frost_behind_floating_with, poll_outcome};
+        use super::*;
+        use eframe::egui::{Align2, Area, Context, Id, Order, pos2, vec2};
+
+        #[test]
+        fn the_wiring_warning_waits_for_three_silent_polls() {
+            let streak = AtomicU32::new(0);
+            let silent = |s: &AtomicU32| note_silent_poll(s, 1, FrostOutcome::DidNotFire);
+            assert!(!silent(&streak));
+            assert!(!silent(&streak));
+            assert!(silent(&streak));
+            assert!(!silent(&streak));
+
+            for fired in [
+                FrostOutcome::ClippedEmpty,
+                FrostOutcome::Failed,
+                FrostOutcome::Composited,
+            ] {
+                streak.store(0, Ordering::Relaxed);
+                assert!(!silent(&streak));
+                assert!(!silent(&streak));
+                assert!(!note_silent_poll(&streak, 1, fired));
+                assert!(!silent(&streak));
+                assert!(!silent(&streak));
+                assert!(silent(&streak), "{fired:?} did not reset the run");
+            }
+
+            streak.store(0, Ordering::Relaxed);
+            assert!(!silent(&streak));
+            assert!(!silent(&streak));
+            assert!(!note_silent_poll(&streak, 0, FrostOutcome::DidNotFire));
+            assert!(silent(&streak));
+        }
+
+        #[test]
+        fn a_later_pass_drops_the_enqueues_of_the_discarded_one() {
+            let ctx = Context::default();
+            let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(50.0, 50.0));
+            let enqueue = |ui: &Ui, rect: Rect, _: GlassParams| {
+                add_callback(ui, rect);
+                ENQUEUED.fetch_add(1, Ordering::Relaxed);
+                true
+            };
+            let frost = |ui: &Ui| {
+                frost_behind_floating_with(ui.ctx(), Id::new("surface"), rect, glass(), enqueue)
+            };
+            let mut warm = ctx.run_ui(input(), |ui| {
+                frost(ui);
+            });
+            warm.textures_delta.clear();
+            ENQUEUED.store(0, Ordering::Relaxed);
+
+            let mut full = ctx.run_ui(input(), |ui| {
+                poll_outcome(ui.ctx());
+                frost(ui);
+                if ui.ctx().current_pass_index() == 0 {
+                    ui.ctx().request_discard("test");
+                }
+            });
+            full.textures_delta.clear();
+            assert_eq!(full.platform_output.num_completed_passes, 2);
+            assert_eq!(callbacks(&full), 1);
+            assert_eq!(ENQUEUED.swap(0, Ordering::Relaxed), 1);
+        }
+
+        #[test]
+        fn the_first_surface_after_login_never_reads_as_silent() {
+            let ctx = Context::default();
+            let streak = AtomicU32::new(0);
+            let (mut enqueued, mut painted) = (0usize, 0usize);
+            let mut first_composite = None;
+            for frame in 0..6 {
+                let outcome = if painted > 0 {
+                    FrostOutcome::Composited
+                } else {
+                    FrostOutcome::DidNotFire
+                };
+                assert!(
+                    !note_silent_poll(&streak, enqueued, outcome),
+                    "frame {frame}"
+                );
+                assert_eq!(streak.load(Ordering::Relaxed), 0, "frame {frame}");
+                if painted > 0 && first_composite.is_none() {
+                    first_composite = Some(frame - 1);
+                }
+
+                let glass_on = frame >= 2;
+                enqueued = 0;
+                let mut full = ctx.run_ui(input(), |ui| {
+                    if !glass_on {
+                        return;
+                    }
+                    for (id, rect) in floating_surfaces(ui.ctx()) {
+                        frost_stand_in(ui.ctx(), id, rect, &mut enqueued);
+                    }
+                    Area::new(Id::new("toast"))
+                        .order(Order::Foreground)
+                        .anchor(Align2::RIGHT_TOP, vec2(-10.0, 10.0))
+                        .show(ui.ctx(), |ui| {
+                            ui.allocate_space(vec2(240.0, 40.0));
+                        });
+                });
+                full.textures_delta.clear();
+                painted = callbacks(&full);
+                assert_eq!(painted, enqueued, "frame {frame}");
+            }
+            assert_eq!(first_composite, Some(4));
+        }
     }
 }
 
@@ -521,6 +695,8 @@ mod backend {
         false
     }
 
+    pub(super) fn discard_pass_enqueues() {}
+
     pub(super) fn poll_outcome() -> Option<FrostReport> {
         None
     }
@@ -529,6 +705,8 @@ mod backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::{FullOutput, PaintCallback, RawInput, Shape, ViewportId, vec2};
+    use std::sync::Arc;
 
     #[test]
     fn off_is_never_visible_and_enabled_needs_a_dial_turned_up() {
@@ -576,5 +754,121 @@ mod tests {
         };
         set_params(&ctx, applied);
         assert_eq!(params(&ctx), applied);
+    }
+
+    pub(super) fn input() -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 800.0))),
+            ..Default::default()
+        }
+    }
+
+    /// A material that frosts.
+    pub(super) fn glass() -> GlassParams {
+        GlassParams {
+            enabled: true,
+            blur_radius: 8.0,
+            ..GlassParams::OFF
+        }
+    }
+
+    /// Adds a stand-in frost callback over `rect`.
+    pub(super) fn add_callback(ui: &Ui, rect: Rect) {
+        ui.painter().add(PaintCallback {
+            rect,
+            callback: Arc::new(()),
+        });
+    }
+
+    /// Paint callbacks in a frame's output.
+    pub(super) fn callbacks(full: &FullOutput) -> usize {
+        full.shapes
+            .iter()
+            .filter(|s| matches!(s.shape, Shape::Callback(_)))
+            .count()
+    }
+
+    /// [`frost_behind_floating_with`] a stand-in callback; adds each enqueue to `count`.
+    pub(super) fn frost_stand_in(ctx: &Context, surface: Id, rect: Rect, count: &mut usize) {
+        frost_behind_floating_with(ctx, surface, rect, glass(), |ui, rect, _| {
+            add_callback(ui, rect);
+            *count += 1;
+            true
+        });
+    }
+
+    /// Whether [`frost_gated`] calls its enqueue for `rect`.
+    fn gate_opens(ui: &Ui, rect: Rect) -> bool {
+        frost_gated(ui, rect, glass(), |_, _, _| true)
+    }
+
+    /// One frame of the backdrop frost over `rect`; returns the enqueues and the callback clips.
+    fn backdrop_frame(ctx: &Context, rect: Rect) -> (usize, Vec<Rect>) {
+        let mut enqueued = 0;
+        let mut full = ctx.run_ui(input(), |ui| {
+            frost_stand_in(ui.ctx(), Id::new("surface"), rect, &mut enqueued);
+        });
+        full.textures_delta.clear();
+        let clips = full
+            .shapes
+            .iter()
+            .filter(|s| matches!(s.shape, Shape::Callback(_)))
+            .map(|s| s.clip_rect)
+            .collect();
+        (enqueued, clips)
+    }
+
+    #[test]
+    fn a_backdrop_area_paints_clipped_to_its_surface_from_its_second_show() {
+        let ctx = Context::default();
+        let rect = Rect::from_min_size(pos2(100.0, 100.0), vec2(300.0, 80.0));
+        assert_eq!(backdrop_frame(&ctx, rect), (0, vec![]));
+        assert_eq!(backdrop_frame(&ctx, rect), (1, vec![rect]));
+        assert_eq!(backdrop_frame(&ctx, rect), (1, vec![rect]));
+    }
+
+    #[test]
+    fn a_frost_after_a_discard_request_does_not_paint() {
+        let ctx = Context::default();
+        let mut seen = Vec::new();
+        let mut full = ctx.run_ui(input(), |ui| {
+            let rect = ui.max_rect();
+            let before = gate_opens(ui, rect);
+            if ui.ctx().current_pass_index() == 0 {
+                ui.ctx().request_discard("test");
+            }
+            seen.push((before, gate_opens(ui, rect)));
+        });
+        full.textures_delta.clear();
+        assert_eq!(seen, [(true, false), (true, true)]);
+    }
+
+    #[test]
+    fn a_frost_outside_the_clip_or_faded_out_does_not_paint() {
+        let ctx = Context::default();
+        let mut seen = None;
+        let mut full = ctx.run_ui(input(), |ui| {
+            ui.set_clip_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)));
+            let inside = Rect::from_min_size(pos2(50.0, 50.0), vec2(100.0, 100.0));
+            let touching = Rect::from_min_size(pos2(100.0, 0.0), vec2(100.0, 100.0));
+            let clipped = (gate_opens(ui, inside), gate_opens(ui, touching));
+            ui.set_opacity(0.0);
+            seen = Some((clipped, gate_opens(ui, inside)));
+        });
+        full.textures_delta.clear();
+        assert_eq!(seen, Some(((true, false), false)));
+    }
+
+    #[test]
+    fn a_frost_in_a_minimized_viewport_does_not_paint() {
+        let ctx = Context::default();
+        let mut seen = Vec::new();
+        for minimized in [false, true] {
+            let mut raw = input();
+            raw.viewports.entry(ViewportId::ROOT).or_default().minimized = Some(minimized);
+            let mut full = ctx.run_ui(raw, |ui| seen.push(gate_opens(ui, ui.max_rect())));
+            full.textures_delta.clear();
+        }
+        assert_eq!(seen, [true, false]);
     }
 }

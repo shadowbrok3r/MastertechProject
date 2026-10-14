@@ -1,4 +1,4 @@
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Color32, Context, CursorIcon, Frame, Layout, Margin, ScrollArea, Shadow, Stroke, Style, Ui, Visuals};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Color32, Context, CursorIcon, Frame, Id, Layout, Margin, ScrollArea, Shadow, Stroke, Style, Ui, Visuals};
 use crate::{ui_tools::{encode_theme, fonts::{self, TextScale}, glass_backdrop::{self, GlassParams}, metrics::{self, apply_metrics, type_scale, Density, Metrics}, rerun_mtech::{RerunMtech, RerunMtechOled}, theme_chrome::{default_egui_chrome, legacy_classic_chrome, mtech_noir_chrome, mtech_noir_glass_chrome, mtech_noir_glass_params, shipped_chrome}, tokyo_dark::{TokyoNight, TokyoNightStorm}, SavedTheme}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -162,19 +162,33 @@ pub fn reset_memory(ctx: &Context) {
     apply_saved_theme(ctx, saved);
 }
 
-/// Stores a preset's semantic colors, read by [`install_style`], and its glass material.
+/// Stores a preset's name, its semantic colors, read by [`install_style`], and its glass material.
 fn apply_preset_semantics(ctx: &Context, preset: PresetStyles) {
+    set_installed_preset(ctx, preset);
     let (success, accent2) = semantic_colors_for_preset(preset);
     crate::ui_tools::theme::set_success_color(ctx, success);
     crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
     glass_backdrop::set_params(ctx, glass_params_for_preset(preset));
 }
 
-/// Syncs the theme editor's config (combo label + fields) to a style applied
-/// out-of-band via the settings channel, so the editor stops showing a stale preset.
-pub fn sync_editor_config(config: &mut ThemeConfig, style: &Style) {
-    sync_config_from_style(config, style);
-    config.preset_style = preset_matching_style(style).unwrap_or(PresetStyles::Custom);
+fn installed_preset_id() -> Id {
+    Id::new("mtech.theme.installed_preset")
+}
+
+/// The preset the installed style was applied as; Custom when none was recorded.
+fn installed_preset(ctx: &Context) -> PresetStyles {
+    ctx.data(|d| d.get_temp::<PresetStyles>(installed_preset_id()))
+        .unwrap_or(PresetStyles::Custom)
+}
+
+fn set_installed_preset(ctx: &Context, preset: PresetStyles) {
+    ctx.data_mut(|d| d.insert_temp(installed_preset_id(), preset));
+}
+
+/// Syncs the editor's fields and preset label to the style and preset installed on `ctx`.
+pub(crate) fn sync_editor_config(config: &mut ThemeConfig, ctx: &Context) {
+    sync_config_from_style(config, &ctx.global_style());
+    config.preset_style = installed_preset(ctx);
 }
 
 /// Compares styles ignoring `number_formatter`, whose PartialEq is Arc pointer identity.
@@ -189,12 +203,6 @@ fn normalized(style: &Style) -> Style {
     let mut style = style.clone();
     apply_metrics(&mut style, &Metrics::for_density(Density::Regular));
     style
-}
-
-/// Recovers the preset a saved style was built from, so its semantic colors survive restart.
-fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
-    let style = normalized(style);
-    exact_preset(&style).or_else(|| legacy_preset(&style))
 }
 
 /// The preset a normalized style equals.
@@ -635,20 +643,32 @@ impl ThemeConfig {
         let mut style = (*ctx.global_style()).clone();
         let before = style.visuals.clone();
         style.visuals.ui(ui);
-        if style.visuals == before {
-            return;
-        }
-        install_style(ctx, style);
-        let installed = ctx.global_style();
-        if installed.visuals != before {
-            sync_config_from_style(self, &installed);
-            self.preset_style = PresetStyles::Custom;
+        if style.visuals != before {
+            self.install_edit(ctx, style, &before);
         }
     }
 
-    /// The preset picker; applies the pick unless it is Custom.
+    /// Installs an edited style; records Custom when the installed visuals differ from `before`.
+    fn install_edit(&mut self, ctx: &Context, style: Style, before: &Visuals) {
+        install_style(ctx, style);
+        if ctx.global_style().visuals != *before {
+            set_installed_preset(ctx, PresetStyles::Custom);
+            sync_editor_config(self, ctx);
+        }
+    }
+
+    /// Installs `chosen` and syncs the editor to it; Custom installs nothing.
+    fn pick_preset(&mut self, ctx: &Context, chosen: PresetStyles) {
+        if chosen == PresetStyles::Custom {
+            return;
+        }
+        apply_preset(ctx, chosen);
+        sync_editor_config(self, ctx);
+    }
+
+    /// The preset picker; applies the pick unless it is Custom or already installed.
     fn preset_menu(&mut self, ui: &mut Ui, ctx: &Context) {
-        let current = self.preset_style;
+        let current = installed_preset(ctx);
         let mut picked = None;
         let _ = MenuButton::new(current.as_str())
             .icon(icons::svg::SWATCHES)
@@ -662,23 +682,19 @@ impl ThemeConfig {
                         controls::menu_inset_row(ui, |ui| controls::section_label(ui, title));
                     }
                     for &preset in presets.iter() {
-                        if controls::menu_check_item(ui, None, preset.as_str(), preset == current).clicked() {
+                        let row = controls::MenuItem::new(preset.as_str())
+                            .checked(preset == current)
+                            .enabled(preset != PresetStyles::Custom)
+                            .show(ui);
+                        if row.clicked() {
                             picked = Some(preset);
                         }
                     }
                 }
             });
-        let Some(chosen) = picked.filter(|p| *p != current) else {
-            return;
-        };
-        self.preset_style = chosen;
-        if chosen == PresetStyles::Custom {
-            return;
+        if let Some(chosen) = picked.filter(|p| *p != current) {
+            self.pick_preset(ctx, chosen);
         }
-        let style = style_for_preset(chosen);
-        sync_config_from_style(self, &style);
-        apply_preset_semantics(ctx, chosen);
-        install_style(ctx, style);
     }
 
     /// Reset, the preset picker, and the save, export and import buttons.
@@ -689,9 +705,7 @@ impl ThemeConfig {
             .show(ui)
             .on_hover_text("Preview the shipped default theme. Nothing is saved until you click Save.");
         if reset.clicked() {
-            apply_preset(ctx, PresetStyles::ShippedClassic);
-            sync_config_from_style(self, &style_for_preset(PresetStyles::ShippedClassic));
-            self.preset_style = PresetStyles::ShippedClassic;
+            self.pick_preset(ctx, PresetStyles::ShippedClassic);
         }
         self.preset_menu(ui, ctx);
 
@@ -775,6 +789,15 @@ impl ThemeConfig {
         }
     }
 
+    /// Installs the glassified installed style and its glass material as Custom.
+    fn glassify_installed(&mut self, ctx: &Context) {
+        let glassified = glassify(&ctx.global_style());
+        glass_backdrop::set_params(ctx, glass_params_for_style(&glassified));
+        install_style(ctx, glassified);
+        set_installed_preset(ctx, PresetStyles::Custom);
+        sync_editor_config(self, ctx);
+    }
+
     /// Glassify and restore-from-account.
     fn restore_row(&mut self, ui: &mut Ui, ctx: &Context, tx: &Sender<SavedTheme>) {
         let glassify_btn = TextButton::new("Glassify current theme")
@@ -786,11 +809,7 @@ impl ThemeConfig {
                  Backgrounds, rounding, and fonts stay as they are. Click Save to keep.",
             );
         if glassify_btn.clicked() {
-            let glassified = glassify(&ctx.global_style());
-            sync_config_from_style(self, &glassified);
-            self.preset_style = PresetStyles::Custom;
-            glass_backdrop::set_params(ctx, glass_params_for_style(&glassified));
-            install_style(ctx, glassified);
+            self.glassify_installed(ctx);
         }
 
         let restore = TextButton::new("Restore saved theme")
@@ -846,6 +865,7 @@ impl ThemeConfig {
     }
 
     pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<SavedTheme>) -> (bool, Arc<Style>) {
+        sync_editor_config(self, ctx);
         let m = Metrics::get(ctx);
         let frame = Frame::side_top_panel(&ctx.global_style()).inner_margin(Margin::ZERO);
         let mut saved = false;
@@ -1530,6 +1550,12 @@ mod tests {
         MATCHABLE_PRESETS.into_iter().chain([PresetStyles::Custom])
     }
 
+    /// The exact or legacy preset a saved style matches.
+    fn preset_matching_style(style: &Style) -> Option<PresetStyles> {
+        let style = normalized(style);
+        exact_preset(&style).or_else(|| legacy_preset(&style))
+    }
+
     #[test]
     fn every_preset_round_trips_as_itself_under_the_overlay() {
         for preset in MATCHABLE_PRESETS {
@@ -1943,6 +1969,7 @@ mod tests {
 
         reset_memory(&ctx);
 
+        assert_eq!(installed_preset(&ctx), PresetStyles::MtechStudio);
         assert_eq!(Metrics::get(&ctx), Metrics::for_density(Density::Compact));
         assert_eq!(fonts::text_scale(&ctx), TextScale::Large);
         assert_eq!(Tokens::get(&ctx), mtech_studio::TOKENS);
@@ -1977,6 +2004,16 @@ mod tests {
         let (success, accent2) = semantic_colors_for_preset(PresetStyles::MtechGlassFull);
         assert_eq!(super::super::theme::success_ctx(&ctx), success);
         assert_eq!(super::super::theme::accent_secondary_ctx(&ctx), accent2);
+
+        assert_eq!(installed_preset(&ctx), PresetStyles::MtechGlassFull);
+        let mut cfg = ThemeConfig::default();
+        sync_editor_config(&mut cfg, &ctx);
+        fn weak_fill(style: &Style) -> Color32 {
+            style.visuals.widgets.noninteractive.weak_bg_fill
+        }
+        assert_eq!(cfg.preset_style, PresetStyles::MtechGlassFull);
+        assert_eq!(cfg.widget_weak_bg_fill, weak_fill(&ctx.global_style()));
+        assert_ne!(cfg.widget_weak_bg_fill, weak_fill(&legacy_glass_style()));
     }
 
     #[test]
@@ -1986,6 +2023,236 @@ mod tests {
         let params = glass_backdrop::params(&ctx);
         assert_eq!(params, glass_params_for_style(&glass_style()));
         assert!(params.is_visible());
+    }
+
+    /// The shipped style with a non-preset hyperlink color.
+    fn custom_style() -> Style {
+        let mut style = style_for_preset(PresetStyles::ShippedClassic);
+        style.visuals.hyperlink_color = Color32::from_rgb(1, 2, 3);
+        style
+    }
+
+    fn custom_record() -> Vec<u8> {
+        encode_theme(&SavedTheme {
+            style: custom_style(),
+            ..saved(PresetStyles::ShippedClassic)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn custom_saved_theme_names_custom_after_login() {
+        let ctx = Context::default();
+        bootstrap_startup_theme(&ctx);
+        assert_eq!(installed_preset(&ctx), PresetStyles::ShippedClassic);
+
+        apply_user_color_scheme(&ctx, &custom_record());
+        assert_eq!(installed_preset(&ctx), PresetStyles::Custom);
+
+        let mut cfg = ThemeConfig::default();
+        sync_editor_config(&mut cfg, &ctx);
+        assert_eq!(cfg.preset_style, PresetStyles::Custom);
+        assert_eq!(cfg.background_color, ctx.global_style().visuals.window_fill);
+        assert_eq!(cfg.link_color, Color32::from_rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn every_saved_preset_names_itself_after_login() {
+        for preset in MATCHABLE_PRESETS {
+            let ctx = Context::default();
+            bootstrap_startup_theme(&ctx);
+            apply_user_color_scheme(&ctx, &encode_theme(&saved(preset)).unwrap());
+            // A Default Egui record is the blank default, which loads as Shipped Classic.
+            let expected = match preset {
+                PresetStyles::DefaultEgui => PresetStyles::ShippedClassic,
+                other => other,
+            };
+            assert_eq!(installed_preset(&ctx), expected, "{}", preset.as_str());
+        }
+    }
+
+    #[test]
+    fn fallback_records_name_shipped_classic() {
+        let blank = SavedTheme {
+            style: Style {
+                visuals: Visuals::dark(),
+                ..Style::default()
+            },
+            ..saved(PresetStyles::ShippedClassic)
+        };
+        let records = [
+            Vec::new(),
+            b"not a theme".to_vec(),
+            encode_theme(&blank).unwrap(),
+        ];
+        for bytes in records {
+            let ctx = Context::default();
+            apply_preset(&ctx, PresetStyles::MtechNoir);
+            apply_user_color_scheme(&ctx, &bytes);
+            assert_eq!(installed_preset(&ctx), PresetStyles::ShippedClassic);
+        }
+    }
+
+    #[test]
+    fn imported_files_name_what_they_install() {
+        let ctx = Context::default();
+        let preset_file =
+            serde_json::to_vec(&style_for_preset(PresetStyles::MtechNoirGlass)).unwrap();
+        apply_saved_theme(&ctx, super::super::theme_from_json(&preset_file).unwrap());
+        assert_eq!(installed_preset(&ctx), PresetStyles::MtechNoirGlass);
+
+        let custom_file = serde_json::to_vec(&custom_style()).unwrap();
+        apply_saved_theme(&ctx, super::super::theme_from_json(&custom_file).unwrap());
+        assert_eq!(installed_preset(&ctx), PresetStyles::Custom);
+        assert_eq!(
+            ctx.global_style().visuals.hyperlink_color,
+            Color32::from_rgb(1, 2, 3)
+        );
+    }
+
+    #[test]
+    fn density_and_text_scale_keep_the_named_preset() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::ObsidianGlass);
+        set_density(&ctx, Density::Compact);
+        set_text_scale(&ctx, TextScale::Large);
+        assert_eq!(installed_preset(&ctx), PresetStyles::ObsidianGlass);
+
+        apply_user_color_scheme(&ctx, &custom_record());
+        set_density(&ctx, Density::Comfortable);
+        set_text_scale(&ctx, TextScale::Small);
+        assert_eq!(installed_preset(&ctx), PresetStyles::Custom);
+    }
+
+    #[test]
+    fn reset_memory_keeps_the_named_preset() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::ObsidianGlass);
+        set_density(&ctx, Density::Compact);
+        reset_memory(&ctx);
+        assert_eq!(installed_preset(&ctx), PresetStyles::ObsidianGlass);
+
+        apply_user_color_scheme(&ctx, &custom_record());
+        reset_memory(&ctx);
+        assert_eq!(installed_preset(&ctx), PresetStyles::Custom);
+
+        let legacy =
+            serde_json::json!({ "style": legacy_glass_style(), "glass": GlassParams::OFF });
+        let bytes = zstd::encode_all(legacy.to_string().as_bytes(), 3).unwrap();
+        apply_user_color_scheme(&ctx, &bytes);
+        reset_memory(&ctx);
+        assert_eq!(installed_preset(&ctx), PresetStyles::MtechGlassFull);
+    }
+
+    #[test]
+    fn picking_a_preset_records_it_and_custom_is_a_no_op() {
+        let ctx = Context::default();
+        apply_user_color_scheme(&ctx, &custom_record());
+        let mut cfg = ThemeConfig::default();
+        sync_editor_config(&mut cfg, &ctx);
+        assert_eq!(cfg.preset_style, PresetStyles::Custom);
+
+        cfg.pick_preset(&ctx, PresetStyles::ShippedClassic);
+        assert_eq!(installed_preset(&ctx), PresetStyles::ShippedClassic);
+        assert_eq!(cfg.preset_style, PresetStyles::ShippedClassic);
+        assert!(styles_visually_equal(
+            &normalized(&ctx.global_style()),
+            &style_for_preset(PresetStyles::ShippedClassic),
+        ));
+
+        let before = ctx.global_style();
+        cfg.pick_preset(&ctx, PresetStyles::Custom);
+        assert_eq!(installed_preset(&ctx), PresetStyles::ShippedClassic);
+        assert_eq!(cfg.preset_style, PresetStyles::ShippedClassic);
+        assert!(styles_visually_equal(&ctx.global_style(), &before));
+    }
+
+    #[test]
+    fn glassify_records_custom() {
+        let ctx = Context::default();
+        apply_preset(&ctx, PresetStyles::MtechNoir);
+        let mut cfg = ThemeConfig::default();
+        cfg.glassify_installed(&ctx);
+        assert_eq!(installed_preset(&ctx), PresetStyles::Custom);
+        assert_eq!(cfg.preset_style, PresetStyles::Custom);
+        assert_eq!(cfg.background_color, ctx.global_style().visuals.window_fill);
+    }
+
+    /// Runs `edit` on the installed visuals through the colour editor's install path.
+    fn edit_colors(ctx: &Context, cfg: &mut ThemeConfig, edit: impl FnOnce(&mut Visuals)) {
+        let mut style = (*ctx.global_style()).clone();
+        let before = style.visuals.clone();
+        edit(&mut style.visuals);
+        cfg.install_edit(ctx, style, &before);
+    }
+
+    #[test]
+    fn a_colour_edit_records_custom_unless_the_overlay_undoes_it() {
+        let ctx = Context::default();
+        let mut cfg = ThemeConfig::default();
+
+        apply_preset(&ctx, PresetStyles::ObsidianGlass);
+        edit_colors(&ctx, &mut cfg, |v| {
+            v.hyperlink_color = Color32::from_rgb(1, 2, 3)
+        });
+        assert_eq!(installed_preset(&ctx), PresetStyles::Custom);
+        assert_eq!(cfg.preset_style, PresetStyles::Custom);
+        assert_eq!(cfg.link_color, Color32::from_rgb(1, 2, 3));
+
+        apply_preset(&ctx, PresetStyles::ObsidianGlass);
+        edit_colors(&ctx, &mut cfg, |v| v.widgets.hovered.expansion = 3.0);
+        assert_eq!(installed_preset(&ctx), PresetStyles::ObsidianGlass);
+    }
+
+    /// Text of every galley the theme editor paints in one frame.
+    fn editor_texts(ctx: &Context, editor: &mut ThemeConfig) -> Vec<String> {
+        use eframe::egui::{CentralPanel, Pos2, RawInput, Rect, Shape, vec2};
+
+        fn collect(shape: &Shape, texts: &mut Vec<String>) {
+            match shape {
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texts)),
+                Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+                _ => {}
+            }
+        }
+
+        let (tx, _rx) = crossbeam::channel::unbounded();
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(860.0, 900.0))),
+            ..Default::default()
+        };
+        let mut full = ctx.run_ui(input, |ui| {
+            CentralPanel::default().show(ui, |ui| {
+                let ctx = ui.ctx().clone();
+                let _ = editor.edit_ui(ui, &ctx, tx.clone());
+            });
+        });
+        full.textures_delta.clear();
+        let mut texts = Vec::new();
+        for clipped in &full.shapes {
+            collect(&clipped.shape, &mut texts);
+        }
+        texts
+    }
+
+    #[test]
+    fn editor_frame_shows_the_installed_preset() {
+        use crate::ui_tools::headless_render::Headless;
+
+        let h = Headless::new(eframe::egui::vec2(860.0, 900.0), 1.0);
+        let shows =
+            |texts: &[String], preset: PresetStyles| texts.iter().any(|t| t == preset.as_str());
+        let mut editor = ThemeConfig::default();
+
+        apply_user_color_scheme(&h.ctx, &custom_record());
+        let texts = editor_texts(&h.ctx, &mut editor);
+        assert!(shows(&texts, PresetStyles::Custom), "{texts:?}");
+        assert!(!shows(&texts, PresetStyles::ShippedClassic), "{texts:?}");
+
+        h.theme(PresetStyles::ObsidianGlass, Density::Regular);
+        let texts = editor_texts(&h.ctx, &mut editor);
+        assert!(shows(&texts, PresetStyles::ObsidianGlass), "{texts:?}");
+        assert!(!shows(&texts, PresetStyles::ShippedClassic), "{texts:?}");
     }
 }
 
