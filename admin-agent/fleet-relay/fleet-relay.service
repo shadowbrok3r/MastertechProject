@@ -1,0 +1,20 @@
+[Unit]
+Description=fleet-relay: read-only Codex thread -> fleet node and quant relay
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I %h/fleet-relay/fleet_relay.py
+Environment=FLEET_RELAY_BIND=192.168.22.7:7431
+Environment=FLEET_RELAY_TOKEN_FILE=%h/.config/fleet-relay/token
+Environment=FLEET_RELAY_CODEX_HOME=%h/.config/zc-codexd/codex-home
+UMask=0077
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+MemoryMax=128M
+TasksMax=32
+CPUQuota=50%
+
+[Install]
+WantedBy=default.target

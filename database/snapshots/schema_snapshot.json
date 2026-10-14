@@ -15,7 +15,7 @@
     },
     {
       "path": "database/schema/agent_thread.surql",
-      "hash": "cc6641a6eb562f9a67b531509f1f77029a815dfe226d2a88ab41fb7e2c360dd3"
+      "hash": "bbba91ace7ead815bcc8ca31bac544475f7fb4c0a6df1f3aa07e7423dff75b77"
     },
     {
       "path": "database/schema/agent_thread_archive.surql",

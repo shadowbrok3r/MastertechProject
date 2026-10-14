@@ -1,5 +1,6 @@
 use eframe::egui::{
-    Align, CentralPanel, Frame, Id, Layout, Margin, Popup, PopupCloseBehavior, RichText, ScrollArea, Ui,
+    Align, CentralPanel, Frame, Id, Layout, Margin, Popup, PopupCloseBehavior, RichText, ScrollArea, Sides, TextStyle,
+    Ui,
 };
 use crate::{
     tabs::ai_playground::{ChatMessage, ChatMessageType, ChatThread, SentFrom, TOOL_PREFIX},
@@ -2451,7 +2452,7 @@ fn pending_rows(messages: &[ChatMessage], newest: i64) -> Vec<ChatMessage> {
     messages.iter().filter(|m| m.ts > newest).cloned().collect()
 }
 
-/// The session's customer, requester, machine and model on one line, and its last error when it has one.
+/// The session's customer, requester, machine and model on one line with the node that served it, and its last error when it has one.
 fn session_details(ui: &mut Ui, row: &AgentThread, customer: Option<&str>) {
     let mut line = format!("{} \u{00b7} {}", row.requested_by.as_deref().unwrap_or("unattributed"), row.connection_string);
     if let (Some(name), Some(sn)) = (customer, row.service_number.as_deref()) {
@@ -2460,7 +2461,22 @@ fn session_details(ui: &mut Ui, row: &AgentThread, customer: Option<&str>) {
     if let Some(model) = row.model.as_deref().filter(|m| !m.trim().is_empty()) {
         line.push_str(&format!(" \u{00b7} {model}"));
     }
-    ui.add(eframe::egui::Label::new(RichText::new(line).small().weak()).truncate());
+    let details = eframe::egui::Label::new(RichText::new(line).small().weak()).truncate();
+    match agent_chat::fleet_label(row, " \u{00b7} ") {
+        Some(fleet) => {
+            let height = ui
+                .text_style_height(&TextStyle::Small)
+                .max(Metrics::get(ui.ctx()).icon_sm);
+            Sides::new().height(height).shrink_left().show(
+                ui,
+                |ui| ui.add(details),
+                |ui| fleet_chip(ui, row, &fleet),
+            );
+        }
+        None => {
+            ui.add(details);
+        }
+    }
     if let Some(error) = row.error.as_deref().filter(|e| !e.trim().is_empty()) {
         let color = theme::error(ui);
         let size = Metrics::get(ui.ctx()).icon_sm;
@@ -2470,6 +2486,15 @@ fn session_details(ui: &mut Ui, row: &AgentThread, customer: Option<&str>) {
             ui.add(eframe::egui::Label::new(text).truncate()).on_hover_text(error);
         });
     }
+}
+
+/// The node and quant that served the session's latest request, with its model, route and time on hover.
+fn fleet_chip(ui: &mut Ui, row: &AgentThread, label: &str) -> eframe::egui::Response {
+    IconLabel::new(svg::GRAPHICS_CARD, label)
+        .small(true)
+        .tone(theme::weak_text(ui))
+        .show(ui)
+        .on_hover_text(agent_chat::fleet_hover(row, &Local::now()))
 }
 
 /// Whether the signed-in user is `row`'s technician or an active Root.
@@ -3735,5 +3760,135 @@ mod tests {
             closed.y,
             open.y
         );
+    }
+
+    /// A machine session that node-7900 served two minutes ago.
+    fn stamped_session(key: &str, status: &str) -> AgentThread {
+        let mut row = session_list::tests::thread(
+            key,
+            status,
+            "JeffsComputer:663a3fd40",
+            Some("jacob.hardy@pclaptops.com"),
+        );
+        row.service_number = Some("2155485".into());
+        row.hostname = Some("JeffsComputer".into());
+        row.model = Some("zc-heavy".into());
+        row.tokens_used = Some(81_768);
+        row.tokens_window = Some(204_800);
+        row.created_at = Some((Utc::now() - chrono::TimeDelta::minutes(14)).into());
+        row.fleet_node = Some("node-7900".into());
+        row.fleet_quant = Some("Q8_0".into());
+        row.fleet_route = Some("pinned".into());
+        row.fleet_model = Some("Qwen3.8-27B-Q8_0.gguf".into());
+        row.fleet_served_at = Some((Utc::now() - chrono::TimeDelta::minutes(2)).into());
+        row
+    }
+
+    #[test]
+    #[ignore = "writes PNG previews"]
+    fn render_fleet_stamp_previews() {
+        use crate::ui_tools::{
+            headless_render::Headless, metrics::Density, theme_config::PresetStyles,
+        };
+        use eframe::egui::{Event, Rect, pos2, vec2};
+
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("MTECH_RENDER_DIR").expect("MTECH_RENDER_DIR"),
+        );
+        std::fs::create_dir_all(&dir).expect("dir");
+        let pinned = stamped_session("p", "running");
+        let mut compaction = stamped_session("c", "running");
+        compaction.fleet_node = Some("r9700".into());
+        compaction.fleet_quant = Some("MXFP4 AWQ".into());
+        compaction.fleet_route = Some("compaction".into());
+        compaction.fleet_model = Some("Qwen3.8-27B-Uncensored-MXFP4-awq".into());
+        let mut idle = stamped_session("i", "idle");
+        idle.fleet_node = Some("node-128".into());
+        idle.fleet_quant = Some("Q6_K_P".into());
+        let mut unstamped = stamped_session("u", "running");
+        unstamped.fleet_node = None;
+
+        let quick_tooltips = |h: &Headless| {
+            h.ctx.all_styles_mut(|s| {
+                s.interaction.tooltip_delay = 0.0;
+                s.interaction.show_tooltips_only_when_still = false;
+            });
+        };
+        let presets = [
+            ("studio", PresetStyles::MtechStudio),
+            ("classic", PresetStyles::ShippedClassic),
+        ];
+        for (tag, preset) in presets {
+            for (name, row) in [
+                ("pinned", &pinned),
+                ("compaction", &compaction),
+                ("unstamped", &unstamped),
+            ] {
+                let mut h = Headless::new(vec2(760.0, 170.0), 1.0);
+                h.theme(preset, Density::Regular);
+                quick_tooltips(&h);
+                let header = |ui: &mut Ui| {
+                    agent_chat::context_bar(ui, row, true);
+                    let top = ui.cursor().min.y;
+                    session_details(ui, row, Some("Jeff Smith"));
+                    Rect::from_x_y_ranges(
+                        ui.max_rect().x_range(),
+                        top..=ui.cursor().min.y - ui.spacing().item_spacing.y,
+                    )
+                };
+                let mut line = Rect::NOTHING;
+                for _ in 0..3 {
+                    line = h.frame(Vec::new(), header).0;
+                }
+                let hover = pos2(line.right() - 24.0, line.center().y);
+                let mut prims = Vec::new();
+                for _ in 0..4 {
+                    prims = h.frame(vec![Event::PointerMoved(hover)], header).1;
+                }
+                h.image(&prims)
+                    .save(dir.join(format!("{tag}_header_{name}.png")))
+                    .expect("png");
+            }
+
+            let mut h = Headless::new(vec2(240.0, 300.0), 1.0);
+            h.theme(preset, Density::Regular);
+            quick_tooltips(&h);
+            let roster = Roster::default();
+            let archived = std::collections::HashSet::new();
+            let extras = HashMap::new();
+            let rows = |ui: &mut Ui| {
+                let context = RowContext {
+                    selected: "p",
+                    now: Local::now(),
+                    roster: &roster,
+                    archived: &archived,
+                    extras: &extras,
+                };
+                let mut pick = ThreadPick::default();
+                let mut first = Rect::NOTHING;
+                for row in [&pinned, &compaction, &idle, &unstamped] {
+                    let top = ui.cursor().min.y;
+                    session_row(ui, &context, row, false, &mut pick);
+                    if first == Rect::NOTHING {
+                        first = Rect::from_x_y_ranges(
+                            ui.max_rect().x_range(),
+                            top..=ui.cursor().min.y - ui.spacing().item_spacing.y,
+                        );
+                    }
+                }
+                first
+            };
+            let mut first = Rect::NOTHING;
+            for _ in 0..3 {
+                first = h.frame(Vec::new(), rows).0;
+            }
+            let mut prims = Vec::new();
+            for _ in 0..4 {
+                prims = h.frame(vec![Event::PointerMoved(first.center())], rows).1;
+            }
+            h.image(&prims)
+                .save(dir.join(format!("{tag}_session_rows.png")))
+                .expect("png");
+        }
     }
 }

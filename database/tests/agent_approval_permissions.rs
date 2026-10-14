@@ -1,9 +1,11 @@
 //! Approval, thread, turn, request and SurrealQL-approval rules against in-memory SurrealDB, with record users signed in.
 
-use database::schema::agent_thread::ADOPT_THREAD_LINKS_SQL;
+use database::schema::agent_thread::{
+    ADOPT_THREAD_LINKS_SQL, AGENT_THREAD_WORKING_STATUSES, FLEET_WATCH_SQL, SET_FLEET_STAMP_SQL,
+};
 use database::schema::assist::CREATE_CONFIRMED_SQL;
 use database::schema::{
-    AgentApproval, AgentThread, AssistRequest, Datetime, RecordId, SqlApproval, CREATE_THREAD_SQL, DECIDER_ALLOWED_SQL,
+    AgentApproval, AgentThread, AssistRequest, Datetime, RecordId, RecordIdExt, SqlApproval, CREATE_THREAD_SQL, DECIDER_ALLOWED_SQL,
     DECIDE_SQL, LIST_PENDING_MINE_SQL, MAY_STEER_SQL, REOPEN_SQL, SQL_CLAIM_SQL, SQL_DECIDE_SQL,
 };
 use serde_json::json;
@@ -520,6 +522,81 @@ async fn a_guest_writes_no_thread_field() {
         .expect("a denied update is not an error");
     let t1 = thread_row(&db, "t1").await;
     assert_eq!((t1.service_number, t1.codex_thread_id), (None, None));
+}
+
+#[tokio::test]
+async fn the_fleet_stamp_keeps_updated_at_and_only_the_broker_writes_it() {
+    let db = mem_db().await;
+    db.query("UPDATE agent_thread:t1 SET codex_thread_id = 'codex-a', updated_at = d'2026-10-14T18:00:00Z'")
+        .await
+        .expect("seed state")
+        .check()
+        .expect("seed statement");
+    let served = Datetime::from_timestamp(1_760_470_000, 123_456_789).expect("valid");
+    db.query(SET_FLEET_STAMP_SQL)
+        .bind(("id", RecordId::new("agent_thread", "t1")))
+        .bind(("node", Some("node-7900".to_string())))
+        .bind(("route", Some("pinned".to_string())))
+        .bind(("quant", Some("Q8_0".to_string())))
+        .bind(("model", None::<String>))
+        .bind(("served", Some(served)))
+        .await
+        .expect("stamp")
+        .check()
+        .expect("stamp statement");
+    let t1 = thread_row(&db, "t1").await;
+    assert_eq!(t1.fleet_node.as_deref(), Some("node-7900"));
+    assert_eq!(t1.fleet_route.as_deref(), Some("pinned"));
+    assert_eq!(t1.fleet_quant.as_deref(), Some("Q8_0"));
+    assert_eq!(t1.fleet_model, None);
+    assert_eq!(t1.fleet_served_at, Some(served));
+    assert_eq!(t1.updated_at, Some("2026-10-14T18:00:00Z".parse::<Datetime>().expect("datetime")));
+
+    for session in [signed_in(&db, "owner@x.com").await, signed_in(&db, "root@x.com").await] {
+        session
+            .query(
+                "UPDATE agent_thread:t1 SET fleet_node = 'x', fleet_route = 'x', fleet_quant = 'x', \
+                 fleet_model = 'x', fleet_served_at = time::now()",
+            )
+            .await
+            .expect("update")
+            .check()
+            .expect("update statement");
+    }
+    let after = thread_row(&db, "t1").await;
+    assert_eq!(after.fleet_stamp(), t1.fleet_stamp(), "record users cannot write the fleet fields");
+}
+
+#[tokio::test]
+async fn the_fleet_watch_lists_working_recent_or_unstamped_open_threads_with_a_codex_thread() {
+    let db = mem_db().await;
+    db.query(
+        "UPDATE agent_thread:t1 SET codex_thread_id = 'codex-a', updated_at = time::now() - 1h;
+         UPDATE agent_thread:t0 SET updated_at = time::now();
+         UPDATE agent_thread:t2 SET status = 'running', codex_thread_id = 'codex-c', updated_at = time::now() - 5h;
+         CREATE agent_thread:t3 CONTENT { status: 'closed', connection_string: 'PC-5:x', codex_thread_id: 'codex-d',
+             updated_at: time::now() };
+         CREATE agent_thread:t4 CONTENT { status: 'idle', connection_string: 'PC-6:x', codex_thread_id: 'codex-e',
+             updated_at: time::now() - 3h };
+         CREATE agent_thread:t5 CONTENT { status: 'idle', connection_string: 'PC-7:x', codex_thread_id: 'codex-f',
+             fleet_node: 'node-7900', updated_at: time::now() - 3h };",
+    )
+    .await
+    .expect("seed state")
+    .check()
+    .expect("seed statements");
+    let rows: Vec<AgentThread> = db
+        .query(FLEET_WATCH_SQL)
+        .bind(("working", AGENT_THREAD_WORKING_STATUSES.map(String::from).to_vec()))
+        .await
+        .expect("watch")
+        .check()
+        .expect("watch statement")
+        .take(0)
+        .expect("rows");
+    let mut keys: Vec<String> = rows.iter().map(|t| t.id.key_string()).collect();
+    keys.sort();
+    assert_eq!(keys, ["t1", "t2", "t4"]);
 }
 
 #[tokio::test]

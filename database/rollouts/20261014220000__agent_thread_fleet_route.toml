@@ -1,0 +1,32 @@
+# agent_thread.fleet_*: inference node, fleet route, quant, model file and time of a thread's latest request.
+# Optional fields on a SCHEMALESS table, so nothing needs a backfill.
+id = "20261014220000__agent_thread_fleet_route"
+name = "agent_thread_fleet_route"
+source_schema_hash = "49844c35c1189b93b0173466e6318c6c7d048682eda27566db9fb6d1acd4ce93"
+target_schema_hash = "34a14340830109926dd4bc3eb277df439afc1b0a767598639995f7d640d2aed5"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_agent_thread_fleet_route"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE fleet_node ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE fleet_route ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE fleet_quant ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE fleet_model ON agent_thread TYPE none | string PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD OVERWRITE fleet_served_at ON agent_thread TYPE none | datetime PERMISSIONS FOR select, create FULL, FOR update NONE;
+"""
+
+[[steps]]
+id = "drop_agent_thread_fleet_route"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS fleet_served_at ON agent_thread;
+REMOVE FIELD IF EXISTS fleet_model ON agent_thread;
+REMOVE FIELD IF EXISTS fleet_quant ON agent_thread;
+REMOVE FIELD IF EXISTS fleet_route ON agent_thread;
+REMOVE FIELD IF EXISTS fleet_node ON agent_thread;
+"""

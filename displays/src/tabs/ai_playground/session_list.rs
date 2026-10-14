@@ -450,7 +450,7 @@ where
     at.format(format).to_string()
 }
 
-/// A row's second line: the kind icon, then the technician when given, the start time and the status.
+/// A row's second line: the kind icon, then the technician when given, the start time, the status and a working session's node.
 pub(super) fn detail_line<Tz: TimeZone>(
     thread: &AgentThread,
     tech: Option<&str>,
@@ -462,11 +462,17 @@ where
     let started = thread
         .created_at
         .map(|at| start_label(DateTime::from(at), now));
+    let node = thread
+        .fleet_node
+        .as_deref()
+        .map(str::trim)
+        .filter(|node| !node.is_empty() && SessionState::of(thread) == SessionState::Working);
     let parts: Vec<String> = tech
         .map(str::to_string)
         .into_iter()
         .chain(started)
         .chain([agent_chat::status_words(thread)])
+        .chain(node.map(str::to_string))
         .collect();
     format!(
         "{} {}",
@@ -475,7 +481,7 @@ where
     )
 }
 
-/// A row's hover text: title, technician, connection, then start, last activity and store.
+/// A row's hover text: title, technician, connection, then start, last activity and store, then the node of the latest request.
 pub(super) fn hover_text<Tz: TimeZone>(
     thread: &AgentThread,
     tech: &str,
@@ -507,6 +513,22 @@ where
     let mut lines = vec![thread.label(), who, thread.connection_string.clone()];
     if !when.is_empty() {
         lines.push(when.join(" \u{00b7} "));
+    }
+    if let Some(node) = agent_chat::fleet_node_quant(thread, " \u{00b7} ") {
+        let how: Vec<String> = thread
+            .fleet_route
+            .as_deref()
+            .map(str::trim)
+            .filter(|route| !route.is_empty())
+            .map(str::to_string)
+            .into_iter()
+            .chain(thread.fleet_served_at.map(clock))
+            .collect();
+        lines.push(if how.is_empty() {
+            format!("Node: {node}")
+        } else {
+            format!("Node: {node} ({})", how.join(", "))
+        });
     }
     lines.join("\n")
 }
@@ -695,6 +717,11 @@ pub(super) mod tests {
             title: None,
             error: None,
             broker_node: None,
+            fleet_node: None,
+            fleet_route: None,
+            fleet_quant: None,
+            fleet_model: None,
+            fleet_served_at: None,
             allow_box_shell: false,
             approve_all: None,
             tokens_used: None,
@@ -1002,6 +1029,44 @@ pub(super) mod tests {
                 "#2155485 JeffsComputer\nJacob Hardy <{JACOB}>\nJeffsComputer:663a3fd40\nstarted 11:54 \u{00b7} Orem"
             )
         );
+    }
+
+    fn stamped(status: &str) -> AgentThread {
+        let mut row = thread("a", status, "PC:1", None);
+        row.fleet_node = Some("node-7900".into());
+        row.fleet_quant = Some("Q8_0".into());
+        row.fleet_route = Some("pinned".into());
+        row.fleet_served_at = at(now().timestamp() - 21 * 60);
+        row
+    }
+
+    #[test]
+    fn only_working_rows_name_their_node() {
+        assert_eq!(
+            detail_line(&stamped("running"), None, &now()),
+            format!("{} Thinking \u{00b7} node-7900", icons::DESKTOP)
+        );
+        assert_eq!(
+            detail_line(&stamped("idle"), None, &now()),
+            format!("{} Idle", icons::DESKTOP)
+        );
+    }
+
+    #[test]
+    fn hover_text_names_the_node_quant_route_and_time() {
+        let mut row = stamped("idle");
+        let text = hover_text(&row, "PC", &now());
+        assert_eq!(
+            text.lines().last(),
+            Some("Node: node-7900 \u{00b7} Q8_0 (pinned, 11:33)")
+        );
+        row.fleet_route = None;
+        row.fleet_served_at = None;
+        row.fleet_quant = None;
+        let text = hover_text(&row, "PC", &now());
+        assert_eq!(text.lines().last(), Some("Node: node-7900"));
+        row.fleet_node = None;
+        assert!(!hover_text(&row, "PC", &now()).contains("Node:"));
     }
 
     #[test]

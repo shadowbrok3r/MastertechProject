@@ -34,6 +34,12 @@ DEFINE FIELD diagnostic_session ON agent_thread TYPE none | record<diagnostic_se
 -- Provenance stamp the broker asks the agent to use on diagnostic records.
 DEFINE FIELD driven_by          ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD error              ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
+-- Inference node, fleet route, quant and model file that served the thread's latest request, and when.
+DEFINE FIELD fleet_node         ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD fleet_route        ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD fleet_quant        ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD fleet_model        ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
+DEFINE FIELD fleet_served_at    ON agent_thread TYPE none | datetime                   PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD hostname           ON agent_thread TYPE none | string                     PERMISSIONS FOR select, create FULL, FOR update NONE;
 DEFINE FIELD last_event_at      ON agent_thread TYPE none | datetime                   PERMISSIONS FOR select, create FULL, FOR update NONE;
 -- Highest agent_event.seq written so far; the broker resumes numbering from it.

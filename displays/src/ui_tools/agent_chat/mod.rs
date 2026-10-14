@@ -5,6 +5,9 @@ mod composer;
 
 pub use composer::{Composer, ComposerAction};
 
+use std::fmt::Display;
+
+use chrono::{DateTime, TimeZone, Utc};
 use database::schema::agent_thread::compact_tokens;
 use database::schema::{AgentActivity, AgentThread, QueuedTurn, RecordId, RecordIdExt};
 use eframe::egui::{self, Align, Color32, Id, Key, Layout, Rect, RichText, Ui, Vec2, vec2};
@@ -88,6 +91,65 @@ fn status_word(status: &str) -> &'static str {
         "failed" => "Failed",
         _ => "Unknown",
     }
+}
+
+/// `fleet_route` of a request that compacted the context.
+const COMPACTION_ROUTE: &str = "compaction";
+
+/// A trimmed, non-empty `fleet_*` value.
+fn stamped(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|v| !v.is_empty())
+}
+
+/// The node that served the thread's latest request and its quant, joined by `sep`; `None` while no node is stamped.
+pub fn fleet_node_quant(thread: &AgentThread, sep: &str) -> Option<String> {
+    let node = stamped(thread.fleet_node.as_deref())?;
+    Some(match stamped(thread.fleet_quant.as_deref()) {
+        Some(quant) => format!("{node}{sep}{quant}"),
+        None => node.to_string(),
+    })
+}
+
+/// [`fleet_node_quant`], then ` · compaction` when that request compacted the context.
+pub fn fleet_label(thread: &AgentThread, sep: &str) -> Option<String> {
+    let label = fleet_node_quant(thread, sep)?;
+    let compaction = stamped(thread.fleet_route.as_deref()) == Some(COMPACTION_ROUTE);
+    Some(if compaction {
+        format!("{label} \u{00b7} {COMPACTION_ROUTE}")
+    } else {
+        label
+    })
+}
+
+/// `just now`, `2 min ago`, `3 h ago` or `4 d ago`.
+fn ago_label(secs: i64) -> String {
+    match secs.max(0) {
+        0..60 => "just now".to_string(),
+        s @ 60..3_600 => format!("{} min ago", s / 60),
+        s @ 3_600..86_400 => format!("{} h ago", s / 3_600),
+        s => format!("{} d ago", s / 86_400),
+    }
+}
+
+/// Model file, route and the time of the thread's latest request, one per line, in `now`'s time zone.
+pub fn fleet_hover<Tz: TimeZone>(thread: &AgentThread, now: &DateTime<Tz>) -> String
+where
+    Tz::Offset: Display,
+{
+    let mut lines = vec![match stamped(thread.fleet_model.as_deref()) {
+        Some(model) => format!("Model: {model}"),
+        None => "Model unknown".to_string(),
+    }];
+    if let Some(route) = stamped(thread.fleet_route.as_deref()) {
+        lines.push(format!("Route: {route}"));
+    }
+    if let Some(at) = thread.fleet_served_at {
+        let at = DateTime::<Utc>::from(at);
+        let age = (now.with_timezone(&Utc) - at).num_seconds();
+        let clock = chat_bubble::clock_label(&at.with_timezone(&now.timezone()), now);
+        lines.push(format!("Last request {clock} ({})", ago_label(age)));
+    }
+    lines.join("\n")
 }
 
 /// A thread's status as a spinner or icon followed by its words.
@@ -504,11 +566,10 @@ mod tests {
         assert_ne!(seen[4], seen[3]);
     }
 
-    #[test]
-    fn status_words_read_the_activity_while_a_turn_runs() {
-        let mut t = AgentThread {
+    fn thread(status: &str) -> AgentThread {
+        AgentThread {
             id: RecordId::new("agent_thread", "t"),
-            status: "running".into(),
+            status: status.into(),
             connection_string: String::new(),
             hostname: None,
             service_number: None,
@@ -529,17 +590,28 @@ mod tests {
             title: None,
             error: None,
             broker_node: None,
+            fleet_node: None,
+            fleet_route: None,
+            fleet_quant: None,
+            fleet_model: None,
+            fleet_served_at: None,
             allow_box_shell: false,
             approve_all: None,
             tokens_used: None,
             tokens_window: None,
             last_seq: None,
-            activity: Some("tool:get_client_info".into()),
+            activity: None,
             created_at: None,
             updated_at: None,
             last_event_at: None,
             closed_at: None,
-        };
+        }
+    }
+
+    #[test]
+    fn status_words_read_the_activity_while_a_turn_runs() {
+        let mut t = thread("running");
+        t.activity = Some("tool:get_client_info".into());
         assert_eq!(status_words(&t), "Running get_client_info");
         assert!(is_active(&t));
         t.status = "waiting_approval".into();
@@ -548,5 +620,76 @@ mod tests {
         assert!(!is_active(&t));
         t.status = "idle".into();
         assert_eq!(status_words(&t), "Idle");
+    }
+
+    fn stamped_thread(node: Option<&str>, quant: Option<&str>, route: Option<&str>) -> AgentThread {
+        let mut t = thread("running");
+        t.fleet_node = node.map(str::to_string);
+        t.fleet_quant = quant.map(str::to_string);
+        t.fleet_route = route.map(str::to_string);
+        t
+    }
+
+    #[test]
+    fn the_fleet_label_names_the_node_its_quant_and_a_compaction() {
+        let dot = " \u{00b7} ";
+        let pinned = stamped_thread(Some("node-7900"), Some("Q8_0"), Some("pinned"));
+        assert_eq!(
+            fleet_label(&pinned, dot).as_deref(),
+            Some("node-7900 \u{00b7} Q8_0")
+        );
+        assert_eq!(fleet_label(&pinned, " ").as_deref(), Some("node-7900 Q8_0"));
+        let compaction = stamped_thread(Some("r9700"), Some("MXFP4 AWQ"), Some("compaction"));
+        assert_eq!(
+            fleet_label(&compaction, dot).as_deref(),
+            Some("r9700 \u{00b7} MXFP4 AWQ \u{00b7} compaction")
+        );
+        assert_eq!(
+            fleet_label(&compaction, " ").as_deref(),
+            Some("r9700 MXFP4 AWQ \u{00b7} compaction")
+        );
+        assert_eq!(
+            fleet_node_quant(&compaction, dot).as_deref(),
+            Some("r9700 \u{00b7} MXFP4 AWQ")
+        );
+        let unprobed = stamped_thread(Some("node-128"), None, Some("spill"));
+        assert_eq!(fleet_label(&unprobed, dot).as_deref(), Some("node-128"));
+        let blank_quant = stamped_thread(Some("node-128"), Some(" "), None);
+        assert_eq!(fleet_label(&blank_quant, dot).as_deref(), Some("node-128"));
+        assert_eq!(
+            fleet_label(&stamped_thread(None, Some("Q8_0"), Some("pinned")), dot),
+            None
+        );
+        assert_eq!(
+            fleet_label(&stamped_thread(Some("  "), Some("Q8_0"), None), dot),
+            None
+        );
+    }
+
+    #[test]
+    fn ages_read_in_minutes_hours_and_days() {
+        assert_eq!(ago_label(-5), "just now");
+        assert_eq!(ago_label(59), "just now");
+        assert_eq!(ago_label(120), "2 min ago");
+        assert_eq!(ago_label(3_599), "59 min ago");
+        assert_eq!(ago_label(7_200), "2 h ago");
+        assert_eq!(ago_label(3 * 86_400), "3 d ago");
+    }
+
+    #[test]
+    fn the_fleet_hover_gives_the_model_route_and_last_request() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 10, 14, 12, 35, 10)
+            .single()
+            .expect("valid time");
+        let mut t = stamped_thread(Some("node-7900"), Some("Q8_0"), Some("pinned"));
+        t.fleet_model = Some("Qwen3.8-27B-Q8_0.gguf".into());
+        t.fleet_served_at = Some((now - chrono::TimeDelta::seconds(150)).into());
+        assert_eq!(
+            fleet_hover(&t, &now),
+            "Model: Qwen3.8-27B-Q8_0.gguf\nRoute: pinned\nLast request 12:32 (2 min ago)"
+        );
+        let bare = stamped_thread(Some("node-128"), None, None);
+        assert_eq!(fleet_hover(&bare, &now), "Model unknown");
     }
 }

@@ -12,6 +12,7 @@ use database::schema::{
     AgentActivity, AgentApproval, AgentDecideOutcome, AgentEvent, AgentThread, AgentTurn, ApprovalAudience,
     ApprovalViewer, AssistRequest, Plan, RecordId, RecordIdExt,
 };
+use displays::ui_tools::agent_chat;
 use displays::{PlatformSpawner, Spawner};
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
@@ -1039,8 +1040,8 @@ impl<'a> AssistantTab<'a> {
         self.scroll_back.set(range - start.min(range));
     }
 
-    /// The transcript block: rows, the scrollbar on its right edge, and what is below while scrolled back.
-    fn draw_transcript(&mut self, f: &mut Frame, area: Rect, spinner: &'static str, running: bool) {
+    /// The transcript block's title: host, session state and key, the serving node, and whether a picked session is viewed.
+    fn transcript_title(&self, spinner: &str) -> String {
         let word = if self.requested_at.is_some() {
             "opening a new session".to_string()
         } else if self.closing() {
@@ -1049,7 +1050,18 @@ impl<'a> AssistantTab<'a> {
             "new session".to_string()
         } else {
             match &self.thread {
-                Some(t) => format!("{} {} {}", status_word(&t.status), glyphs::DOT, short_key(&t.id)),
+                Some(t) => {
+                    let word = format!(
+                        "{} {} {}",
+                        status_word(&t.status),
+                        glyphs::DOT,
+                        short_key(&t.id)
+                    );
+                    match agent_chat::fleet_label(t, " ") {
+                        Some(fleet) => format!("{word} {} {fleet}", glyphs::DOT),
+                        None => word,
+                    }
+                }
                 None => "no session".to_string(),
             }
         };
@@ -1059,11 +1071,16 @@ impl<'a> AssistantTab<'a> {
             None => self.hostname.clone(),
         };
         let viewing = if self.pinned.is_some() { format!(" {} viewing", glyphs::DOT) } else { String::new() };
-        let title = if self.requested_at.is_some() || self.closing() {
+        if self.requested_at.is_some() || self.closing() {
             format!(" Agent \u{00b7} {host} \u{00b7} {word}{viewing} {spinner} ")
         } else {
             format!(" Agent \u{00b7} {host} \u{00b7} {word}{viewing} ")
-        };
+        }
+    }
+
+    /// The transcript block: rows, the scrollbar on its right edge, and what is below while scrolled back.
+    fn draw_transcript(&mut self, f: &mut Frame, area: Rect, spinner: &'static str, running: bool) {
+        let title = self.transcript_title(spinner);
         let muted = Style::default().fg(THEME.text_muted);
         let hint = " Ctrl+S sessions ";
         let hint_fits = usize::from(area.width) >= wrap::width(&title) + wrap::width(hint) + 4;
@@ -1564,6 +1581,11 @@ mod tests {
             title: None,
             error: None,
             broker_node: None,
+            fleet_node: None,
+            fleet_route: None,
+            fleet_quant: None,
+            fleet_model: None,
+            fleet_served_at: None,
             allow_box_shell: false,
             approve_all: None,
             tokens_used: None,
@@ -1613,6 +1635,30 @@ mod tests {
 
     fn footer(tab: &AssistantTab<'_>) -> String {
         text(&[tab.footer_line(400, tab.running())])
+    }
+
+    #[test]
+    fn the_title_names_the_node_and_quant_once_stamped() {
+        let mut t = thread("t1", "running");
+        t.hostname = Some("PC-1".into());
+        assert_eq!(
+            tab(Some(t.clone())).transcript_title("x"),
+            " Agent \u{00b7} PC-1 \u{00b7} working \u{00b7} t1 "
+        );
+        t.fleet_node = Some("node-7900".into());
+        t.fleet_quant = Some("Q8_0".into());
+        t.fleet_route = Some("pinned".into());
+        assert_eq!(
+            tab(Some(t.clone())).transcript_title("x"),
+            " Agent \u{00b7} PC-1 \u{00b7} working \u{00b7} t1 \u{00b7} node-7900 Q8_0 "
+        );
+        t.fleet_node = Some("r9700".into());
+        t.fleet_quant = Some("MXFP4 AWQ".into());
+        t.fleet_route = Some("compaction".into());
+        assert_eq!(
+            tab(Some(t)).transcript_title("x"),
+            " Agent \u{00b7} PC-1 \u{00b7} working \u{00b7} t1 \u{00b7} r9700 MXFP4 AWQ \u{00b7} compaction "
+        );
     }
 
     #[test]
