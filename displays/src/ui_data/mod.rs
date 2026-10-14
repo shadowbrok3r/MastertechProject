@@ -801,8 +801,8 @@ impl crate::app_state::SharedContext {
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
             ctx.request_repaint();
-            crate::ui_tools::theme_config::sync_editor_config(&mut self.theme_config, &settings.style);
             crate::ui_tools::theme_config::apply_saved_theme(ctx, settings);
+            crate::ui_tools::theme_config::sync_editor_config(&mut self.theme_config, ctx);
         }
     }
 
