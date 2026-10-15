@@ -74,6 +74,5 @@ windows = { version = "0.62", features = [
     "Wdk_Graphics_Direct3D",
 ]}
 wmi = "=0.18.4"
-evtx = { version = "0.12", default-features = false }
 # Kernel-driver backends: SCM, device IO, shared bus mutexes, thread affinity.
 winapi = { version = "0.3", features = ["fileapi", "ioapiset", "winnt", "handleapi", "errhandlingapi", "winbase", "synchapi", "processthreadsapi", "minwindef", "minwinbase", "winsvc", "sddl", "securitybaseapi", "std"] }

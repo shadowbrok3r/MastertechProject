@@ -1,7 +1,4 @@
-//! Watches `C:\Windows\LiveKernelReports` for watchdog live dumps written
-//! during a run. Display-path hangs (AMD Crash Defender `AMD_WATCHDOG` /
-//! `AMD_REPORT_UM`, dxgkrnl `WATCHDOG`) land here and never raise a TDR event,
-//! so [`super::TdrCounters`] does not see them.
+//! Watches `C:\Windows\LiveKernelReports` for watchdog live dumps written during a run.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -109,7 +106,7 @@ impl Default for LiveDumpWatcher {
     }
 }
 
-fn collect_dumps(root: &Path) -> std::io::Result<HashSet<PathBuf>> {
+pub(super) fn collect_dumps(root: &Path) -> std::io::Result<HashSet<PathBuf>> {
     let mut out = HashSet::new();
     walk(root, 0, &mut out)?;
     Ok(out)
