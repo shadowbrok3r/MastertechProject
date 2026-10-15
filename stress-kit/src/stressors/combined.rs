@@ -21,6 +21,7 @@ use wgpu::util::DeviceExt;
 use crate::Metrics;
 
 use super::gpu_common::{wait_latest, GpuContext};
+use super::gpu_witness::Witness;
 
 const TICK: Duration = Duration::from_millis(500);
 
@@ -36,6 +37,7 @@ const INVOCATIONS_PER_DISPATCH: u64 = (WG_SIZE as u64) * (WG_COUNT as u64);
 const INNER_ITERS: u32 = 2048;
 // 5 flops per inner iteration: `y * 0.999999` plus two 2-flop fma calls.
 const GPU_OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 5;
+const GPU_FLOPS_PER_WORKGROUP: u64 = (WG_SIZE as u64) * GPU_OPS_PER_INVOCATION;
 /// Consecutive device-wait timeouts tolerated before the GPU leg is dropped.
 const MAX_WAIT_FAILURES: u32 = 3;
 
@@ -44,9 +46,13 @@ struct Params { inner_iters: u32, seed: u32, _p0: u32, _p1: u32 };
 
 @group(0) @binding(0) var<storage, read_write> sink: array<f32>;
 @group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read_write> witness: array<atomic<u32>>;
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
     let i = gid.x;
     if (i >= arrayLength(&sink)) { return; }
     var x: f32 = f32((i ^ params.seed) & 0xffffu) * 1e-5 + 1.0001;
@@ -56,6 +62,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         x = fma(y, 1e-7, x);
     }
     sink[i] = x + y;
+
+    if (lid == 0u) {
+        atomicAdd(&witness[0], 1u);
+    }
 }
 "#;
 
@@ -72,7 +82,8 @@ pub(crate) fn run(
     let mem_cap_per_thread_mb = (memory_cap_mb / mem_threads as u64).max(MEM_CHUNK_MB);
 
     let cpu_bursts = Arc::new(AtomicU64::new(0));
-    let gpu_dispatches = Arc::new(AtomicU64::new(0));
+    // Workgroups the GPU-side counter proved executed.
+    let gpu_workgroups = Arc::new(AtomicU64::new(0));
     let warn_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let cpu_handles: Vec<_> = (0..cpu_threads)
@@ -98,11 +109,11 @@ pub(crate) fn run(
 
     let gpu_handle = {
         let cancel = cancel.clone();
-        let counter = gpu_dispatches.clone();
+        let counter = gpu_workgroups.clone();
         let warn = warn_slot.clone();
         thread::Builder::new()
             .name("stress-kit-combined-gpu".into())
-            .spawn(move || gpu_driver(cancel, counter, warn))
+            .spawn(move || gpu_driver(cancel, counter, warn, || GpuContext::acquire(true)))
             .expect("stress-kit: failed to spawn combined gpu driver")
     };
 
@@ -114,12 +125,12 @@ pub(crate) fn run(
         thread::sleep(Duration::from_millis(50));
         if last_tick.elapsed() >= TICK {
             let cpu_now = cpu_bursts.load(Ordering::Relaxed);
-            let gpu_now = gpu_dispatches.load(Ordering::Relaxed);
+            let gpu_now = gpu_workgroups.load(Ordering::Relaxed);
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
 
             let cpu_flops = cpu_now.saturating_sub(last_cpu) as f64 * CPU_FLOPS_PER_BURST as f64;
-            let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64
-                * (INVOCATIONS_PER_DISPATCH * GPU_OPS_PER_INVOCATION) as f64;
+            let gpu_flops =
+                gpu_now.saturating_sub(last_gpu) as f64 * GPU_FLOPS_PER_WORKGROUP as f64;
             let gflops = (cpu_flops + gpu_flops) / dt / 1e9;
 
             let _ = tx.send(Metrics {
@@ -200,8 +211,13 @@ fn write_pattern(buf: &mut [u8]) {
     std::hint::black_box(&*buf);
 }
 
-fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<Option<String>>>) {
-    let ctx = match GpuContext::acquire(true) {
+fn gpu_driver(
+    cancel: Arc<AtomicBool>,
+    counter: Arc<AtomicU64>,
+    warn: Arc<Mutex<Option<String>>>,
+    acquire: impl FnOnce() -> Result<GpuContext, String>,
+) {
+    let ctx = match acquire() {
         Ok(c) => c,
         Err(e) => {
             let msg = format!(
@@ -262,12 +278,14 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
             compilation_options: Default::default(),
             cache: None,
         });
+    let mut witness = Witness::new(&ctx.device);
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("combined bind group"),
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: sink_buf.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: params_buf.as_entire_binding() },
+            witness.entry(2),
         ],
     });
 
@@ -289,11 +307,9 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
             cpass.set_bind_group(0, &bind_group, &[]);
             cpass.dispatch_workgroups(WG_COUNT, 1, 1);
         }
-        ctx.queue.submit(std::iter::once(encoder.finish()));
-        // Only a confirmed-complete dispatch counts toward GFLOPS.
+        witness.submit(&ctx.queue, encoder);
         match ctx.device.poll(wait_latest()) {
             Ok(_) => {
-                counter.fetch_add(1, Ordering::Relaxed);
                 wait_failures = 0;
             }
             Err(e) => {
@@ -322,11 +338,61 @@ fn gpu_driver(cancel: Arc<AtomicBool>, counter: Arc<AtomicU64>, warn: Arc<Mutex<
             set_warn(&warn, msg);
             return;
         }
+        match witness.absorb() {
+            Ok(workgroups) => {
+                counter.fetch_add(workgroups, Ordering::Relaxed);
+            }
+            Err(fault) => {
+                let msg = format!(
+                    "combined: inconclusive - {fault}; CPU+RAM only from here, so this is not a \
+                     whole-system result"
+                );
+                log::error!("[stress-kit/combined] {msg}");
+                set_warn(&warn, msg);
+                return;
+            }
+        }
     }
 }
 
 fn set_warn(warn: &Arc<Mutex<Option<String>>>, msg: String) {
     if let Ok(mut g) = warn.lock() {
         *g = Some(msg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stressors::gpu_witness::test_support::assert_witness_binding;
+
+    #[test]
+    fn shader_bumps_the_witness_at_binding_2() {
+        assert_witness_binding(SHADER, 2);
+    }
+
+    /// Noop device: dispatches retire without running.
+    #[test]
+    fn a_gpu_leg_that_never_runs_dispatches_earns_no_credit() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let counter = Arc::new(AtomicU64::new(0));
+        let warn = Arc::new(Mutex::new(None));
+        let leg = {
+            let (cancel, counter, warn) = (cancel.clone(), counter.clone(), warn.clone());
+            thread::spawn(move || gpu_driver(cancel, counter, warn, GpuContext::noop))
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !leg.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        cancel.store(true, Ordering::SeqCst);
+        leg.join().expect("combined gpu leg");
+
+        let reason = warn.lock().ok().and_then(|g| g.clone()).expect("a warning");
+        assert!(
+            reason.starts_with("combined: inconclusive - the GPU retired"),
+            "{reason}"
+        );
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }

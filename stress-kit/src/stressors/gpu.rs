@@ -1,4 +1,4 @@
-//! Mixed FMA + scattered-load compute shader. Reports GFLOPS.
+//! Mixed FMA + scattered-load compute shader. Reports GFLOPS of workgroups proven to have run.
 
 #![cfg(feature = "gpu")]
 
@@ -11,6 +11,7 @@ use wgpu::util::DeviceExt;
 use crate::Metrics;
 
 use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, wait_latest, GpuContext, TICK};
+use super::gpu_witness::Witness;
 
 const SHADER: &str = r#"
 struct Params {
@@ -23,11 +24,15 @@ struct Params {
 @group(0) @binding(0) var<storage, read>        scatter:  array<f32>;
 @group(0) @binding(1) var<storage, read_write>  sink:     array<f32>;
 @group(0) @binding(2) var<uniform>              params:   Params;
+@group(0) @binding(3) var<storage, read_write>  witness:  array<atomic<u32>>;
 
 const WG_SIZE: u32 = 64u;
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
     let i  = gid.x;
     let len = params.buffer_len;
     if (i >= arrayLength(&sink)) { return; }
@@ -55,6 +60,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     sink[i] = x * 1e-9 + y * 1e-9;
+
+    if (lid == 0u) {
+        atomicAdd(&witness[0], 1u);
+    }
 }
 "#;
 
@@ -64,6 +73,7 @@ const INVOCATIONS_PER_DISPATCH: u64 = (WG_SIZE as u64) * (WG_COUNT as u64);
 const INNER_ITERS: u32 = 1024;
 // 6 flops per inner iteration, plus 2 more on every 4th iteration.
 const OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 6 + (INNER_ITERS as u64) / 2;
+const OPS_PER_WORKGROUP: u64 = (WG_SIZE as u64) * OPS_PER_INVOCATION;
 const SCATTER_FLOATS: usize = (64 * 1024 * 1024) / std::mem::size_of::<f32>();
 /// Consecutive device-wait timeouts tolerated before the run is declared stalled.
 const MAX_WAIT_FAILURES: u32 = 3;
@@ -74,7 +84,16 @@ pub(crate) fn run(
     tx: &mpsc::Sender<Metrics>,
     started_at: Instant,
 ) {
-    let ctx = match GpuContext::acquire(true) {
+    run_with(cancel, tx, started_at, || GpuContext::acquire(true));
+}
+
+fn run_with(
+    cancel: &Arc<AtomicBool>,
+    tx: &mpsc::Sender<Metrics>,
+    started_at: Instant,
+    acquire: impl FnOnce() -> Result<GpuContext, String>,
+) {
+    let ctx = match acquire() {
         Ok(c) => c,
         Err(e) => {
             return run_unsupported("gpu", "GPU compute load", &e, cancel, tx, started_at)
@@ -143,6 +162,7 @@ pub(crate) fn run(
             cache: None,
         });
 
+    let mut witness = Witness::new(&ctx.device);
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("gpu-stressor bind group"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -150,12 +170,13 @@ pub(crate) fn run(
             wgpu::BindGroupEntry { binding: 0, resource: scatter_buf.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: sink_buf.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 2, resource: params_buf.as_entire_binding() },
+            witness.entry(3),
         ],
     });
 
     let mut last_tick = Instant::now();
-    // Confirmed-complete dispatches only; a timed-out wait is not work done.
-    let mut dispatches_in_tick: u64 = 0;
+    // Workgroups the GPU-side counter proved executed this tick.
+    let mut workgroups_in_tick: u64 = 0;
     let mut wait_failures: u32 = 0;
     let mut warn: Option<String> = None;
 
@@ -177,12 +198,11 @@ pub(crate) fn run(
             cpass.set_bind_group(0, &bind_group, &[]);
             cpass.dispatch_workgroups(WG_COUNT, 1, 1);
         }
-        ctx.queue.submit(std::iter::once(encoder.finish()));
+        witness.submit(&ctx.queue, encoder);
         // A wait timeout is neither an uncaptured error nor device-lost, so it has
         // to be counted here or a hung device looks healthy.
         match ctx.device.poll(wait_latest()) {
             Ok(_) => {
-                dispatches_in_tick += 1;
                 wait_failures = 0;
             }
             Err(e) => {
@@ -208,17 +228,67 @@ pub(crate) fn run(
             );
             return;
         }
+        match witness.absorb() {
+            Ok(workgroups) => workgroups_in_tick += workgroups,
+            Err(fault) => {
+                emit_fatal_tick(
+                    tx,
+                    started_at,
+                    format!("gpu: inconclusive - {fault}; the compute load is unproven"),
+                    0,
+                );
+                return;
+            }
+        }
 
         if last_tick.elapsed() >= TICK {
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
-            let invocations = INVOCATIONS_PER_DISPATCH * dispatches_in_tick;
-            let total_ops = invocations * OPS_PER_INVOCATION;
+            let total_ops = workgroups_in_tick * OPS_PER_WORKGROUP;
             let gflops = (total_ops as f64) / dt / 1e9;
             emit_tick(tx, started_at, gflops, warn.take(), 0);
             last_tick = Instant::now();
-            dispatches_in_tick = 0;
+            workgroups_in_tick = 0;
         }
     }
 
     log::debug!("[stress-kit/gpu] cancellation received, exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stressors::gpu_witness::test_support::{
+        assert_witness_binding, peak, samples_until_fatal,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn shader_bumps_the_witness_at_binding_3() {
+        assert_witness_binding(SHADER, 3);
+    }
+
+    /// Noop device: dispatches retire without running.
+    #[test]
+    fn a_device_that_never_runs_dispatches_earns_no_credit() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || run_with(&cancel, &tx, Instant::now(), GpuContext::noop))
+        };
+        let samples = samples_until_fatal(&rx, Duration::from_secs(30));
+        cancel.store(true, Ordering::SeqCst);
+        worker.join().expect("gpu worker");
+
+        let reason = samples
+            .iter()
+            .find(|m| m.fatal)
+            .and_then(|m| m.last_error.clone())
+            .expect("a fatal with a reason");
+        assert!(
+            reason.starts_with("gpu: inconclusive - the GPU retired"),
+            "{reason}"
+        );
+        assert_eq!(peak(&samples), 0.0);
+    }
 }

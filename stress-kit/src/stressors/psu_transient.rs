@@ -2,7 +2,7 @@
 //! square-waves between compute bursts and idle windows while CPU FMA workers
 //! run continuously. Submits are sized so a burst can be cut on the clock, and
 //! the achieved duty cycle is measured rather than assumed. Reports combined
-//! GFLOPS from confirmed-complete burst-phase GPU work. A run with no GPU load
+//! GFLOPS from burst-phase GPU work a GPU-side counter proves ran. A run with no GPU load
 //! is not a valid transient test: it goes fatal as soon as the GPU leg is gone
 //! and the stage returns on the next tick.
 
@@ -19,6 +19,7 @@ use wgpu::util::DeviceExt;
 use crate::Metrics;
 
 use super::gpu_common::{emit_fatal_tick, emit_tick, wait_for, wait_latest, GpuContext, TICK};
+use super::gpu_witness::Witness;
 
 /// Target length of the GPU burst; submits stop as soon as it elapses.
 const PULSE_ON: Duration = Duration::from_millis(100);
@@ -36,6 +37,7 @@ const INVOCATIONS_PER_SUBMIT: u64 = (WG_SIZE as u64) * (WG_PER_SUBMIT as u64);
 const INNER_ITERS: u32 = 512;
 // 6 flops per shader iteration plus 2 more on every fourth iteration.
 const GPU_OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 6 + (INNER_ITERS as u64) / 2;
+const GPU_FLOPS_PER_WORKGROUP: u64 = (WG_SIZE as u64) * GPU_OPS_PER_INVOCATION;
 /// Queued submits tolerated before the driver thread waits on the oldest.
 const MAX_INFLIGHT_SUBMITS: usize = 3;
 /// Wall-clock window without confirmed GPU work before the leg is declared stalled.
@@ -64,9 +66,13 @@ struct Params {
 @group(0) @binding(0) var<storage, read>       scatter: array<f32>;
 @group(0) @binding(1) var<storage, read_write> sink:    array<f32>;
 @group(0) @binding(2) var<uniform>             params:  Params;
+@group(0) @binding(3) var<storage, read_write> witness: array<atomic<u32>>;
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
     let i = gid.x;
     let len = params.buffer_len;
     if (i >= arrayLength(&sink)) { return; }
@@ -92,6 +98,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     sink[i] = x * 1e-9 + y * 1e-9;
+
+    if (lid == 0u) {
+        atomicAdd(&witness[0], 1u);
+    }
 }
 "#;
 
@@ -115,8 +125,8 @@ pub(crate) fn run(
     // Two logical cores left free for the GPU submit thread and the tick loop.
     let cpu_threads = thread_count.saturating_sub(2).max(1);
     let cpu_bursts = Arc::new(AtomicU64::new(0));
-    // Confirmed-complete GPU work units, not submits.
-    let gpu_units = Arc::new(AtomicU64::new(0));
+    // Workgroups the GPU-side counter proved executed.
+    let gpu_workgroups = Arc::new(AtomicU64::new(0));
     let warn_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let stall_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let fatal_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -134,14 +144,19 @@ pub(crate) fn run(
 
     let gpu_handle = {
         let stop = stop.clone();
-        let counter = gpu_units.clone();
+        let counter = gpu_workgroups.clone();
         let warn = warn_slot.clone();
         let stall = stall_slot.clone();
         let fatal = fatal_slot.clone();
         let tx = tx.clone();
         thread::Builder::new()
             .name("stress-kit-pulse-gpu".into())
-            .spawn(move || gpu_driver(stop, counter, warn, stall, fatal, tx, started_at))
+            .spawn(move || {
+                let slots = Slots { warn, stall, fatal };
+                gpu_driver(stop, counter, slots, tx, started_at, || {
+                    GpuContext::acquire(true)
+                })
+            })
             .expect("stress-kit: failed to spawn psu_transient gpu driver")
     };
 
@@ -156,12 +171,11 @@ pub(crate) fn run(
         }
 
         let cpu_now = cpu_bursts.load(Ordering::Relaxed);
-        let gpu_now = gpu_units.load(Ordering::Relaxed);
+        let gpu_now = gpu_workgroups.load(Ordering::Relaxed);
         let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
 
         let cpu_flops = cpu_now.saturating_sub(last_cpu) as f64 * CPU_FLOPS_PER_BURST as f64;
-        let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64
-            * (INVOCATIONS_PER_SUBMIT * GPU_OPS_PER_INVOCATION) as f64;
+        let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64 * GPU_FLOPS_PER_WORKGROUP as f64;
         let gflops = (cpu_flops + gpu_flops) / dt / 1e9;
 
         last_cpu = cpu_now;
@@ -243,16 +257,23 @@ fn raise_submit_priority() {
 #[cfg(not(windows))]
 fn raise_submit_priority() {}
 
-fn gpu_driver(
-    stop: Arc<AtomicBool>,
-    counter: Arc<AtomicU64>,
+/// Reason slots the GPU driver thread publishes to the tick loop.
+struct Slots {
     warn: Arc<Mutex<Option<String>>>,
     stall: Arc<Mutex<Option<String>>>,
     fatal: Arc<Mutex<Option<String>>>,
+}
+
+fn gpu_driver(
+    stop: Arc<AtomicBool>,
+    counter: Arc<AtomicU64>,
+    slots: Slots,
     tx: mpsc::Sender<Metrics>,
     started_at: Instant,
+    acquire: impl FnOnce() -> Result<GpuContext, String>,
 ) {
-    let ctx = match GpuContext::acquire(true) {
+    let Slots { warn, stall, fatal } = slots;
+    let ctx = match acquire() {
         Ok(c) => c,
         Err(e) => {
             let msg = format!(
@@ -324,6 +345,7 @@ fn gpu_driver(
             compilation_options: Default::default(),
             cache: None,
         });
+    let mut witness = Witness::new(&ctx.device);
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("psu-transient bind group"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -331,14 +353,15 @@ fn gpu_driver(
             wgpu::BindGroupEntry { binding: 0, resource: scatter_buf.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: sink_buf.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 2, resource: params_buf.as_entire_binding() },
+            witness.entry(3),
         ],
     });
 
     // Reset by every confirmed unit; a timing-out device wait leaves it standing.
     let mut last_progress = Instant::now();
 
-    // Uncounted warm-up submit forces pipeline compilation before the first edge.
-    let warmup = submit_unit(&ctx, &pipeline, &bind_group);
+    // Warm-up submit forces pipeline compilation before the first edge.
+    let warmup = submit_unit(&ctx, &mut witness, &pipeline, &bind_group);
     if drain_to(&ctx, warmup, &stall) {
         last_progress = Instant::now();
     }
@@ -347,11 +370,16 @@ fn gpu_driver(
         return;
     }
 
-    let Some(unit_cost) = calibrate_unit(&ctx, &pipeline, &bind_group, &stall) else {
+    let Some(unit_cost) = calibrate_unit(&ctx, &mut witness, &pipeline, &bind_group, &stall) else {
         report_gpu_stalled(&warn, &fatal, &tx, started_at, last_progress.elapsed());
         return;
     };
     last_progress = Instant::now();
+    // Warm-up and calibration units are proven but not credited.
+    if let Err(msg) = credit(&mut witness, &AtomicU64::new(0)) {
+        report_fatal(&warn, &fatal, &tx, started_at, msg);
+        return;
+    }
     let inflight_cap = inflight_cap_for(unit_cost);
     log::info!(
         "[stress-kit/psu_transient] submit cost {:.2}ms, ~{} submits per burst, {} in flight",
@@ -381,15 +409,17 @@ fn gpu_driver(
             params.seed = params.seed.wrapping_mul(1103515245).wrapping_add(12345);
             ctx.queue.write_buffer(&params_buf, 0, bytemuck::bytes_of(&params));
 
-            pending.push_back(submit_unit(&ctx, &pipeline, &bind_group));
+            pending.push_back(submit_unit(&ctx, &mut witness, &pipeline, &bind_group));
             submits += 1;
 
             match pop_at_cap(&mut pending, inflight_cap) {
-                // The cap drain already waits on the oldest unit; its success confirms one unit.
                 Some(oldest) => {
                     if drain_to(&ctx, oldest, &stall) {
-                        counter.fetch_add(1, Ordering::Relaxed);
                         last_progress = Instant::now();
+                    }
+                    if let Err(msg) = credit(&mut witness, &counter) {
+                        report_fatal(&warn, &fatal, &tx, started_at, msg);
+                        return;
                     }
                 }
                 None => {
@@ -399,13 +429,10 @@ fn gpu_driver(
         }
 
         // Queued work is drained before the idle window so the trailing edge steps down.
-        let queued = pending.len() as u64;
         pending.clear();
         // Skipped once stalled: the wait would block for wgpu's full internal timeout.
         let stalled = last_progress.elapsed() >= DRAIN_STALL_LIMIT;
         if !stalled && check_poll(ctx.device.poll(wait_latest()), &stall) {
-            // An empty queue confirms every unit still tracked at the boundary.
-            counter.fetch_add(queued, Ordering::Relaxed);
             last_progress = Instant::now();
         }
         let on_actual = cycle_start.elapsed();
@@ -416,6 +443,10 @@ fn gpu_driver(
         }
         if last_progress.elapsed() >= DRAIN_STALL_LIMIT {
             report_gpu_stalled(&warn, &fatal, &tx, started_at, last_progress.elapsed());
+            return;
+        }
+        if let Err(msg) = credit(&mut witness, &counter) {
+            report_fatal(&warn, &fatal, &tx, started_at, msg);
             return;
         }
 
@@ -447,6 +478,7 @@ fn gpu_driver(
 /// Encodes and submits one work unit.
 fn submit_unit(
     ctx: &GpuContext,
+    witness: &mut Witness,
     pipeline: &wgpu::ComputePipeline,
     bind_group: &wgpu::BindGroup,
 ) -> wgpu::SubmissionIndex {
@@ -464,7 +496,7 @@ fn submit_unit(
         cpass.set_bind_group(0, bind_group, &[]);
         cpass.dispatch_workgroups(WG_PER_SUBMIT, 1, 1);
     }
-    ctx.queue.submit(std::iter::once(encoder.finish()))
+    witness.submit(&ctx.queue, encoder)
 }
 
 /// Pops the oldest queued submission once `cap` is exceeded.
@@ -513,6 +545,7 @@ fn check_poll(
 /// Fastest of `CALIBRATION_SAMPLES` timed single-unit submits; `None` if a wait timed out.
 fn calibrate_unit(
     ctx: &GpuContext,
+    witness: &mut Witness,
     pipeline: &wgpu::ComputePipeline,
     bind_group: &wgpu::BindGroup,
     stall: &Arc<Mutex<Option<String>>>,
@@ -520,7 +553,7 @@ fn calibrate_unit(
     let mut best = Duration::MAX;
     for _ in 0..CALIBRATION_SAMPLES {
         let started = Instant::now();
-        let index = submit_unit(ctx, pipeline, bind_group);
+        let index = submit_unit(ctx, witness, pipeline, bind_group);
         if !drain_to(ctx, index, stall) {
             return None;
         }
@@ -604,6 +637,18 @@ fn report_gpu_stalled(
     );
 }
 
+/// Adds the workgroups `witness` proved since the last call to `counter`; `Err` is the fatal reason.
+fn credit(witness: &mut Witness, counter: &AtomicU64) -> Result<(), String> {
+    let workgroups = witness.absorb().map_err(|fault| {
+        format!(
+            "psu_transient: inconclusive - {fault}; the pulsed +12V load is unproven, so this is \
+             not a valid PSU transient test"
+        )
+    })?;
+    counter.fetch_add(workgroups, Ordering::Relaxed);
+    Ok(())
+}
+
 /// Publishes `msg` to both slots and sends the fatal tick.
 fn report_fatal(
     warn: &Arc<Mutex<Option<String>>>,
@@ -643,5 +688,57 @@ fn set_slot(slot: &Arc<Mutex<Option<String>>>, msg: String) {
 fn clear_slot(slot: &Arc<Mutex<Option<String>>>) {
     if let Ok(mut g) = slot.lock() {
         *g = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stressors::gpu_witness::test_support::{
+        assert_witness_binding, samples_until_fatal,
+    };
+
+    #[test]
+    fn shader_bumps_the_witness_at_binding_3() {
+        assert_witness_binding(SHADER, 3);
+    }
+
+    /// Noop device: dispatches retire without running.
+    #[test]
+    fn a_gpu_leg_that_never_runs_dispatches_earns_no_credit() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let counter = Arc::new(AtomicU64::new(0));
+        let fatal = Arc::new(Mutex::new(None));
+        let slots = Slots {
+            warn: Arc::new(Mutex::new(None)),
+            stall: Arc::new(Mutex::new(None)),
+            fatal: fatal.clone(),
+        };
+        let (tx, rx) = mpsc::channel();
+        let leg = {
+            let (stop, counter) = (stop.clone(), counter.clone());
+            thread::spawn(move || {
+                gpu_driver(stop, counter, slots, tx, Instant::now(), GpuContext::noop)
+            })
+        };
+        let samples = samples_until_fatal(&rx, Duration::from_secs(30));
+        stop.store(true, Ordering::SeqCst);
+        leg.join().expect("psu_transient gpu leg");
+
+        let latched = fatal
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .expect("a latched fatal");
+        assert!(
+            latched.starts_with("psu_transient: inconclusive - the GPU retired"),
+            "{latched}"
+        );
+        assert!(
+            samples
+                .iter()
+                .any(|m| m.fatal && m.last_error.as_deref() == Some(latched.as_str()))
+        );
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }
