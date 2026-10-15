@@ -360,6 +360,33 @@ impl GpuContext {
     pub(super) fn spawn_device(&self, label: &str) -> Result<(Device, Queue), String> {
         request_device(&self.adapter, label, &self.health)
     }
+
+    /// Context on wgpu's noop backend: commands validate and retire, dispatches run nothing.
+    #[cfg(test)]
+    pub(super) fn noop() -> Result<Self, String> {
+        let instance = Instance::new(InstanceDescriptor {
+            backends: Backends::NOOP,
+            backend_options: wgpu::BackendOptions {
+                noop: wgpu::NoopBackendOptions::enabled(),
+                ..Default::default()
+            },
+            ..InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter =
+            pollster::block_on(instance.request_adapter(&RequestAdapterOptions::default()))
+                .map_err(|e| format!("noop adapter: {e}"))?;
+        let health = GpuHealth::default();
+        let (device, queue) = request_device(&adapter, "stress-kit noop", &health)?;
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            vendor_label: "noop".into(),
+            backend_label: "Noop".into(),
+            health,
+        })
+    }
 }
 
 /// Requests a device with this crate's limits and health reporting wired in.

@@ -121,6 +121,10 @@ async fn main() -> eframe::Result<()> {
     // stress-runner would fall back to its own runtime and the cross-runtime
     // futures might never see WS responses.
     stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
+    stress_runner::set_host_build(
+        "qc-app",
+        concat!(env!("CARGO_PKG_VERSION"), "+", env!("BUILD_HASH")),
+    );
 
     // Cache the real status table off the backends. Best-effort and off the
     // startup path: every lookup falls back to the compiled table, which names

@@ -2292,6 +2292,10 @@ pub struct RecordStressTestRunParams {
     pub hostname: Option<String>,
     #[schemars(description = "Free-form notes (symptom match, MCP timeout, dump paths, …)")]
     pub notes: Option<String>,
+    #[schemars(
+        description = "Build that ran the test, e.g. 'MasterTech 5.0.1+ec3ea6b; stress-kit 0.1.0+ec3ea6b' or a third-party tool's version. Default: 'backfill; recorded by <this app's build>'"
+    )]
+    pub tool_version: Option<String>,
     #[schemars(description = "Tags (default includes backfill + preset:gpu-probe)")]
     #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
@@ -8119,6 +8123,7 @@ impl PluginToolProvider {
         run.duration_actual_secs = p.duration_actual_secs;
         run.hostname = p.hostname.clone();
         run.notes = p.notes.clone();
+        run.tool_version = Some(backfill_tool_version(p.tool_version.as_deref()));
         run.tags = tags;
         run.result = result;
         run.finish_reason = Some(FinishReason::Crashed);
@@ -13483,6 +13488,14 @@ fn parse_record_id(s: &str, table: &'static str) -> database::schema::RecordId {
     database::schema::entity_link::parse_record_id(s, table)
 }
 
+/// `tool_version` of a backfilled run: the caller's value, else this app's build marked as the recorder.
+fn backfill_tool_version(supplied: Option<&str>) -> String {
+    match supplied.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) => v.to_string(),
+        None => format!("backfill; recorded by {}", stress_runner::host_build()),
+    }
+}
+
 // ─── TCP server ────────────────────────────────────────────────────────────────
 
 /// Start the plugin MCP server on TCP port 9003.
@@ -14290,7 +14303,21 @@ mod broker_tool_tests {
 
 #[cfg(test)]
 mod stress_suite_tests {
-    use super::{default_stress_script_timeout_secs, is_cert_script, stress_suite_script_names};
+    use super::{
+        backfill_tool_version, default_stress_script_timeout_secs, is_cert_script,
+        stress_suite_script_names,
+    };
+
+    #[test]
+    fn backfilled_runs_name_their_build_or_their_recorder() {
+        assert_eq!(backfill_tool_version(Some(" OCCT 13.1.4 ")), "OCCT 13.1.4");
+        let recorded = backfill_tool_version(Some("  "));
+        assert_eq!(
+            recorded,
+            format!("backfill; recorded by {}", stress_runner::host_build())
+        );
+        assert_eq!(backfill_tool_version(None), recorded);
+    }
 
     #[test]
     fn the_suite_leaves_certifications_out_unless_asked() {

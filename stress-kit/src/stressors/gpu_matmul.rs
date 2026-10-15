@@ -1,4 +1,4 @@
-//! Repeated NxN fp32 matmul on the GPU. Reports GFLOPS via `2 * N^3` per matmul.
+//! Repeated NxN fp32 matmul on the GPU. Reports GFLOPS of workgroups proven to have run.
 //! Sampled output rows are read back and checked against a CPU reference;
 //! mismatches accumulate in `Metrics::errors`.
 
@@ -15,10 +15,12 @@ use crate::Metrics;
 use super::gpu_common::{
     emit_fatal_tick, emit_tick, run_unsupported, wait_latest, GpuContext, MAP_WAIT_TIMEOUT, TICK,
 };
+use super::gpu_witness::Witness;
 
 const N: u32 = 2048;
 const TILE: u32 = 16;
-const OPS_PER_MATMUL: u64 = 2 * (N as u64) * (N as u64) * (N as u64);
+/// `2 * N` flops per output element over one `TILE x TILE` workgroup.
+const OPS_PER_WORKGROUP: u64 = 2 * (N as u64) * (TILE as u64) * (TILE as u64);
 
 /// Consecutive device-wait timeouts tolerated before the run is declared stalled.
 const MAX_WAIT_FAILURES: u32 = 3;
@@ -38,9 +40,13 @@ struct Dims { n: u32, _pad0: u32, _pad1: u32, _pad2: u32 };
 @group(0) @binding(1) var<storage, read>       b:    array<f32>;
 @group(0) @binding(2) var<storage, read_write> c:    array<f32>;
 @group(0) @binding(3) var<uniform>             dims: Dims;
+@group(0) @binding(4) var<storage, read_write> witness: array<atomic<u32>>;
 
 @compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
     let n = dims.n;
     let row = gid.y;
     let col = gid.x;
@@ -51,6 +57,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         acc = fma(a[row * n + k], b[k * n + col], acc);
     }
     c[row * n + col] = acc;
+
+    if (lid == 0u) {
+        atomicAdd(&witness[0], 1u);
+    }
 }
 "#;
 
@@ -60,7 +70,16 @@ pub(crate) fn run(
     tx: &mpsc::Sender<Metrics>,
     started_at: Instant,
 ) {
-    let ctx = match GpuContext::acquire(true) {
+    run_with(cancel, tx, started_at, || GpuContext::acquire(true));
+}
+
+fn run_with(
+    cancel: &Arc<AtomicBool>,
+    tx: &mpsc::Sender<Metrics>,
+    started_at: Instant,
+    acquire: impl FnOnce() -> Result<GpuContext, String>,
+) {
+    let ctx = match acquire() {
         Ok(c) => c,
         Err(e) => {
             return run_unsupported("gpu_matmul", "matmul load", &e, cancel, tx, started_at)
@@ -150,6 +169,7 @@ pub(crate) fn run(
         compilation_options: Default::default(),
         cache: None,
     });
+    let mut witness = Witness::new(&ctx.device);
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("matmul bind group"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -158,13 +178,14 @@ pub(crate) fn run(
             wgpu::BindGroupEntry { binding: 1, resource: b_buf.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 2, resource: c_buf.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 3, resource: dims_buf.as_entire_binding() },
+            witness.entry(4),
         ],
     });
 
     let groups = N.div_ceil(TILE);
     let mut last_tick = Instant::now();
-    // Confirmed-complete matmuls only; a timed-out wait is not work done.
-    let mut matmuls_in_tick: u64 = 0;
+    // Workgroups the GPU-side counter proved executed this tick.
+    let mut workgroups_in_tick: u64 = 0;
     let mut matmul_count: u64 = 0;
     let mut total_errors: u64 = 0;
     let mut logged_mismatch = false;
@@ -189,7 +210,7 @@ pub(crate) fn run(
             cpass.dispatch_workgroups(groups, groups, 1);
         }
         encoder.copy_buffer_to_buffer(&c_buf, verify_row * row_bytes, &readback_buf, 0, row_bytes);
-        ctx.queue.submit(std::iter::once(encoder.finish()));
+        witness.submit(&ctx.queue, encoder);
         // A wait timeout is neither an uncaptured error nor device-lost, so it has
         // to be counted here or a hung queue reports full throughput.
         let completed = match ctx.device.poll(wait_latest()) {
@@ -226,7 +247,6 @@ pub(crate) fn run(
         }
 
         if completed {
-            matmuls_in_tick += 1;
             matmul_count += 1;
 
             // Read back the sampled row and compare against the reference.
@@ -288,9 +308,22 @@ pub(crate) fn run(
             }
         }
 
+        match witness.absorb() {
+            Ok(workgroups) => workgroups_in_tick += workgroups,
+            Err(fault) => {
+                emit_fatal_tick(
+                    tx,
+                    started_at,
+                    format!("gpu_matmul: inconclusive - {fault}; the matmul load is unproven"),
+                    total_errors,
+                );
+                return;
+            }
+        }
+
         if last_tick.elapsed() >= TICK {
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
-            let total_ops = matmuls_in_tick * OPS_PER_MATMUL;
+            let total_ops = workgroups_in_tick * OPS_PER_WORKGROUP;
             let gflops = (total_ops as f64) / dt / 1e9;
             let unchecked = warn.take();
             let err_msg = if total_errors > 0 {
@@ -302,7 +335,7 @@ pub(crate) fn run(
             };
             emit_tick(tx, started_at, gflops, err_msg, total_errors);
             last_tick = Instant::now();
-            matmuls_in_tick = 0;
+            workgroups_in_tick = 0;
         }
     }
 
@@ -312,4 +345,49 @@ pub(crate) fn run(
         );
     }
     log::debug!("[stress-kit/gpu_matmul] cancellation received, exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stressors::gpu_witness::test_support::{
+        assert_witness_binding, peak, samples_until_fatal,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn shader_bumps_the_witness_at_binding_4() {
+        assert_witness_binding(SHADER, 4);
+    }
+
+    #[test]
+    fn workgroup_flops_sum_to_the_matmul_flops() {
+        let groups = u64::from(N.div_ceil(TILE));
+        assert_eq!(OPS_PER_WORKGROUP * groups * groups, 2 * u64::from(N).pow(3));
+    }
+
+    /// Noop device: dispatches retire without running.
+    #[test]
+    fn a_device_that_never_runs_dispatches_earns_no_credit() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || run_with(&cancel, &tx, Instant::now(), GpuContext::noop))
+        };
+        let samples = samples_until_fatal(&rx, Duration::from_secs(60));
+        cancel.store(true, Ordering::SeqCst);
+        worker.join().expect("gpu_matmul worker");
+
+        let reason = samples
+            .iter()
+            .find(|m| m.fatal)
+            .and_then(|m| m.last_error.clone())
+            .expect("a fatal with a reason");
+        assert!(
+            reason.starts_with("gpu_matmul: inconclusive - the GPU retired"),
+            "{reason}"
+        );
+        assert_eq!(peak(&samples), 0.0);
+    }
 }

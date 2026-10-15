@@ -33,6 +33,9 @@ use stress_kit::{
 };
 
 use crate::mapping::{default_target_kind, metric_from_snapshot};
+use crate::plausibility::{
+    logical_cpus, PowerBreach, PowerGate, ThroughputBreach, ThroughputGate, IMPLAUSIBLE_VALUE_CODE,
+};
 use crate::rules::{
     evaluate_stage, is_device_loss_message, is_inconclusive_message, is_resolution_message,
     is_stressor_hang_message, is_stressor_limit_message, MissingSensor, RuleViolation,
@@ -830,6 +833,7 @@ fn build_run(spec: &RunSpec) -> StressTestRun {
     run.notes = spec.notes.clone();
     run.preset_label = spec.preset_label.clone();
     run.tags = spec.tags.clone();
+    run.tool_version = Some(crate::provenance::tool_version());
 
     run.duration_planned_secs = spec.plan.expected_duration_secs();
     run
@@ -1025,12 +1029,11 @@ fn drive_single(
     let mut drops = MetricDrops::default();
     let label = stressor.label().to_string();
     let effective_rules = rules.clone().unwrap_or_default();
-    let mut stage_stats = StageStats::begin(0, &label, stressor, &telemetry.snapshot());
+    let snapshot0 = telemetry.snapshot();
+    let mut stage_stats = StageStats::begin(0, &label, stressor, &snapshot0);
+    let mut stage_tp = StageThroughput::new(&label, stressor, &snapshot0, false);
     let mut stage_last_error: Option<String> = None;
     let mut stage_had_error = false;
-    let mut stage_peak: Option<f64> = None;
-    let mut stage_tp_sum = 0.0_f64;
-    let mut stage_tp_count = 0_u32;
     // Stressors latch `fatal` on every later sample; report it once.
     let mut fatal_reported = false;
 
@@ -1052,6 +1055,7 @@ fn drive_single(
         }
 
         if let Some(m) = session.try_recv() {
+            let m = fold_sample(&mut stage_tp, m, run_id, update_tx);
             if m.fatal {
                 if !fatal_reported {
                     fatal_reported = true;
@@ -1062,11 +1066,6 @@ fn drive_single(
                 stage_stats.absorb_final(&m);
                 session.stop();
             }
-            if m.throughput > 0.0 {
-                stage_peak = Some(stage_peak.map_or(m.throughput, |p: f64| p.max(m.throughput)));
-                stage_tp_sum += m.throughput;
-                stage_tp_count += 1;
-            }
             if let Some(err) = &m.last_error {
                 stage_had_error = true;
                 stage_last_error = Some(err.clone());
@@ -1076,13 +1075,20 @@ fn drive_single(
 
         if last_tick.elapsed() >= TICK_INTERVAL {
             last_tick = Instant::now();
-            let snapshot = telemetry.snapshot();
-            if snapshot.is_populated() {
-                let whea_before = acc.whea_delta_count;
-                let tdr_before = acc.tdr_delta_count;
-                let new_errors = acc.absorb(&latest_metrics, &snapshot, throughput_unit);
+            let ScreenedTick {
+                snapshot,
+                new_errors,
+                ..
+            } = record_tick(
+                acc,
+                telemetry.snapshot(),
+                &latest_metrics,
+                throughput_unit,
+                run_id,
+                update_tx,
+            );
+            if let Some(new_errors) = new_errors {
                 stage_stats.absorb_tick(&latest_metrics, &snapshot, &effective_rules);
-                persist_counter_events(run_id, &acc, whea_before, tdr_before);
                 if new_errors > 0 {
                     persist_error_event(run_id, stressor, new_errors, latest_metrics.last_error.clone());
                 }
@@ -1090,7 +1096,7 @@ fn drive_single(
                 match metric_from_snapshot(
                     run_id.clone(),
                     &snapshot,
-                    Some(latest_metrics.throughput),
+                    stage_tp.recorded(latest_metrics.throughput),
                     Some(throughput_unit),
                     latest_metrics.last_error.as_deref(),
                     None,
@@ -1140,11 +1146,7 @@ fn drive_single(
     // Final drain: any sample emitted after the last periodic absorb — the
     // fatal tick included — is still folded into the stage.
     if let Some(m) = session.try_recv() {
-        if m.throughput > 0.0 {
-            stage_peak = Some(stage_peak.map_or(m.throughput, |p: f64| p.max(m.throughput)));
-            stage_tp_sum += m.throughput;
-            stage_tp_count += 1;
-        }
+        let m = fold_sample(&mut stage_tp, m, run_id, update_tx);
         if let Some(err) = &m.last_error {
             stage_had_error = true;
             stage_last_error = Some(err.clone());
@@ -1171,19 +1173,14 @@ fn drive_single(
     );
     persist_tdr_event(run_id, tdr_before, acc.tdr_delta_count);
     let verdict = stage_verdict_for(&stage_stats, rules, &effective_rules);
-    let avg = if stage_tp_count > 0 {
-        Some(stage_tp_sum / stage_tp_count as f64)
-    } else {
-        None
-    };
     let summary = stage_summary_from_stats(
         &stage_stats,
         stressor,
         threads as u32,
         duration_secs.unwrap_or(0),
         started_at.elapsed().as_secs_f64(),
-        stage_peak,
-        avg,
+        stage_tp.peak(),
+        stage_tp.mean(),
         throughput_unit,
         stage_had_error,
         stage_last_error,
@@ -1252,9 +1249,10 @@ fn drive_concurrent(
         .enumerate()
         .map(|(i, l)| StageStats::begin(i as u32, &l.label, l.stressor, &snapshot0))
         .collect();
-    let mut peak: Vec<Option<f64>> = vec![None; n];
-    let mut tp_sum = vec![0.0_f64; n];
-    let mut tp_count = vec![0_u32; n];
+    let mut throughput: Vec<StageThroughput> = lanes
+        .iter()
+        .map(|l| StageThroughput::new(&l.label, l.stressor, &snapshot0, false))
+        .collect();
     let mut last_error: Vec<Option<String>> = vec![None; n];
     // Newest lane message already routed into `acc`.
     let mut classified: Vec<Option<String>> = vec![None; n];
@@ -1285,6 +1283,7 @@ fn drive_concurrent(
 
         for (i, s) in sessions.iter().enumerate() {
             if let Some(m) = s.try_recv() {
+                let m = fold_sample(&mut throughput[i], m, run_id, update_tx);
                 if m.fatal {
                     if !fatal_seen[i] {
                         fatal_seen[i] = true;
@@ -1296,11 +1295,6 @@ fn drive_concurrent(
                     stats[i].absorb_final(&m);
                     s.stop();
                 }
-                if m.throughput > 0.0 {
-                    peak[i] = Some(peak[i].map_or(m.throughput, |p: f64| p.max(m.throughput)));
-                    tp_sum[i] += m.throughput;
-                    tp_count[i] += 1;
-                }
                 if let Some(err) = &m.last_error {
                     had_error[i] = true;
                     last_error[i] = Some(err.clone());
@@ -1311,13 +1305,19 @@ fn drive_concurrent(
 
         if last_tick.elapsed() >= TICK_INTERVAL {
             last_tick = Instant::now();
-            let snapshot = telemetry.snapshot();
-            if snapshot.is_populated() {
-                let whea_before = acc.whea_delta_count;
-                let tdr_before = acc.tdr_delta_count;
-                acc.absorb(&Metrics::default(), &snapshot, "mixed");
-                persist_counter_events(run_id, acc, whea_before, tdr_before);
-
+            let ScreenedTick {
+                snapshot,
+                new_errors,
+                ..
+            } = record_tick(
+                acc,
+                telemetry.snapshot(),
+                &Metrics::default(),
+                "mixed",
+                run_id,
+                update_tx,
+            );
+            if new_errors.is_some() {
                 for (i, lane) in lanes.iter().enumerate() {
                     let unit = lane.stressor.throughput_unit();
                     stats[i].absorb_tick(&latest[i], &snapshot, &effective_rules);
@@ -1340,7 +1340,7 @@ fn drive_concurrent(
                     match metric_from_snapshot(
                         run_id.clone(),
                         &snapshot,
-                        Some(latest[i].throughput),
+                        throughput[i].recorded(latest[i].throughput),
                         Some(unit),
                         latest[i].last_error.as_deref(),
                         Some(i as u32),
@@ -1388,11 +1388,7 @@ fn drive_concurrent(
         // Final drain per lane, then fold: the last sample can land after the
         // last periodic absorb.
         if let Some(m) = sessions.get(i).and_then(|s| s.try_recv()) {
-            if m.throughput > 0.0 {
-                peak[i] = Some(peak[i].map_or(m.throughput, |p: f64| p.max(m.throughput)));
-                tp_sum[i] += m.throughput;
-                tp_count[i] += 1;
-            }
+            let m = fold_sample(&mut throughput[i], m, run_id, update_tx);
             if let Some(err) = &m.last_error {
                 had_error[i] = true;
                 last_error[i] = Some(err.clone());
@@ -1417,19 +1413,14 @@ fn drive_concurrent(
         acc.route_lane_error(&mut classified[i], last_error[i].as_deref(), stats[i].errors);
         let unit = lane.stressor.throughput_unit();
         let verdict = stage_verdict_for(&stats[i], rules, &effective_rules);
-        let avg = if tp_count[i] > 0 {
-            Some(tp_sum[i] / tp_count[i] as f64)
-        } else {
-            None
-        };
         let summary = stage_summary_from_stats(
             &stats[i],
             lane.stressor,
             lane.threads as u32,
             duration_secs.unwrap_or(0),
             started_at.elapsed().as_secs_f64(),
-            peak[i],
-            avg,
+            throughput[i].peak(),
+            throughput[i].mean(),
             unit,
             had_error[i],
             last_error[i].take(),
@@ -1601,12 +1592,10 @@ fn drive_scenario(
     let mut current_stage_label: Option<String> = None;
     let mut current_unit: &'static str = "ops/s";
     let mut current_stage_started_at: Option<Instant> = None;
-    let mut current_stage_peak_throughput: Option<f64> = None;
-    let mut current_stage_throughput_sum: f64 = 0.0;
-    let mut current_stage_throughput_count: u32 = 0;
     let mut current_stage_last_error: Option<String> = None;
     let mut current_stage_had_error = false;
     let mut current_stage_stats: Option<StageStats> = None;
+    let mut current_stage_tp: Option<StageThroughput> = None;
     let effective_rules = rules.clone().unwrap_or_default();
     let mut latest_metrics = Metrics::default();
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
@@ -1639,20 +1628,20 @@ fn drive_scenario(
                     current_stage_index = Some(index);
                     current_stage_label = Some(label.clone());
                     current_stage_started_at = Some(Instant::now());
-                    current_stage_peak_throughput = None;
-                    current_stage_throughput_sum = 0.0;
-                    current_stage_throughput_count = 0;
                     current_stage_last_error = None;
                     current_stage_had_error = false;
                     // Stressors latch `fatal`/`last_error`; a stale carry-over
                     // would be charged to this stage.
                     latest_metrics = Metrics::default();
+                    let snapshot0 = telemetry.snapshot();
                     current_stage_stats = Some(StageStats::begin(
                         index as u32,
                         &label,
                         stressor,
-                        &telemetry.snapshot(),
+                        &snapshot0,
                     ));
+                    current_stage_tp =
+                        Some(StageThroughput::new(&label, stressor, &snapshot0, true));
 
                     // Persist a stress_test_event row for the stage transition.
                     persist_event(
@@ -1673,14 +1662,11 @@ fn drive_scenario(
                     if ending_stage.is_some_and(|s| s != stage_index) {
                         continue;
                     }
+                    let metrics = match current_stage_tp.as_mut() {
+                        Some(stage) => fold_sample(stage, metrics, run_id, update_tx),
+                        None => metrics,
+                    };
                     latest_metrics = metrics.clone();
-                    current_stage_peak_throughput = Some(
-                        current_stage_peak_throughput
-                            .map(|p| p.max(metrics.throughput))
-                            .unwrap_or(metrics.throughput),
-                    );
-                    current_stage_throughput_sum += metrics.throughput;
-                    current_stage_throughput_count += 1;
                     if let Some(err) = &metrics.last_error {
                         current_stage_had_error = true;
                         current_stage_last_error = Some(err.clone());
@@ -1711,11 +1697,6 @@ fn drive_scenario(
                     let elapsed = current_stage_started_at
                         .map(|s| s.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
-                    let avg = if current_stage_throughput_count > 0 {
-                        Some(current_stage_throughput_sum / current_stage_throughput_count as f64)
-                    } else {
-                        None
-                    };
                     let planned = stage_specs.get(index).map(|s| s.duration_secs).unwrap_or(0);
                     let stressor = stage_specs
                         .get(index)
@@ -1741,8 +1722,8 @@ fn drive_scenario(
                         stage_specs.get(index).map(|s| s.threads as u32).unwrap_or(0),
                         planned,
                         elapsed,
-                        current_stage_peak_throughput,
-                        avg,
+                        current_stage_tp.as_ref().and_then(StageThroughput::peak),
+                        current_stage_tp.as_ref().and_then(StageThroughput::mean),
                         current_unit,
                         current_stage_had_error,
                         current_stage_last_error.clone(),
@@ -1825,11 +1806,19 @@ fn drive_scenario(
 
         if last_tick.elapsed() >= TICK_INTERVAL && current_stage_index.is_some() {
             last_tick = Instant::now();
-            let snapshot = telemetry.snapshot();
-            if snapshot.is_populated() {
-                let whea_before = acc.whea_delta_count;
-                let tdr_before = acc.tdr_delta_count;
-                let new_errors = acc.absorb(&latest_metrics, &snapshot, current_unit);
+            let ScreenedTick {
+                snapshot,
+                new_errors,
+                ..
+            } = record_tick(
+                acc,
+                telemetry.snapshot(),
+                &latest_metrics,
+                current_unit,
+                run_id,
+                update_tx,
+            );
+            if let Some(new_errors) = new_errors {
                 if let Some(stats) = current_stage_stats.as_mut() {
                     stats.absorb_tick(&latest_metrics, &snapshot, &effective_rules);
                 }
@@ -1858,7 +1847,6 @@ fn drive_scenario(
                         },
                     );
                 }
-                persist_counter_events(run_id, &acc, whea_before, tdr_before);
                 if new_errors > 0 {
                     let stressor = current_stage_index
                         .and_then(|i| stage_specs.get(i))
@@ -1870,7 +1858,10 @@ fn drive_scenario(
                 match metric_from_snapshot(
                     run_id.clone(),
                     &snapshot,
-                    Some(latest_metrics.throughput),
+                    match current_stage_tp.as_ref() {
+                        Some(stage) => stage.recorded(latest_metrics.throughput),
+                        None => Some(latest_metrics.throughput),
+                    },
                     Some(current_unit),
                     latest_metrics.last_error.as_deref(),
                     current_stage_index.map(|i| i as u32),
@@ -1955,6 +1946,122 @@ fn spawn_event_create(event: DbStressTestEvent, what: &'static str) {
             }
         }
     });
+}
+
+/// Persists a `custom`/`implausible_value` event and warns the operator.
+fn report_implausible(
+    run_id: &RecordId,
+    update_tx: &Sender<RunUpdate>,
+    detail: String,
+    data: serde_json::Value,
+) {
+    log::warn!("stress-runner: {detail}");
+    send(
+        update_tx,
+        RunUpdate::Warning {
+            message: detail.clone(),
+        },
+    );
+    let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Custom, "stress-runner");
+    event.code = Some(IMPLAUSIBLE_VALUE_CODE.to_string());
+    event.detail = detail;
+    event.data = Some(data);
+    spawn_event_create(event, "implausible-value");
+}
+
+/// Screens and absorbs one telemetry tick, reporting power breaches and persisting counter events.
+fn record_tick(
+    acc: &mut SummaryAccumulator,
+    snapshot: TelemetrySnapshot,
+    metrics: &Metrics,
+    unit: &'static str,
+    run_id: &RecordId,
+    update_tx: &Sender<RunUpdate>,
+) -> ScreenedTick {
+    let whea_before = acc.whea_delta_count;
+    let tdr_before = acc.tdr_delta_count;
+    let tick = acc.absorb_screened(snapshot, metrics, unit);
+    for breach in &tick.breaches {
+        report_implausible(run_id, update_tx, breach.detail(), breach.data());
+    }
+    if tick.new_errors.is_some() {
+        persist_counter_events(run_id, acc, whea_before, tdr_before);
+    }
+    tick
+}
+
+/// Folds a stressor sample into its stage, reporting the stage's first cleared throughput.
+fn fold_sample(
+    stage: &mut StageThroughput,
+    metrics: Metrics,
+    run_id: &RecordId,
+    update_tx: &Sender<RunUpdate>,
+) -> Metrics {
+    let (metrics, breach) = stage.fold(metrics);
+    if let Some(breach) = breach {
+        report_implausible(run_id, update_tx, breach.detail(), breach.data());
+    }
+    metrics
+}
+
+/// A telemetry tick with implausible GPU power cleared.
+struct ScreenedTick {
+    snapshot: TelemetrySnapshot,
+    breaches: Vec<PowerBreach>,
+    /// Test errors new since the last tick; `None` when the snapshot was not absorbed.
+    new_errors: Option<u64>,
+}
+
+/// One stage's throughput samples screened against its stressor's ceiling, with their peak and mean.
+struct StageThroughput {
+    gate: ThroughputGate,
+    /// Zero-throughput samples count toward the mean.
+    count_idle: bool,
+    peak: Option<f64>,
+    sum: f64,
+    count: u32,
+}
+
+impl StageThroughput {
+    fn new(
+        label: &str,
+        stressor: Stressor,
+        snapshot: &TelemetrySnapshot,
+        count_idle: bool,
+    ) -> Self {
+        Self {
+            gate: ThroughputGate::new(label, stressor, logical_cpus(snapshot)),
+            count_idle,
+            peak: None,
+            sum: 0.0,
+            count: 0,
+        }
+    }
+
+    /// Zeroes a throughput above the ceiling and folds a recorded one; returns the stage's first breach.
+    fn fold(&mut self, mut metrics: Metrics) -> (Metrics, Option<ThroughputBreach>) {
+        let breach = self.gate.screen(&mut metrics);
+        let tp = metrics.throughput;
+        if self.gate.recorded(tp).is_some() && (self.count_idle || tp > 0.0) {
+            self.peak = Some(self.peak.map_or(tp, |p| p.max(tp)));
+            self.sum += tp;
+            self.count += 1;
+        }
+        (metrics, breach)
+    }
+
+    /// Throughput to store for the latest folded sample: `None` when it was cleared.
+    fn recorded(&self, throughput: f64) -> Option<f64> {
+        self.gate.recorded(throughput)
+    }
+
+    fn peak(&self) -> Option<f64> {
+        self.peak
+    }
+
+    fn mean(&self) -> Option<f64> {
+        (self.count > 0).then(|| self.sum / f64::from(self.count))
+    }
 }
 
 fn persist_event(
@@ -2282,6 +2389,8 @@ struct SummaryAccumulator {
     /// `last_error` transitions that name a load the stressor could not apply.
     inconclusive_errors: u32,
     max_power_w: Option<u32>,
+    /// Clears GPU power readings above what the card's form factor can draw.
+    power_gate: PowerGate,
     /// `Metrics.errors` from stages that already reset their counter.
     completed_stage_errors: u64,
     /// Latest cumulative `Metrics.errors` of the in-flight stage.
@@ -2396,6 +2505,24 @@ impl SummaryAccumulator {
 
     /// Fold one tick into the rollup. Returns how many new test errors this
     /// tick revealed so the caller can persist a `stress_test_event`.
+    /// Clears GPU power above its ceiling in `snapshot`, then absorbs it when populated.
+    fn absorb_screened(
+        &mut self,
+        mut snapshot: TelemetrySnapshot,
+        metrics: &Metrics,
+        unit: &'static str,
+    ) -> ScreenedTick {
+        let breaches = self.power_gate.screen(&mut snapshot);
+        let new_errors = snapshot
+            .is_populated()
+            .then(|| self.absorb(metrics, &snapshot, unit));
+        ScreenedTick {
+            snapshot,
+            breaches,
+            new_errors,
+        }
+    }
+
     fn absorb(
         &mut self,
         metrics: &Metrics,
@@ -3014,6 +3141,121 @@ mod tests {
     #[test]
     fn a_clean_run_emits_no_drop_summary() {
         assert!(MetricDrops::default().summary().is_none());
+    }
+
+    #[test]
+    fn every_script_run_row_carries_the_build_that_ran_it() {
+        let computer = RecordId::new("computer", "c1");
+        let mut specs: Vec<RunSpec> = crate::STRESS_SCRIPT_NAMES
+            .iter()
+            .filter_map(|name| crate::build_stress_script_spec(name, computer.clone(), 60))
+            .collect();
+        specs.push(RunSpec::single_stresskit(computer, Stressor::Cpu, Some(10)));
+        assert!(specs.len() > crate::STRESS_SCRIPT_NAMES.len() / 2);
+        for spec in &specs {
+            let run = build_run(spec);
+            assert_eq!(run.tool_version, Some(crate::provenance::tool_version()));
+        }
+    }
+
+    fn gpu_snapshot(name: &str, watts: f32) -> TelemetrySnapshot {
+        TelemetrySnapshot {
+            gpus: vec![stress_kit::telemetry::GpuSample {
+                name: name.to_string(),
+                power_w: Some(watts),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// Populated snapshot of one laptop GPU drawing `watts`.
+    fn laptop_tick(watts: f32) -> TelemetrySnapshot {
+        let mut snap = gpu_snapshot("NVIDIA GeForce RTX 4060 Laptop GPU", watts);
+        snap.captured_at_unix_ms = 1_700_000_000_000;
+        snap.cores = vec![Default::default()];
+        snap.memory.total_mb = 1;
+        snap
+    }
+
+    /// Snapshot: run 7697c4cf's idle RTX 4060 Laptop read 590.006 W.
+    #[test]
+    fn a_590_w_laptop_tick_reaches_neither_max_power_w_nor_the_metric_row() {
+        let mut acc = SummaryAccumulator::default();
+        let tick = acc.absorb_screened(laptop_tick(590.006), &Metrics::default(), "GFLOPS");
+        assert_eq!(tick.breaches.len(), 1);
+        assert_eq!(tick.new_errors, Some(0));
+        assert_eq!(tick.snapshot.gpus[0].power_w, None);
+        let metric = metric_from_snapshot(
+            RecordId::new("stress_test_run", "r1"),
+            &tick.snapshot,
+            None,
+            Some("GFLOPS"),
+            None,
+            None,
+            None,
+        )
+        .expect("metric row");
+        assert_eq!(metric.power_w, None);
+        assert_eq!(metric.gpu_power_w, None);
+        assert_eq!(acc.into_summary().max_power_w, None);
+    }
+
+    #[test]
+    fn real_power_around_an_impossible_tick_still_sets_max_power_w() {
+        let mut acc = SummaryAccumulator::default();
+        let breaches: usize = [9.0, 590.006, 106.0, 588.206]
+            .into_iter()
+            .map(|w| {
+                acc.absorb_screened(laptop_tick(w), &Metrics::default(), "GFLOPS")
+                    .breaches
+                    .len()
+            })
+            .sum();
+        assert_eq!(breaches, 1);
+        assert_eq!(acc.into_summary().max_power_w, Some(106));
+    }
+
+    #[test]
+    fn an_unpopulated_tick_is_screened_but_not_absorbed() {
+        let mut acc = SummaryAccumulator::default();
+        let raw = gpu_snapshot("NVIDIA GeForce RTX 4060 Laptop GPU", 590.006);
+        let tick = acc.absorb_screened(raw, &Metrics::default(), "GFLOPS");
+        assert_eq!(tick.new_errors, None);
+        assert_eq!(tick.breaches.len(), 1);
+        assert_eq!(tick.snapshot.gpus[0].power_w, None);
+    }
+
+    /// Snapshot: a GT 710 recorded 241,530 GFLOPS on gpu_matmul.
+    #[test]
+    fn an_impossible_throughput_sample_leaves_the_stage_peak_and_mean_unchanged() {
+        let snap = TelemetrySnapshot::default();
+        let mut stage = StageThroughput::new("gpu_matmul", Stressor::GpuMatmul, &snap, false);
+        let mut breaches = 0;
+        let mut stored = Vec::new();
+        for tp in [3_000.0, 241_530.0, 3_100.0, 377_700.0] {
+            let (m, breach) = stage.fold(work_tick(tp, None));
+            breaches += usize::from(breach.is_some());
+            stored.push(stage.recorded(m.throughput));
+        }
+        assert_eq!(breaches, 1);
+        assert_eq!(stored, [Some(3_000.0), None, Some(3_100.0), None]);
+        assert_eq!(stage.peak(), Some(3_100.0));
+        assert_eq!(stage.mean(), Some(3_050.0));
+    }
+
+    #[test]
+    fn idle_samples_count_toward_the_mean_only_when_asked() {
+        let snap = TelemetrySnapshot::default();
+        let mut single = StageThroughput::new("cpu", Stressor::Cpu, &snap, false);
+        let mut scenario = StageThroughput::new("cpu", Stressor::Cpu, &snap, true);
+        for tp in [0.0, 30.0, 10.0] {
+            single.fold(work_tick(tp, None));
+            scenario.fold(work_tick(tp, None));
+        }
+        assert_eq!(single.mean(), Some(20.0));
+        assert_eq!(scenario.mean(), Some(40.0 / 3.0));
+        assert_eq!(single.peak(), scenario.peak());
     }
 
     /// The reported symptom: a metric persist failure ended the stage 40s into

@@ -644,6 +644,10 @@ async fn main() -> eframe::Result<()> {
     // Run stress-runner's DB writes on this runtime (which owns the SurrealDB
     // connection) instead of its private fallback runtime.
     stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
+    stress_runner::set_host_build(
+        "MasterTech",
+        concat!(env!("CARGO_PKG_VERSION"), "+", env!("BUILD_HASH")),
+    );
 
     // Lets a script executor start async work from the thread it runs on.
     scripts_exec::env::set_runtime_handle(tokio::runtime::Handle::current());

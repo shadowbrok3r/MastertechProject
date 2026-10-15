@@ -76,3 +76,7 @@ windows = { version = "0.62", features = [
 wmi = "=0.18.4"
 # Kernel-driver backends: SCM, device IO, shared bus mutexes, thread affinity.
 winapi = { version = "0.3", features = ["fileapi", "ioapiset", "winnt", "handleapi", "errhandlingapi", "winbase", "synchapi", "processthreadsapi", "minwindef", "minwinbase", "winsvc", "sddl", "securitybaseapi", "std"] }
+
+[dev-dependencies]
+# Noop backend: GPU stressors run against a device whose dispatches execute nothing.
+wgpu = { version = "30.0.0", default-features = false, features = ["noop"] }

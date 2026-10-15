@@ -30,6 +30,9 @@
 
 mod stressors;
 pub mod bench;
+
+/// This stress-kit build: crate version plus `{git7}{dirty}.{ts6}` from `build_hash.rs`.
+pub const BUILD_ID: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("BUILD_HASH"));
 pub mod gpu_stack;
 pub mod lowlevel;
 pub mod scenario;
@@ -678,6 +681,13 @@ mod tests {
     #[test]
     fn unknown_label_is_none() {
         assert_eq!(Stressor::from_str("nonsense"), None);
+    }
+
+    #[test]
+    fn build_id_names_the_crate_version_and_build() {
+        let (version, hash) = BUILD_ID.split_once('+').expect("version+hash");
+        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        assert!(!hash.is_empty());
     }
 
     /// Mirrors the stressors whose `run` calls `GpuContext::acquire`, which is

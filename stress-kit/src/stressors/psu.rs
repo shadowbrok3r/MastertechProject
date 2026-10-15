@@ -7,6 +7,8 @@
 //! yield a PSU verdict: the stage goes fatal the moment the GPU leg is gone, or
 //! when a leg that only signalled trouble fails to recover inside
 //! `GPU_LOSS_GRACE`, and returns once that fatal is latched.
+//!
+//! GPU flops are credited only for workgroups a GPU-side counter proves ran.
 
 #![cfg(feature = "gpu")]
 
@@ -21,6 +23,7 @@ use wgpu::util::DeviceExt;
 use crate::Metrics;
 
 use super::gpu_common::{emit_fatal_tick, emit_tick, wait_for, wait_latest, GpuContext, TICK};
+use super::gpu_witness::Witness;
 
 const CHAIN_DEPTH: usize = 8;
 const ITERS_PER_BURST: u64 = 200_000;
@@ -33,6 +36,7 @@ const INNER_ITERS: u32 = 1024;
 // 6 flops per inner iteration, plus 2 more on every 4th iteration.
 const GPU_OPS_PER_INVOCATION: u64 = (INNER_ITERS as u64) * 6 + (INNER_ITERS as u64) / 2;
 const SCATTER_FLOATS: usize = (64 * 1024 * 1024) / std::mem::size_of::<f32>();
+const GPU_FLOPS_PER_WORKGROUP: u64 = (WG_SIZE as u64) * GPU_OPS_PER_INVOCATION;
 
 /// Distinct seed slots cycled through, one per submission.
 const DISPATCH_SLOTS: usize = 8;
@@ -59,9 +63,13 @@ struct Params {
 @group(0) @binding(0) var<storage, read>        scatter:  array<f32>;
 @group(0) @binding(1) var<storage, read_write>  sink:     array<f32>;
 @group(0) @binding(2) var<uniform>              params:   Params;
+@group(0) @binding(3) var<storage, read_write>  witness:  array<atomic<u32>>;
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
     let i  = gid.x;
     let len = params.buffer_len;
     if (i >= arrayLength(&sink)) { return; }
@@ -89,8 +97,23 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     sink[i] = x * 1e-9 + y * 1e-9;
+
+    if (lid == 0u) {
+        atomicAdd(&witness[0], 1u);
+    }
 }
 "#;
+
+/// State the GPU driver thread shares with the tick loop.
+#[derive(Clone, Default)]
+struct GpuLeg {
+    stop: Arc<AtomicBool>,
+    /// Workgroups the GPU-side counter proved executed.
+    executed: Arc<AtomicU64>,
+    warn: Arc<Mutex<Option<String>>>,
+    fatal: Arc<Mutex<Option<String>>>,
+    down: Arc<AtomicBool>,
+}
 
 pub(crate) fn run(
     thread_count: usize,
@@ -98,28 +121,32 @@ pub(crate) fn run(
     tx: &mpsc::Sender<Metrics>,
     started_at: Instant,
 ) {
-    let stop = Arc::new(AtomicBool::new(false));
+    run_with(thread_count, cancel, tx, started_at, || {
+        GpuContext::acquire(true)
+    });
+}
+
+fn run_with(
+    thread_count: usize,
+    cancel: &Arc<AtomicBool>,
+    tx: &mpsc::Sender<Metrics>,
+    started_at: Instant,
+    acquire: impl FnOnce() -> Result<GpuContext, String> + Send + 'static,
+) {
+    let leg = GpuLeg::default();
     let cpu_threads = thread_count.saturating_sub(RESERVED_CORES).max(1);
     let cpu_bursts = Arc::new(AtomicU64::new(0));
-    let gpu_dispatches = Arc::new(AtomicU64::new(0));
-    let gpu_down = Arc::new(AtomicBool::new(false));
-    let warn_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let fatal_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let mut cpu_handles: Vec<_> = (0..cpu_threads)
-        .map(|_| spawn_fma_worker(&stop, &cpu_bursts))
+        .map(|_| spawn_fma_worker(&leg.stop, &cpu_bursts))
         .collect();
 
     let gpu_handle = {
-        let stop = stop.clone();
-        let counter = gpu_dispatches.clone();
-        let warn = warn_slot.clone();
-        let fatal = fatal_slot.clone();
-        let down = gpu_down.clone();
+        let leg = leg.clone();
         let tx = tx.clone();
         thread::Builder::new()
             .name("stress-kit-psu-gpu".into())
-            .spawn(move || gpu_driver(stop, counter, warn, fatal, down, tx, started_at))
+            .spawn(move || gpu_driver(leg, tx, started_at, acquire))
             .expect("stress-kit: failed to spawn psu gpu driver")
     };
 
@@ -132,10 +159,10 @@ pub(crate) fn run(
         thread::sleep(Duration::from_millis(50));
 
         // GPU leg down: put its reserved cores back to work on the CPU chains.
-        if grace_until.is_none() && gpu_down.load(Ordering::Relaxed) {
+        if grace_until.is_none() && leg.down.load(Ordering::Relaxed) {
             grace_until = Some(Instant::now() + GPU_LOSS_GRACE);
             for _ in 0..thread_count.saturating_sub(cpu_threads) {
-                cpu_handles.push(spawn_fma_worker(&stop, &cpu_bursts));
+                cpu_handles.push(spawn_fma_worker(&leg.stop, &cpu_bursts));
             }
         }
 
@@ -144,23 +171,22 @@ pub(crate) fn run(
         }
 
         let cpu_now = cpu_bursts.load(Ordering::Relaxed);
-        let gpu_now = gpu_dispatches.load(Ordering::Relaxed);
+        let gpu_now = leg.executed.load(Ordering::Relaxed);
         let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
 
         let cpu_flops = cpu_now.saturating_sub(last_cpu) as f64 * CPU_FLOPS_PER_BURST as f64;
-        let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64
-            * (INVOCATIONS_PER_DISPATCH * GPU_OPS_PER_INVOCATION) as f64;
+        let gpu_flops = gpu_now.saturating_sub(last_gpu) as f64 * GPU_FLOPS_PER_WORKGROUP as f64;
         let gflops = (cpu_flops + gpu_flops) / dt / 1e9;
 
         last_cpu = cpu_now;
         last_gpu = gpu_now;
         last_tick = Instant::now();
 
-        let reason = warn_slot.lock().ok().and_then(|g| g.clone());
+        let reason = leg.warn.lock().ok().and_then(|g| g.clone());
         // The driver thread returns early only when its leg is gone for good.
         let leg_gone = gpu_handle.is_finished()
             || grace_until.is_some_and(|deadline| Instant::now() >= deadline);
-        let fatal = fatal_slot.lock().ok().and_then(|g| g.clone()).or_else(|| {
+        let fatal = leg.fatal.lock().ok().and_then(|g| g.clone()).or_else(|| {
             leg_gone.then(|| reason.clone().unwrap_or_else(|| GPU_LEG_DOWN.to_string()))
         });
 
@@ -174,7 +200,7 @@ pub(crate) fn run(
         }
     }
 
-    stop.store(true, Ordering::SeqCst);
+    leg.stop.store(true, Ordering::SeqCst);
     for h in cpu_handles {
         let _ = h.join();
     }
@@ -230,15 +256,19 @@ fn raise_submit_priority() {
 fn raise_submit_priority() {}
 
 fn gpu_driver(
-    stop: Arc<AtomicBool>,
-    counter: Arc<AtomicU64>,
-    warn: Arc<Mutex<Option<String>>>,
-    fatal: Arc<Mutex<Option<String>>>,
-    down: Arc<AtomicBool>,
+    leg: GpuLeg,
     tx: mpsc::Sender<Metrics>,
     started_at: Instant,
+    acquire: impl FnOnce() -> Result<GpuContext, String>,
 ) {
-    let ctx = match GpuContext::acquire(true) {
+    let GpuLeg {
+        stop,
+        executed,
+        warn,
+        fatal,
+        down,
+    } = leg;
+    let ctx = match acquire() {
         Ok(c) => c,
         Err(e) => {
             // No leg to recover, so the fatal goes out now instead of after the grace window.
@@ -277,6 +307,7 @@ fn gpu_driver(
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
+    let mut witness = Witness::new(&ctx.device);
 
     #[repr(C)]
     #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -334,6 +365,7 @@ fn gpu_driver(
                     wgpu::BindGroupEntry { binding: 0, resource: scatter_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 1, resource: sink_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 2, resource: params_buf.as_entire_binding() },
+                    witness.entry(3),
                 ],
             })
         })
@@ -352,13 +384,11 @@ fn gpu_driver(
             match ctx.device.poll(wait_for(oldest)) {
                 Ok(_) => {
                     pending.pop_front();
-                    counter.fetch_add(1, Ordering::Relaxed);
                     last_progress = Instant::now();
                 }
                 // Oldest stays tracked unless a full drain confirms it completed.
                 Err(e) => match ctx.device.poll(wait_latest()) {
                     Ok(_) => {
-                        counter.fetch_add(pending.len() as u64, Ordering::Relaxed);
                         pending.clear();
                         last_progress = Instant::now();
                     }
@@ -399,6 +429,21 @@ fn gpu_driver(
         if stop.load(Ordering::Relaxed) {
             break;
         }
+        match witness.absorb() {
+            Ok(workgroups) => {
+                executed.fetch_add(workgroups, Ordering::Relaxed);
+            }
+            Err(fault) => {
+                report_gpu_stop(
+                    &warn,
+                    &down,
+                    format!(
+                        "psu: inconclusive - {fault}; the GPU leg's load on the rail is unproven"
+                    ),
+                );
+                return;
+            }
+        }
 
         let mut encoder = ctx
             .device
@@ -412,11 +457,10 @@ fn gpu_driver(
             cpass.set_bind_group(0, &bind_groups[slot], &[]);
             cpass.dispatch_workgroups(WG_COUNT, 1, 1);
         }
-        pending.push_back(ctx.queue.submit(std::iter::once(encoder.finish())));
+        pending.push_back(witness.submit(&ctx.queue, encoder));
         slot = (slot + 1) % bind_groups.len();
 
         if let Ok(wgpu::PollStatus::QueueEmpty) = ctx.device.poll(wgpu::PollType::Poll) {
-            counter.fetch_add(pending.len() as u64, Ordering::Relaxed);
             pending.clear();
             last_progress = Instant::now();
         }
@@ -468,5 +512,45 @@ fn report_gpu_never_ran(
 fn set_slot(slot: &Arc<Mutex<Option<String>>>, msg: String) {
     if let Ok(mut g) = slot.lock() {
         *g = Some(msg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stressors::gpu_witness::test_support::{
+        assert_witness_binding, peak, samples_until_fatal,
+    };
+
+    #[test]
+    fn shader_bumps_the_witness_at_binding_3() {
+        assert_witness_binding(SHADER, 3);
+    }
+
+    /// Noop device: dispatches retire without running.
+    #[test]
+    fn a_device_that_never_runs_dispatches_earns_no_gpu_credit() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let cancel = cancel.clone();
+            thread::spawn(move || run_with(1, &cancel, &tx, Instant::now(), GpuContext::noop))
+        };
+        let samples = samples_until_fatal(&rx, Duration::from_secs(30));
+        cancel.store(true, Ordering::SeqCst);
+        worker.join().expect("psu worker");
+
+        let fatal = samples
+            .iter()
+            .find(|m| m.fatal)
+            .expect("the GPU leg latched a fatal");
+        let reason = fatal.last_error.as_deref().unwrap_or_default();
+        assert!(
+            reason.contains("without running any of their workgroups"),
+            "{reason}"
+        );
+        assert!(reason.starts_with("psu: inconclusive - "), "{reason}");
+        // One FMA thread stays far below 100 GFLOPS.
+        assert!(peak(&samples) < 100.0, "peak {} GFLOPS", peak(&samples));
     }
 }
