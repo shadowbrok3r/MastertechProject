@@ -77,7 +77,7 @@ fn default_temp_ticks() -> u32 {
     5
 }
 
-/// Sustained clock drop below a fraction of the stage's max while under load.
+/// Sustained under-load clock drop below a fraction of the stage max.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ClockCollapseRule {
     pub below_pct_of_stage_max: f32,
@@ -105,6 +105,17 @@ pub struct RailDroopRule {
 
 fn default_rail_ticks() -> u32 {
     5
+}
+
+/// Ends a scenario run once a temperature rule is over its own-ceiling or absolute limit for `consecutive_ticks`+ ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ThermalFailFastRule {
+    #[serde(default = "default_fail_fast_ticks")]
+    pub consecutive_ticks: u32,
+}
+
+fn default_fail_fast_ticks() -> u32 {
+    60
 }
 
 /// Post-warmup throughput stability: coefficient of variation must stay under `max_cv`.
@@ -141,6 +152,8 @@ pub struct VerdictRules {
     /// `calibrated: false`, so the number cannot gate a certification run.
     /// Only set this per-board after verifying against a meter.
     pub min_v12_v: Option<RailDroopRule>,
+    /// `None` runs every stage to its end after a thermal breach.
+    pub thermal_fail_fast: Option<ThermalFailFastRule>,
 }
 
 impl Default for VerdictRules {
@@ -155,6 +168,7 @@ impl Default for VerdictRules {
             clock_collapse: None,
             throughput_cv: None,
             min_v12_v: None,
+            thermal_fail_fast: None,
         }
     }
 }
@@ -190,6 +204,9 @@ impl VerdictRules {
                 min_samples: 30,
             }),
             min_v12_v: None,
+            thermal_fail_fast: Some(ThermalFailFastRule {
+                consecutive_ticks: default_fail_fast_ticks(),
+            }),
         }
     }
 }
@@ -444,6 +461,9 @@ pub struct StageStats {
     pub worst_cpu_temp_over: u32,
     gpu_temp_over_run: u32,
     pub worst_gpu_temp_over: u32,
+    /// Over-limit run counting only GPU readings graded on their own ceiling or an absolute limit.
+    own_limit_gpu_temp_over_run: u32,
+    worst_own_limit_gpu_temp_over: u32,
     rail_under_run: u32,
     pub worst_rail_under: u32,
     collapse_run: u32,
@@ -514,6 +534,8 @@ impl StageStats {
             worst_cpu_temp_over: 0,
             gpu_temp_over_run: 0,
             worst_gpu_temp_over: 0,
+            own_limit_gpu_temp_over_run: 0,
+            worst_own_limit_gpu_temp_over: 0,
             rail_under_run: 0,
             worst_rail_under: 0,
             collapse_run: 0,
@@ -644,11 +666,22 @@ impl StageStats {
             self.max_gpu_temp_c = Some(self.max_gpu_temp_c.map_or(t, |m| m.max(t)));
         }
         if let Some(rule) = &rules.max_gpu_temp_c {
-            let worst = snapshot
-                .gpus
-                .iter()
-                .filter_map(|g| GpuReading::graded(rule, g))
-                .max_by(|a, b| a.excess_c().total_cmp(&b.excess_c()));
+            let hottest = |own_limit_only: bool| {
+                snapshot
+                    .gpus
+                    .iter()
+                    .filter_map(|g| GpuReading::graded(rule, g))
+                    .filter(|r| !own_limit_only || !rule.falls_back_to_flat_limit(r.ceiling_c))
+                    .max_by(|a, b| a.excess_c().total_cmp(&b.excess_c()))
+            };
+            let worst = hottest(false);
+            let own_limit = hottest(true);
+            track_over_run(
+                own_limit.map(|r| r.temp_c),
+                own_limit.map_or(rule.limit_c, |r| r.limit_c),
+                &mut self.own_limit_gpu_temp_over_run,
+                &mut self.worst_own_limit_gpu_temp_over,
+            );
             match worst {
                 Some(reading) => {
                     self.gpu_temp_samples = self.gpu_temp_samples.saturating_add(1);
@@ -802,6 +835,55 @@ impl StageStats {
     /// either.
     fn cpu_temp_ungradable(&self, rule: &TempRule) -> bool {
         rule.falls_back_to_flat_limit(self.cpu_ceiling_c) && self.only_dptf_cpu_temps()
+    }
+
+    /// CPU breach `rule` records once the worst over-limit run reaches `min_ticks`.
+    fn cpu_temp_breach(&self, rule: &TempRule, min_ticks: u32) -> Option<RuleViolation> {
+        if self.worst_cpu_temp_over < min_ticks {
+            return None;
+        }
+        let limit_c = rule.effective_limit_c(self.cpu_ceiling_c);
+        Some(RuleViolation::CpuTemp {
+            limit_c,
+            peak_c: self.max_cpu_temp_c.unwrap_or(limit_c),
+            sustained_ticks: self.worst_cpu_temp_over,
+            ceiling_c: self.cpu_ceiling_c,
+        })
+    }
+
+    /// GPU breach `rule` records once the worst over-limit run reaches `min_ticks`.
+    fn gpu_temp_breach(&self, rule: &TempRule, min_ticks: u32) -> Option<RuleViolation> {
+        if self.worst_gpu_temp_over < min_ticks {
+            return None;
+        }
+        let peak = self.gpu_peak;
+        Some(RuleViolation::GpuTemp {
+            limit_c: peak.map_or(rule.limit_c, |p| p.limit_c),
+            peak_c: peak.map_or(rule.limit_c, |p| p.temp_c),
+            sustained_ticks: self.worst_gpu_temp_over,
+            ceiling_c: peak.and_then(|p| p.ceiling_c),
+        })
+    }
+
+    /// Own-ceiling or absolute-limit breach that outlasted `rules.thermal_fail_fast`, as [`evaluate_stage`] records it.
+    pub fn decisive_thermal_breach(&self, rules: &VerdictRules) -> Option<RuleViolation> {
+        let fail_fast = rules.thermal_fail_fast?;
+        let window = |rule: &TempRule| {
+            rule.consecutive_ticks
+                .max(fail_fast.consecutive_ticks)
+                .max(1)
+        };
+        let cpu = rules
+            .max_cpu_temp_c
+            .filter(|rule| !rule.falls_back_to_flat_limit(self.cpu_ceiling_c))
+            .and_then(|rule| self.cpu_temp_breach(&rule, window(&rule)));
+        cpu.or_else(|| {
+            let rule = rules.max_gpu_temp_c?;
+            if self.worst_own_limit_gpu_temp_over < window(&rule) {
+                return None;
+            }
+            self.gpu_temp_breach(&rule, rule.consecutive_ticks)
+        })
     }
 }
 
@@ -1101,13 +1183,8 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
                 policy: rule.on_missing,
                 detail: Some(no_ceiling_line(rule.limit_c)),
             });
-        } else if stats.worst_cpu_temp_over >= rule.consecutive_ticks {
-            violations.push(RuleViolation::CpuTemp {
-                limit_c,
-                peak_c: stats.max_cpu_temp_c.unwrap_or(limit_c),
-                sustained_ticks: stats.worst_cpu_temp_over,
-                ceiling_c: stats.cpu_ceiling_c,
-            });
+        } else if let Some(breach) = stats.cpu_temp_breach(rule, rule.consecutive_ticks) {
+            violations.push(breach);
         }
     }
     if let Some(rule) = &rules.max_gpu_temp_c {
@@ -1125,14 +1202,8 @@ pub fn evaluate_stage(stats: &StageStats, rules: &VerdictRules) -> StageVerdict 
                         .to_string()
                 }),
             });
-        } else if stats.worst_gpu_temp_over >= rule.consecutive_ticks {
-            let peak = stats.gpu_peak;
-            violations.push(RuleViolation::GpuTemp {
-                limit_c: peak.map_or(rule.limit_c, |p| p.limit_c),
-                peak_c: peak.map_or(rule.limit_c, |p| p.temp_c),
-                sustained_ticks: stats.worst_gpu_temp_over,
-                ceiling_c: peak.and_then(|p| p.ceiling_c),
-            });
+        } else if let Some(breach) = stats.gpu_temp_breach(rule, rule.consecutive_ticks) {
+            violations.push(breach);
         }
     }
     if let Some(rule) = &rules.min_v12_v {
@@ -2504,5 +2575,289 @@ mod tests {
         }
         assert_eq!(stats.tool_limits.len(), MAX_TOOL_LIMITS);
         assert!(evaluate_stage(&stats, &rules).pass);
+    }
+
+    /// Snapshot carrying the ceiling stress-kit's CPUID table gives `brand` on that family/model.
+    fn snapshot_for_amd_part(temp_c: f32, family: u8, model: u8, brand: &str) -> TelemetrySnapshot {
+        use stress_kit::telemetry::cpu_ceiling::{CpuIdentity, CpuVendor, ceiling_for};
+        let id = CpuIdentity {
+            vendor: CpuVendor::Amd,
+            family,
+            model,
+            brand: brand.to_string(),
+        };
+        let mut snap = snapshot(temp_c, 4700, 99.0);
+        snap.cpu_ceiling = ceiling_for(&id, None);
+        snap
+    }
+
+    fn ticks(stats: &mut StageStats, rules: &VerdictRules, n: u32, snap: &TelemetrySnapshot) {
+        for _ in 0..n {
+            stats.absorb_tick(&metrics(100.0, 0), snap, rules);
+        }
+    }
+
+    /// A Ryzen 5 7600X held at 95.5 C for 3,600 ticks passes and is never decisive.
+    #[test]
+    fn a_7600x_holding_its_ceiling_passes_and_never_fails_fast() {
+        let rules = VerdictRules::certification();
+        let snap = snapshot_for_amd_part(95.5, 0x19, 0x61, "AMD Ryzen 5 7600X 6-Core Processor");
+        let mut stats = stats_for(&rules);
+        ticks(&mut stats, &rules, 3_600, &snap);
+        assert_eq!(stats.cpu_ceiling_c, Some(95.0));
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(verdict.pass, "violations: {:?}", verdict.violation_lines());
+    }
+
+    /// A 5600X held at 95.4 C for 928 ticks passes; a 5800X at the same reading fails.
+    #[test]
+    fn a_5600x_holding_95c_passes_where_a_5800x_fails() {
+        let rules = VerdictRules::certification();
+        let r5 = snapshot_for_amd_part(95.375, 0x19, 0x21, "AMD Ryzen 5 5600X 6-Core Processor");
+        let mut stats = stats_for(&rules);
+        ticks(&mut stats, &rules, 928, &r5);
+        assert_eq!(stats.cpu_ceiling_c, Some(95.0));
+        assert!(evaluate_stage(&stats, &rules).pass);
+
+        let r7 = snapshot_for_amd_part(95.375, 0x19, 0x21, "AMD Ryzen 7 5800X 8-Core Processor");
+        let mut stats = stats_for(&rules);
+        ticks(&mut stats, &rules, 928, &r7);
+        assert_eq!(stats.cpu_ceiling_c, Some(90.0));
+        assert!(!evaluate_stage(&stats, &rules).pass);
+    }
+
+    /// The stage still fails on the rule's own 5 ticks; only a 60-tick hold is decisive.
+    #[test]
+    fn a_breach_is_decisive_only_once_it_outlasts_the_fail_fast_window() {
+        let rules = VerdictRules::certification();
+        let hot = snapshot_at_ceiling(99.0, 95.0);
+        let mut stats = stats_for(&rules);
+        ticks(&mut stats, &rules, 59, &hot);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        assert!(!evaluate_stage(&stats, &rules).pass);
+
+        ticks(&mut stats, &rules, 1, &hot);
+        let breach = stats
+            .decisive_thermal_breach(&rules)
+            .expect("60 consecutive ticks over the limit");
+        assert!(matches!(
+            breach,
+            RuleViolation::CpuTemp { sustained_ticks: 60, limit_c, peak_c, ceiling_c }
+                if limit_c == 95.0 + OVER_CEILING_MARGIN_C
+                    && peak_c == 99.0
+                    && ceiling_c == Some(95.0)
+        ));
+    }
+
+    #[test]
+    fn a_decisive_breach_is_the_violation_the_stage_verdict_records() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        ticks(&mut stats, &rules, 75, &snapshot_at_ceiling(99.0, 95.0));
+        let breach = stats.decisive_thermal_breach(&rules).expect("decisive");
+        assert_eq!(evaluate_stage(&stats, &rules).violations, vec![breach]);
+    }
+
+    #[test]
+    fn repeated_spikes_are_never_decisive() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        for i in 0..600 {
+            let t = if i % 30 < 20 { 99.0 } else { 70.0 };
+            stats.absorb_tick(&metrics(100.0, 0), &snapshot_at_ceiling(t, 95.0), &rules);
+        }
+        assert_eq!(stats.worst_cpu_temp_over, 20);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        assert!(!evaluate_stage(&stats, &rules).pass);
+    }
+
+    #[test]
+    fn fail_fast_is_off_unless_the_policy_sets_it() {
+        let hot = snapshot_at_ceiling(99.0, 95.0);
+        let off = VerdictRules {
+            thermal_fail_fast: None,
+            ..VerdictRules::certification()
+        };
+        let mut stats = stats_for(&off);
+        ticks(&mut stats, &off, 600, &hot);
+        assert!(stats.decisive_thermal_breach(&off).is_none());
+        assert!(!evaluate_stage(&stats, &off).pass);
+        assert!(
+            stats
+                .decisive_thermal_breach(&VerdictRules::certification())
+                .is_some()
+        );
+
+        let legacy = VerdictRules::default();
+        assert!(legacy.thermal_fail_fast.is_none());
+        let mut stats = stats_for(&legacy);
+        ticks(&mut stats, &legacy, 600, &hot);
+        assert!(stats.decisive_thermal_breach(&legacy).is_none());
+    }
+
+    #[test]
+    fn a_rule_window_longer_than_the_fail_fast_window_wins() {
+        let mut rules = VerdictRules::certification();
+        if let Some(cpu) = rules.max_cpu_temp_c.as_mut() {
+            cpu.consecutive_ticks = 90;
+        }
+        let hot = snapshot_at_ceiling(99.0, 95.0);
+        let mut stats = stats_for(&rules);
+        ticks(&mut stats, &rules, 89, &hot);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        ticks(&mut stats, &rules, 1, &hot);
+        assert!(stats.decisive_thermal_breach(&rules).is_some());
+    }
+
+    /// Snapshot carrying one GPU reading from `source` with an optional driver throttle temperature.
+    fn gpu_snapshot(
+        source: GpuSource,
+        gpu_temp_c: f32,
+        throttle_temp_c: Option<f32>,
+    ) -> TelemetrySnapshot {
+        let mut snap = snapshot_with_gpu(70.0, 4000, 99.0, gpu_temp_c);
+        snap.gpus[0].source = source;
+        snap.gpus[0].throttle_temp_c = throttle_temp_c;
+        snap
+    }
+
+    #[test]
+    fn a_sustained_breach_of_the_driver_throttle_temperature_is_decisive() {
+        let rules = VerdictRules::certification();
+        let snap = gpu_snapshot(GpuSource::Wddm, 95.0, Some(90.0));
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+        ticks(&mut stats, &rules, 59, &snap);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        ticks(&mut stats, &rules, 1, &snap);
+        let breach = stats.decisive_thermal_breach(&rules).expect("decisive");
+        assert!(matches!(
+            breach,
+            RuleViolation::GpuTemp { sustained_ticks: 60, ceiling_c, .. } if ceiling_c == Some(90.0)
+        ));
+        assert_eq!(evaluate_stage(&stats, &rules).violations, vec![breach]);
+    }
+
+    /// An NVML GPU at 94 C and an untabled AMD CPU at 97 C fail the stage on the flat limit but are never decisive.
+    #[test]
+    fn a_flat_fallback_breach_fails_the_stage_but_is_never_decisive() {
+        let rules = VerdictRules::certification();
+        let nvml = gpu_snapshot(GpuSource::Nvml, 94.0, None);
+        let mut gpu = StageStats::begin(0, "gpu", Stressor::Gpu, &nvml);
+        ticks(&mut gpu, &rules, 600, &nvml);
+        assert!(gpu.decisive_thermal_breach(&rules).is_none());
+        let verdict = evaluate_stage(&gpu, &rules);
+        assert!(
+            matches!(
+                verdict.violations[..],
+                [RuleViolation::GpuTemp {
+                    sustained_ticks: 600,
+                    ceiling_c: None,
+                    ..
+                }]
+            ),
+            "{:?}",
+            verdict.violations
+        );
+
+        let mut cpu = stats_for(&rules);
+        ticks(&mut cpu, &rules, 600, &untabled_amd_snapshot(97.0));
+        assert!(cpu.decisive_thermal_breach(&rules).is_none());
+        let verdict = evaluate_stage(&cpu, &rules);
+        assert!(
+            matches!(
+                verdict.violations[..],
+                [RuleViolation::CpuTemp {
+                    sustained_ticks: 600,
+                    ceiling_c: None,
+                    ..
+                }]
+            ),
+            "{:?}",
+            verdict.violations
+        );
+    }
+
+    /// One WDDM spike over its own ceiling does not make a sustained NVML flat-limit breach decisive.
+    #[test]
+    fn a_flat_fallback_run_is_not_made_decisive_by_another_gpu() {
+        let rules = VerdictRules::certification();
+        let mut snap = gpu_snapshot(GpuSource::Nvml, 94.0, None);
+        let mut igpu = snap.gpus[0].clone();
+        igpu.index = 1;
+        igpu.source = GpuSource::Wddm;
+        igpu.throttle_temp_c = Some(90.0);
+        igpu.temp_c = Some(70.0);
+        snap.gpus.push(igpu);
+        let mut spike = snap.clone();
+        spike.gpus[1].temp_c = Some(110.0);
+
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+        ticks(&mut stats, &rules, 1, &spike);
+        ticks(&mut stats, &rules, 600, &snap);
+        assert_eq!(stats.worst_gpu_temp_over, 601);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        assert!(!evaluate_stage(&stats, &rules).pass);
+    }
+
+    /// A rule with an absolute basis is decisive on any sensor source.
+    #[test]
+    fn an_absolute_limit_breach_is_decisive_on_any_source() {
+        let mut rules = VerdictRules::certification();
+        for rule in [rules.max_cpu_temp_c.as_mut(), rules.max_gpu_temp_c.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            rule.basis = TempLimitBasis::Absolute;
+        }
+        let nvml = gpu_snapshot(GpuSource::Nvml, 94.0, None);
+        let mut gpu = StageStats::begin(0, "gpu", Stressor::Gpu, &nvml);
+        ticks(&mut gpu, &rules, 60, &nvml);
+        assert!(matches!(
+            gpu.decisive_thermal_breach(&rules),
+            Some(RuleViolation::GpuTemp {
+                sustained_ticks: 60,
+                ..
+            })
+        ));
+
+        let mut cpu = stats_for(&rules);
+        ticks(&mut cpu, &rules, 60, &untabled_amd_snapshot(97.0));
+        assert!(matches!(
+            cpu.decisive_thermal_breach(&rules),
+            Some(RuleViolation::CpuTemp {
+                sustained_ticks: 60,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn an_ungradable_dptf_reading_is_never_decisive() {
+        let rules = VerdictRules::certification();
+        let mut stats = stats_for(&rules);
+        ticks(&mut stats, &rules, 600, &dptf_snapshot(99.0));
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+    }
+
+    #[test]
+    fn thermal_fail_fast_parses_from_a_preset_and_defaults_off() {
+        let set: VerdictRules =
+            toml::from_str("thermal_fail_fast = { consecutive_ticks = 120 }").unwrap();
+        assert_eq!(
+            set.thermal_fail_fast,
+            Some(ThermalFailFastRule {
+                consecutive_ticks: 120
+            })
+        );
+        let bare: VerdictRules = toml::from_str("thermal_fail_fast = {}").unwrap();
+        assert_eq!(
+            bare.thermal_fail_fast,
+            Some(ThermalFailFastRule {
+                consecutive_ticks: 60
+            })
+        );
+        let absent: VerdictRules = toml::from_str("whea_fails = true").unwrap();
+        assert_eq!(absent.thermal_fail_fast, None);
     }
 }

@@ -865,7 +865,9 @@ pub struct RunSummary {
     pub peak_throughput: Option<f64>,
     pub avg_throughput: Option<f64>,
     pub throughput_unit: Option<String>,
+    /// A CPU/GPU temperature rule breached, or a supplied thermal_throttle event on an MCP-recorded run; no throttle state is read.
     pub thermal_throttle_detected: bool,
+    /// A clock-collapse rule breached without a temperature breach, or a rail-droop rule breached.
     pub vrm_throttle_detected: bool,
     /// `WheaCounters.delta_since_program_start` at run end.
     pub whea_delta_count: u32,

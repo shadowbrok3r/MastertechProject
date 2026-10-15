@@ -297,6 +297,16 @@ mod tests {
     }
 
     #[test]
+    fn every_cert_preset_fails_fast_on_a_decisive_thermal_breach() {
+        let expected = VerdictRules::certification().thermal_fail_fast;
+        assert!(expected.is_some());
+        for name in CERT_PRESET_NAMES {
+            let preset = load_cert_preset(name).expect(name);
+            assert_eq!(preset.rules.thermal_fail_fast, expected, "{name}");
+        }
+    }
+
+    #[test]
     fn tier_durations_match_bands() {
         let hours = |name: &str| load_cert_preset(name).unwrap().total_secs() as f64 / 3600.0;
         let bronze = hours("bronze");

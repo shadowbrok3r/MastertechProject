@@ -107,8 +107,8 @@ pub use report::{
 };
 pub use rules::{
     evaluate_stage, ClockCollapseRule, MissingSensor, MissingSensorPolicy, RailDroopRule,
-    RuleViolation, StageStats, StageVerdict, TempRule, ThroughputCvRule, UnevaluatedRule,
-    VerdictRules,
+    RuleViolation, StageStats, StageVerdict, TempRule, ThermalFailFastRule, ThroughputCvRule,
+    UnevaluatedRule, VerdictRules,
 };
 pub use gpu_probe::{gpu_probe_spec, gpu_probe_stages, GPU_PROBE_PRESET};
 pub use panel_config::{
