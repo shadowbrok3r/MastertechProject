@@ -38,6 +38,9 @@ pub struct GpuSample {
     /// Temperature at which the driver starts throttling, when it publishes one.
     #[serde(default)]
     pub throttle_temp_c: Option<f32>,
+    /// Temperature at which the hardware slows the GPU, when the driver publishes one.
+    #[serde(default)]
+    pub slowdown_temp_c: Option<f32>,
     #[serde(default)]
     pub source: GpuSource,
 }
@@ -59,16 +62,61 @@ pub enum GpuSource {
 mod nvml_sampler {
     use super::{GpuSample, GpuSource};
     use nvml_wrapper::{
-        enum_wrappers::device::{Clock, TemperatureSensor},
-        Nvml,
+        Device, Nvml,
+        enum_wrappers::device::{Clock, TemperatureSensor, TemperatureThreshold},
     };
+    use std::ops::RangeInclusive;
     use std::sync::{Mutex, OnceLock};
 
-    static NVML: OnceLock<Mutex<Option<Nvml>>> = OnceLock::new();
+    /// NVML thresholds outside this range are treated as unreported.
+    const PLAUSIBLE_THRESHOLD_C: RangeInclusive<u32> = 80..=110;
 
-    fn nvml() -> &'static Mutex<Option<Nvml>> {
+    /// One device's NVML temperature thresholds in degrees C.
+    #[derive(Debug, Clone, Copy, Default, PartialEq)]
+    pub(super) struct Thresholds {
+        /// GPU max operating temperature, when plausible and below `slowdown_c`.
+        pub throttle_c: Option<f32>,
+        /// HW slowdown temperature, when plausible.
+        pub slowdown_c: Option<f32>,
+    }
+
+    impl Thresholds {
+        /// Plausibility-filtered thresholds from raw NVML readings.
+        pub(super) fn from_raw(gpu_max: Option<u32>, slowdown: Option<u32>) -> Self {
+            let plausible = |c: Option<u32>| c.filter(|c| PLAUSIBLE_THRESHOLD_C.contains(c));
+            let slowdown = plausible(slowdown);
+            let throttle = plausible(gpu_max).filter(|g| slowdown.is_some_and(|s| *g < s));
+            Self {
+                throttle_c: throttle.map(|c| c as f32),
+                slowdown_c: slowdown.map(|c| c as f32),
+            }
+        }
+    }
+
+    struct NvmlState {
+        nvml: Nvml,
+        /// Per device index, read once at init.
+        thresholds: Vec<Thresholds>,
+    }
+
+    impl NvmlState {
+        fn new(nvml: Nvml) -> Self {
+            let thresholds = (0..nvml.device_count().unwrap_or(0))
+                .map(|idx| {
+                    nvml.device_by_index(idx)
+                        .map(|dev| device_thresholds(idx, &dev))
+                        .unwrap_or_default()
+                })
+                .collect();
+            Self { nvml, thresholds }
+        }
+    }
+
+    static NVML: OnceLock<Mutex<Option<NvmlState>>> = OnceLock::new();
+
+    fn nvml() -> &'static Mutex<Option<NvmlState>> {
         NVML.get_or_init(|| {
-            let n = Nvml::init().ok();
+            let n = Nvml::init().ok().map(NvmlState::new);
             if n.is_none() {
                 log::debug!("[stress-kit/gpu] NVML init failed; NVIDIA telemetry disabled");
             }
@@ -76,9 +124,24 @@ mod nvml_sampler {
         })
     }
 
+    fn device_thresholds(idx: u32, dev: &Device) -> Thresholds {
+        let gpu_max = dev.temperature_threshold(TemperatureThreshold::GpuMax).ok();
+        let slowdown = dev
+            .temperature_threshold(TemperatureThreshold::Slowdown)
+            .ok();
+        let picked = Thresholds::from_raw(gpu_max, slowdown);
+        log::info!(
+            "[stress-kit/gpu] NVML device {idx}: max operating {gpu_max:?} C, slowdown {slowdown:?} C, graded throttle {:?} C, slowdown {:?} C",
+            picked.throttle_c,
+            picked.slowdown_c
+        );
+        picked
+    }
+
     pub fn sample() -> Vec<GpuSample> {
         let Ok(guard) = nvml().lock() else { return Vec::new() };
-        let Some(nv) = guard.as_ref() else { return Vec::new() };
+        let Some(state) = guard.as_ref() else { return Vec::new() };
+        let nv = &state.nvml;
 
         let driver = nv.sys_driver_version().ok();
         let count = match nv.device_count() {
@@ -129,6 +192,11 @@ mod nvml_sampler {
                 .into_iter()
                 .filter(|s| s != "(empty)")
                 .collect();
+            let thresholds = state
+                .thresholds
+                .get(idx as usize)
+                .copied()
+                .unwrap_or_default();
 
             out.push(GpuSample {
                 index: idx as usize,
@@ -153,11 +221,52 @@ mod nvml_sampler {
                 power_pct: None,
                 fan_rpm: None,
                 hotspot_c: None,
-                throttle_temp_c: None,
+                throttle_temp_c: thresholds.throttle_c,
+                slowdown_temp_c: thresholds.slowdown_c,
                 source: GpuSource::Nvml,
             });
         }
         out
+    }
+}
+
+#[cfg(all(test, feature = "nvml"))]
+mod nvml_threshold_tests {
+    use super::nvml_sampler::Thresholds;
+
+    fn picked(gpu_max: Option<u32>, slowdown: Option<u32>) -> (Option<f32>, Option<f32>) {
+        let t = Thresholds::from_raw(gpu_max, slowdown);
+        (t.throttle_c, t.slowdown_c)
+    }
+
+    #[test]
+    fn gpu_max_operating_temperature_is_the_throttle_temperature() {
+        assert_eq!(picked(Some(93), Some(95)), (Some(93.0), Some(95.0)));
+        assert_eq!(picked(Some(87), Some(102)), (Some(87.0), Some(102.0)));
+    }
+
+    #[test]
+    fn slowdown_never_stands_in_for_a_missing_gpu_max() {
+        assert_eq!(picked(None, Some(93)), (None, Some(93.0)));
+    }
+
+    #[test]
+    fn a_gpu_max_without_a_plausible_slowdown_above_it_is_unused() {
+        assert_eq!(picked(Some(93), None), (None, None));
+        assert_eq!(picked(Some(93), Some(u32::MAX - 1)), (None, None));
+        assert_eq!(picked(Some(95), Some(95)), (None, Some(95.0)));
+        assert_eq!(picked(Some(97), Some(95)), (None, Some(95.0)));
+    }
+
+    #[test]
+    fn implausible_thresholds_are_unused() {
+        assert_eq!(picked(None, None), (None, None));
+        assert_eq!(picked(Some(0), Some(0)), (None, None));
+        assert_eq!(picked(Some(57), Some(97)), (None, Some(97.0)));
+        assert_eq!(picked(Some(65), Some(97)), (None, Some(97.0)));
+        assert_eq!(picked(Some(79), Some(95)), (None, Some(95.0)));
+        assert_eq!(picked(Some(255), Some(111)), (None, None));
+        assert_eq!(picked(Some(80), Some(110)), (Some(80.0), Some(110.0)));
     }
 }
 
