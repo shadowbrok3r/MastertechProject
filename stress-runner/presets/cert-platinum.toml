@@ -18,6 +18,8 @@ max_cpu_temp_c = { limit_c = 95.0, consecutive_ticks = 5 }
 max_gpu_temp_c = { limit_c = 90.0, consecutive_ticks = 5, on_missing = "warn" }
 clock_collapse = { below_pct_of_stage_max = 0.60, consecutive_ticks = 10, min_cpu_usage_pct = 50.0 }
 throughput_cv = { warmup_ticks = 10, max_cv = 0.20, min_samples = 30 }
+# Ends the run once a CPU or GPU breach of its own ceiling or an absolute limit holds this many consecutive ticks.
+thermal_fail_fast = { consecutive_ticks = 60 }
 
 [[stage]]
 label = "cpu_fma"

@@ -86,12 +86,14 @@ pub fn ceiling_for(id: &CpuIdentity, msr_tjmax_c: Option<u32>) -> Option<CpuTher
 ///
 /// Extend by adding the family/model pair, not by widening a range.
 fn amd_ceiling(family: u8, model: u8, brand: &str) -> Option<f32> {
-    let x3d = brand.to_ascii_uppercase().contains("X3D");
+    let brand = brand.to_ascii_uppercase();
+    let x3d = brand.contains("X3D");
+    let r5_5600x = brand.split_whitespace().any(|token| token == "5600X");
     match (family, model) {
         // Zen, Zen+, Zen 2 — Ryzen 1000/2000/3000 and Threadripper 1000-3000.
         (0x17, _) => Some(95.0),
-        // Zen 3 Vermeer — Ryzen 5000 desktop, 5800X3D included.
-        (0x19, 0x21) => Some(90.0),
+        // Zen 3 Vermeer — Ryzen 5000 desktop, 5800X3D included; the 5600X reads 95.
+        (0x19, 0x21) => Some(if r5_5600x { 95.0 } else { 90.0 }),
         // Zen 4 Raphael — Ryzen 7000 desktop; the X3D parts cap lower.
         (0x19, 0x61) => Some(if x3d { 89.0 } else { 95.0 }),
         // Zen 5 Granite Ridge — Ryzen 9000 desktop, 9800X3D included.
@@ -176,6 +178,17 @@ mod tests {
                 .limit_c,
             95.0
         );
+    }
+
+    /// Only the exact 5600X brand token lifts the Vermeer ceiling to 95 C.
+    #[test]
+    fn the_5600x_is_the_one_vermeer_part_rated_at_95() {
+        let limit = |brand: &str| ceiling_for(&amd(0x19, 0x21, brand), None).unwrap().limit_c;
+        assert_eq!(limit("AMD Ryzen 5 5600X 6-Core Processor"), 95.0);
+        assert_eq!(limit("AMD Ryzen 5 5600X3D 6-Core Processor"), 90.0);
+        assert_eq!(limit("AMD Ryzen 5 5600 6-Core Processor"), 90.0);
+        assert_eq!(limit("AMD Ryzen 7 5800X 8-Core Processor"), 90.0);
+        assert_eq!(limit("AMD Ryzen 9 5950X 16-Core Processor"), 90.0);
     }
 
     /// An untabled AMD part reports nothing, so the caller keeps its configured

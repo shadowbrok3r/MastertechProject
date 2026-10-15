@@ -1439,11 +1439,71 @@ fn stage_to_end_early(
     (now.duration_since(latched_at) >= FATAL_STAGE_GRACE).then_some(index)
 }
 
-/// First stage of the segment that resumes the list after `ended`; `None` ends
-/// the run because the list is exhausted or the operator cancelled.
-fn next_segment_start(ended: usize, stage_count: usize, cancelled: bool) -> Option<usize> {
+/// First stage after `ended` to resume at; `None` once the list is exhausted, cancelled, or thermally stopped.
+fn next_segment_start(
+    ended: usize,
+    stage_count: usize,
+    cancelled: bool,
+    thermal_stop: Option<usize>,
+) -> Option<usize> {
     let next = ended.saturating_add(1);
-    (!cancelled && next < stage_count).then_some(next)
+    (!cancelled && thermal_stop.is_none() && next < stage_count).then_some(next)
+}
+
+/// In-flight stage to end and the breach that decided it, while no stage is ending and no thermal stop latched.
+fn thermal_stage_to_end(
+    stage: Option<usize>,
+    stats: Option<&StageStats>,
+    rules: &VerdictRules,
+    ending_stage: Option<usize>,
+    thermal_stop: Option<usize>,
+) -> Option<(usize, RuleViolation)> {
+    if ending_stage.is_some() || thermal_stop.is_some() {
+        return None;
+    }
+    let breach = stats?.decisive_thermal_breach(rules)?;
+    Some((stage?, breach))
+}
+
+/// Ends stage `index` for a decisive thermal breach, drops any pending fatal, and marks the run ended early.
+fn latch_thermal_stop(
+    index: usize,
+    ending_stage: &mut Option<usize>,
+    thermal_stop: &mut Option<usize>,
+    fatal_stage: &mut Option<(usize, Instant)>,
+    acc: &mut SummaryAccumulator,
+) {
+    *ending_stage = Some(index);
+    *thermal_stop = Some(index);
+    *fatal_stage = None;
+    acc.thermal_fail_fast = true;
+}
+
+/// Operator-facing line for a run ended by a decisive thermal breach.
+fn thermal_fail_fast_message(stage_label: &str, breach: &RuleViolation, not_run: usize) -> String {
+    format!(
+        "stage '{stage_label}': {} — the thermal breach is decisive, so the run ends now; \
+         {not_run} remaining stage(s) were not run",
+        breach.describe()
+    )
+}
+
+/// Persist a `custom`/`thermal_fail_fast` event naming the breach and the stages left unrun.
+fn persist_thermal_fail_fast_event(
+    run_id: &RecordId,
+    stage_label: &str,
+    breach: &RuleViolation,
+    not_run: &[RunStage],
+) {
+    let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Custom, "verdict-rules");
+    event.code = Some("thermal_fail_fast".to_string());
+    event.detail = thermal_fail_fast_message(stage_label, breach, not_run.len());
+    event.data = Some(serde_json::json!({
+        "stage": stage_label,
+        "breach": breach,
+        "stages_not_run": not_run.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(),
+    }));
+    spawn_event_create(event, "thermal-fail-fast");
 }
 
 /// Wall-clock budget a restarted segment inherits from the run's cap.
@@ -1481,6 +1541,8 @@ fn drive_scenario(
     let mut fatal_stage: Option<(usize, Instant)> = None;
     // Stage being ended early; events for any other stage of that segment are dropped.
     let mut ending_stage: Option<usize> = None;
+    // Stage whose decisive thermal breach ended the run.
+    let mut thermal_stop: Option<usize> = None;
     let mut last_tick = Instant::now();
     let mut current_stage_index: Option<usize> = None;
     let mut current_stage_label: Option<String> = None;
@@ -1657,6 +1719,7 @@ fn drive_scenario(
                                 ended,
                                 stage_specs.len(),
                                 cancel.load(Ordering::Relaxed),
+                                thermal_stop,
                             ) {
                                 Some(next) => {
                                     stage_offset = next;
@@ -1714,6 +1777,31 @@ fn drive_scenario(
                 let new_errors = acc.absorb(&latest_metrics, &snapshot, current_unit);
                 if let Some(stats) = current_stage_stats.as_mut() {
                     stats.absorb_tick(&latest_metrics, &snapshot, &effective_rules);
+                }
+                if let Some((index, breach)) = thermal_stage_to_end(
+                    current_stage_index,
+                    current_stage_stats.as_ref(),
+                    &effective_rules,
+                    ending_stage,
+                    thermal_stop,
+                ) {
+                    latch_thermal_stop(
+                        index,
+                        &mut ending_stage,
+                        &mut thermal_stop,
+                        &mut fatal_stage,
+                        acc,
+                    );
+                    runner.stop();
+                    let label = current_stage_label.clone().unwrap_or_default();
+                    let not_run = stage_specs.get(index + 1..).unwrap_or_default();
+                    persist_thermal_fail_fast_event(run_id, &label, &breach, not_run);
+                    send(
+                        update_tx,
+                        RunUpdate::Warning {
+                            message: thermal_fail_fast_message(&label, &breach, not_run.len()),
+                        },
+                    );
                 }
                 persist_counter_events(run_id, &acc, whea_before, tdr_before);
                 if new_errors > 0 {
@@ -2150,6 +2238,8 @@ struct SummaryAccumulator {
     /// with adapter evidence in the summary.
     gpu_leg_planned: bool,
     scenario_finish: Option<DbFinishReason>,
+    /// A decisive thermal breach ended the run before its remaining stages.
+    thermal_fail_fast: bool,
 }
 
 impl SummaryAccumulator {
@@ -2466,7 +2556,12 @@ impl SummaryAccumulator {
             } else {
                 FailureMode::None
             };
-            (RunResult::Fail, DbFinishReason::Completed, mode)
+            let reason = if self.thermal_fail_fast {
+                DbFinishReason::EndedEarly
+            } else {
+                DbFinishReason::Completed
+            };
+            (RunResult::Fail, reason, mode)
         } else if cancelled {
             (
                 RunResult::Aborted,
@@ -4082,11 +4177,11 @@ mod tests {
     /// Ending a stage early must not abort the stages after it.
     #[test]
     fn ending_a_stage_early_resumes_the_remaining_stages() {
-        assert_eq!(next_segment_start(6, 12, false), Some(7));
-        assert_eq!(next_segment_start(10, 12, false), Some(11));
+        assert_eq!(next_segment_start(6, 12, false, None), Some(7));
+        assert_eq!(next_segment_start(10, 12, false, None), Some(11));
         // The last stage, and an operator cancel, end the run instead.
-        assert_eq!(next_segment_start(11, 12, false), None);
-        assert_eq!(next_segment_start(6, 12, true), None);
+        assert_eq!(next_segment_start(11, 12, false, None), None);
+        assert_eq!(next_segment_start(6, 12, true, None), None);
     }
 
     /// The resumed segment holds exactly the stages after the one that ended and
@@ -4098,7 +4193,7 @@ mod tests {
             stage_spec("gpu", Stressor::Gpu),
             stage_spec("disk", Stressor::Disk),
         ];
-        let next = next_segment_start(1, specs.len(), false).expect("disk stage remains");
+        let next = next_segment_start(1, specs.len(), false, None).expect("disk stage remains");
         let def = scenario_def(&specs[next..], Some(30), false, Default::default());
         assert_eq!(def.stages.len(), 1);
         assert_eq!(def.stages[0].label, "disk");
@@ -4108,6 +4203,162 @@ mod tests {
         assert_eq!(remaining_wall_secs(None, Duration::from_secs(90)), None);
         assert_eq!(remaining_wall_secs(Some(600), Duration::from_secs(90)), Some(510));
         assert_eq!(remaining_wall_secs(Some(60), Duration::from_secs(90)), Some(0));
+    }
+
+    /// One cpu_fma stage on a 95 C-ceiling part held at `temp_c` for `n` ticks under the certification policy.
+    fn hot_stage(temp_c: f32, n: u32) -> (StageStats, VerdictRules) {
+        let rules = VerdictRules::certification();
+        let snap = TelemetrySnapshot {
+            captured_at_unix_ms: 1,
+            cores: vec![stress_kit::telemetry::CoreSample {
+                usage_pct: 99.0,
+                freq_mhz: 4000,
+                temp_c: Some(temp_c),
+                ..Default::default()
+            }],
+            cpu_ceiling: Some(stress_kit::telemetry::CpuThermalCeiling {
+                limit_c: 95.0,
+                source: stress_kit::telemetry::CpuCeilingSource::AmdModel,
+            }),
+            ..Default::default()
+        };
+        let mut stats = StageStats::begin(0, "cpu_fma", Stressor::Fp, &snap);
+        for _ in 0..n {
+            stats.absorb_tick(&work_tick(100.0, None), &snap, &rules);
+        }
+        (stats, rules)
+    }
+
+    /// Stage outcome `StageFinished` records for `stats` under `rules`.
+    fn graded_outcome(stats: &StageStats, rules: &VerdictRules) -> StageOutcome {
+        let verdict = stage_verdict_for(stats, &Some(rules.clone()), rules);
+        let summary = stage_summary_from_stats(
+            stats,
+            Stressor::Fp,
+            0,
+            4_500,
+            60.0,
+            Some(100.0),
+            Some(100.0),
+            "Mflop/s",
+            false,
+            None,
+            verdict.as_ref(),
+        );
+        StageOutcome { summary, verdict }
+    }
+
+    #[test]
+    fn a_decisive_thermal_breach_ends_the_in_flight_stage() {
+        let (stats, rules) = hot_stage(99.0, 60);
+        let (index, breach) =
+            thermal_stage_to_end(Some(3), Some(&stats), &rules, None, None).expect("decisive");
+        assert_eq!(index, 3);
+        assert!(matches!(
+            breach,
+            RuleViolation::CpuTemp {
+                sustained_ticks: 60,
+                ..
+            }
+        ));
+
+        assert!(thermal_stage_to_end(Some(3), Some(&stats), &rules, Some(3), None).is_none());
+        assert!(thermal_stage_to_end(Some(3), Some(&stats), &rules, None, Some(3)).is_none());
+        assert!(thermal_stage_to_end(None, Some(&stats), &rules, None, None).is_none());
+        assert!(thermal_stage_to_end(Some(3), None, &rules, None, None).is_none());
+        let (short, rules) = hot_stage(99.0, 59);
+        assert!(thermal_stage_to_end(Some(3), Some(&short), &rules, None, None).is_none());
+    }
+
+    /// A latched thermal stop ends the stage, clears its fatal, blocks the resume, and fails the run as ended early.
+    #[test]
+    fn a_thermal_stop_ends_the_run_instead_of_resuming_it() {
+        let (stats, rules) = hot_stage(99.0, 60);
+        let mut ending_stage = None;
+        let mut thermal_stop = None;
+        let mut fatal_stage = Some((3, Instant::now()));
+        let mut acc = acc_with_work();
+        let (index, _) =
+            thermal_stage_to_end(Some(3), Some(&stats), &rules, ending_stage, thermal_stop)
+                .expect("decisive");
+        latch_thermal_stop(
+            index,
+            &mut ending_stage,
+            &mut thermal_stop,
+            &mut fatal_stage,
+            &mut acc,
+        );
+        assert_eq!(ending_stage, Some(3));
+        assert_eq!(thermal_stop, Some(3));
+        assert_eq!(fatal_stage, None);
+        assert!(acc.thermal_fail_fast);
+
+        // `Finished` takes `ending_stage`; the latched stop still blocks the resume and a second latch.
+        let ended = ending_stage.take().expect("stage being ended");
+        assert_eq!(next_segment_start(ended, 12, false, thermal_stop), None);
+        assert_eq!(next_segment_start(ended, 12, false, None), Some(4));
+        assert!(
+            thermal_stage_to_end(Some(3), Some(&stats), &rules, ending_stage, thermal_stop)
+                .is_none()
+        );
+
+        let verdict = verdict_at(
+            acc,
+            vec![graded_outcome(&stats, &rules)],
+            60.0,
+            Some(43_200),
+        );
+        assert_eq!(verdict.result, RunResult::Fail);
+        assert_eq!(verdict.finish_reason, DbFinishReason::EndedEarly);
+        assert_eq!(verdict.failure_mode.kind(), "thermal_throttle");
+    }
+
+    #[test]
+    fn the_fail_fast_line_names_the_breach_and_the_stages_not_run() {
+        let (stats, rules) = hot_stage(99.0, 60);
+        let (_, breach) =
+            thermal_stage_to_end(Some(0), Some(&stats), &rules, None, None).expect("decisive");
+        let line = thermal_fail_fast_message("cpu_fma", &breach, 11);
+        assert!(
+            line.starts_with("stage 'cpu_fma': CPU over 98C for 60s"),
+            "{line}"
+        );
+        assert!(
+            line.contains("11 remaining stage(s) were not run"),
+            "{line}"
+        );
+    }
+
+    /// Stage verdict, failure mode and summary flag match a full run's breach; only the finish reason differs.
+    #[test]
+    fn a_fail_fast_run_fails_with_the_same_evidence_as_a_full_run() {
+        let (stats, rules) = hot_stage(99.0, 60);
+        let mut fast_acc = acc_with_work();
+        latch_thermal_stop(0, &mut None, &mut None, &mut None, &mut fast_acc);
+        let fast = verdict_at(
+            fast_acc,
+            vec![graded_outcome(&stats, &rules)],
+            60.0,
+            Some(43_200),
+        );
+        let full = verdict_at(
+            acc_with_work(),
+            vec![graded_outcome(&stats, &rules)],
+            43_200.0,
+            Some(43_200),
+        );
+
+        assert_eq!(fast.result, RunResult::Fail);
+        assert_eq!(fast.finish_reason, DbFinishReason::EndedEarly);
+        assert_eq!(full.result, RunResult::Fail);
+        assert_eq!(full.finish_reason, DbFinishReason::Completed);
+        assert_eq!(fast.failure_mode.kind(), "thermal_throttle");
+        assert_eq!(fast.failure_mode, full.failure_mode);
+        assert!(fast.summary.thermal_throttle_detected);
+        assert_eq!(
+            fast.stage_outcomes[0].summary.violations,
+            full.stage_outcomes[0].summary.violations
+        );
     }
 
     #[test]
