@@ -734,6 +734,10 @@ impl StressLab {
                 .as_ref()
                 .is_some_and(|h| h.to_ascii_lowercase().contains(needle))
             || run
+                .tool_version
+                .as_ref()
+                .is_some_and(|v| v.to_ascii_lowercase().contains(needle))
+            || run
                 .target_component
                 .as_ref()
                 .is_some_and(|c| self.component_name(c).to_ascii_lowercase().contains(needle))
@@ -1070,6 +1074,14 @@ impl StressLab {
                         .show(ui);
                 }
             });
+            if let Some(build) = &run.tool_version {
+                controls::IconLabel::new(svg::GIT_COMMIT, build)
+                    .tone(theme::weak_text(ui))
+                    .small(true)
+                    .wrap(true)
+                    .selectable(true)
+                    .show(ui);
+            }
         }
 
         controls::hairline(ui);

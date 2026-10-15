@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 database = { workspace = true, features = ["desktop"] }
 displays = { path = "../displays", features = ["tokio", "native-telemetry"] }
+stress-runner = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true }
 log = { workspace = true }

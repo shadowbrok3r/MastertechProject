@@ -1,5 +1,5 @@
 -- ============================================================
--- TABLE: benchmark_result           last changed: Benchmark tranche (2026-06-10)
+-- TABLE: benchmark_result           last changed: stress_tool_version (2026-10-15)
 -- Managed by surrealkit. Edit here, then `rollout plan`.
 -- ============================================================
 -- One scored benchmark execution against one computer. Stressor-backed
@@ -43,3 +43,5 @@ DEFINE FIELD captured_at    ON benchmark_result TYPE datetime DEFAULT time::now(
 DEFINE FIELD tags           ON benchmark_result TYPE array<string> DEFAULT []       PERMISSIONS FULL;
 DEFINE FIELD tags.*         ON benchmark_result TYPE string                         PERMISSIONS FULL;
 DEFINE FIELD notes          ON benchmark_result TYPE none | string                  PERMISSIONS FULL;
+-- Build that wrote the row: "<App> <ver>+<sha>; stress-kit <build>".
+DEFINE FIELD tool_version   ON benchmark_result TYPE none | string                  PERMISSIONS FULL;

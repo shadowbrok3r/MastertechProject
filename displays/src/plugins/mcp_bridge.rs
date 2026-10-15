@@ -2293,7 +2293,7 @@ pub struct RecordStressTestRunParams {
     #[schemars(description = "Free-form notes (symptom match, MCP timeout, dump paths, …)")]
     pub notes: Option<String>,
     #[schemars(
-        description = "Build that ran the test, e.g. 'MasterTech 5.0.1+ec3ea6b; stress-kit 0.1.0+ec3ea6b' or a third-party tool's version. Default: 'backfill; recorded by <this app's build>'"
+        description = "Build that ran the test, e.g. 'MasterTech 5.0.1+ec3ea6b; stress-kit 0.1.0+ec3ea6b' or a third-party tool's version. Stored on the run and its events with '; recorded by <this app's build>' appended; default 'backfill; recorded by <this app's build>'"
     )]
     pub tool_version: Option<String>,
     #[schemars(description = "Tags (default includes backfill + preset:gpu-probe)")]
@@ -8009,172 +8009,9 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<RecordStressTestRunParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        use database::schema::{
-            EventKind, FailureMode, FinishReason, RecordIdExt, RunResult, RunSummary,
-            StressTestEvent, StressTestRun, TargetKind, TestTool, STRESS_TEST_RUN_TABLE,
-        };
+        use database::schema::{RecordIdExt, StressTestRun};
 
-        let computer = parse_record_id(&p.computer_id, database::schema::COMPUTER_TABLE);
-        let session_ref = p
-            .session_id
-            .as_deref()
-            .map(|s| parse_record_id(s, database::schema::DIAGNOSTIC_SESSION_TABLE));
-        let service_order = p.service_order_id.as_deref().map(|s| {
-            parse_record_id(s, database::schema::TICKET_TABLE)
-        });
-        let target_component = p.target_component_id.as_deref().map(|s| {
-            parse_record_id(s, database::schema::HARDWARE_COMPONENT_TABLE)
-        });
-
-        let target_kind = match p.target_kind.as_deref().unwrap_or("gpu") {
-            "cpu" => TargetKind::Cpu,
-            "gpu" => TargetKind::Gpu,
-            "memory" => TargetKind::Memory,
-            "storage" => TargetKind::Storage,
-            "psu" => TargetKind::Psu,
-            "motherboard" => TargetKind::Motherboard,
-            "system" => TargetKind::System,
-            "mixed" => TargetKind::Mixed,
-            other => {
-                return Err(to_internal(format!(
-                    "unknown target_kind '{other}' — use cpu, gpu, memory, storage, psu, motherboard, system, or mixed"
-                )));
-            }
-        };
-
-        let preset = p
-            .preset_label
-            .clone()
-            .unwrap_or_else(|| "qc-mcp:gpu-probe-v1".into());
-        let tool = TestTool::StressKitScenario {
-            name: Some(preset.clone()),
-        };
-
-        let started_at: chrono::DateTime<chrono::Utc> = p
-            .started_at
-            .parse()
-            .map_err(|e| to_internal(format!("invalid started_at: {e}")))?;
-        let ended_at: Option<chrono::DateTime<chrono::Utc>> = match &p.ended_at {
-            Some(s) => Some(s.parse().map_err(|e| to_internal(format!("invalid ended_at: {e}")))?),
-            None => None,
-        };
-
-        let result = match p.result.as_deref().unwrap_or("fail") {
-            "pass" => RunResult::Pass,
-            "fail" => RunResult::Fail,
-            "aborted" => RunResult::Aborted,
-            "inconclusive" => RunResult::Inconclusive,
-            other => {
-                return Err(to_internal(format!(
-                    "unknown result '{other}' — use pass, fail, aborted, or inconclusive"
-                )));
-            }
-        };
-
-        let failure_mode = match p.failure_kind.as_deref().unwrap_or("reboot") {
-            "none" => FailureMode::None,
-            "reboot" => FailureMode::Reboot,
-            "timeout" => FailureMode::Timeout,
-            "tdr" => FailureMode::Tdr { count: 1 },
-            "gpu_device_lost" => FailureMode::GpuDeviceLost {
-                message: p.notes.clone().unwrap_or_default(),
-            },
-            "bsod" => FailureMode::Bsod {
-                code: None,
-                bugcheck_args: None,
-            },
-            "whea_error" => FailureMode::WheaError { count: 1 },
-            "app_error" => FailureMode::AppError {
-                exit_code: None,
-                message: p.notes.clone().unwrap_or_default(),
-            },
-            // Pairs with result='inconclusive': the stressor wedged, so the run
-            // is not evidence about the hardware in either direction.
-            "stressor_hang" => FailureMode::StressorHang {
-                message: p.notes.clone().unwrap_or_default(),
-            },
-            other => {
-                return Err(to_internal(format!(
-                    "unknown failure_kind '{other}'"
-                )));
-            }
-        };
-
-        let mut tags = p.tags.unwrap_or_default();
-        if !tags.iter().any(|t| t == "backfill") {
-            tags.push("backfill".into());
-        }
-        if !tags.iter().any(|t| t == "preset:gpu-probe") {
-            tags.push("preset:gpu-probe".into());
-        }
-
-        let mut run = StressTestRun::new_for(computer, tool, target_kind);
-        run.id = database::schema::random_record_id(STRESS_TEST_RUN_TABLE);
-        run.service_order = service_order;
-        run.session_ref = session_ref;
-        run.target_component = target_component.clone();
-        if let Some(ref gpu) = target_component {
-            run.touched_components = vec![gpu.clone()];
-        }
-        run.preset_label = Some(preset);
-        run.started_at = started_at.into();
-        run.ended_at = ended_at.map(Into::into);
-        run.duration_planned_secs = Some(125);
-        run.duration_actual_secs = p.duration_actual_secs;
-        run.hostname = p.hostname.clone();
-        run.notes = p.notes.clone();
-        run.tool_version = Some(backfill_tool_version(p.tool_version.as_deref()));
-        run.tags = tags;
-        run.result = result;
-        run.finish_reason = Some(FinishReason::Crashed);
-        run.set_failure_mode(failure_mode);
-
-        let mut events: Vec<StressTestEvent> = Vec::new();
-        for ev in &p.events {
-            let kind = match ev.kind.as_str() {
-                "stage_started" => EventKind::StageStarted,
-                "stage_finished" => EventKind::StageFinished,
-                "unexpected_shutdown" => EventKind::UnexpectedShutdown,
-                "tdr" => EventKind::Tdr,
-                "bsod" => EventKind::Bsod,
-                "whea_hit" => EventKind::WheaHit,
-                "memory_error" => EventKind::MemoryError,
-                "disk_io_error" => EventKind::DiskIoError,
-                "thermal_throttle" => EventKind::ThermalThrottle,
-                "operator_note" => EventKind::OperatorNote,
-                "custom" => EventKind::Custom,
-                other => {
-                    return Err(to_internal(format!("unknown event kind '{other}'")));
-                }
-            };
-            let mut row = StressTestEvent::new(run.id.clone(), kind, ev.source.as_deref().unwrap_or("operator"));
-            if let Some(at) = &ev.at {
-                row.at = at
-                    .parse::<chrono::DateTime<chrono::Utc>>()
-                    .map_err(|e| to_internal(format!("invalid event at: {e}")))?
-                    .into();
-            }
-            row.code = ev.code.clone();
-            row.detail = ev.detail.clone();
-            events.push(row);
-        }
-
-        // Counters come from the events the caller supplied; zeroing the summary
-        // here is what left every backfilled run invisible to a counter search.
-        let of_kind = |k: EventKind| -> u32 {
-            events.iter().filter(|e| e.kind == k).count().min(u32::MAX as usize) as u32
-        };
-        let memory_errors = of_kind(EventKind::MemoryError);
-        run.summary = RunSummary {
-            memory_errors,
-            test_errors: memory_errors,
-            tdr_count: of_kind(EventKind::Tdr),
-            whea_delta_count: of_kind(EventKind::WheaHit),
-            disk_io_errors: of_kind(EventKind::DiskIoError),
-            bsod_detected: of_kind(EventKind::Bsod) > 0,
-            thermal_throttle_detected: of_kind(EventKind::ThermalThrottle) > 0,
-            ..RunSummary::default()
-        };
+        let (run, events) = backfill_rows(p).map_err(to_internal)?;
 
         let run_id = StressTestRun::create_completed(&run, &events)
             .await
@@ -13488,12 +13325,186 @@ fn parse_record_id(s: &str, table: &'static str) -> database::schema::RecordId {
     database::schema::entity_link::parse_record_id(s, table)
 }
 
-/// `tool_version` of a backfilled run: the caller's value, else this app's build marked as the recorder.
-fn backfill_tool_version(supplied: Option<&str>) -> String {
-    match supplied.map(str::trim).filter(|v| !v.is_empty()) {
-        Some(v) => v.to_string(),
-        None => format!("backfill; recorded by {}", stress_runner::host_build()),
+/// The run and timeline rows `record_stress_test_run` persists for `p`.
+fn backfill_rows(
+    p: RecordStressTestRunParams,
+) -> Result<(database::schema::StressTestRun, Vec<database::schema::StressTestEvent>), String> {
+    use database::schema::{
+        EventKind, FailureMode, FinishReason, RunResult, RunSummary, StressTestRun, TargetKind,
+        TestTool, STRESS_TEST_RUN_TABLE,
+    };
+
+    let computer = parse_record_id(&p.computer_id, database::schema::COMPUTER_TABLE);
+    let session_ref = p
+        .session_id
+        .as_deref()
+        .map(|s| parse_record_id(s, database::schema::DIAGNOSTIC_SESSION_TABLE));
+    let service_order = p.service_order_id.as_deref().map(|s| {
+        parse_record_id(s, database::schema::TICKET_TABLE)
+    });
+    let target_component = p.target_component_id.as_deref().map(|s| {
+        parse_record_id(s, database::schema::HARDWARE_COMPONENT_TABLE)
+    });
+
+    let target_kind = match p.target_kind.as_deref().unwrap_or("gpu") {
+        "cpu" => TargetKind::Cpu,
+        "gpu" => TargetKind::Gpu,
+        "memory" => TargetKind::Memory,
+        "storage" => TargetKind::Storage,
+        "psu" => TargetKind::Psu,
+        "motherboard" => TargetKind::Motherboard,
+        "system" => TargetKind::System,
+        "mixed" => TargetKind::Mixed,
+        other => {
+            return Err(format!(
+                "unknown target_kind '{other}' — use cpu, gpu, memory, storage, psu, motherboard, system, or mixed"
+            ));
+        }
+    };
+
+    let preset = p
+        .preset_label
+        .clone()
+        .unwrap_or_else(|| "qc-mcp:gpu-probe-v1".into());
+    let tool = TestTool::StressKitScenario {
+        name: Some(preset.clone()),
+    };
+
+    let started_at: chrono::DateTime<chrono::Utc> = p
+        .started_at
+        .parse()
+        .map_err(|e| format!("invalid started_at: {e}"))?;
+    let ended_at: Option<chrono::DateTime<chrono::Utc>> = match &p.ended_at {
+        Some(s) => Some(s.parse().map_err(|e| format!("invalid ended_at: {e}"))?),
+        None => None,
+    };
+
+    let result = match p.result.as_deref().unwrap_or("fail") {
+        "pass" => RunResult::Pass,
+        "fail" => RunResult::Fail,
+        "aborted" => RunResult::Aborted,
+        "inconclusive" => RunResult::Inconclusive,
+        other => {
+            return Err(format!(
+                "unknown result '{other}' — use pass, fail, aborted, or inconclusive"
+            ));
+        }
+    };
+
+    let failure_mode = match p.failure_kind.as_deref().unwrap_or("reboot") {
+        "none" => FailureMode::None,
+        "reboot" => FailureMode::Reboot,
+        "timeout" => FailureMode::Timeout,
+        "tdr" => FailureMode::Tdr { count: 1 },
+        "gpu_device_lost" => FailureMode::GpuDeviceLost {
+            message: p.notes.clone().unwrap_or_default(),
+        },
+        "bsod" => FailureMode::Bsod {
+            code: None,
+            bugcheck_args: None,
+        },
+        "whea_error" => FailureMode::WheaError { count: 1 },
+        "app_error" => FailureMode::AppError {
+            exit_code: None,
+            message: p.notes.clone().unwrap_or_default(),
+        },
+        // Paired with result='inconclusive'.
+        "stressor_hang" => FailureMode::StressorHang {
+            message: p.notes.clone().unwrap_or_default(),
+        },
+        other => {
+            return Err(format!(
+                "unknown failure_kind '{other}'"
+            ));
+        }
+    };
+
+    let mut tags = p.tags.unwrap_or_default();
+    if !tags.iter().any(|t| t == "backfill") {
+        tags.push("backfill".into());
     }
+    if !tags.iter().any(|t| t == "preset:gpu-probe") {
+        tags.push("preset:gpu-probe".into());
+    }
+
+    let mut run = StressTestRun::new_for(computer, tool, target_kind);
+    run.id = database::schema::random_record_id(STRESS_TEST_RUN_TABLE);
+    run.service_order = service_order;
+    run.session_ref = session_ref;
+    run.target_component = target_component.clone();
+    if let Some(ref gpu) = target_component {
+        run.touched_components = vec![gpu.clone()];
+    }
+    run.preset_label = Some(preset);
+    run.started_at = started_at.into();
+    run.ended_at = ended_at.map(Into::into);
+    run.duration_planned_secs = Some(125);
+    run.duration_actual_secs = p.duration_actual_secs;
+    run.hostname = p.hostname.clone();
+    run.notes = p.notes.clone();
+    run.tool_version = Some(stress_runner::recorded_tool_version(p.tool_version.as_deref()));
+    run.tags = tags;
+    run.result = result;
+    run.finish_reason = Some(FinishReason::Crashed);
+    run.set_failure_mode(failure_mode);
+
+    let events = backfill_events(&run, &p.events)?;
+
+    // Summary counters derived from the supplied events.
+    let of_kind = |k: EventKind| -> u32 {
+        events.iter().filter(|e| e.kind == k).count().min(u32::MAX as usize) as u32
+    };
+    let memory_errors = of_kind(EventKind::MemoryError);
+    run.summary = RunSummary {
+        memory_errors,
+        test_errors: memory_errors,
+        tdr_count: of_kind(EventKind::Tdr),
+        whea_delta_count: of_kind(EventKind::WheaHit),
+        disk_io_errors: of_kind(EventKind::DiskIoError),
+        bsod_detected: of_kind(EventKind::Bsod) > 0,
+        thermal_throttle_detected: of_kind(EventKind::ThermalThrottle) > 0,
+        ..RunSummary::default()
+    };
+
+    Ok((run, events))
+}
+
+/// Timeline rows of a backfilled run, stamped with the run's `tool_version`.
+fn backfill_events(
+    run: &database::schema::StressTestRun,
+    params: &[RecordStressTestEventParams],
+) -> Result<Vec<database::schema::StressTestEvent>, String> {
+    use database::schema::{EventKind, StressTestEvent};
+    params
+        .iter()
+        .map(|ev| {
+            let kind = match ev.kind.as_str() {
+                "stage_started" => EventKind::StageStarted,
+                "stage_finished" => EventKind::StageFinished,
+                "unexpected_shutdown" => EventKind::UnexpectedShutdown,
+                "tdr" => EventKind::Tdr,
+                "bsod" => EventKind::Bsod,
+                "whea_hit" => EventKind::WheaHit,
+                "memory_error" => EventKind::MemoryError,
+                "disk_io_error" => EventKind::DiskIoError,
+                "thermal_throttle" => EventKind::ThermalThrottle,
+                "operator_note" => EventKind::OperatorNote,
+                "custom" => EventKind::Custom,
+                other => return Err(format!("unknown event kind '{other}'")),
+            };
+            let mut row = StressTestEvent::new(run.id.clone(), kind, ev.source.as_deref().unwrap_or("operator"));
+            if let Some(at) = &ev.at {
+                row.at = at
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .map_err(|e| format!("invalid event at: {e}"))?
+                    .into();
+            }
+            row.code = ev.code.clone();
+            row.detail = ev.detail.clone();
+            row.tool_version = run.tool_version.clone();
+            Ok(row)
+        })
+        .collect()
 }
 
 // ─── TCP server ────────────────────────────────────────────────────────────────
@@ -14304,19 +14315,52 @@ mod broker_tool_tests {
 #[cfg(test)]
 mod stress_suite_tests {
     use super::{
-        backfill_tool_version, default_stress_script_timeout_secs, is_cert_script,
-        stress_suite_script_names,
+        backfill_rows, default_stress_script_timeout_secs, is_cert_script,
+        stress_suite_script_names, RecordStressTestRunParams,
     };
+    use database::schema::EventKind;
+
+    fn backfill_params(tool_version: Option<&str>) -> RecordStressTestRunParams {
+        serde_json::from_value(serde_json::json!({
+            "computer_id": "DESKTOP-TEST:0000000",
+            "started_at": "2026-10-15T12:00:00Z",
+            "tool_version": tool_version,
+            "events": [
+                { "kind": "tdr", "detail": "driver reset", "at": "2026-10-15T12:01:00Z" },
+                { "kind": "operator_note", "detail": "machine rebooted" },
+            ],
+        }))
+        .expect("record_stress_test_run params")
+    }
 
     #[test]
-    fn backfilled_runs_name_their_build_or_their_recorder() {
-        assert_eq!(backfill_tool_version(Some(" OCCT 13.1.4 ")), "OCCT 13.1.4");
-        let recorded = backfill_tool_version(Some("  "));
-        assert_eq!(
-            recorded,
-            format!("backfill; recorded by {}", stress_runner::host_build())
-        );
-        assert_eq!(backfill_tool_version(None), recorded);
+    fn backfilled_runs_and_events_name_their_recorder() {
+        let recorder = stress_runner::host_build();
+        for (supplied, expected) in [
+            (None, format!("backfill; recorded by {recorder}")),
+            (Some(" OCCT 13.1.4 "), format!("OCCT 13.1.4; recorded by {recorder}")),
+        ] {
+            let (run, events) = backfill_rows(backfill_params(supplied)).expect("valid backfill");
+            assert_eq!(run.tool_version.as_deref(), Some(expected.as_str()));
+            assert_eq!(run.clone().stamped().tool_version, run.tool_version);
+            assert_eq!(events.len(), 2);
+            for event in &events {
+                assert_eq!(event.run_ref, run.id);
+                assert_eq!(event.tool_version, run.tool_version);
+                assert_eq!(event.clone().stamped().tool_version, run.tool_version);
+            }
+            assert_eq!(events[0].kind, EventKind::Tdr);
+            assert_eq!(events[1].source, "operator");
+            assert_eq!(run.summary.tdr_count, 1);
+        }
+    }
+
+    #[test]
+    fn backfill_rejects_an_unknown_event_kind() {
+        let mut params = backfill_params(None);
+        params.events[0].kind = "meltdown".to_string();
+        let err = backfill_rows(params).expect_err("unknown kind");
+        assert!(err.contains("meltdown"), "{err}");
     }
 
     #[test]

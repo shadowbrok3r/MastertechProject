@@ -272,6 +272,7 @@ dependencies = [
  "env_logger",
  "log",
  "rustls",
+ "stress-runner",
  "tokio",
 ]
 

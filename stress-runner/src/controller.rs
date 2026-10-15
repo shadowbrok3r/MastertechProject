@@ -3158,6 +3158,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn events_and_benchmark_rows_carry_the_run_build() {
+        use database::schema::{BenchmarkKind, BenchmarkResult};
+        let computer = RecordId::new("computer", "c1");
+        let run = build_run(&RunSpec::single_stresskit(computer.clone(), Stressor::Cpu, Some(10)));
+        assert!(run.tool_version.is_some());
+        assert_eq!(run.clone().stamped().tool_version, run.tool_version);
+
+        let event = DbStressTestEvent::new(run.id.clone(), DbEventKind::Tdr, "telemetry").stamped();
+        assert_eq!(event.tool_version, run.tool_version);
+
+        let mut scored = BenchmarkResult::new(computer.clone(), BenchmarkKind::CpuMulti, 1.0, "Mflop/s");
+        scored.run_ref = Some(run.id.clone());
+        assert_eq!(scored.stamped().tool_version, run.tool_version);
+
+        let standalone = BenchmarkResult::new(computer, BenchmarkKind::MemoryLatency, 80.0, "ns").stamped();
+        assert_eq!(standalone.run_ref, None);
+        assert_eq!(standalone.tool_version, run.tool_version);
+    }
+
     fn gpu_snapshot(name: &str, watts: f32) -> TelemetrySnapshot {
         TelemetrySnapshot {
             gpus: vec![stress_kit::telemetry::GpuSample {

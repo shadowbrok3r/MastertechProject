@@ -59,7 +59,7 @@
     },
     {
       "path": "database/schema/benchmark_result.surql",
-      "hash": "bd6f4eff6a6faa5d076968425ab2aeeb3de3f4fda3abd4b4aa1e5541029b116a"
+      "hash": "0b1b70634faf3795410be2cfb6f9b3f42619360ece6072dd39c07e65c7e58487"
     },
     {
       "path": "database/schema/build_job.surql",
@@ -183,7 +183,7 @@
     },
     {
       "path": "database/schema/stress_test_event.surql",
-      "hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+      "hash": "c2ed692970077701ce20c458074e6e27464484642b2ebd15ff0dd3c74468f94b"
     },
     {
       "path": "database/schema/stress_test_metric.surql",

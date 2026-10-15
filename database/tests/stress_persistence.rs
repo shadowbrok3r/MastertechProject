@@ -740,3 +740,126 @@ async fn finalize_persists_the_summary_tdr_count() {
     assert_eq!(tdr, Some(1));
     assert_eq!(kind.as_deref(), Some("tdr"));
 }
+
+const TEST_BUILD: &str = "MasterTech 0.0.0+0000000.000000; stress-kit 0.0.0+0000000.000000";
+
+/// Registers [`TEST_BUILD`] as this test process's build stamp.
+fn registered_build() -> &'static str {
+    database::schema::register_process_build(TEST_BUILD);
+    let build = database::schema::process_build();
+    assert_eq!(build, TEST_BUILD);
+    build
+}
+
+async fn read_event(db: &Surreal<Db>, id: &RecordId) -> StressTestEvent {
+    let mut resp = db
+        .query("SELECT * FROM $id")
+        .bind(("id", id.clone()))
+        .await
+        .expect("select event");
+    let rows: Vec<StressTestEvent> = resp.take(0).expect("decode event");
+    rows.into_iter().next().expect("event row")
+}
+
+async fn read_benchmark(db: &Surreal<Db>, id: &RecordId) -> database::schema::BenchmarkResult {
+    let mut resp = db
+        .query("SELECT * FROM $id")
+        .bind(("id", id.clone()))
+        .await
+        .expect("select benchmark_result");
+    let rows: Vec<database::schema::BenchmarkResult> = resp.take(0).expect("decode benchmark_result");
+    rows.into_iter().next().expect("benchmark_result row")
+}
+
+#[tokio::test]
+async fn event_create_stamps_the_process_build() {
+    let build = registered_build();
+    let db = mem_db().await;
+    let computer = seed_computer(&db, "DESKTOP-TEST:stamp").await;
+    let run = seed_run(&db, &computer).await;
+
+    let event = StressTestEvent::new(run, EventKind::Tdr, "telemetry");
+    assert_eq!(event.tool_version, None);
+    let id = StressTestEvent::create_on(&db, &event).await.expect("create event");
+
+    assert_eq!(read_event(&db, &id).await.tool_version.as_deref(), Some(build));
+}
+
+#[tokio::test]
+async fn event_create_keeps_a_recorded_by_stamp() {
+    registered_build();
+    let db = mem_db().await;
+    let computer = seed_computer(&db, "DESKTOP-TEST:recorded").await;
+    let run = seed_run(&db, &computer).await;
+
+    let recorded = "backfill; recorded by admin-agent 0.0.0+0000000.000000";
+    let mut event = StressTestEvent::new(run, EventKind::OperatorNote, "operator");
+    event.tool_version = Some(recorded.to_string());
+    let id = StressTestEvent::create_on(&db, &event).await.expect("create event");
+
+    assert_eq!(read_event(&db, &id).await.tool_version.as_deref(), Some(recorded));
+}
+
+#[tokio::test]
+async fn event_create_still_rejects_a_missing_run() {
+    registered_build();
+    let db = mem_db().await;
+    let missing = RecordId::new(STRESS_TEST_RUN_TABLE, "missing");
+    let event = StressTestEvent::new(missing, EventKind::Custom, "stress-runner");
+
+    let err = StressTestEvent::create_on(&db, &event).await.expect_err("missing run_ref");
+    assert!(err.to_string().contains("does not exist"), "{err}");
+}
+
+#[tokio::test]
+async fn standalone_benchmark_create_stamps_the_process_build() {
+    use database::schema::{BenchmarkKind, BenchmarkResult};
+    let build = registered_build();
+    let db = mem_db().await;
+    let computer = seed_computer(&db, "DESKTOP-TEST:ladder").await;
+
+    let row = BenchmarkResult::new(computer, BenchmarkKind::MemoryLatency, 81.5, "ns");
+    assert_eq!(row.run_ref, None);
+    let id = BenchmarkResult::create_on(&db, &row).await.expect("create benchmark_result");
+
+    let got = read_benchmark(&db, &id).await;
+    assert_eq!(got.run_ref, None);
+    assert_eq!(got.tool_version.as_deref(), Some(build));
+}
+
+#[tokio::test]
+async fn rows_without_tool_version_still_deserialize() {
+    use database::schema::{BenchmarkKind, BenchmarkResult};
+    let db = mem_db().await;
+    let computer = seed_computer(&db, "DESKTOP-TEST:legacy").await;
+    let run = seed_run(&db, &computer).await;
+
+    let event = StressTestEvent::new(run, EventKind::StageStarted, "stress-kit");
+    let row = BenchmarkResult::new(computer, BenchmarkKind::CpuSingle, 1234.5, "Mflop/s");
+    for (id, mut content) in [
+        (event.id.clone(), event.clone().into_value()),
+        (row.id.clone(), row.clone().into_value()),
+    ] {
+        if let surrealdb::types::Value::Object(obj) = &mut content {
+            obj.remove("id");
+            obj.remove("tool_version");
+        }
+        db.query("CREATE $id CONTENT $content")
+            .bind(("id", id))
+            .bind(("content", content))
+            .await
+            .and_then(|r| r.check())
+            .expect("create legacy row");
+    }
+
+    let mut resp = db
+        .query("SELECT VALUE tool_version FROM ONLY $id")
+        .bind(("id", event.id.clone()))
+        .await
+        .expect("probe legacy event");
+    let stored: Option<String> = resp.take(0).expect("legacy tool_version");
+    assert_eq!(stored, None);
+
+    assert_eq!(read_event(&db, &event.id).await.tool_version, None);
+    assert_eq!(read_benchmark(&db, &row.id).await.tool_version, None);
+}
