@@ -186,7 +186,7 @@ impl VerdictRules {
                 on_missing: MissingSensorPolicy::Inconclusive,
                 basis: TempLimitBasis::PartCeiling,
             }),
-            // NVML and sysinfo readings grade flat; WDDM ones against the driver's throttle temperature.
+            // NVML and WDDM readings grade against their throttle temperature; NVML without one and sysinfo grade flat.
             max_gpu_temp_c: Some(TempRule {
                 limit_c: 90.0,
                 consecutive_ticks: 5,
@@ -233,6 +233,9 @@ pub enum RuleViolation {
         /// The driver's throttle temperature when `limit_c` was derived from it.
         #[serde(default)]
         ceiling_c: Option<f32>,
+        /// The HW slowdown temperature when `limit_c` was capped under it.
+        #[serde(default)]
+        slowdown_c: Option<f32>,
     },
     ClockCollapse { below_pct: f32, ticks: u32 },
     ThroughputUnstable { cv: f64, max_cv: f64 },
@@ -335,13 +338,24 @@ impl RuleViolation {
                      part's own ceiling is unknown, so the configured limit graded it"
                 ),
             },
-            Self::GpuTemp { limit_c, peak_c, sustained_ticks, ceiling_c } => match ceiling_c {
-                Some(c) => format!(
+            Self::GpuTemp {
+                limit_c,
+                peak_c,
+                sustained_ticks,
+                ceiling_c,
+                slowdown_c,
+            } => match (ceiling_c, slowdown_c) {
+                (Some(c), Some(s)) => format!(
+                    "GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C) — at the \
+                     card's {s:.0}C hardware slowdown temperature, past its {c:.0}C throttle \
+                     temperature, so the card was not holding its thermal limit"
+                ),
+                (Some(c), None) => format!(
                     "GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C) — \
                      the driver's {c:.0}C throttle temperature plus a {OVER_CEILING_MARGIN_C:.0}C \
                      margin, so the card was not holding its thermal limit"
                 ),
-                None => {
+                (None, _) => {
                     format!("GPU over {limit_c:.0}C for {sustained_ticks}s (peak {peak_c:.1}C)")
                 }
             },
@@ -876,6 +890,7 @@ impl StageStats {
             peak_c: peak.map_or(rule.limit_c, |p| p.temp_c),
             sustained_ticks: self.worst_gpu_temp_over,
             ceiling_c: peak.and_then(|p| p.ceiling_c),
+            slowdown_c: peak.and_then(|p| p.slowdown_c),
         })
     }
 
@@ -956,6 +971,8 @@ struct GpuReading {
     limit_c: f32,
     /// The driver's throttle temperature when `limit_c` was derived from it.
     ceiling_c: Option<f32>,
+    /// The HW slowdown temperature when `limit_c` was capped one degree under it.
+    slowdown_c: Option<f32>,
 }
 
 impl GpuReading {
@@ -965,12 +982,18 @@ impl GpuReading {
         let temp_c = gpu.temp_c?;
         let ceiling_c = match (gpu.source, rule.basis) {
             (GpuSource::Wddm, TempLimitBasis::PartCeiling) => Some(gpu.throttle_temp_c?),
+            (GpuSource::Nvml, TempLimitBasis::PartCeiling) => gpu.throttle_temp_c,
             _ => None,
         };
+        let limit_c = rule.effective_limit_c(ceiling_c);
+        let slowdown_c = ceiling_c
+            .and(gpu.slowdown_temp_c)
+            .filter(|s| s - 1.0 < limit_c);
         Some(Self {
             temp_c,
-            limit_c: rule.effective_limit_c(ceiling_c),
+            limit_c: slowdown_c.map_or(limit_c, |s| s - 1.0),
             ceiling_c,
+            slowdown_c,
         })
     }
 
@@ -2736,6 +2759,17 @@ mod tests {
         snap
     }
 
+    /// NVML snapshot carrying the card's max operating and HW slowdown temperatures.
+    fn nvml_snapshot(
+        gpu_temp_c: f32,
+        throttle_temp_c: f32,
+        slowdown_temp_c: f32,
+    ) -> TelemetrySnapshot {
+        let mut snap = gpu_snapshot(GpuSource::Nvml, gpu_temp_c, Some(throttle_temp_c));
+        snap.gpus[0].slowdown_temp_c = Some(slowdown_temp_c);
+        snap
+    }
+
     #[test]
     fn a_sustained_breach_of_the_driver_throttle_temperature_is_decisive() {
         let rules = VerdictRules::certification();
@@ -2752,7 +2786,7 @@ mod tests {
         assert_eq!(evaluate_stage(&stats, &rules).violations, vec![breach]);
     }
 
-    /// An NVML GPU at 94 C and an untabled AMD CPU at 97 C fail the stage on the flat limit but are never decisive.
+    /// An NVML GPU with no throttle temperature at 94 C and an untabled AMD CPU at 97 C fail the stage on the flat limit but are never decisive.
     #[test]
     fn a_flat_fallback_breach_fails_the_stage_but_is_never_decisive() {
         let rules = VerdictRules::certification();
@@ -2812,6 +2846,138 @@ mod tests {
         assert_eq!(stats.worst_gpu_temp_over, 601);
         assert!(stats.decisive_thermal_breach(&rules).is_none());
         assert!(!evaluate_stage(&stats, &rules).pass);
+    }
+
+    /// An RTX 3060 Ti at 92-93 C against its 93 C max operating and 95 C slowdown temperatures passes and is never decisive.
+    #[test]
+    fn an_nvml_card_holding_its_throttle_temperature_passes() {
+        let rules = VerdictRules::certification();
+        let at_92 = nvml_snapshot(92.0, 93.0, 95.0);
+        let at_93 = nvml_snapshot(93.0, 93.0, 95.0);
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &at_92);
+        for i in 0..2_700 {
+            let snap = if i % 3 == 0 { &at_92 } else { &at_93 };
+            stats.absorb_tick(&metrics(100.0, 0), snap, &rules);
+        }
+        assert_eq!(stats.max_gpu_temp_c, Some(93.0));
+        assert_eq!(stats.gpu_temp_samples, 2_700);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        let verdict = evaluate_stage(&stats, &rules);
+        assert!(verdict.pass, "violations: {:?}", verdict.violation_lines());
+
+        let flat = gpu_snapshot(GpuSource::Nvml, 93.0, None);
+        let mut unread = StageStats::begin(0, "gpu", Stressor::Gpu, &flat);
+        ticks(&mut unread, &rules, 2_700, &flat);
+        assert!(!evaluate_stage(&unread, &rules).pass);
+    }
+
+    /// A laptop card with an 87 C max operating and 102 C slowdown temperature grades at 87 + 3 C.
+    #[test]
+    fn an_nvml_card_overshooting_its_throttle_temperature_is_decisive() {
+        let rules = VerdictRules::certification();
+        let held = nvml_snapshot(90.0, 87.0, 102.0);
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &held);
+        ticks(&mut stats, &rules, 600, &held);
+        assert!(evaluate_stage(&stats, &rules).pass);
+
+        let snap = nvml_snapshot(91.0, 87.0, 102.0);
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+        ticks(&mut stats, &rules, 59, &snap);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+        assert!(!evaluate_stage(&stats, &rules).pass);
+
+        ticks(&mut stats, &rules, 1, &snap);
+        let breach = stats.decisive_thermal_breach(&rules).expect("decisive");
+        assert_eq!(
+            breach,
+            RuleViolation::GpuTemp {
+                limit_c: 87.0 + OVER_CEILING_MARGIN_C,
+                peak_c: 91.0,
+                sustained_ticks: 60,
+                ceiling_c: Some(87.0),
+                slowdown_c: None,
+            }
+        );
+        assert!(
+            breach
+                .describe()
+                .contains("87C throttle temperature plus a 3C margin"),
+            "{}",
+            breach.describe()
+        );
+        assert_eq!(evaluate_stage(&stats, &rules).violations, vec![breach]);
+    }
+
+    /// An RTX 3080 (93 C max operating, 95 C slowdown) held at 95 C fails and is decisive; at 94 C it passes.
+    #[test]
+    fn an_nvml_card_held_at_its_hw_slowdown_temperature_fails_and_is_decisive() {
+        let rules = VerdictRules::certification();
+        let under = nvml_snapshot(94.0, 93.0, 95.0);
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &under);
+        ticks(&mut stats, &rules, 600, &under);
+        assert!(evaluate_stage(&stats, &rules).pass);
+
+        let uncapped = gpu_snapshot(GpuSource::Nvml, 95.0, Some(93.0));
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &uncapped);
+        ticks(&mut stats, &rules, 600, &uncapped);
+        assert!(evaluate_stage(&stats, &rules).pass);
+
+        let slowdown = nvml_snapshot(95.0, 93.0, 95.0);
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &slowdown);
+        ticks(&mut stats, &rules, 5, &slowdown);
+        assert!(!evaluate_stage(&stats, &rules).pass);
+        ticks(&mut stats, &rules, 54, &slowdown);
+        assert!(stats.decisive_thermal_breach(&rules).is_none());
+
+        ticks(&mut stats, &rules, 1, &slowdown);
+        let breach = stats.decisive_thermal_breach(&rules).expect("decisive");
+        assert_eq!(
+            breach,
+            RuleViolation::GpuTemp {
+                limit_c: 94.0,
+                peak_c: 95.0,
+                sustained_ticks: 60,
+                ceiling_c: Some(93.0),
+                slowdown_c: Some(95.0),
+            }
+        );
+        assert!(
+            breach
+                .describe()
+                .contains("95C hardware slowdown temperature"),
+            "{}",
+            breach.describe()
+        );
+        assert_eq!(evaluate_stage(&stats, &rules).violations, vec![breach]);
+    }
+
+    /// NVML and WDDM readings carrying the same throttle temperature grade identically under either basis.
+    #[test]
+    fn nvml_and_wddm_readings_with_a_throttle_temperature_grade_identically() {
+        for basis in [TempLimitBasis::PartCeiling, TempLimitBasis::Absolute] {
+            let mut rules = VerdictRules::certification();
+            if let Some(rule) = rules.max_gpu_temp_c.as_mut() {
+                rule.basis = basis;
+            }
+            for temp_c in [90.0, 93.0, 93.0 + OVER_CEILING_MARGIN_C, 97.0] {
+                let graded = |source| {
+                    let snap = gpu_snapshot(source, temp_c, Some(93.0));
+                    let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &snap);
+                    ticks(&mut stats, &rules, 120, &snap);
+                    (
+                        evaluate_stage(&stats, &rules).violations,
+                        stats.decisive_thermal_breach(&rules),
+                    )
+                };
+                let nvml = graded(GpuSource::Nvml);
+                assert_eq!(nvml, graded(GpuSource::Wddm), "{basis:?} {temp_c} C");
+                let limit_c = match basis {
+                    TempLimitBasis::PartCeiling => 93.0 + OVER_CEILING_MARGIN_C,
+                    TempLimitBasis::Absolute => 90.0,
+                };
+                assert_eq!(nvml.0.is_empty(), temp_c <= limit_c, "{basis:?} {temp_c} C");
+            }
+        }
     }
 
     /// A rule with an absolute basis is decisive on any sensor source.
