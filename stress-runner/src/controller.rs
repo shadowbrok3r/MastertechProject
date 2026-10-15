@@ -28,7 +28,7 @@ use stress_kit::{
         FinishReason as SkFinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner,
         ScenarioStage,
     },
-    telemetry::{TelemetryAgent, TelemetrySnapshot},
+    telemetry::{TdrCounters, TelemetryAgent, TelemetrySnapshot},
     Metrics, StressConfig, StressSession, Stressor,
 };
 
@@ -614,6 +614,9 @@ fn worker(
     // ---- 2. Track state for the final summary ----
     let mut acc = SummaryAccumulator::default();
     acc.gpu_leg_planned = spec.plan.has_gpu_leg();
+    // Baselines the run's TDR count on a fresh read.
+    telemetry.tdr_now(Duration::ZERO);
+    acc.absorb_tdr(&telemetry.snapshot());
     let mut outcomes: Vec<StageOutcome> = Vec::new();
     let rules = spec.rules.clone();
     let display = spec.display;
@@ -765,6 +768,8 @@ fn worker(
     }
     let stages: Vec<ScenarioStageSummary> =
         outcomes.iter().map(|o| o.summary.clone()).collect();
+    let tdr_before = close_stages(telemetry.as_ref(), &mut [], &mut acc);
+    persist_tdr_event(&run_id_clone, tdr_before, acc.tdr_delta_count);
     let mut verdict = acc.into_verdict(
         &run_id_clone,
         &cancel,
@@ -957,6 +962,46 @@ fn stage_verdict_for(
     }
 }
 
+/// Longest a stage that ended on a fault waits for its TDR to reach the event log or a live dump.
+const TDR_SETTLE_GRACE: Duration = Duration::from_secs(3);
+
+/// Telemetry a stage end reads; [`TelemetryAgent`] outside tests.
+trait StageEndTelemetry {
+    fn snapshot(&self) -> TelemetrySnapshot;
+    fn tdr_now(&self, grace: Duration) -> Option<TdrCounters>;
+}
+
+impl StageEndTelemetry for TelemetryAgent {
+    fn snapshot(&self) -> TelemetrySnapshot {
+        TelemetryAgent::snapshot(self)
+    }
+
+    fn tdr_now(&self, grace: Duration) -> Option<TdrCounters> {
+        TelemetryAgent::tdr_now(self, grace)
+    }
+}
+
+/// Closes `stages` and the run rollup on a TDR read forced past the poll throttle; returns the rollup's prior TDR count.
+fn close_stages(
+    telemetry: &impl StageEndTelemetry,
+    stages: &mut [StageStats],
+    acc: &mut SummaryAccumulator,
+) -> u32 {
+    let tdr_before = acc.tdr_delta_count;
+    let grace = if stages.iter().any(StageStats::ended_on_fault) {
+        TDR_SETTLE_GRACE
+    } else {
+        Duration::ZERO
+    };
+    telemetry.tdr_now(grace);
+    let end = telemetry.snapshot();
+    acc.absorb_tdr(&end);
+    for stage in stages {
+        stage.finish(&end);
+    }
+    tdr_before
+}
+
 /// Drive a single-stressor run: tick at 1 Hz, sample telemetry, batch metric
 /// writes, forward updates to the UI.
 fn drive_single(
@@ -1119,7 +1164,12 @@ fn drive_single(
             },
         );
     }
-    stage_stats.finish(&telemetry.snapshot());
+    let tdr_before = close_stages(
+        telemetry.as_ref(),
+        std::slice::from_mut(&mut stage_stats),
+        acc,
+    );
+    persist_tdr_event(run_id, tdr_before, acc.tdr_delta_count);
     let verdict = stage_verdict_for(&stage_stats, rules, &effective_rules);
     let avg = if stage_tp_count > 0 {
         Some(stage_tp_sum / stage_tp_count as f64)
@@ -1334,9 +1384,7 @@ fn drive_concurrent(
         send(update_tx, RunUpdate::Warning { message: w });
     }
 
-    let final_snapshot = telemetry.snapshot();
-    let mut total_test_errors = 0_u64;
-    for (i, lane) in lanes.iter().enumerate() {
+    for (i, lane_stats) in stats.iter_mut().enumerate() {
         // Final drain per lane, then fold: the last sample can land after the
         // last periodic absorb.
         if let Some(m) = sessions.get(i).and_then(|s| s.try_recv()) {
@@ -1351,8 +1399,13 @@ fn drive_concurrent(
             }
             latest[i] = m;
         }
-        stats[i].absorb_final(&latest[i]);
-        stats[i].finish(&final_snapshot);
+        lane_stats.absorb_final(&latest[i]);
+    }
+    let tdr_before = close_stages(telemetry.as_ref(), &mut stats, acc);
+    persist_tdr_event(run_id, tdr_before, acc.tdr_delta_count);
+
+    let mut total_test_errors = 0_u64;
+    for (i, lane) in lanes.iter().enumerate() {
         // Emits are tick-gated; the lane's trailing window has none yet.
         if latest[i].errors > seen_errors[i] {
             let new_errors = latest[i].errors - seen_errors[i];
@@ -1678,7 +1731,9 @@ fn drive_scenario(
                     });
                     flush_stage_errors(run_id, acc, &latest_metrics, stressor);
                     stats.absorb_final(&latest_metrics);
-                    stats.finish(&telemetry.snapshot());
+                    let tdr_before =
+                        close_stages(telemetry.as_ref(), std::slice::from_mut(&mut stats), acc);
+                    persist_tdr_event(run_id, tdr_before, acc.tdr_delta_count);
                     let verdict = stage_verdict_for(&stats, rules, &effective_rules);
                     let summary = stage_summary_from_stats(
                         &stats,
@@ -2051,9 +2106,14 @@ fn persist_counter_events(
         );
         spawn_event_create(event, "whea");
     }
-    if acc.tdr_delta_count > tdr_before {
+    persist_tdr_event(run_id, tdr_before, acc.tdr_delta_count);
+}
+
+/// Persists a `tdr` event when the run's TDR count rose.
+fn persist_tdr_event(run_id: &RecordId, before: u32, after: u32) {
+    if after > before {
         let mut event = DbStressTestEvent::new(run_id.clone(), DbEventKind::Tdr, "telemetry");
-        event.detail = format!("TDR counter moved {tdr_before} -> {}", acc.tdr_delta_count);
+        event.detail = format!("TDR counter moved {before} -> {after}");
         spawn_event_create(event, "tdr");
     }
 }
@@ -2209,6 +2269,8 @@ struct SummaryAccumulator {
     throughput_samples: u32,
     last_throughput_unit: Option<String>,
     whea_delta_count: u32,
+    /// Agent TDR counter at the run's first snapshot that carried one.
+    tdr_baseline: Option<u64>,
     tdr_delta_count: u32,
     max_gpu_temp_c: Option<f32>,
     max_cpu_temp_c: Option<f32>,
@@ -2386,9 +2448,7 @@ impl SummaryAccumulator {
         if let Some(whea) = &snapshot.whea {
             self.whea_delta_count = whea.delta_since_program_start as u32;
         }
-        if let Some(tdr) = &snapshot.tdr {
-            self.tdr_delta_count = tdr.delta_since_program_start as u32;
-        }
+        self.absorb_tdr(snapshot);
 
         for g in &snapshot.gpus {
             if let Some(t) = g.temp_c {
@@ -2413,6 +2473,19 @@ impl SummaryAccumulator {
         }
 
         new_errors
+    }
+
+    /// Folds the agent's TDR count relative to the first one this run saw; never decreases.
+    fn absorb_tdr(&mut self, snapshot: &TelemetrySnapshot) {
+        let Some(tdr) = &snapshot.tdr else { return };
+        let baseline = *self
+            .tdr_baseline
+            .get_or_insert(tdr.delta_since_program_start);
+        let delta = tdr
+            .delta_since_program_start
+            .saturating_sub(baseline)
+            .min(u32::MAX as u64) as u32;
+        self.tdr_delta_count = self.tdr_delta_count.max(delta);
     }
 
     fn total_test_errors(&self) -> u64 {
@@ -3166,6 +3239,165 @@ mod tests {
         acc.absorb(&work_tick(100.0, None), &snap, "GFLOPS");
 
         assert_eq!(acc.into_summary().max_temp_c, None);
+    }
+
+    fn tdr_snapshot(delta: u64) -> TelemetrySnapshot {
+        TelemetrySnapshot {
+            tdr: Some(stress_kit::telemetry::TdrCounters {
+                delta_since_program_start: delta,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_tdr_counted_mid_run_reaches_the_run_summary() {
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb(&work_tick(100.0, None), &tdr_snapshot(0), "GFLOPS");
+        acc.absorb(&work_tick(100.0, None), &tdr_snapshot(1), "GFLOPS");
+
+        assert_eq!(
+            verdict_with(acc, vec![finished_stage()]).summary.tdr_count,
+            1
+        );
+    }
+
+    #[test]
+    fn tdrs_counted_before_the_run_stay_out_of_its_summary() {
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb(
+            &work_tick(100.0, None),
+            &TelemetrySnapshot::default(),
+            "GFLOPS",
+        );
+        acc.absorb(&work_tick(100.0, None), &tdr_snapshot(3), "GFLOPS");
+        assert_eq!(
+            acc.tdr_delta_count, 0,
+            "agent TDRs from before the run counted"
+        );
+
+        acc.absorb(&work_tick(100.0, None), &tdr_snapshot(4), "GFLOPS");
+        assert_eq!(acc.into_summary().tdr_count, 1);
+    }
+
+    /// Agent stand-in whose TDR count moves only when re-read past the poll throttle.
+    struct LateTdr {
+        published: std::cell::Cell<u64>,
+        on_disk: std::cell::Cell<u64>,
+        graces: std::cell::RefCell<Vec<Duration>>,
+    }
+
+    impl LateTdr {
+        fn new(count: u64) -> Self {
+            Self {
+                published: std::cell::Cell::new(count),
+                on_disk: std::cell::Cell::new(count),
+                graces: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl StageEndTelemetry for LateTdr {
+        fn snapshot(&self) -> TelemetrySnapshot {
+            tdr_snapshot(self.published.get())
+        }
+
+        fn tdr_now(&self, grace: Duration) -> Option<TdrCounters> {
+            self.graces.borrow_mut().push(grace);
+            self.published.set(self.on_disk.get());
+            self.snapshot().tdr
+        }
+    }
+
+    #[test]
+    fn a_tdr_after_a_device_loss_is_charged_to_the_stage_that_lost_the_device() {
+        let rules = VerdictRules::certification();
+        let agent = LateTdr::new(4);
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb_tdr(&agent.snapshot());
+
+        let mut matmul = StageStats::begin(0, "gpu_matmul", Stressor::GpuMatmul, &agent.snapshot());
+        matmul.absorb_tick(&work_tick(100.0, None), &agent.snapshot(), &rules);
+        acc.absorb(&work_tick(100.0, None), &agent.snapshot(), "GFLOPS");
+        matmul.absorb_final(&fatal_tick(Some(
+            "GPU device failed (1 error(s)): Parent device is lost",
+        )));
+        agent.on_disk.set(5);
+        close_stages(&agent, std::slice::from_mut(&mut matmul), &mut acc);
+
+        let mut vram = StageStats::begin(1, "gpu_vram", Stressor::GpuVram, &agent.snapshot());
+        vram.absorb_tick(&work_tick(100.0, None), &agent.snapshot(), &rules);
+        acc.absorb(&work_tick(100.0, None), &agent.snapshot(), "MiB/s");
+        close_stages(&agent, std::slice::from_mut(&mut vram), &mut acc);
+
+        assert_eq!(matmul.tdr_delta, 1);
+        assert_eq!(vram.tdr_delta, 0, "the TDR moved to the next stage");
+        assert_eq!(*agent.graces.borrow(), [TDR_SETTLE_GRACE, Duration::ZERO]);
+        let matmul_verdict = evaluate_stage(&matmul, &rules);
+        assert!(
+            matmul_verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::Tdr { delta: 1 }))
+        );
+        let vram_verdict = evaluate_stage(&vram, &rules);
+        assert!(
+            !vram_verdict
+                .violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::Tdr { .. }))
+        );
+        let verdict = verdict_with(
+            acc,
+            vec![outcome_with(matmul_verdict), outcome_with(vram_verdict)],
+        );
+        assert_eq!(verdict.summary.tdr_count, 1);
+    }
+
+    #[test]
+    fn a_tdr_after_the_last_tick_reaches_the_run_summary() {
+        let agent = LateTdr::new(2);
+        let mut acc = SummaryAccumulator::default();
+        acc.absorb_tdr(&agent.snapshot());
+        acc.absorb(&work_tick(100.0, None), &agent.snapshot(), "GFLOPS");
+
+        agent.on_disk.set(3);
+        assert_eq!(close_stages(&agent, &mut [], &mut acc), 0);
+        assert_eq!(*agent.graces.borrow(), [Duration::ZERO]);
+        assert_eq!(
+            verdict_with(acc, vec![finished_stage()]).summary.tdr_count,
+            1
+        );
+    }
+
+    #[test]
+    fn a_stale_snapshot_never_lowers_a_tdr_count() {
+        let rules = VerdictRules::default();
+        let mut acc = SummaryAccumulator::default();
+        let mut stats = StageStats::begin(0, "gpu", Stressor::Gpu, &tdr_snapshot(0));
+        for delta in [0, 2, 1] {
+            acc.absorb(&work_tick(100.0, None), &tdr_snapshot(delta), "GFLOPS");
+            stats.absorb_tick(&work_tick(100.0, None), &tdr_snapshot(delta), &rules);
+        }
+        stats.finish(&tdr_snapshot(1));
+        assert_eq!(acc.tdr_delta_count, 2);
+        assert_eq!(stats.tdr_delta, 2);
+    }
+
+    #[test]
+    fn a_tdr_under_certification_rules_grades_the_run_tdr() {
+        let rules = VerdictRules::certification();
+        let mut stats = StageStats::begin(0, "gpu_matmul", Stressor::GpuMatmul, &tdr_snapshot(0));
+        let mut acc = SummaryAccumulator::default();
+        for delta in [0, 1] {
+            stats.absorb_tick(&work_tick(100.0, None), &tdr_snapshot(delta), &rules);
+            acc.absorb(&work_tick(100.0, None), &tdr_snapshot(delta), "GFLOPS");
+        }
+
+        let verdict = verdict_with(acc, vec![outcome_with(evaluate_stage(&stats, &rules))]);
+        assert_eq!(verdict.failure_mode, FailureMode::Tdr { count: 1 });
+        assert_eq!(verdict.summary.tdr_count, 1);
     }
 
     #[test]

@@ -86,6 +86,13 @@ fn count_all() -> Option<Counts> {
 /// Runs one channel XPath query and counts matching events; `None` when the
 /// query can't be opened.
 fn count_matching(query: &str) -> Option<u64> {
+    let mut count: u64 = 0;
+    visit_matching(query, |_| count += 1)?;
+    Some(count)
+}
+
+/// Runs one System channel XPath query and passes each matching event to `visit`; `None` when the query can't be opened.
+pub(super) fn visit_matching(query: &str, mut visit: impl FnMut(EVT_HANDLE)) -> Option<()> {
     let channel = to_wide(CHANNEL);
     let query_w = to_wide(query);
     let flags = EvtQueryChannelPath.0 | EvtQueryForwardDirection.0;
@@ -100,12 +107,11 @@ fn count_matching(query: &str) -> Option<u64> {
     } {
         Ok(h) => h,
         Err(e) => {
-            log::debug!("stress-kit/whea: EvtQuery failed for '{query}': {e}");
+            log::debug!("stress-kit/eventlog: EvtQuery failed for '{query}': {e}");
             return None;
         }
     };
 
-    let mut count: u64 = 0;
     let mut batch = [0isize; EVT_NEXT_BATCH];
     loop {
         let mut returned: u32 = 0;
@@ -117,13 +123,13 @@ fn count_matching(query: &str) -> Option<u64> {
         if n == 0 {
             break;
         }
-        count += n as u64;
         for &h in &batch[..n] {
+            visit(EVT_HANDLE(h));
             let _ = unsafe { EvtClose(EVT_HANDLE(h)) };
         }
     }
     let _ = unsafe { EvtClose(handle) };
-    Some(count)
+    Some(())
 }
 
 fn to_wide(s: &str) -> Vec<u16> {

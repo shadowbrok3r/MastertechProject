@@ -699,3 +699,44 @@ async fn orphan_backfill_script_matches_the_fleet_reaper() {
         .expect("second preview");
     assert!(rerun.is_empty(), "a second run found {rerun:?}");
 }
+
+#[tokio::test]
+async fn finalize_persists_the_summary_tdr_count() {
+    use database::schema::{
+        FailureMode, FinishReason, RunResult, RunSummary, ScenarioStageSummary,
+    };
+
+    let db = mem_db().await;
+    let computer = seed_computer(&db, "DESKTOP-TEST:tdr").await;
+    let run = seed_run(&db, &computer).await;
+    let failure = FailureMode::Tdr { count: 1 };
+
+    db.query(stress_test_sql::RUN_FINALIZE)
+        .bind(("id", run.clone()))
+        .bind(("result", RunResult::Fail.as_str().to_string()))
+        .bind(("finish", FinishReason::Completed))
+        .bind(("failure_kind", failure.kind().to_string()))
+        .bind(("failure", failure))
+        .bind((
+            "summary",
+            RunSummary {
+                tdr_count: 1,
+                ..RunSummary::default()
+            },
+        ))
+        .bind(("stages", Vec::<ScenarioStageSummary>::new()))
+        .bind(("ended_at", Datetime::from(chrono::Utc::now())))
+        .await
+        .and_then(|r| r.check())
+        .expect("finalize run");
+
+    let mut resp = db
+        .query("SELECT VALUE summary.tdr_count FROM ONLY $id; SELECT VALUE failure_kind FROM ONLY $id;")
+        .bind(("id", run))
+        .await
+        .expect("read back run");
+    let tdr: Option<i64> = resp.take(0).expect("summary.tdr_count");
+    let kind: Option<String> = resp.take(1).expect("failure_kind");
+    assert_eq!(tdr, Some(1));
+    assert_eq!(kind.as_deref(), Some("tdr"));
+}

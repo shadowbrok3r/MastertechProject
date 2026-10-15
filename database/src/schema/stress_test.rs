@@ -871,8 +871,7 @@ pub struct RunSummary {
     pub vrm_throttle_detected: bool,
     /// `WheaCounters.delta_since_program_start` at run end.
     pub whea_delta_count: u32,
-    /// `TdrCounters.delta_since_program_start` at run end. Reaped runs take it
-    /// from their `tdr` events instead.
+    /// TDRs (Display 4101/4109 events, 0x117/0x141 live dumps) counted from run start to run end; reaped runs count `tdr` events.
     pub tdr_count: u32,
     pub bsod_detected: bool,
     pub bsod_code: Option<String>,
@@ -1220,23 +1219,9 @@ impl StressTestRun {
         stages: Vec<ScenarioStageSummary>,
         ended_at: Option<Datetime>,
     ) -> anyhow::Result<()> {
-        // `duration::secs(...)` returns an integer when the elapsed window
-        // is a whole number of seconds; round-tripping through the Rust
-        // `Option<f64>` field then fails with "Expected float, got number".
-        // Force the cast at the write site so the column is always a float.
-        let sql = "UPDATE $id SET \
-                result = $result, \
-                finish_reason = $finish, \
-                failure_mode = $failure, \
-                failure_kind = $failure_kind, \
-                summary = $summary, \
-                scenario_stages = $stages, \
-                ended_at = $ended_at, \
-                duration_actual_secs = <float> duration::secs(($ended_at ?? time::now()) - started_at) \
-                RETURN VALUE session_ref";
         let failure_kind = failure_mode.kind().to_string();
         let mut res = db()
-            .query(sql)
+            .query(stress_test_sql::RUN_FINALIZE)
             .bind(("id", run_id.clone()))
             .bind(("result", result.as_str().to_string()))
             .bind(("finish", finish_reason))

@@ -622,7 +622,7 @@ impl StageStats {
             whea_corrected(snapshot).saturating_sub(self.whea_corrected_baseline);
         self.whea_fatal_delta = whea_fatal(snapshot).saturating_sub(self.whea_fatal_baseline);
         self.whea_unavailable |= snapshot.whea_unavailable;
-        self.tdr_delta = tdr_count(snapshot).saturating_sub(self.tdr_baseline);
+        self.absorb_tdr(snapshot);
 
         if self.cpu_ceiling_c.is_none() {
             self.cpu_ceiling_c = snapshot.cpu_ceiling.map(|c| c.limit_c);
@@ -779,7 +779,12 @@ impl StageStats {
             whea_corrected(snapshot).saturating_sub(self.whea_corrected_baseline);
         self.whea_fatal_delta = whea_fatal(snapshot).saturating_sub(self.whea_fatal_baseline);
         self.whea_unavailable |= snapshot.whea_unavailable;
-        self.tdr_delta = tdr_count(snapshot).saturating_sub(self.tdr_baseline);
+        self.absorb_tdr(snapshot);
+    }
+
+    fn absorb_tdr(&mut self, snapshot: &TelemetrySnapshot) {
+        let delta = tdr_count(snapshot).saturating_sub(self.tdr_baseline);
+        self.tdr_delta = self.tdr_delta.max(delta);
     }
 
     /// Post-warmup coefficient of variation; `None` until two samples exist.
@@ -822,6 +827,15 @@ impl StageStats {
     /// fails the stage, but the notes must reach a verdict to be persisted.
     pub fn has_tool_limits(&self) -> bool {
         !self.tool_limits.is_empty()
+    }
+
+    /// `true` when the stage latched a fatal or reported a lost GPU device.
+    pub fn ended_on_fault(&self) -> bool {
+        self.fatal_abort
+            || self
+                .last_error
+                .as_deref()
+                .is_some_and(is_device_loss_message)
     }
 
     /// `true` when every CPU temperature this stage folded came from the DPTF

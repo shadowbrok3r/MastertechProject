@@ -36,7 +36,7 @@ mod superio;
 mod storage_thermal_windows;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -506,9 +506,20 @@ fn is_cpu_package_label(label: &str) -> bool {
         && (l.contains("package") || l.contains("tctl") || l.contains("tdie"))
 }
 
+#[cfg(target_os = "windows")]
+type TdrSource = tdr_windows::TdrMonitor;
+#[cfg(not(target_os = "windows"))]
+type TdrSource = ();
+/// The sampler's TDR monitor, shared so a caller can force a read.
+type TdrSlot = Arc<Mutex<Option<TdrSource>>>;
+
+/// Spacing between forced TDR reads while [`TelemetryAgent::tdr_now`] waits for the count to rise.
+const TDR_SETTLE_STEP: Duration = Duration::from_millis(250);
+
 pub struct TelemetryAgent {
     snapshot: Arc<Mutex<TelemetrySnapshot>>,
     cancel: Arc<AtomicBool>,
+    tdr: TdrSlot,
 }
 
 impl TelemetryAgent {
@@ -516,17 +527,47 @@ impl TelemetryAgent {
     pub fn start(refresh_ms: u64) -> Self {
         let snapshot = Arc::new(Mutex::new(TelemetrySnapshot::default()));
         let cancel = Arc::new(AtomicBool::new(false));
+        let tdr = TdrSlot::default();
 
         let snap_clone = snapshot.clone();
         let cancel_clone = cancel.clone();
+        let tdr_clone = tdr.clone();
         let interval = Duration::from_millis(refresh_ms.max(100));
 
         thread::Builder::new()
             .name("stress-kit-telemetry".into())
-            .spawn(move || sampler_loop(snap_clone, cancel_clone, interval))
+            .spawn(move || sampler_loop(snap_clone, cancel_clone, tdr_clone, interval))
             .expect("stress-kit: failed to spawn telemetry thread");
 
-        Self { snapshot, cancel }
+        Self {
+            snapshot,
+            cancel,
+            tdr,
+        }
+    }
+
+    /// Forces a TDR re-read, retrying up to `grace` until the count rises, and publishes it; `None` before the monitor opens.
+    pub fn tdr_now(&self, grace: Duration) -> Option<TdrCounters> {
+        let seen = self
+            .snapshot
+            .lock()
+            .ok()
+            .and_then(|g| g.tdr.as_ref().map(|t| t.delta_since_program_start))
+            .unwrap_or(0);
+        #[cfg(target_os = "windows")]
+        let poll = || {
+            lock_tdr(&self.tdr)
+                .as_mut()
+                .map(tdr_windows::TdrMonitor::poll_now)
+        };
+        #[cfg(not(target_os = "windows"))]
+        let poll = || lock_tdr(&self.tdr).and(None);
+        let counters = settle_tdr(seen, grace, TDR_SETTLE_STEP, poll)?;
+        if let Ok(mut g) = self.snapshot.lock() {
+            let previous = g.tdr.take();
+            g.tdr = latest_tdr(previous, Some(counters.clone()));
+        }
+        Some(counters)
     }
 
     /// Cheap clone of the latest sample; default-initialized until the first tick lands.
@@ -551,6 +592,37 @@ impl TelemetryAgent {
 impl Drop for TelemetryAgent {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+fn lock_tdr(slot: &TdrSlot) -> MutexGuard<'_, Option<TdrSource>> {
+    slot.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Polls until the TDR count exceeds `seen` or `grace` elapses; returns the last reading.
+fn settle_tdr(
+    seen: u64,
+    grace: Duration,
+    step: Duration,
+    mut poll: impl FnMut() -> Option<TdrCounters>,
+) -> Option<TdrCounters> {
+    let deadline = Instant::now() + grace;
+    loop {
+        let counters = poll()?;
+        let now = Instant::now();
+        if counters.delta_since_program_start > seen || now >= deadline {
+            return Some(counters);
+        }
+        thread::sleep(step.min(deadline - now));
+    }
+}
+
+/// The counters with the higher TDR count; a tie keeps `current`.
+fn latest_tdr(previous: Option<TdrCounters>, current: Option<TdrCounters>) -> Option<TdrCounters> {
+    match (previous, current) {
+        (Some(p), Some(c)) if p.delta_since_program_start > c.delta_since_program_start => Some(p),
+        (p, None) => p,
+        (_, c) => c,
     }
 }
 
@@ -751,6 +823,7 @@ impl LowLevelReaders {
 fn sampler_loop(
     snapshot: Arc<Mutex<TelemetrySnapshot>>,
     cancel: Arc<AtomicBool>,
+    tdr: TdrSlot,
     interval: Duration,
 ) {
     let refresh_kind = RefreshKind::nothing()
@@ -770,9 +843,9 @@ fn sampler_loop(
     let whea: Option<()> = None;
 
     #[cfg(target_os = "windows")]
-    let mut tdr = tdr_windows::TdrMonitor::open();
-    #[cfg(not(target_os = "windows"))]
-    let tdr: Option<()> = None;
+    {
+        *lock_tdr(&tdr) = tdr_windows::TdrMonitor::open();
+    }
 
     #[cfg(target_os = "windows")]
     let mut thermal = thermal_windows::ThermalMonitor::open();
@@ -819,6 +892,11 @@ fn sampler_loop(
         let (die, die_domains): (Option<CpuDieThermal>, Vec<ThermalReading>) = (None, Vec::new());
 
         #[cfg(target_os = "windows")]
+        let tdr_counters = lock_tdr(&tdr).as_mut().map(|t| t.poll());
+        #[cfg(not(target_os = "windows"))]
+        let tdr_counters = lock_tdr(&tdr).and(None);
+
+        #[cfg(target_os = "windows")]
         let thermals = {
             let mut v = thermal.as_mut().map(|t| t.poll()).unwrap_or_default();
             if let Some(d) = die.as_ref() {
@@ -855,13 +933,7 @@ fn sampler_loop(
             whea_unavailable,
             #[cfg(not(target_os = "windows"))]
             whea_unavailable: false,
-            #[cfg(target_os = "windows")]
-            tdr: tdr.as_mut().map(|t| t.poll()),
-            #[cfg(not(target_os = "windows"))]
-            tdr: {
-                let _ = tdr;
-                None
-            },
+            tdr: tdr_counters,
             thermals,
             #[cfg(feature = "lowlevel")]
             voltages: readers.poll_rails(),
@@ -879,7 +951,9 @@ fn sampler_loop(
         };
 
         if let Ok(mut g) = snapshot.lock() {
+            let previous = g.tdr.take();
             *g = snap;
+            g.tdr = latest_tdr(previous, g.tdr.take());
         }
 
         thread::sleep(interval);
@@ -1103,5 +1177,54 @@ mod tests {
         assert_eq!(s.rail_reading("+12v").map(|v| v.volts), Some(11.9));
         assert_eq!(s.rail_12v(), Some(11.9));
         assert!(!TelemetrySnapshot::default().any_uncalibrated_rails());
+    }
+
+    fn tdrs(delta: u64) -> TdrCounters {
+        TdrCounters {
+            delta_since_program_start: delta,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn settle_tdr_polls_until_the_count_rises() {
+        let mut polls = 0;
+        let counters = settle_tdr(2, Duration::from_secs(5), Duration::from_millis(1), || {
+            polls += 1;
+            Some(tdrs(if polls < 3 { 2 } else { 3 }))
+        });
+        assert_eq!(counters.map(|c| c.delta_since_program_start), Some(3));
+        assert_eq!(polls, 3);
+    }
+
+    #[test]
+    fn settle_tdr_gives_up_after_the_grace_period() {
+        let started = Instant::now();
+        let counters = settle_tdr(
+            0,
+            Duration::from_millis(30),
+            Duration::from_millis(5),
+            || Some(tdrs(0)),
+        );
+        assert_eq!(counters.map(|c| c.delta_since_program_start), Some(0));
+        assert!(started.elapsed() >= Duration::from_millis(30));
+
+        let mut polls = 0;
+        settle_tdr(0, Duration::ZERO, Duration::from_millis(5), || {
+            polls += 1;
+            Some(tdrs(0))
+        });
+        assert_eq!(polls, 1);
+        assert!(settle_tdr(0, Duration::from_secs(5), Duration::from_millis(1), || None).is_none());
+    }
+
+    #[test]
+    fn published_tdr_count_never_moves_backwards() {
+        let kept = latest_tdr(Some(tdrs(2)), Some(tdrs(1)));
+        assert_eq!(kept.map(|c| c.delta_since_program_start), Some(2));
+        let newer = latest_tdr(Some(tdrs(1)), Some(tdrs(2)));
+        assert_eq!(newer.map(|c| c.delta_since_program_start), Some(2));
+        assert!(latest_tdr(Some(tdrs(1)), None).is_some());
+        assert!(latest_tdr(None, None).is_none());
     }
 }

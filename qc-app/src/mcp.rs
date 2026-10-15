@@ -775,7 +775,7 @@ impl QcToolProvider {
         let tdr_before = snap_before
             .as_ref()
             .and_then(|s| s.tdr.as_ref())
-            .map(|t| t.absolute_since_boot);
+            .map(|t| t.delta_since_program_start);
         let pcie_replay_before = snap_before
             .as_ref()
             .and_then(|s| s.gpus.first())
@@ -837,7 +837,7 @@ impl QcToolProvider {
         let tdr_after = snap_after
             .as_ref()
             .and_then(|s| s.tdr.as_ref())
-            .map(|t| t.absolute_since_boot);
+            .map(|t| t.delta_since_program_start);
         let pcie_replay_after = snap_after
             .as_ref()
             .and_then(|s| s.gpus.first())

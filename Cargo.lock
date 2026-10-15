@@ -10981,7 +10981,6 @@ name = "stress-kit"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "evtx",
  "facet",
  "log",
  "nvml-wrapper",

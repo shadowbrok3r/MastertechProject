@@ -12,6 +12,18 @@ pub const HW_COMPONENT_UPSERT: &str = "UPSERT $id MERGE { \
 pub const STRESS_RUN_CREATE: &str =
     "CREATE $id CONTENT ($content + { embedding: $embedding })";
 
+/// Writes a finished run's verdict, summary and stages with a float `duration_actual_secs`; returns its session_ref.
+pub const RUN_FINALIZE: &str = "UPDATE $id SET \
+        result = $result, \
+        finish_reason = $finish, \
+        failure_mode = $failure, \
+        failure_kind = $failure_kind, \
+        summary = $summary, \
+        scenario_stages = $stages, \
+        ended_at = $ended_at, \
+        duration_actual_secs = <float> duration::secs(($ended_at ?? time::now()) - started_at) \
+    RETURN VALUE session_ref";
+
 pub const RECORD_EXISTS: &str = "RETURN record::exists($id)";
 
 /// In-progress runs on every machine that started before `$floor`.
