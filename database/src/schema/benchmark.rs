@@ -7,7 +7,9 @@
 
 use crate::db;
 use serde::{Deserialize, Serialize};
+use surrealdb::{Connection, Surreal};
 
+use super::build_stamp::fill_tool_version;
 use super::{random_record_id, Datetime, RecordId, SurrealValue, BENCHMARK_RESULT_TABLE};
 
 /// Lowercase benchmark identifiers; indexed and used for baseline grouping.
@@ -128,6 +130,10 @@ pub struct BenchmarkResult {
     pub captured_at: Datetime,
     pub tags: Vec<String>,
     pub notes: Option<String>,
+    /// Build that wrote the row; NONE on rows older than this field.
+    #[serde(default)]
+    #[surreal(default)]
+    pub tool_version: Option<String>,
 }
 
 impl BenchmarkResult {
@@ -154,16 +160,25 @@ impl BenchmarkResult {
             captured_at: chrono::Utc::now().into(),
             tags: Vec::new(),
             notes: None,
+            tool_version: None,
         }
     }
 
+    /// This row with a missing `tool_version` set to the process build stamp.
+    pub fn stamped(mut self) -> Self {
+        fill_tool_version(&mut self.tool_version);
+        self
+    }
+
     pub async fn create(result: &Self) -> anyhow::Result<RecordId> {
-        let value = result.clone().into_value();
-        let created: Option<Self> = db()
-            .create(result.id.clone())
-            .content(value)
-            .await?;
-        Ok(created.map(|c| c.id).unwrap_or_else(|| result.id.clone()))
+        Self::create_on(db().as_ref(), result).await
+    }
+
+    /// Inserts the [`stamped`](Self::stamped) row on `db`.
+    pub async fn create_on<C: Connection>(db: &Surreal<C>, result: &Self) -> anyhow::Result<RecordId> {
+        let id = result.id.clone();
+        let created: Option<Self> = db.create(id.clone()).content(result.clone().stamped().into_value()).await?;
+        Ok(created.map(|c| c.id).unwrap_or(id))
     }
 
     /// Score history for one machine, newest first, optionally one kind.

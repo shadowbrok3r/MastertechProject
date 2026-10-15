@@ -1,0 +1,27 @@
+# stress_test_event.tool_version, benchmark_result.tool_version: build that wrote the row.
+# Optional fields on SCHEMALESS tables, so nothing needs a backfill.
+id = "20261015160000__stress_tool_version"
+name = "stress_tool_version"
+state = "planned"
+source_schema_hash = "34a14340830109926dd4bc3eb277df439afc1b0a767598639995f7d640d2aed5"
+target_schema_hash = "d3feb779dc85c86f278ffce8a81ba4727b231aa2ebcbf66ddef59332279d40fe"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "add_stress_tool_version"
+phase = "start"
+kind = "run_sql"
+sql = """
+DEFINE FIELD OVERWRITE tool_version ON stress_test_event TYPE none | string PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE tool_version ON benchmark_result TYPE none | string PERMISSIONS FULL;
+"""
+
+[[steps]]
+id = "drop_stress_tool_version"
+phase = "rollback"
+kind = "run_sql"
+sql = """
+REMOVE FIELD IF EXISTS tool_version ON benchmark_result;
+REMOVE FIELD IF EXISTS tool_version ON stress_test_event;
+"""

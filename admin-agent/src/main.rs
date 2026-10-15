@@ -13,6 +13,11 @@ async fn main() -> anyhow::Result<()> {
     // Both rustls backends are compiled in on Linux; pick one before any TLS.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
+    stress_runner::set_host_build(
+        "admin-agent",
+        concat!(env!("CARGO_PKG_VERSION"), "+", env!("BUILD_HASH")),
+    );
+
     let _ = database::init_database().await;
     log::info!("admin-agent: database ready");
 

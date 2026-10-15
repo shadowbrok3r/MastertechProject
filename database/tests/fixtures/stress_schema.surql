@@ -36,5 +36,7 @@ DEFINE TABLE stress_test_event TYPE ANY SCHEMALESS;
 DEFINE FIELD run_ref ON stress_test_event TYPE record<stress_test_run>;
 DEFINE FIELD at ON stress_test_event TYPE datetime DEFAULT time::now();
 DEFINE INDEX idx_event_run_time ON stress_test_event FIELDS run_ref, at;
+DEFINE FIELD tool_version ON stress_test_event TYPE none | string;
 
 DEFINE TABLE benchmark_result TYPE ANY SCHEMALESS;
+DEFINE FIELD tool_version ON benchmark_result TYPE none | string;

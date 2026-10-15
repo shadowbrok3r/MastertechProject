@@ -33,6 +33,10 @@ pub struct RunRecord {
     pub result: RunResult,
     pub failure_kind: String,
     pub hostname: Option<String>,
+    /// Build that ran the run; NONE on runs older than the stamp.
+    #[serde(default)]
+    #[surreal(default)]
+    pub tool_version: Option<String>,
     pub started_at: Datetime,
     pub ended_at: Option<Datetime>,
     pub duration_actual_secs: Option<f64>,
@@ -110,7 +114,8 @@ pub async fn fetch_runs(limit: u64) -> anyhow::Result<Vec<RunRecord>> {
     let rows: Vec<RunRecord> = db()
         .query(
             "SELECT id, target_component, touched_components, target_kind, tool_label, \
-                    preset_label, result, failure_kind, hostname, started_at, ended_at, summary, \
+                    preset_label, result, failure_kind, hostname, tool_version, started_at, \
+                    ended_at, summary, \
                     (IF duration_actual_secs != NONE THEN <float> duration_actual_secs END) \
                         AS duration_actual_secs \
              FROM stress_test_run ORDER BY started_at DESC LIMIT $limit",

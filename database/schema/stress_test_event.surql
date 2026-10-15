@@ -1,5 +1,5 @@
 -- ============================================================
--- TABLE: stress_test_event         last changed: Stress-test tranche (2026-05-16)
+-- TABLE: stress_test_event         last changed: stress_tool_version (2026-10-15)
 -- Managed by surrealkit. Edit here, then `rollout plan`.
 -- ============================================================
 -- Discrete events surfaced during (or shortly after) a stress run:
@@ -31,3 +31,5 @@ DEFINE FIELD code    ON stress_test_event TYPE none | string                PERM
 DEFINE FIELD detail  ON stress_test_event TYPE string DEFAULT ''            PERMISSIONS FULL;
 -- Structured payload — varies by event kind, schema-free on purpose.
 DEFINE FIELD data    ON stress_test_event TYPE none | object                PERMISSIONS FULL;
+-- Build that wrote the row: "<App> <ver>+<sha>; stress-kit <build>"; backfills end "; recorded by <App> <ver>+<sha>".
+DEFINE FIELD tool_version ON stress_test_event TYPE none | string           PERMISSIONS FULL;

@@ -135,7 +135,7 @@ pub use mapping::{
     stressor_from_db, stressor_to_db,
 };
 pub use runtime::set_runtime_handle;
-pub use provenance::{host_build, set_host_build, tool_version};
+pub use provenance::{host_build, recorded_tool_version, set_host_build, tool_version};
 
 // Re-export the most-used database + stress-kit types so callers only need to
 // depend on `stress-runner` for the common case.

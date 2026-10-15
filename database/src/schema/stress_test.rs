@@ -27,6 +27,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use surrealdb::{Connection, Surreal};
 
+use super::build_stamp::fill_tool_version;
 use super::{
     random_record_id, Datetime, RecordId, SurrealValue,
     HARDWARE_COMPONENT_TABLE, STRESS_TEST_EVENT_TABLE, STRESS_TEST_METRIC_TABLE,
@@ -82,8 +83,12 @@ const RUN_CONFIRM_BACKOFF: std::time::Duration = std::time::Duration::from_milli
 /// [`super::utilities::record_exists`], which folds an empty response into an
 /// `Err` and so cannot distinguish "absent" from "probe failed".
 pub(crate) async fn probe_record(id: &RecordId) -> RecordProbe {
+    probe_record_on(db().as_ref(), id).await
+}
+
+pub(crate) async fn probe_record_on<C: Connection>(db: &Surreal<C>, id: &RecordId) -> RecordProbe {
     let probe = async {
-        let mut response = db()
+        let mut response = db
             .query(stress_test_sql::RECORD_EXISTS)
             .bind(("id", id.clone()))
             .await?;
@@ -108,7 +113,11 @@ pub struct MetricWriteReport {
 /// run row is already read-back confirmed at creation and an unreachable DB
 /// will fail the insert on its own.
 pub(crate) async fn check_run_link(run_ref: &RecordId) -> anyhow::Result<()> {
-    match probe_record(run_ref).await {
+    check_run_link_on(db().as_ref(), run_ref).await
+}
+
+async fn check_run_link_on<C: Connection>(db: &Surreal<C>, run_ref: &RecordId) -> anyhow::Result<()> {
+    match probe_record_on(db, run_ref).await {
         RecordProbe::Present => Ok(()),
         RecordProbe::Missing => {
             anyhow::bail!("run_ref {run_ref:?} does not exist")
@@ -1072,6 +1081,12 @@ impl StressTestRun {
         self.failure_mode = failure_mode;
     }
 
+    /// This run with a missing `tool_version` set to the process build stamp.
+    pub fn stamped(mut self) -> Self {
+        fill_tool_version(&mut self.tool_version);
+        self
+    }
+
     /// Text passed to `fn::embed_text` when the run row has no local embedding.
     pub fn embed_source(&self) -> String {
         format!(
@@ -1115,6 +1130,7 @@ fn ensure_run_content_objects(content: &mut surrealdb::types::Value, run: &Stres
 
 impl StressTestRun {
     pub async fn create(run: &Self) -> anyhow::Result<RecordId> {
+        let run = &run.clone().stamped();
         let mut content = surreal_create_content(run, true);
         ensure_run_content_objects(&mut content, run);
         super::utilities::spawn_embedding_backfill();
@@ -1832,6 +1848,10 @@ pub struct StressTestEvent {
     pub code: Option<String>,
     pub detail: String,
     pub data: Option<serde_json::Value>,
+    /// Build that wrote the row; NONE on rows older than this field.
+    #[serde(default)]
+    #[surreal(default)]
+    pub tool_version: Option<String>,
 }
 
 impl StressTestEvent {
@@ -1845,17 +1865,27 @@ impl StressTestEvent {
             code: None,
             detail: String::new(),
             data: None,
+            tool_version: None,
         }
     }
 
+    /// This event with a missing `tool_version` set to the process build stamp.
+    pub fn stamped(mut self) -> Self {
+        fill_tool_version(&mut self.tool_version);
+        self
+    }
+
     pub async fn create(event: &Self) -> anyhow::Result<RecordId> {
-        check_run_link(&event.run_ref).await?;
-        let value = surreal_create_content(event, false);
-        let created: Option<Self> = db()
-            .create(event.id.clone())
-            .content(value)
-            .await?;
-        Ok(created.map(|c| c.id).unwrap_or_else(|| event.id.clone()))
+        Self::create_on(db().as_ref(), event).await
+    }
+
+    /// Inserts the [`stamped`](Self::stamped) event on `db` after checking its `run_ref`.
+    pub async fn create_on<C: Connection>(db: &Surreal<C>, event: &Self) -> anyhow::Result<RecordId> {
+        check_run_link_on(db, &event.run_ref).await?;
+        let event = event.clone().stamped();
+        let value = surreal_create_content(&event, false);
+        let created: Option<Self> = db.create(event.id.clone()).content(value).await?;
+        Ok(created.map(|c| c.id).unwrap_or(event.id))
     }
 
     pub async fn list_for_run(run_ref: &RecordId) -> anyhow::Result<Vec<Self>> {

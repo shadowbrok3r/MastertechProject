@@ -425,6 +425,9 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          # Read only by Dockerfiles that declare ARG GIT_SHA.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           push: true
           tags: |
             ${{ matrix.image }}:beta

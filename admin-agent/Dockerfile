@@ -47,6 +47,9 @@ COPY build_hash.rs build_hash.rs
 COPY .env .env
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release -p admin-agent --recipe-path recipe.json
+# Commit stamp for build_hash.rs; .git/ is not in the build context.
+ARG GIT_SHA=""
+ENV BUILD_GIT_SHA=$GIT_SHA
 COPY . .
 RUN cargo build --release -p admin-agent --locked
 RUN ls -la /app/target/release/
