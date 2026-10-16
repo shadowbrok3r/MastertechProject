@@ -29,6 +29,7 @@ const WAIT_MARGIN_SECS: u64 = 15;
 pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
     "query_surrealdb",
     "search_diagnostics",
+    "find_similar_cases",
     "get_diagnostic_session",
     "get_computer_details",
     "get_service_order",
@@ -117,6 +118,7 @@ pub const DIAGNOSTICIAN_TOOLS: &[&str] = &[
 pub const GENERAL_TOOLS: &[&str] = &[
     "query_surrealdb",
     "search_diagnostics",
+    "find_similar_cases",
     "get_diagnostic_session",
     "get_computer_details",
     "get_service_order",

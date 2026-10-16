@@ -1005,6 +1005,257 @@ impl DiagnosticEntry {
 
         Ok(e.id)
     }
+
+    /// Up to `k` entries nearest `vector`, closest first; filtered searches, and index searches returning fewer than `k`, scan exactly.
+    pub async fn nearest(
+        vector: &[f32],
+        k: usize,
+        filter: &SimilarFilter,
+    ) -> anyhow::Result<Vec<SimilarEntry>> {
+        if filter.is_empty() {
+            let indexed = Self::knn(vector, k, filter, KnnSearch::Index).await?;
+            if indexed.len() >= k {
+                return Ok(indexed);
+            }
+            log::info!(
+                "diag_embedding returned {} of {k} neighbours; rescanning exactly",
+                indexed.len()
+            );
+        }
+        Self::knn(vector, k, filter, KnnSearch::Exact).await
+    }
+
+    async fn knn(
+        vector: &[f32],
+        k: usize,
+        filter: &SimilarFilter,
+        search: KnnSearch,
+    ) -> anyhow::Result<Vec<SimilarEntry>> {
+        Ok(db()
+            .query(nearest_entries_sql(filter, k, search))
+            .bind(("vec", vector.to_vec()))
+            .bind(("category", filter.category))
+            .bind(("exclude", filter.exclude_session.clone()))
+            .await?
+            .take(0)?)
+    }
+
+    /// Past sessions whose entries sit nearest `text`, closest first.
+    pub async fn similar_cases(
+        text: &str,
+        cases: usize,
+        filter: &SimilarFilter,
+    ) -> anyhow::Result<Vec<SimilarCase>> {
+        let vector = super::utilities::embed_text(text).await?;
+        let fetch = (cases * FETCH_PER_CASE).min(MAX_SIMILAR_FETCH);
+        let entries = Self::nearest(&vector, fetch, filter).await?;
+        let mut found = group_by_session(entries, cases, ENTRIES_PER_CASE);
+        if found.is_empty() {
+            return Ok(found);
+        }
+        let ids: Vec<RecordId> = found.iter().map(|c| c.session_ref.clone()).collect();
+        let sessions: Vec<CaseSession> = db()
+            .query(CASE_SESSIONS_SQL)
+            .bind(("ids", ids))
+            .await?
+            .take(0)?;
+        for case in &mut found {
+            case.session = sessions.iter().find(|s| s.id == case.session_ref).cloned();
+        }
+        Ok(found)
+    }
+}
+
+/// Characters of an entry's `detail` that a similarity search returns.
+const SIMILAR_DETAIL_CHARS: usize = 400;
+/// Entries kept per session in a similarity result.
+const ENTRIES_PER_CASE: usize = 3;
+/// Entries fetched per requested session.
+const FETCH_PER_CASE: usize = 10;
+/// Most entries one similarity search fetches.
+const MAX_SIMILAR_FETCH: usize = 100;
+/// Smallest HNSW search width.
+const MIN_SEARCH_EF: usize = 64;
+
+/// How a nearest-neighbour query over `diagnostic_entry` searches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnnSearch {
+    /// The `diag_embedding` HNSW index.
+    Index,
+    /// A cosine scan of every row.
+    Exact,
+}
+
+impl KnnSearch {
+    fn operator(self, k: usize) -> String {
+        match self {
+            Self::Index => format!("<|{k},{}|>", (k * 2).max(MIN_SEARCH_EF)),
+            Self::Exact => format!("<|{k},COSINE|>"),
+        }
+    }
+}
+
+/// Narrows a similarity search over `diagnostic_entry`.
+#[derive(Debug, Clone, Default)]
+pub struct SimilarFilter {
+    pub category: Option<DiagnosticCategory>,
+    /// Only entries the consolidator marked `data.flywheel_lesson`.
+    pub lessons_only: bool,
+    pub exclude_session: Option<RecordId>,
+}
+
+impl SimilarFilter {
+    pub fn is_empty(&self) -> bool {
+        self.category.is_none() && !self.lessons_only && self.exclude_session.is_none()
+    }
+}
+
+/// Nearest-entries query for `filter`, binding `$vec`, `$category` and `$exclude`.
+pub fn nearest_entries_sql(filter: &SimilarFilter, k: usize, search: KnnSearch) -> String {
+    let mut conditions: Vec<String> = Vec::new();
+    if filter.category.is_some() {
+        conditions.push("category = $category".into());
+    }
+    if filter.lessons_only {
+        conditions.push("data.flywheel_lesson = true".into());
+    }
+    if filter.exclude_session.is_some() {
+        conditions.push("session_ref != $exclude".into());
+    }
+    conditions.push(format!("embedding {} $vec", search.operator(k)));
+    format!(
+        "SELECT id, session_ref, category, title, \
+         string::slice(detail, 0, {SIMILAR_DETAIL_CHARS}) AS detail, timestamp, \
+         vector::distance::knn() AS dist FROM diagnostic_entry WHERE {} ORDER BY dist",
+        conditions.join(" AND ")
+    )
+}
+
+/// Session fields shown beside a similarity match.
+pub const CASE_SESSIONS_SQL: &str =
+    "SELECT id, hostname, status, summary, current_theory, started_at FROM $ids";
+
+/// A diagnostic entry returned by a similarity search.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct SimilarEntry {
+    pub id: RecordId,
+    pub session_ref: RecordId,
+    pub category: DiagnosticCategory,
+    pub title: String,
+    pub detail: String,
+    pub timestamp: Datetime,
+    /// Cosine distance to the query; lower is closer.
+    pub dist: f64,
+}
+
+/// A `CASE_SESSIONS_SQL` row.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct CaseSession {
+    pub id: RecordId,
+    pub hostname: Option<String>,
+    pub status: Option<String>,
+    pub summary: Option<String>,
+    pub current_theory: Option<String>,
+    pub started_at: Option<Datetime>,
+}
+
+/// A past session found by a similarity search, with its matching entries closest first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimilarCase {
+    pub session_ref: RecordId,
+    /// `None` when the session row no longer exists.
+    pub session: Option<CaseSession>,
+    pub best_dist: f64,
+    pub entries: Vec<SimilarEntry>,
+}
+
+/// Groups `entries`, closest first, into at most `cases` sessions of at most `per_case` entries each.
+pub fn group_by_session(
+    entries: Vec<SimilarEntry>,
+    cases: usize,
+    per_case: usize,
+) -> Vec<SimilarCase> {
+    let mut found: Vec<SimilarCase> = Vec::new();
+    for entry in entries {
+        match found
+            .iter()
+            .position(|c| c.session_ref == entry.session_ref)
+        {
+            Some(i) if found[i].entries.len() < per_case => found[i].entries.push(entry),
+            Some(_) => {}
+            None if found.len() < cases => found.push(SimilarCase {
+                session_ref: entry.session_ref.clone(),
+                session: None,
+                best_dist: entry.dist,
+                entries: vec![entry],
+            }),
+            None => {}
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod similar_tests {
+    use super::*;
+
+    fn entry(key: &str, session: &str, dist: f64) -> SimilarEntry {
+        SimilarEntry {
+            id: RecordId::new(super::super::DIAGNOSTIC_ENTRY_TABLE, key),
+            session_ref: RecordId::new(super::super::DIAGNOSTIC_SESSION_TABLE, session),
+            category: DiagnosticCategory::Finding,
+            title: key.to_string(),
+            detail: String::new(),
+            timestamp: chrono::Utc::now().into(),
+            dist,
+        }
+    }
+
+    fn keys(case: &SimilarCase) -> Vec<String> {
+        case.entries.iter().map(|e| e.title.clone()).collect()
+    }
+
+    #[test]
+    fn entries_group_by_session_in_order_of_their_closest_entry() {
+        let entries = vec![
+            entry("a1", "a", 0.10),
+            entry("b1", "b", 0.20),
+            entry("a2", "a", 0.25),
+            entry("a3", "a", 0.30),
+            entry("c1", "c", 0.35),
+            entry("a4", "a", 0.40),
+            entry("b2", "b", 0.45),
+        ];
+        let cases = group_by_session(entries, 2, 3);
+        assert_eq!(cases.len(), 2);
+        assert_eq!(keys(&cases[0]), ["a1", "a2", "a3"]);
+        assert_eq!(cases[0].best_dist, 0.10);
+        assert_eq!(keys(&cases[1]), ["b1", "b2"]);
+        assert!(cases.iter().all(|c| c.session.is_none()));
+    }
+
+    #[test]
+    fn the_query_names_only_the_filters_that_are_set() {
+        let plain = nearest_entries_sql(&SimilarFilter::default(), 12, KnnSearch::Index);
+        assert!(
+            plain.contains("WHERE embedding <|12,64|> $vec ORDER BY dist"),
+            "{plain}"
+        );
+        let filter = SimilarFilter {
+            category: Some(DiagnosticCategory::Recommendation),
+            lessons_only: true,
+            exclude_session: Some(RecordId::new(super::super::DIAGNOSTIC_SESSION_TABLE, "x")),
+        };
+        let filtered = nearest_entries_sql(&filter, 50, KnnSearch::Exact);
+        assert!(
+            filtered.contains(
+                "WHERE category = $category AND data.flywheel_lesson = true AND session_ref != $exclude \
+                 AND embedding <|50,COSINE|> $vec"
+            ),
+            "{filtered}"
+        );
+        assert!(nearest_entries_sql(&filter, 50, KnnSearch::Index).contains("<|50,100|>"));
+    }
 }
 
 #[cfg(test)]
