@@ -1,13 +1,18 @@
 //! AMD total board power and hotspot temperature from ADLX, the library AMD's driver installs.
 
 use std::ffi::{CStr, c_char, c_void};
+use std::fmt;
+use std::path::{Path, PathBuf};
 use std::ptr::{NonNull, null, null_mut};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, HMODULE, STILL_ACTIVE};
 use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+};
+use windows::Win32::System::Threading::{
+    GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::core::{PCSTR, PCWSTR, s, w};
 
@@ -18,6 +23,10 @@ use super::gpu_wddm::LuidKey;
 const LIBRARY: PCWSTR = w!("amdadlx64.dll");
 #[cfg(not(target_pointer_width = "64"))]
 const LIBRARY: PCWSTR = w!("amdadlx32.dll");
+#[cfg(target_pointer_width = "64")]
+const LIBRARY_FILE: &str = "amdadlx64.dll";
+#[cfg(not(target_pointer_width = "64"))]
+const LIBRARY_FILE: &str = "amdadlx32.dll";
 
 /// ADLX 2.0.0.125, the SDK release the vtable layouts below were checked against.
 const SDK_VERSION: u64 = 0x0002_0000_0000_007D;
@@ -25,9 +34,15 @@ const SDK_VERSION: u64 = 0x0002_0000_0000_007D;
 const RETRY_AFTER: Duration = Duration::from_secs(60);
 /// Upper bound on GPUs read from one list.
 const MAX_GPUS: u32 = 16;
+/// Environment variable that keeps ADLX unloaded for the process.
+const DISABLE_ENV: &str = "MTECH_NO_ADLX";
+/// Complete reads after which this process's probe record is removed.
+const PROBE_READS: u32 = 3;
 
 const ADLX_OK: i32 = 0;
 const ADLX_ALREADY_INITIALIZED: i32 = 2;
+/// `GPUTYPE_INTEGRATED` from `ADLX_GPU_TYPE`.
+const GPU_TYPE_INTEGRATED: i32 = 1;
 
 type Slot = *const c_void;
 type InitializeFn = unsafe extern "C" fn(version: u64, system: *mut *mut c_void) -> i32;
@@ -71,7 +86,9 @@ struct GpuListVtbl {
 #[repr(C)]
 struct GpuVtbl {
     interface: InterfaceVtbl,
-    _vendor_id_to_is_external: [Slot; 4],
+    _vendor_id_and_asic_family_type: [Slot; 2],
+    gpu_type: IntGetter,
+    _is_external: Slot,
     name: unsafe extern "system" fn(this: *mut c_void, name: *mut *const c_char) -> i32,
 }
 
@@ -205,6 +222,9 @@ impl Reading {
     }
 }
 
+/// Receives the name of each ADLX call just before it runs.
+type Step<'a> = &'a mut dyn FnMut(fmt::Arguments<'_>);
+
 /// A started ADLX instance, kept for the life of the process.
 struct Runtime {
     system: NonNull<c_void>,
@@ -216,20 +236,23 @@ unsafe impl Send for Runtime {}
 
 enum State {
     Untried,
-    Ready(Runtime),
+    Ready(Runtime, Option<Probe>),
     Failed(Instant),
+    Disabled,
 }
 
 static STATE: Mutex<State> = Mutex::new(State::Untried);
 
 impl Runtime {
     /// Loads ADLX from System32 and starts it; the library stays loaded either way.
-    fn start() -> Result<Self, String> {
+    fn start(step: Step) -> Result<Self, String> {
+        step(format_args!("LoadLibraryExW({LIBRARY_FILE})"));
         let library = unsafe { LoadLibraryExW(LIBRARY, None, LOAD_LIBRARY_SEARCH_SYSTEM32) }
             .map_err(|e| format!("no ADLX library: {e}"))?;
         // SAFETY: the export types are the ones ADLX.h declares.
         let initialize = unsafe { export::<InitializeFn>(library, s!("ADLXInitialize")) }
             .ok_or("ADLXInitialize is not exported")?;
+        step(format_args!("ADLXQueryFullVersion"));
         let runtime_version =
             unsafe { export::<QueryFullVersionFn>(library, s!("ADLXQueryFullVersion")) }.and_then(
                 |query| {
@@ -239,11 +262,15 @@ impl Runtime {
             );
         let version = runtime_version.map_or(SDK_VERSION, |v| v.min(SDK_VERSION));
 
+        step(format_args!("ADLXInitialize({version:#x})"));
         let mut system = null_mut();
         let status = unsafe { initialize(version, &mut system) };
         if !succeeded(status) {
             return Err(format!("ADLXInitialize({version:#x}) returned {status}"));
         }
+        step(format_args!(
+            "IADLXSystem::GetPerformanceMonitoringServices"
+        ));
         let perf = NonNull::new(system).and_then(|system| {
             let mut perf = null_mut();
             // SAFETY: `system` is the IADLXSystem ADLXInitialize returned.
@@ -264,6 +291,7 @@ impl Runtime {
                 if let Some(terminate) =
                     unsafe { export::<TerminateFn>(library, s!("ADLXTerminate")) }
                 {
+                    step(format_args!("ADLXTerminate"));
                     unsafe { terminate() };
                 }
                 Err("ADLX started without performance monitoring services".to_string())
@@ -271,10 +299,11 @@ impl Runtime {
         }
     }
 
-    /// Every GPU ADLX lists, with the metrics its driver answered.
-    fn read(&self) -> Vec<Reading> {
+    /// Every GPU ADLX lists except integrated ones, with the metrics its driver answered.
+    fn read(&self, step: Step) -> Vec<Reading> {
         // SAFETY: `system` is the live IADLXSystem; each object below is used per its vtable.
         let system = unsafe { vtbl::<SystemVtbl>(self.system.as_ptr()) };
+        step(format_args!("IADLXSystem::GetGPUs"));
         let mut raw = null_mut();
         if unsafe { (system.get_gpus)(self.system.as_ptr(), &mut raw) } != ADLX_OK {
             return Vec::new();
@@ -284,27 +313,45 @@ impl Runtime {
         };
         let gpus = unsafe { list.vtbl::<GpuListVtbl>() };
         let (begin, end) = unsafe { ((gpus.begin)(list.ptr()), (gpus.end)(list.ptr())) };
-        (begin..end.min(begin.saturating_add(MAX_GPUS)))
-            .filter_map(|at| {
-                let mut raw = null_mut();
-                (unsafe { (gpus.at_gpu_list)(list.ptr(), at, &mut raw) } == ADLX_OK)
-                    .then(|| Owned::new(raw))
-                    .flatten()
-            })
-            .map(|gpu| self.reading(&gpu))
-            .collect()
+        let mut readings = Vec::new();
+        for at in begin..end.min(begin.saturating_add(MAX_GPUS)) {
+            step(format_args!("gpu {at}: IADLXGPUList::At_GPUList"));
+            let mut raw = null_mut();
+            if unsafe { (gpus.at_gpu_list)(list.ptr(), at, &mut raw) } != ADLX_OK {
+                continue;
+            }
+            let Some(gpu) = Owned::new(raw) else {
+                continue;
+            };
+            step(format_args!("gpu {at}: IADLXGPU::Type"));
+            if gpu_type(&gpu) == Some(GPU_TYPE_INTEGRATED) {
+                step(format_args!("gpu {at}: IADLXGPU::Release"));
+                continue;
+            }
+            readings.push(self.reading(&gpu, at, step));
+            step(format_args!("gpu {at}: IADLXGPU::Release"));
+        }
+        step(format_args!("IADLXGPUList::Release"));
+        readings
     }
 
-    fn reading(&self, gpu: &Owned) -> Reading {
+    fn reading(&self, gpu: &Owned, at: u32, step: Step) -> Reading {
+        step(format_args!("gpu {at}: QueryInterface(IADLXGPU2)"));
         let gpu2 = gpu2(gpu);
+        step(format_args!("gpu {at}: IADLXGPU2::LUID"));
+        let luid = gpu2.as_ref().and_then(luid);
+        step(format_args!("gpu {at}: IADLXGPU::Name"));
         let mut reading = Reading {
-            luid: gpu2.as_ref().and_then(luid),
+            luid,
             name: name(gpu).unwrap_or_default(),
             ..Default::default()
         };
+        step(format_args!("gpu {at}: IADLXGPU2::IsPowerOff"));
         if gpu2.as_ref().is_some_and(powered_off) {
+            step(format_args!("gpu {at}: IADLXGPU2::Release"));
             return reading;
         }
+        step(format_args!("gpu {at}: GetCurrentGPUMetrics"));
         let mut raw = null_mut();
         // SAFETY: `perf` is the live performance monitoring service and `gpu` one of its GPUs.
         let status = unsafe {
@@ -315,8 +362,10 @@ impl Runtime {
             )
         };
         let Some(metrics) = (status == ADLX_OK).then(|| Owned::new(raw)).flatten() else {
+            step(format_args!("gpu {at}: IADLXGPU2::Release"));
             return reading;
         };
+        step(format_args!("gpu {at}: IADLXGPUMetrics getters"));
         let m = unsafe { metrics.vtbl::<MetricsVtbl>() };
         let double = |get: DoubleGetter| {
             let mut value = 0.0;
@@ -335,8 +384,18 @@ impl Runtime {
         reading.mem_clock_mhz = int(m.gpu_vram_clock_speed).and_then(positive);
         reading.fan_rpm = int(m.gpu_fan_speed).and_then(positive);
         reading.vram_used_mb = int(m.gpu_vram).and_then(positive).map(u64::from);
+        step(format_args!(
+            "gpu {at}: IADLXGPUMetrics and IADLXGPU2 Release"
+        ));
         reading
     }
+}
+
+/// `ADLX_GPU_TYPE` of `gpu`.
+fn gpu_type(gpu: &Owned) -> Option<i32> {
+    let mut kind = 0;
+    // SAFETY: `gpu` is an IADLXGPU.
+    (unsafe { (gpu.vtbl::<GpuVtbl>().gpu_type)(gpu.ptr(), &mut kind) } == ADLX_OK).then_some(kind)
 }
 
 fn name(gpu: &Owned) -> Option<String> {
@@ -376,32 +435,227 @@ fn powered_off(gpu2: &Owned) -> bool {
         && state != 0
 }
 
-/// Readings from every GPU ADLX lists; empty when no AMD driver library answers.
+fn probe_path() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from)
+        .join("Mastertech")
+        .join("adlx-probe.txt")
+}
+
+/// Size and write time of the System32 ADLX library; `None` when it is not installed.
+fn library_fingerprint() -> Option<String> {
+    let system = PathBuf::from(std::env::var_os("SystemRoot")?).join("System32");
+    let meta = std::fs::metadata(system.join(LIBRARY_FILE)).ok()?;
+    let written = meta
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("{}:{written}", meta.len()))
+}
+
+/// Whether `value`, the content of [`DISABLE_ENV`], switches ADLX off.
+fn switches_off(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !matches!(v.trim(), "" | "0" | "false" | "off" | "no"))
+}
+
+/// Whether `pid` is a running process; one that exists but cannot be opened counts.
+fn process_alive(pid: u32) -> bool {
+    let handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        Ok(handle) => handle,
+        Err(e) => return e.code() == E_ACCESSDENIED,
+    };
+    let mut code = 0u32;
+    let running =
+        unsafe { GetExitCodeProcess(handle, &mut code) }.is_ok() && code == STILL_ACTIVE.0 as u32;
+    let _ = unsafe { CloseHandle(handle) };
+    running
+}
+
+/// The on-disk record of an ADLX start a process has not yet survived.
+#[derive(Debug, Clone, PartialEq)]
+struct ProbeRecord {
+    pid: u32,
+    library: String,
+    step: String,
+}
+
+impl ProbeRecord {
+    fn parse(text: &str) -> Option<Self> {
+        let (mut pid, mut library, mut step) = (None, None, String::new());
+        for line in text.lines() {
+            match line.split_once('=') {
+                Some(("pid", v)) => pid = v.trim().parse().ok(),
+                Some(("library", v)) => library = Some(v.trim().to_string()),
+                Some(("step", v)) => step = v.trim().to_string(),
+                _ => {}
+            }
+        }
+        Some(Self {
+            pid: pid?,
+            library: library?,
+            step,
+        })
+    }
+
+    fn render(&self) -> String {
+        format!(
+            "pid={}\nlibrary={}\nstep={}\n",
+            self.pid, self.library, self.step
+        )
+    }
+}
+
+/// What a probe record left on disk means for a new ADLX start.
+#[derive(Debug, PartialEq)]
+enum Verdict {
+    Start,
+    /// Another running process is starting the same library.
+    Busy,
+    /// A process died during this step with the same library.
+    Died(String),
+}
+
+fn verdict(
+    record: Option<&ProbeRecord>,
+    library: &str,
+    own_pid: u32,
+    alive: impl Fn(u32) -> bool,
+) -> Verdict {
+    match record {
+        Some(r) if r.library == library && r.pid != own_pid => {
+            if alive(r.pid) {
+                Verdict::Busy
+            } else {
+                Verdict::Died(r.step.clone())
+            }
+        }
+        _ => Verdict::Start,
+    }
+}
+
+/// This process's probe record, naming each ADLX call until the first read completes.
+struct Probe {
+    path: PathBuf,
+    record: ProbeRecord,
+    reads: u32,
+}
+
+impl Probe {
+    /// Writes the record; `None` when it cannot be written.
+    fn begin(path: PathBuf, library: String) -> Option<Self> {
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        let probe = Self {
+            path,
+            record: ProbeRecord {
+                pid: std::process::id(),
+                library,
+                step: "start".to_string(),
+            },
+            reads: 0,
+        };
+        std::fs::write(&probe.path, probe.record.render()).ok()?;
+        Some(probe)
+    }
+
+    fn step(&mut self, step: fmt::Arguments<'_>) {
+        if self.reads == 0 {
+            self.record.step = step.to_string();
+            let _ = std::fs::write(&self.path, self.record.render());
+        }
+    }
+
+    /// Counts a complete read; `true` once [`PROBE_READS`] passed and the record is removed.
+    fn read_done(&mut self) -> bool {
+        if self.reads == 0 {
+            self.step(format_args!("after the first read"));
+        }
+        self.reads += 1;
+        if self.reads < PROBE_READS {
+            return false;
+        }
+        self.discard();
+        true
+    }
+
+    fn discard(&self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Starts ADLX unless it is switched off, not installed, or killed an earlier process.
+fn begin(path: &Path) -> State {
+    if switches_off(std::env::var(DISABLE_ENV).ok().as_deref()) {
+        log::info!("[stress-kit/gpu] ADLX off: {DISABLE_ENV} is set");
+        return State::Disabled;
+    }
+    let Some(library) = library_fingerprint() else {
+        log::debug!("[stress-kit/gpu] ADLX unavailable: no {LIBRARY_FILE} in System32");
+        return State::Failed(Instant::now());
+    };
+    let record = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| ProbeRecord::parse(&text));
+    match verdict(record.as_ref(), &library, std::process::id(), process_alive) {
+        Verdict::Start => {}
+        Verdict::Busy => return State::Failed(Instant::now()),
+        Verdict::Died(step) => {
+            log::warn!(
+                "[stress-kit/gpu] ADLX off: an earlier process stopped during `{step}` with this \
+                 {LIBRARY_FILE}; delete {} to retry",
+                path.display()
+            );
+            return State::Disabled;
+        }
+    }
+    let mut probe = Probe::begin(path.to_path_buf(), library);
+    let started = Runtime::start(&mut |step| {
+        if let Some(probe) = probe.as_mut() {
+            probe.step(step);
+        }
+    });
+    match started {
+        Ok(runtime) => {
+            log::info!("[stress-kit/gpu] ADLX started; AMD board power and hotspot enabled");
+            State::Ready(runtime, probe)
+        }
+        Err(e) => {
+            if let Some(probe) = probe {
+                probe.discard();
+            }
+            log::debug!("[stress-kit/gpu] ADLX unavailable: {e}");
+            State::Failed(Instant::now())
+        }
+    }
+}
+
+/// Readings from every discrete GPU ADLX lists; empty when no AMD driver library answers.
 fn readings() -> Vec<Reading> {
     let Ok(mut state) = STATE.lock() else {
         return Vec::new();
     };
-    if let State::Failed(at) = *state
-        && at.elapsed() < RETRY_AFTER
-    {
+    let start = match &*state {
+        State::Disabled => return Vec::new(),
+        State::Failed(at) if at.elapsed() < RETRY_AFTER => return Vec::new(),
+        State::Untried | State::Failed(_) => true,
+        State::Ready(..) => false,
+    };
+    if start {
+        *state = begin(&probe_path());
+    }
+    let State::Ready(runtime, probe) = &mut *state else {
         return Vec::new();
+    };
+    let readings = runtime.read(&mut |step| {
+        if let Some(probe) = probe.as_mut() {
+            probe.step(step);
+        }
+    });
+    if probe.as_mut().is_some_and(Probe::read_done) {
+        *probe = None;
     }
-    if !matches!(*state, State::Ready(_)) {
-        *state = match Runtime::start() {
-            Ok(runtime) => {
-                log::info!("[stress-kit/gpu] ADLX started; AMD board power and hotspot enabled");
-                State::Ready(runtime)
-            }
-            Err(e) => {
-                log::debug!("[stress-kit/gpu] ADLX unavailable: {e}");
-                State::Failed(Instant::now())
-            }
-        };
-    }
-    match &*state {
-        State::Ready(runtime) => runtime.read(),
-        _ => Vec::new(),
-    }
+    readings
 }
 
 /// The WDDM adapter `reading` describes: by LUID, else by a name only one AMD adapter carries.
@@ -422,9 +676,18 @@ fn matching<'a>(
     named.next().is_none().then_some(first)
 }
 
-/// Adds ADLX board power and hotspot temperature to the AMD adapters in `gpus`.
-pub(crate) fn enrich(gpus: &mut [(LuidKey, GpuSample)]) {
-    if !gpus.iter().any(|(_, gpu)| gpu.vendor == "AMD") {
+/// Whether `gpus` holds an AMD adapter `integrated` does not report as integrated.
+fn wants_adlx(gpus: &[(LuidKey, GpuSample)], integrated: impl Fn(LuidKey) -> Option<bool>) -> bool {
+    gpus.iter()
+        .any(|(luid, gpu)| gpu.vendor == "AMD" && integrated(*luid) != Some(true))
+}
+
+/// Adds ADLX board power and hotspot temperature to the discrete AMD adapters in `gpus`.
+pub(crate) fn enrich(
+    gpus: &mut [(LuidKey, GpuSample)],
+    integrated: impl Fn(LuidKey) -> Option<bool>,
+) {
+    if !wants_adlx(gpus, integrated) {
         return;
     }
     for reading in readings() {
@@ -453,6 +716,7 @@ mod tests {
         assert_eq!(offset_of!(GpuListVtbl, begin), 5 * PTR);
         assert_eq!(offset_of!(GpuListVtbl, end), 6 * PTR);
         assert_eq!(offset_of!(GpuListVtbl, at_gpu_list), 11 * PTR);
+        assert_eq!(offset_of!(GpuVtbl, gpu_type), 5 * PTR);
         assert_eq!(offset_of!(GpuVtbl, name), 7 * PTR);
         assert_eq!(offset_of!(Gpu2Vtbl, is_power_off), 23 * PTR);
         assert_eq!(offset_of!(Gpu2Vtbl, luid), 34 * PTR);
@@ -557,5 +821,99 @@ mod tests {
             assert!(reading.board_power_w.is_none_or(|w| w > 0.0 && w < 2000.0));
             assert!(reading.hotspot_c.is_none_or(|t| t > 0.0 && t < 150.0));
         }
+    }
+
+    #[test]
+    fn only_an_amd_adapter_not_known_integrated_loads_adlx() {
+        let igpu = amd((1, 0), "AMD Radeon(TM) Graphics");
+        let nvidia = (
+            (2, 0),
+            GpuSample {
+                vendor: "NVIDIA".into(),
+                ..Default::default()
+            },
+        );
+        let integrated = |luid: LuidKey| Some(luid == (1, 0));
+        assert!(!wants_adlx(&[igpu.clone(), nvidia.clone()], integrated));
+        assert!(!wants_adlx(std::slice::from_ref(&nvidia), |_| None));
+        assert!(wants_adlx(std::slice::from_ref(&igpu), |_| None));
+        assert!(wants_adlx(
+            &[igpu, amd((3, 0), "AMD Radeon RX 9070 XT")],
+            integrated
+        ));
+    }
+
+    #[test]
+    fn a_probe_record_round_trips() {
+        let record = ProbeRecord {
+            pid: 4312,
+            library: "2191440:1760000000".into(),
+            step: "gpu 0: IADLXGPU2::IsPowerOff".into(),
+        };
+        assert_eq!(ProbeRecord::parse(&record.render()), Some(record));
+        assert_eq!(ProbeRecord::parse("step=start\n"), None);
+        assert_eq!(ProbeRecord::parse(""), None);
+    }
+
+    #[test]
+    fn a_record_left_by_a_dead_process_names_its_step() {
+        let record = ProbeRecord {
+            pid: 7,
+            library: "lib".into(),
+            step: "ADLXInitialize(0x200000000007d)".into(),
+        };
+        assert_eq!(
+            verdict(Some(&record), "lib", 9, |_| false),
+            Verdict::Died("ADLXInitialize(0x200000000007d)".into())
+        );
+        assert_eq!(verdict(Some(&record), "lib", 9, |_| true), Verdict::Busy);
+        assert_eq!(
+            verdict(Some(&record), "newer lib", 9, |_| false),
+            Verdict::Start
+        );
+        assert_eq!(verdict(Some(&record), "lib", 7, |_| false), Verdict::Start);
+        assert_eq!(verdict(None, "lib", 9, |_| false), Verdict::Start);
+    }
+
+    #[test]
+    fn the_probe_record_follows_each_call_and_clears_after_enough_reads() {
+        let path = std::env::temp_dir().join(format!("adlx-probe-test-{}.txt", std::process::id()));
+        let read = |path: &Path| {
+            ProbeRecord::parse(&std::fs::read_to_string(path).expect("record on disk"))
+                .expect("record parses")
+        };
+        let mut probe = Probe::begin(path.clone(), "lib".into()).expect("writable temp dir");
+        probe.step(format_args!("IADLXSystem::GetGPUs"));
+        assert_eq!(read(&path).step, "IADLXSystem::GetGPUs");
+        assert_eq!(read(&path).pid, std::process::id());
+        for _ in 1..PROBE_READS {
+            assert!(!probe.read_done());
+        }
+        assert_eq!(read(&path).step, "after the first read");
+        probe.step(format_args!("gpu 0: IADLXGPU::Type"));
+        assert_eq!(read(&path).step, "after the first read");
+        assert!(probe.read_done());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn only_an_on_value_switches_adlx_off() {
+        assert!(switches_off(Some("1")));
+        assert!(switches_off(Some("yes")));
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("false"),
+            Some(" off "),
+            Some("no"),
+        ] {
+            assert!(!switches_off(off), "{off:?}");
+        }
+    }
+
+    #[test]
+    fn this_process_is_alive() {
+        assert!(process_alive(std::process::id()));
     }
 }
