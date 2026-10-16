@@ -98,8 +98,8 @@ database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.37", features=["serde",  "default_fonts", "glow", "links"], default-features=false }
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
-surrealdb = { version = "3.3.0", default-features = false, features = ["protocol-ws", "rustls"] }
-surrealdb-types = { version = "3.3.0" }
+surrealdb = { version = "3.3.4", default-features = false, features = ["protocol-ws", "rustls"] }
+surrealdb-types = { version = "3.3.4" }
 egui_extras = { version = "0.37", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", branch = "egui-037", features = ["persistency"]}
 egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
