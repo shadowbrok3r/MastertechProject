@@ -2349,6 +2349,20 @@ pub struct SearchDiagnosticsParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct FindSimilarCasesParams {
+    #[schemars(description = "The symptom, error or question in plain words, e.g. 'reboots under GPU load, WHEA 0x124 in the event log'")]
+    pub text: String,
+    #[schemars(description = "Max past sessions to return (default 5, max 10)")]
+    pub limit: Option<u32>,
+    #[schemars(description = "Only entries of one category: finding, action, note, error, system_info, network_info, security_alert, performance_note, customer_note or recommendation")]
+    pub category: Option<String>,
+    #[schemars(description = "Only the lessons the nightly consolidator distilled from closed sessions (default false)")]
+    pub lessons_only: Option<bool>,
+    #[schemars(description = "Session to leave out, usually the one you are working")]
+    pub exclude_session_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct GetDiagnosticSessionParams {
     #[schemars(description = "Session ID to retrieve (with all entries)")]
     pub session_id: String,
@@ -8361,6 +8375,112 @@ impl PluginToolProvider {
     }
 
     #[tool(
+        name = "find_similar_cases",
+        description = "Past diagnostic sessions whose logged entries mean the same as `text`: a semantic vector search over every diagnostic_entry, so it matches on meaning rather than shared words, across all machines. Returns up to `limit` sessions, closest first, each with its hostname, status, summary or current theory, and its nearest entries with their cosine distance. Lower is closer: about 0.30 is a strong match, 0.40 or more is usually unrelated. Use it at intake and before settling on a theory to see what was found and what fixed similar machines, then get_diagnostic_session on the best match. Pass exclude_session_id to leave out the session you are working. Read-only."
+    )]
+    async fn find_similar_cases(
+        &self,
+        Parameters(p): Parameters<FindSimilarCasesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::{
+            DIAGNOSTIC_SESSION_TABLE, DiagnosticCategory, DiagnosticEntry, SimilarFilter,
+        };
+        const DEFAULT_CASES: usize = 5;
+        const MAX_CASES: usize = 10;
+        const SUMMARY_CHARS: usize = 500;
+
+        let text = p.text.trim();
+        if text.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "find_similar_cases: text must not be empty".to_string(),
+                None,
+            ));
+        }
+        let category = match p
+            .category
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+        {
+            None => None,
+            Some(name) => Some(
+                DiagnosticCategory::all()
+                    .iter()
+                    .copied()
+                    .find(|c| c.as_str().eq_ignore_ascii_case(name))
+                    .ok_or_else(|| {
+                        let known: Vec<&str> = DiagnosticCategory::all()
+                            .iter()
+                            .map(|c| c.as_str())
+                            .collect();
+                        ErrorData::invalid_params(
+                            format!(
+                                "find_similar_cases: unknown category '{name}'; use one of {}",
+                                known.join(", ")
+                            ),
+                            None,
+                        )
+                    })?,
+            ),
+        };
+        let filter = SimilarFilter {
+            category,
+            lessons_only: p.lessons_only.unwrap_or(false),
+            exclude_session: p
+                .exclude_session_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| parse_record_id(s, DIAGNOSTIC_SESSION_TABLE)),
+        };
+        let limit = p
+            .limit
+            .map_or(DEFAULT_CASES, |n| (n as usize).clamp(1, MAX_CASES));
+
+        let found = DiagnosticEntry::similar_cases(text, limit, &filter)
+            .await
+            .map_err(to_internal)?;
+        let round = |d: f64| (d * 1000.0).round() / 1000.0;
+        let cases: Vec<serde_json::Value> = found
+            .iter()
+            .map(|case| {
+                let session = case.session.as_ref();
+                let summary = session
+                    .and_then(|s| s.summary.as_deref())
+                    .map(|s| s.chars().take(SUMMARY_CHARS).collect::<String>());
+                let entries: Vec<serde_json::Value> = case
+                    .entries
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "entry_id": e.id.key_string(),
+                            "category": e.category.as_str(),
+                            "title": e.title,
+                            "detail": e.detail,
+                            "logged_at": e.timestamp,
+                            "dist": round(e.dist),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "session_id": case.session_ref.key_string(),
+                    "hostname": session.and_then(|s| s.hostname.clone()),
+                    "status": session.and_then(|s| s.status.clone()),
+                    "summary": summary,
+                    "current_theory": session.and_then(|s| s.current_theory.clone()),
+                    "started_at": session.and_then(|s| s.started_at),
+                    "best_dist": round(case.best_dist),
+                    "entries": entries,
+                })
+            })
+            .collect();
+        Ok(CallToolResult::success(vec![
+            ContentBlock::json(serde_json::json!({ "count": cases.len(), "cases": cases }))
+                .map_err(to_internal)?,
+        ]))
+    }
+
+    #[tool(
         name = "get_diagnostic_session",
         description = "Retrieve a full diagnostic session with all its log entries."
     )]
@@ -12664,6 +12784,7 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - close_diagnostic_session — finalize with status and summary.
 - link_diagnostic_to_task — retroactively link a session to an in-house task / service_order.
 - search_diagnostics — find past sessions by hostname, customer, tags, or free text.
+- find_similar_cases — past sessions on any machine whose entries mean the same as a symptom (vector search). Use at intake and before settling on a theory.
 - get_diagnostic_session — retrieve a full session with all entries.
 - create_ai_task — hand off hands-on work to the tech as a checklist (see Hands-On Handoff above).
 - add_ai_task_steps — append steps to an AI task; reopens it and re-notifies the tech.
