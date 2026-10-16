@@ -623,6 +623,7 @@ impl MastertechPlugin for EguiFrameCapture {
                         delta: egui::vec2(delta_x, delta_y),
                         phase: egui::TouchPhase::Move,
                         modifiers: egui::Modifiers::NONE,
+                        source: egui::MouseWheelSource::Unknown,
                     });
                 }
             }
@@ -686,6 +687,7 @@ impl MastertechPlugin for EguiFrameCapture {
                         delta: egui::vec2(delta_x, delta_y),
                         phase: egui::TouchPhase::Move,
                         modifiers: egui::Modifiers::NONE,
+                        source: egui::MouseWheelSource::Unknown,
                     });
                 }
             }

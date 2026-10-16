@@ -160,7 +160,7 @@ impl ResetCodeDialog {
         let t = Tokens::get(ctx);
         let outcome = controls::modal(
             ctx,
-            Id::new("reset_code_dialog"),
+            Id::unique("reset_code_dialog"),
             svg::KEY,
             "Reset a password",
             ModalWidth::Narrow,

@@ -1,7 +1,7 @@
 //! Selectable list and tree rows with a leading icon.
 
 use eframe::egui::{
-    AsIdSalt, Color32, IdSalt, Rect, Response, Sense, TextStyle, Ui, Vec2, WidgetInfo, WidgetType,
+    AsIdSalt, Color32, IdSalt, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo,
     collapsing_header::CollapsingState, pos2, vec2,
 };
 
@@ -227,12 +227,7 @@ impl<'a> ListItem<'a> {
 
         let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
         response.widget_info(|| {
-            WidgetInfo::selected(
-                WidgetType::SelectableLabel,
-                ui.is_enabled(),
-                self.selected,
-                self.label,
-            )
+            WidgetInfo::selected(Role::Button, ui.is_enabled(), self.selected, self.label)
         });
         let top = (rect.center().y - (text_h + bar_h) / 2.0).round();
         let line = Rect::from_min_size(pos2(rect.left(), top), vec2(width, line_h));

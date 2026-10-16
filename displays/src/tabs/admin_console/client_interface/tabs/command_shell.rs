@@ -486,7 +486,7 @@ impl WebSocketClient {
             .inner_margin(Margin::same(6))
         )
         .show(ui, |ui| {
-            let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
+            let id = Id::unique(format!("scroll_area-{:?}", self.client.client_hash));
 
             let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
             if tab_press {

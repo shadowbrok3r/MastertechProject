@@ -202,7 +202,7 @@ impl Composer {
         if super::hovered(ui, rect) {
             mark_active(ui, id);
         }
-        let active = ui.data(|d| d.get_temp::<Id>(Id::new(ACTIVE_KEY))) == Some(id);
+        let active = ui.data(|d| d.get_temp::<Id>(Id::unique(ACTIVE_KEY))) == Some(id);
         if !active {
             return;
         }
@@ -394,7 +394,7 @@ fn take_plain_enter(input: &mut egui::InputState) -> bool {
 
 /// Records `id` as the composer the technician last used.
 fn mark_active(ui: &Ui, id: Id) {
-    ui.data_mut(|d| d.insert_temp(Id::new(ACTIVE_KEY), id));
+    ui.data_mut(|d| d.insert_temp(Id::unique(ACTIVE_KEY), id));
 }
 
 /// One attachment as a thumbnail or a file chip with a remove button; true when removed.
@@ -461,7 +461,7 @@ mod tests {
         busy: bool,
         events: Vec<Event>,
     ) -> Option<ComposerAction> {
-        let id = Id::new("composer_test");
+        let id = Id::unique("composer_test");
         let input = RawInput {
             events,
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(420.0, 300.0))),
@@ -612,7 +612,7 @@ mod tests {
     ) -> (Rect, [f32; 2]) {
         frame(ctx, composer, text, busy, Vec::new());
         let rect = ctx
-            .read_response(Id::new("composer_test").with("text"))
+            .read_response(Id::unique("composer_test").with("text"))
             .expect("the text box was drawn")
             .rect;
         let gap = ctx.global_style().spacing.item_spacing.x;

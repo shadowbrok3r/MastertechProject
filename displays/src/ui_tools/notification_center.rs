@@ -366,7 +366,7 @@ impl NotificationCenter {
         };
         let mut open = true;
         controls::icon_window(ctx, svg::SUN_HORIZON, "Morning brief")
-            .id(Id::new("morning_brief_window"))
+            .id(Id::unique("morning_brief_window"))
             .open(&mut open)
             .default_width(460.0)
             .collapsible(false)

@@ -96,12 +96,12 @@ mtech-tui = { path = "mtech-tui" }
 mtech-update = { path = "mtech-update" }
 database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
-eframe = { version="0.36", features=["serde",  "default_fonts", "glow", "links"], default-features=false }
+eframe = { version="0.37", features=["serde",  "default_fonts", "glow", "links", "clipboard"], default-features=false }
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
 surrealdb = { version = "3.3.4", default-features = false, features = ["protocol-ws", "rustls"] }
 surrealdb-types = { version = "3.3.4" }
-egui_extras = { version = "0.36", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
-egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
+egui_extras = { version = "0.37", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
+egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", branch = "egui-037", features = ["persistency"]}
 egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
 egui_json_tree = { version = "0.17", features = ["serde_json"] }
 egui_dock = { version = "0.21.1", features = ["serde"] }
@@ -189,3 +189,11 @@ codegen-units = 16
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"
 # strip = false  # Disable strip just for this profile
+
+[patch.crates-io]
+egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock", branch = "egui-037" }
+egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", branch = "egui-037" }
+egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-037" }
+egui-snarl = { git = "https://github.com/shadowbrok3r/egui-snarl", branch = "egui-037" }
+egui-scale = { git = "https://github.com/shadowbrok3r/egui-scale", branch = "egui-037" }
+egui_plot = { git = "https://github.com/emilk/egui_plot", rev = "aead78045a529884eac5ad267251caa73bd832aa" }

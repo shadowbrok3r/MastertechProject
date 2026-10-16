@@ -384,7 +384,7 @@ pub fn render_history_windows(
             format!("History — {}", win.serial)
         };
         controls::icon_window(ctx, svg::CLOCK_COUNTER_CLOCKWISE, &title)
-            .id(eframe::egui::Id::new(("inv_hist", win.serial.clone())))
+            .id(eframe::egui::Id::unique(("inv_hist", win.serial.clone())))
             .resizable(true)
             .default_size([760., 360.])
             .open(&mut open)

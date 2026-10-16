@@ -581,7 +581,7 @@ impl GroupHeader {
 }
 
 fn filter_popup_id() -> Id {
-    Id::new("enhanced_ai_session_filter")
+    Id::unique("enhanced_ai_session_filter")
 }
 
 /// Whether the filter popover is open.

@@ -712,7 +712,7 @@ impl MastertechPlugin for WasmPlugin {
         let mut open = true;
         let title = format!("{} Report", self.name);
         controls::icon_window(&ctx, svg::CLIPBOARD_TEXT, &title)
-            .id(eframe::egui::Id::new(format!("plugin_ui_window_{}", self.id)))
+            .id(eframe::egui::Id::unique(format!("plugin_ui_window_{}", self.id)))
             .default_width(680.0)
             .default_height(500.0)
             .open(&mut open)
@@ -836,7 +836,7 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
                     Some("warn") => Some((svg::WARNING, t.warn)),
                     _ => None,
                 };
-                let id = egui::Id::new(format!("plugin_section_{}", header));
+                let id = egui::Id::unique(format!("plugin_section_{}", header));
                 let mut section = controls::Section::new(id, header).default_open(default_open);
                 if let Some((icon, tone)) = mark {
                     section = section.icon(icon).icon_tone(tone);

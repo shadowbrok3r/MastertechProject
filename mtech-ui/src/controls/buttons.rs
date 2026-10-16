@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use eframe::egui::{
-    Color32, FontId, Galley, Rect, Response, Sense, TextStyle, Ui, Vec2, WidgetInfo, WidgetType,
-    pos2, vec2,
+    Color32, FontId, Galley, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo, pos2,
+    vec2,
 };
 
 use super::{
@@ -168,8 +168,7 @@ impl<'a> TextButton<'a> {
         let (t, m) = kit(ui);
         let size = self.measure(&m, text.size().x);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        response
-            .widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), self.label));
+        response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), self.label));
         if !ui.is_rect_visible(rect) {
             return response;
         }
@@ -380,7 +379,7 @@ impl<'a> IconButton<'a> {
             self.tip
         };
         response.widget_info(|| {
-            WidgetInfo::selected(WidgetType::Button, ui.is_enabled(), self.selected, name)
+            WidgetInfo::selected(Role::Button, ui.is_enabled(), self.selected, name)
         });
         if ui.is_rect_visible(rect) {
             let (state, focused) = state_of(ui, &response);

@@ -1,7 +1,7 @@
 //! Pill switch and checkbox, each with a trailing label.
 
 use eframe::egui::{
-    Color32, Rect, Response, Sense, TextStyle, Ui, Vec2, WidgetInfo, WidgetType, lerp, pos2, vec2,
+    Color32, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo, lerp, pos2, vec2,
 };
 
 use super::{State, focus_ring, kit, mix, paint_box, state_of, text_galley, whole};
@@ -31,8 +31,7 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         *on = !*on;
         response.mark_changed();
     }
-    response
-        .widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), *on, label));
+    response.widget_info(|| WidgetInfo::selected(Role::CheckBox, ui.is_enabled(), *on, label));
     if !ui.is_rect_visible(rect) {
         return response;
     }
@@ -83,8 +82,7 @@ pub fn checkbox(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         *on = !*on;
         response.mark_changed();
     }
-    response
-        .widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), *on, label));
+    response.widget_info(|| WidgetInfo::selected(Role::CheckBox, ui.is_enabled(), *on, label));
     if !ui.is_rect_visible(rect) {
         return response;
     }

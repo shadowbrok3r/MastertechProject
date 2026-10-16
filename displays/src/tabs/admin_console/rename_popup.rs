@@ -71,7 +71,7 @@ impl RenameClientPopup {
 
         let mut open = true;
         controls::icon_window(ctx, icons::svg::PENCIL_SIMPLE, "Rename client")
-            .id(egui::Id::new((
+            .id(egui::Id::unique((
                 "admin_rename_client",
                 self.client.connection_string.as_str(),
             )))

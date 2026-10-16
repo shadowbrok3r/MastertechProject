@@ -230,7 +230,7 @@ impl Displayable for LiveTaskPayload {
                     .as_ref()
                     .filter(|(edited_at, _)| last_read.map(|lr| *edited_at > lr).unwrap_or(true));
                 let mut section = Section::new("task_description", "Task Description")
-                    .id(ui.make_persistent_id(Id::new(task_descrip_header)))
+                    .id(ui.make_persistent_id(Id::unique(task_descrip_header)))
                     .icon(svg::NOTE_PENCIL)
                     .default_open(false);
                 if unseen_edit.is_some() {

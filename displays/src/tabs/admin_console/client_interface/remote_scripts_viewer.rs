@@ -210,7 +210,7 @@ impl RemoteScriptsViewer {
             return;
         }
 
-        let panel_id = ui.id().with("scripts_top_bar");
+        let panel_id = ui.scope_id().with("scripts_top_bar");
         eframe::egui::Panel::top(panel_id).show(ui, |ui| {
             controls::bar(ui, BarKind::Tool, |ui| {
                 TextField::new(&mut self.service_number)
@@ -275,7 +275,7 @@ impl RemoteScriptsViewer {
         });
 
         if self.reboot_recommended && !self.running {
-            let banner_id = ui.id().with("scripts_reboot_banner");
+            let banner_id = ui.scope_id().with("scripts_reboot_banner");
             eframe::egui::Panel::top(banner_id).show(ui, |ui| {
                 controls::bar(ui, BarKind::Status, |ui| {
                     controls::note(
@@ -306,7 +306,7 @@ impl RemoteScriptsViewer {
             });
         }
 
-        let side_id = ui.id().with("scripts_side_panel");
+        let side_id = ui.scope_id().with("scripts_side_panel");
         eframe::egui::Panel::left(side_id)
             .resizable(false)
             .default_size(160.0_f32)
@@ -335,7 +335,7 @@ impl RemoteScriptsViewer {
                 }
             });
 
-        let log_panel_id = ui.id().with("scripts_log_panel");
+        let log_panel_id = ui.scope_id().with("scripts_log_panel");
         eframe::egui::Panel::bottom(log_panel_id)
             .resizable(true)
             .default_size(200.0_f32)

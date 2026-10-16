@@ -645,7 +645,7 @@ impl UserAdmin {
                 let title = format!("Turn off {}?", draft.name);
                 controls::modal(
                     ctx,
-                    egui::Id::new("user_admin_confirm_deactivate"),
+                    egui::Id::unique("user_admin_confirm_deactivate"),
                     svg::PROHIBIT,
                     &title,
                     ModalWidth::Narrow,
@@ -682,7 +682,7 @@ impl UserAdmin {
                 let title = format!("Give {} Root access?", draft.name);
                 controls::modal(
                     ctx,
-                    egui::Id::new("user_admin_confirm_root"),
+                    egui::Id::unique("user_admin_confirm_root"),
                     svg::CROWN_SIMPLE,
                     &title,
                     ModalWidth::Narrow,

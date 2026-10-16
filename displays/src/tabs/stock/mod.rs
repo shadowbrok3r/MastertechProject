@@ -1401,7 +1401,7 @@ impl StockTable {
     /// "did nothing" — the response never reported `lost_focus` and our
     /// submit branch never fired.
     fn audit_scan_input(&mut self, ui: &mut Ui) {
-        let id = Id::new("inventory_scan_input");
+        let id = Id::unique("inventory_scan_input");
         let response = TextField::new(&mut self.scan_input)
             .id_salt("inventory_scan_input")
             .hint("Scan serial → Enter")
@@ -2762,7 +2762,7 @@ impl StockTable {
         }
         let outcome = controls::modal(
             ui.ctx(),
-            Id::new("customer_change_modal"),
+            Id::unique("customer_change_modal"),
             svg::USER_SWITCH,
             "Change Customer",
             ModalWidth::Regular,

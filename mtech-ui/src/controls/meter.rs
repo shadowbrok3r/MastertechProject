@@ -3,8 +3,8 @@
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    Color32, CursorIcon, Key, Rect, Response, Sense, Stroke, StrokeKind, TextStyle, Ui, Vec2,
-    WidgetInfo, WidgetType, emath::Numeric, lerp, pos2, remap_clamp, vec2,
+    Color32, CursorIcon, Key, Rect, Response, Role, Sense, Stroke, StrokeKind, TextStyle, Ui, Vec2,
+    WidgetInfo, emath::Numeric, lerp, pos2, remap_clamp, vec2,
 };
 
 use super::ink_on;
@@ -116,7 +116,7 @@ impl<'a> ProgressBar<'a> {
         let text = self.text.or(percent.as_deref());
         response.widget_info(|| {
             WidgetInfo::labeled(
-                WidgetType::ProgressIndicator,
+                Role::ProgressIndicator,
                 ui.is_enabled(),
                 text.unwrap_or("Progress"),
             )
@@ -286,9 +286,8 @@ impl<'a, N: Numeric> Slider<'a, N> {
             response.mark_changed();
         }
         let value = self.value.to_f64();
-        response.widget_info(|| {
-            WidgetInfo::labeled(WidgetType::Slider, ui.is_enabled(), format!("{value}"))
-        });
+        response
+            .widget_info(|| WidgetInfo::labeled(Role::Slider, ui.is_enabled(), format!("{value}")));
         let response = response.on_hover_cursor(CursorIcon::PointingHand);
 
         if ui.is_rect_visible(rect) {
@@ -418,7 +417,7 @@ pub fn segmented<V: PartialEq + Clone>(
         let hit = ui.interact(cell, response.id.with(i), Sense::click());
         let on = selected == Some(i);
         hit.widget_info(|| {
-            WidgetInfo::selected(WidgetType::RadioButton, ui.is_enabled(), on, segment.label)
+            WidgetInfo::selected(Role::RadioButton, ui.is_enabled(), on, segment.label)
         });
         if hit.clicked() {
             picked = Some(i);

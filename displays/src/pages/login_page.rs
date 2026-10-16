@@ -335,7 +335,7 @@ fn login_form(
         .text_color(t.text)
         .desired_width(inner.width())
         .min_size(inner.size())
-        .vertical_align(Align::Center)
+        .align(Align2::LEFT_CENTER)
         .lock_focus(completes)
         .show(&mut field);
     if output.response.changed() {

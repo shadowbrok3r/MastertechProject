@@ -471,7 +471,7 @@ fn one_tab_press_focuses_the_text_inside_a_field() {
     };
     run_with(&ctx, vec![tab], &mut draw);
     run_with(&ctx, Vec::new(), &mut draw);
-    let focused = ctx.memory(|m| m.has_focus(eframe::egui::Id::new("tab.field")));
+    let focused = ctx.memory(|m| m.has_focus(eframe::egui::Id::unique("tab.field")));
     assert!(focused, "the first Tab lands on the text, not the box");
 }
 
@@ -502,7 +502,7 @@ fn disabled_menu_rows_and_dialog_buttons_ignore_clicks() {
 #[test]
 fn a_section_reports_its_header_and_takes_an_exact_id() {
     let ctx = context(Density::Regular);
-    let id = eframe::egui::Id::new("exact.section");
+    let id = eframe::egui::Id::unique("exact.section");
     let mut header = Rect::NOTHING;
     let mut clicked = false;
     let draw = |ui: &mut Ui, header: &mut Rect, clicked: &mut bool| {

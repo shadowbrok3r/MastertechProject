@@ -129,7 +129,7 @@ impl WebSocketClient {
         // menus so the operator can see what they're looking at without
         // having to remember which tab they last clicked.
         let bar_h = Metrics::get(ui.ctx()).bar_h;
-        eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}{}", self.id_prefix(), self.client.client_hash)))
+        eframe::egui::Panel::top(Id::unique(format!("ClientTopPanel-{}{}", self.id_prefix(), self.client.client_hash)))
         .exact_size(bar_h)
         .frame(Frame::side_top_panel(ui.style()).inner_margin(Margin::ZERO))
         .show_separator_line(false)

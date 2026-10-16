@@ -83,7 +83,7 @@ impl TabViewer for MastertechContext {
     type Tab = TabId;
 
     fn id(&mut self, tab: &mut Self::Tab) -> eframe::egui::Id {
-        eframe::egui::Id::new(*tab)
+        eframe::egui::Id::unique(*tab)
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {

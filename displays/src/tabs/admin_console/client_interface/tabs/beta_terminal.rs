@@ -75,7 +75,7 @@ impl BetaTerminal {
             completions: Vec::new(),
             completion_idx: None,
             apply_first_on_arrival: false,
-            focus_id: Id::new(("beta_terminal_focus", nonce)),
+            focus_id: Id::unique(("beta_terminal_focus", nonce)),
             want_focus: false,
         }
     }

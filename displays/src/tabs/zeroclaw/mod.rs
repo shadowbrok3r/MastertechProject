@@ -44,7 +44,7 @@ struct Seen {
 }
 
 fn seen_id() -> Id {
-    Id::new("zeroclaw_seen")
+    Id::unique("zeroclaw_seen")
 }
 
 /// A ZeroClaw item picked from the session list.
@@ -618,7 +618,7 @@ impl ZeroClawView {
             return;
         }
         let style = ChatStyle::from_ui(ui);
-        let scope = Id::new(("zeroclaw_transcript", row.id.as_str()));
+        let scope = Id::unique(("zeroclaw_transcript", row.id.as_str()));
         let agent = row.agent.clone();
         let to_end = self.scroll_to_end > 0;
         ScrollArea::vertical()
@@ -683,7 +683,7 @@ impl ZeroClawView {
             return;
         }
         let style = ChatStyle::from_ui(ui);
-        let scope = Id::new(("zeroclaw_runs", job.id.as_str()));
+        let scope = Id::unique(("zeroclaw_runs", job.id.as_str()));
         ScrollArea::vertical().id_salt(("zeroclaw_runs_scroll", job.id.as_str())).auto_shrink([false, false]).show(ui, |ui| {
             for (i, run) in self.runs.iter().enumerate() {
                 run_row(ui, &style, scope, i, run);

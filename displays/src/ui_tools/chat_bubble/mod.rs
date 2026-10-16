@@ -365,7 +365,7 @@ impl<'a> ChatRow<'a> {
         let mut toggled = false;
         let mut copied = false;
         ui.scope_builder(
-            UiBuilder::new().id(id).layout(Layout::top_down(Align::Min)),
+            UiBuilder::new().scope_id(id).layout(Layout::top_down(Align::Min)),
             |ui| {
                 ui.set_max_width(width);
                 if self.nested {

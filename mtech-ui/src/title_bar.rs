@@ -2,8 +2,8 @@
 
 use eframe::egui::{
     Align, AsIdSalt, Color32, Context, CursorIcon, Frame, Id, LayerId, Layout, Order, Panel,
-    PointerButton, Rect, ResizeDirection, Sense, Stroke, StrokeKind, TextWrapMode, Ui, UiBuilder,
-    Vec2, ViewportCommand, WidgetInfo, WidgetType, pos2, vec2,
+    PointerButton, Rect, ResizeDirection, Role, Sense, Stroke, StrokeKind, TextWrapMode, Ui,
+    UiBuilder, Vec2, ViewportCommand, WidgetInfo, pos2, vec2,
 };
 
 use crate::controls::{
@@ -45,7 +45,7 @@ impl Caption {
 
     /// Stable widget id.
     pub fn id(self) -> Id {
-        Id::new(("mtech.title_bar.caption", self as u8))
+        Id::unique(("mtech.title_bar.caption", self as u8))
     }
 
     fn icon(self, maximized: bool) -> Icon {
@@ -99,7 +99,7 @@ pub struct TitleBar<'a> {
 impl<'a> TitleBar<'a> {
     pub fn new(id_salt: impl AsIdSalt, title: &'a str) -> Self {
         Self {
-            id: Id::new(id_salt),
+            id: Id::unique(id_salt),
             title,
             mark: None,
             frameless: false,
@@ -277,7 +277,7 @@ fn caption_buttons(ui: &Ui, full: Rect, t: &Tokens) {
         );
         let response = ui.interact(rect, caption.id(), Sense::click());
         let tip = caption.tip(maximized);
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, tip));
+        response.widget_info(|| WidgetInfo::labeled(Role::Button, true, tip));
         let (state, _) = state_of(ui, &response);
         let close = caption == Caption::Close;
         let (fill, ink) = match state {
@@ -357,11 +357,11 @@ pub fn window_edges(ui: &mut Ui) {
         return;
     }
     let window = ctx.content_rect();
-    let layer = LayerId::new(Order::Foreground, Id::new("mtech.title_bar.edges"));
+    let layer = LayerId::new(Order::Foreground, Id::unique("mtech.title_bar.edges"));
     let edges = ui.new_child(UiBuilder::new().layer_id(layer).max_rect(window));
     for (i, (rect, direction, cursor)) in zones(window).into_iter().enumerate() {
         let response = edges
-            .interact(rect, Id::new(("mtech.title_bar.resize", i)), Sense::drag())
+            .interact(rect, Id::unique(("mtech.title_bar.resize", i)), Sense::drag())
             .on_hover_cursor(cursor);
         if response.drag_started_by(PointerButton::Primary) {
             ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));

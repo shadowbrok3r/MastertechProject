@@ -332,7 +332,7 @@ mod tests {
     /// Runs one frame drawing the card over `over`; returns the covered height and the card's rect.
     fn frame(ctx: &Context, plan: &Plan, over: Rect) -> (f32, Option<Rect>) {
         let mut covered = 0.0;
-        let scope = Id::new("plan_test");
+        let scope = Id::unique("plan_test");
         let mut out = ctx.run_ui(
             RawInput {
                 screen_rect: Some(over.expand(40.0)),
@@ -388,7 +388,7 @@ mod tests {
     fn a_dismissed_plan_covers_nothing_until_it_changes() {
         let ctx = Context::default();
         let over = Rect::from_min_size(pos2(0.0, 0.0), vec2(500.0, 400.0));
-        let scope = Id::new("plan_test");
+        let scope = Id::unique("plan_test");
         ctx.data_mut(|d| d.insert_temp(scope.with(("plan_dismissed", "p1")), true));
         let (covered, _) = frame(&ctx, &plan(3, 1), over);
         assert_eq!(covered, 0.0);

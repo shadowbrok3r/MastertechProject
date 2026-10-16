@@ -16,7 +16,7 @@ use displays::ui_tools::{
     icons::svg::{self, Icon},
 };
 use displays::{ToastMessage, get_toast_sender};
-use eframe::egui::{Align2, Area, Context, Frame, Order, RichText, Sense, Ui, Vec2};
+use eframe::egui::{Align2, Area, Context, Frame, Id, Order, RichText, Sense, Ui, Vec2};
 use log::{info, warn};
 use tokio::spawn;
 
@@ -164,7 +164,7 @@ impl MastertechContext {
 
         let mut confirm = false;
         let mut dismiss = false;
-        Area::new("assist_confirm_prompt".into())
+        Area::new(Id::unique("assist_confirm_prompt"))
             .anchor(Align2::RIGHT_BOTTOM, [-20.0, -80.0])
             .order(Order::Foreground)
             .interactable(true)

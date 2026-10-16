@@ -6,7 +6,7 @@ use std::sync::Arc;
 use eframe::egui::{
     Align, Color32, Context, FontFamily, FontId, Frame, Galley, Id, Layout, Margin, Modal, Popup,
     PopupCloseBehavior, Rect, Response, Sense, Stroke, TextStyle, TextWrapMode, Ui, UiBuilder,
-    UiKind, UiStackInfo, Vec2, WidgetInfo, WidgetText, WidgetType, Window,
+    UiKind, UiStackInfo, Vec2, WidgetInfo, WidgetText, Window,
     containers::menu::{self, MenuConfig},
     pos2,
     text::{LayoutJob, TextFormat},
@@ -547,8 +547,10 @@ fn menu_row(ui: &mut Ui, icon: Option<Icon>, label: &str, trail: Trail, ink: Ink
     let size = vec2(fill_width(ui).max(min_w), m.row_h);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     response.widget_info(|| match trail {
-        Trail::Check(on) => WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), on, label),
-        _ => WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), label),
+        Trail::Check(on) => {
+            WidgetInfo::selected(eframe::egui::Role::CheckBox, ui.is_enabled(), on, label)
+        }
+        _ => WidgetInfo::labeled(eframe::egui::Role::Button, ui.is_enabled(), label),
     });
     if ui.is_rect_visible(rect) {
         let (state, focused) = state_of(ui, &response);
@@ -736,7 +738,8 @@ impl<'a> MenuButton<'a> {
         } else {
             self.label
         };
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), name));
+        response
+            .widget_info(|| WidgetInfo::labeled(eframe::egui::Role::Button, ui.is_enabled(), name));
         let inner = popup_menu(&response, self.keep_open, add);
         let open = Popup::is_id_open(ui.ctx(), menu_popup_id(response.id));
         if ui.is_rect_visible(rect) {
@@ -816,7 +819,7 @@ pub fn tab_title(icon: Icon, title: &str) -> WidgetText {
 
 /// The id `Window::new(title)` derives from a plain-text title.
 pub fn window_id(title: &str) -> Id {
-    Id::new(Some(Cow::Borrowed(title)))
+    Id::unique(Some(Cow::Borrowed(title)))
 }
 
 /// A window titled with a primary SVG icon and `title`; its id matches `Window::new(title)`.

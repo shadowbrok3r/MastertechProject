@@ -1,6 +1,6 @@
 //! Plot builders shared across tabs.
 
-use eframe::egui::AsId;
+use eframe::egui::AsIdSalt;
 use egui_plot::Plot;
 
 /// A plot with every bounds-mutating interaction disabled.
@@ -9,7 +9,7 @@ use egui_plot::Plot;
 /// drag-zoom, boxed zoom, ctrl+wheel zoom and wheel scroll — so each needs its
 /// own flag. With all five off the plot keeps `auto_bounds`, and the wheel
 /// delta reaches the enclosing `ScrollArea` instead of panning the chart.
-pub fn pinned<'a>(id: impl AsId) -> Plot<'a> {
+pub fn pinned<'a>(id: impl AsIdSalt) -> Plot<'a> {
     Plot::new(id)
         .allow_drag(false)
         .allow_zoom(false)
@@ -19,7 +19,7 @@ pub fn pinned<'a>(id: impl AsId) -> Plot<'a> {
 }
 
 /// [`pinned`] when `interactive` is false, otherwise a plot the operator can pan and zoom.
-pub fn maybe_pinned<'a>(id: impl AsId, interactive: bool) -> Plot<'a> {
+pub fn maybe_pinned<'a>(id: impl AsIdSalt, interactive: bool) -> Plot<'a> {
     if interactive {
         Plot::new(id)
     } else {

@@ -26,7 +26,7 @@ const HEAL_SHORTCUT: KeyboardShortcut =
 /// Call once per pass, from `App::ui`. Logs atlas growth, imminent-rebuild warnings, rebuild
 /// events, and pixels-per-point changes; Ctrl+Shift+F reinstalls fonts.
 pub fn watch(ctx: &Context) {
-    let id = Id::new("font_atlas_watch");
+    let id = Id::unique("font_atlas_watch");
     let ratio = ctx.fonts(|f| f.font_atlas_fill_ratio());
     let size = ctx.fonts(|f| f.font_image_size());
     let ppp = ctx.pixels_per_point();

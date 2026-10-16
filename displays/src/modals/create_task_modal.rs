@@ -8,7 +8,7 @@ use crate::ui_tools::{
     icons::svg,
     theme,
 };
-use eframe::egui::{Align, Frame, Layout, Margin, Stroke, Ui, Vec2, Widget, vec2};
+use eframe::egui::{Align, Align2, Frame, Layout, Margin, Stroke, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
 use database::schema::{fetch_prestashop_order, OrderLookup};
 use database::schema::task_creation::{
@@ -351,7 +351,7 @@ impl CreateTaskModal {
                                                 0,
                                             )))
                                             .min_size(vec2(0.0, m.control_h - 2.0))
-                                            .vertical_align(Align::Center)
+                                            .align(Align2::LEFT_CENTER)
                                     })
                                     .ui(ui)
                             })

@@ -172,7 +172,7 @@ fn apply_preset_semantics(ctx: &Context, preset: PresetStyles) {
 }
 
 fn installed_preset_id() -> Id {
-    Id::new("mtech.theme.installed_preset")
+    Id::unique("mtech.theme.installed_preset")
 }
 
 /// The preset the installed style was applied as; Custom when none was recorded.

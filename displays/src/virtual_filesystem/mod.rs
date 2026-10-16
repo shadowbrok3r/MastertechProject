@@ -402,7 +402,7 @@ impl FileSystem {
         let (run_on_remote_tx, run_on_remote_rx) = crossbeam::channel::unbounded();
 
         Self {
-            scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
+            scroll_id: Id::unique(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
             bytes_tx, bytes_rx,
             fs_actions_channel,
             file_preview_channel,
@@ -592,14 +592,14 @@ impl FileSystem {
 
         if let Some(file) = self.previewed_file.as_mut() {
             if size.x > 1000. {
-                eframe::egui::Panel::right(Id::new("FileBrowserSidePanel"))
+                eframe::egui::Panel::right(Id::unique("FileBrowserSidePanel"))
                     .default_size(ui.available_width()/2.0)
                     .show(ui, |ui|
                 {
                     self.file_editor.show(ui, file);
                 });
             } else {
-                eframe::egui::Panel::bottom(Id::new("FileBrowserBottomPanel"))
+                eframe::egui::Panel::bottom(Id::unique("FileBrowserBottomPanel"))
                     .default_size(ui.available_height()/2.0)
                     .show(ui, |ui|
                 {

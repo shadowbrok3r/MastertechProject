@@ -171,7 +171,7 @@ impl Tokens {
 }
 
 fn tokens_id() -> Id {
-    Id::new("mtech.tokens")
+    Id::unique("mtech.tokens")
 }
 
 /// `top` (premultiplied) painted over `under`, as an opaque colour.

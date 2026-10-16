@@ -46,7 +46,7 @@ pub fn show(
     let corner = Pos2::new(host.right() - w - MARGIN, host.bottom() - h - MARGIN);
 
     let mut clicked = None;
-    eframe::egui::Area::new(Id::new("session-board-minimap"))
+    eframe::egui::Area::new(Id::unique("session-board-minimap"))
         .order(eframe::egui::Order::Foreground)
         .fixed_pos(corner)
         .constrain_to(host)

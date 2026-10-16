@@ -245,7 +245,7 @@ impl CommandBar {
         let email = user.get_email().to_string();
         let store = Some(user.get_store().as_str().to_string());
 
-        let id = Id::new("command_bar");
+        let id = Id::unique("command_bar");
         let style = ctx.global_style();
         let (t, m) = (Tokens::get(ctx), Metrics::get(ctx));
         let frame = Frame::popup(&style)
