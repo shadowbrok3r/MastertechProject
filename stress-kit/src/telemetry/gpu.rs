@@ -290,7 +290,7 @@ impl GpuSampler {
         #[cfg(target_os = "windows")]
         let mut out = {
             let mut wddm = self.wddm.sample();
-            super::gpu_adlx::enrich(&mut wddm);
+            super::gpu_adlx::enrich(&mut wddm, |luid| self.wddm.is_integrated(luid));
             with_wddm(nvml, wddm.into_iter().map(|(_, gpu)| gpu).collect())
         };
         #[cfg(not(target_os = "windows"))]

@@ -60,6 +60,7 @@ Equivalent by hand, from the workspace root:
 ```powershell
 $env:SKIA_NINJA_COMMAND = "C:\path\to\ninja.exe"
 $env:CARGO_TARGET_DIR = "C:\ct"
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
 cargo build -p MasterTech --profile release-fast --features skia-render
 ```
 
@@ -73,6 +74,10 @@ NOT set a real environment variable — it aliases to `Set-Variable`.)
 - **ninja** — not bundled with Rust/MSVC. Download `ninja-win.zip` from
   https://github.com/ninja-build/ninja/releases and extract `ninja.exe` anywhere.
 - LLVM/clang-cl at `C:\Program Files\LLVM` (already required by this project).
+  `skia-bindings` runs bindgen against LLVM's own clang headers, so `LIBCLANG_PATH`
+  must point at `C:\Program Files\LLVM\bin`. An older libclang, such as the ESP32
+  toolchain's `esp-clang`, fails with `use of undeclared identifier
+  '__builtin_ia32_...'` in `avx10_2*intrin.h`. The script sets it for its build.
 - `CARGO_TARGET_DIR` must point somewhere short. Building inside this repo's own
   deeply-nested `target\` directory hits Windows' 260-character path limit while
   ninja compiles Skia's source tree and fails with

@@ -15,11 +15,18 @@ use windows::Wdk::Graphics::Direct3D::{
     KMTQUERYADAPTERINFOTYPE,
 };
 use windows::Win32::Foundation::{LUID, NTSTATUS};
+use windows::Win32::Graphics::DXCore::{
+    DXCORE_ADAPTER_ATTRIBUTE_D3D11_GRAPHICS, IDXCoreAdapter, IDXCoreAdapterFactory,
+    IDXCoreAdapterList, InstanceLuid, IsIntegrated,
+};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
     IDXGIAdapter1, IDXGIDevice, IDXGIFactory1, IDXGIFactory6,
 };
-use windows::core::Interface;
+use windows::Win32::System::LibraryLoader::{
+    GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+};
+use windows::core::{GUID, HRESULT, Interface, s, w};
 
 use super::gpu::{GpuSample, GpuSource};
 
@@ -337,14 +344,62 @@ fn enumerate(vendor_of: fn(u32) -> Option<&'static str>) -> Vec<Adapter> {
         .collect()
 }
 
+type CreateAdapterFactoryFn =
+    unsafe extern "system" fn(riid: *const GUID, factory: *mut *mut c_void) -> HRESULT;
+
+/// DXCore's integrated flag per adapter LUID; `None` where dxcore.dll is absent.
+fn integrated_by_luid() -> Option<HashMap<LuidKey, bool>> {
+    let library =
+        unsafe { LoadLibraryExW(w!("dxcore.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32) }.ok()?;
+    let proc = unsafe { GetProcAddress(library, s!("DXCoreCreateAdapterFactory")) }?;
+    // SAFETY: DXCoreCreateAdapterFactory has this signature in dxcore.h.
+    let create: CreateAdapterFactoryFn = unsafe { std::mem::transmute(proc) };
+    let mut raw = std::ptr::null_mut();
+    unsafe { create(&IDXCoreAdapterFactory::IID, &mut raw) }
+        .ok()
+        .ok()?;
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: a successful call hands back an acquired IDXCoreAdapterFactory.
+    let factory = unsafe { IDXCoreAdapterFactory::from_raw(raw) };
+    let list: IDXCoreAdapterList =
+        unsafe { factory.CreateAdapterList(&[DXCORE_ADAPTER_ATTRIBUTE_D3D11_GRAPHICS]) }.ok()?;
+    let mut out = HashMap::new();
+    for index in 0..unsafe { list.GetAdapterCount() } {
+        let Ok(adapter) = (unsafe { list.GetAdapter::<IDXCoreAdapter>(index) }) else {
+            continue;
+        };
+        let mut luid = LUID::default();
+        let mut integrated = 0u8;
+        let answered =
+            unsafe { adapter.GetProperty(InstanceLuid, size_of::<LUID>(), (&raw mut luid).cast()) }
+                .is_ok()
+                && unsafe {
+                    adapter.GetProperty(IsIntegrated, size_of::<u8>(), (&raw mut integrated).cast())
+                }
+                .is_ok();
+        if answered {
+            out.insert((luid.LowPart, luid.HighPart), integrated != 0);
+        }
+    }
+    Some(out)
+}
+
 /// WDDM GPU reader that keeps engine running times between ticks for usage.
 #[derive(Default)]
 pub(crate) struct WddmGpuMonitor {
     adapters: Vec<Adapter>,
     enumerated_at: Option<Instant>,
+    integrated: Option<HashMap<LuidKey, bool>>,
 }
 
 impl WddmGpuMonitor {
+    /// Whether DXCore reports the adapter as integrated; `None` when it did not say.
+    pub(crate) fn is_integrated(&self, luid: LuidKey) -> Option<bool> {
+        self.integrated.as_ref()?.get(&luid).copied()
+    }
+
     pub(crate) fn sample(&mut self) -> Vec<(LuidKey, GpuSample)> {
         let now = Instant::now();
         if self
@@ -372,6 +427,7 @@ impl WddmGpuMonitor {
                 adapter.running = running;
             }
         }
+        self.integrated = integrated_by_luid();
         self.enumerated_at = Some(now);
     }
 }
@@ -433,6 +489,21 @@ mod tests {
             assert_eq!(second.name, first.name);
             assert!(second.memory_used_mb.is_none_or(|used| used < 1 << 20));
             assert!(second.usage_pct.is_none_or(|u| (0.0..=100.0).contains(&u)));
+        }
+    }
+
+    #[test]
+    fn dxcore_flags_every_wddm_adapter() {
+        let Some(flags) = integrated_by_luid() else {
+            return;
+        };
+        println!("{flags:?}");
+        for adapter in enumerate(|_| Some("any")) {
+            assert!(
+                flags.contains_key(&adapter.key()),
+                "{} has no DXCore entry",
+                adapter.name
+            );
         }
     }
 
