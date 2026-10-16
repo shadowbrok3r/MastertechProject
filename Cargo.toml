@@ -96,7 +96,7 @@ mtech-tui = { path = "mtech-tui" }
 mtech-update = { path = "mtech-update" }
 database = { path = "database" }
 tcp_protocol = { path = "tcp_protocol" }
-eframe = { version="0.37", features=["serde",  "default_fonts", "glow", "links"], default-features=false }
+eframe = { version="0.37", features=["serde",  "default_fonts", "glow", "links", "clipboard"], default-features=false }
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde", "layout-cache" ]}
 surrealdb = { version = "3.3.4", default-features = false, features = ["protocol-ws", "rustls"] }
 surrealdb-types = { version = "3.3.4" }

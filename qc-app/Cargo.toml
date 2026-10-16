@@ -14,7 +14,7 @@ resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit", "dep:raw-window-handle"]
 
 [dependencies]
-eframe = { version = "0.37", features = ["persistence", "serde", "default_fonts", "glow", "links"], default-features = false }
+eframe = { version = "0.37", features = ["persistence", "serde", "default_fonts", "glow", "links", "clipboard"], default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 egui-phosphor.workspace = true
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
@@ -69,7 +69,7 @@ wmi = "=0.18.4"
 [dependencies.egui]
 version = "0.37"
 default-features = false
-features = ["rayon", "bytemuck"]
+features = ["rayon", "bytemuck", "monochrome_emoji_fonts"]
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "3"
