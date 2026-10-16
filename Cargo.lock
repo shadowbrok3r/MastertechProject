@@ -3549,10 +3549,11 @@ dependencies = [
 [[package]]
 name = "egui_skia"
 version = "0.5.0"
-source = "git+https://github.com/shadowbrok3r/egui_skia?branch=egui-037#47461614b2ea3a851bd50c7b4bb90813eaf53e11"
+source = "git+https://github.com/shadowbrok3r/egui_skia?branch=egui-037#fb2edf0ea91561de07b3b79603e60f5c9b460f90"
 dependencies = [
  "egui",
  "egui-winit",
+ "log",
  "raw-window-handle",
  "skia-safe",
 ]
