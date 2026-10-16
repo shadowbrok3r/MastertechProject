@@ -9958,7 +9958,7 @@ lists the valid ones."
 
     #[tool(
         name = "query_surrealdb",
-        description = "Read-only SurrealQL against the Mastertech database: exactly one SELECT, INFO or RETURN statement, with no write, DDL, LET, http::, fn::, api::, file::, sequence:: or file literal anywhere in it, no backslash inside a quoted identifier, and no `/` (division or regex literal). SurrealDB 3.x rejects five patterns that are legal elsewhere: ORDER BY must name a projected field or alias; SPLIT and GROUP BY are mutually exclusive; aggregates do not nest; NONE poisons arithmetic and casts (guard with ?? or WHERE x != NONE); queries are cut off at 45s, so LIMIT or aggregate server-side. A failed query returns the database error plus a hint naming which rule it hit."
+        description = "Read-only SurrealQL against the Mastertech database: exactly one SELECT, INFO or RETURN statement, with no write, DDL, LET, http::, fn::, api::, file::, sequence:: or file literal anywhere in it, no backslash inside a quoted identifier, and no `/` (division or regex literal). SurrealDB 3.x rejects four patterns that are legal elsewhere: SPLIT and GROUP BY are mutually exclusive; aggregates do not nest; NONE poisons arithmetic and casts (guard with ?? or WHERE x != NONE); queries are cut off at 45s, so LIMIT or aggregate server-side. A failed query returns the database error plus a hint naming which rule it hit. One trap returns no error: math::max and math::min over datetimes in a GROUP BY return null, so use time::max and time::min."
     )]
     async fn query_surrealdb(
         &self,
@@ -13058,12 +13058,7 @@ async fn empty_result_hint(query: &str, result: &[serde_json::Value]) -> Option<
 }
 
 fn surrealql_error(raw: String) -> ErrorData {
-    let hint = if raw.contains("Missing order idiom") {
-        Some(
-            "ORDER BY may only name a field the projection returns. Add that field \
-             (or its alias) to the SELECT list, or select `*`.",
-        )
-    } else if raw.contains("SPLIT and GROUP are mutually exclusive") {
+    let hint = if raw.contains("SPLIT and GROUP are mutually exclusive") {
         Some(
             "SPLIT cannot be combined with GROUP BY. Flatten the array in a subquery, \
              then GROUP BY over the subquery's result.",
