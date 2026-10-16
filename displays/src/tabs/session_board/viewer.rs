@@ -326,7 +326,7 @@ impl BoardViewer<'_> {
         // A Ui on the snarl layer, so egui applies the graph transform to the callback rect.
         let ui = Ui::new(
             painter.ctx().clone(),
-            eframe::egui::Id::new("session-board-frost"),
+            eframe::egui::Id::unique("session-board-frost"),
             eframe::egui::UiBuilder::new()
                 .layer_id(painter.layer_id())
                 .max_rect(*viewport),

@@ -60,7 +60,7 @@ impl AiAttentionModal {
         let buttons = [(Role::Primary, view_label), (Role::Cancel, "Later")];
         let shown = controls::modal(
             ctx,
-            Id::new(("ai_attention_modal", task.id.key_string())),
+            Id::unique(("ai_attention_modal", task.id.key_string())),
             svg::ROBOT,
             title,
             ModalWidth::Narrow,

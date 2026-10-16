@@ -3,10 +3,10 @@
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    Align, AsIdSalt, Atom, Color32, CornerRadius, DragValue, EventFilter, Frame, Id, IdSalt, Key,
-    Layout, Margin, Popup, PopupCloseBehavior, Rect, Response, ScrollArea, Sense, Shape, Stroke,
-    StrokeKind, TextBuffer, TextEdit, TextStyle, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
-    emath::Numeric, epaint::RectShape, pos2, text_edit::TextEditOutput, vec2,
+    Align, Align2, AsIdSalt, Atom, Color32, CornerRadius, DragValue, EventFilter, Frame, Id,
+    IdSalt, Key, Layout, Margin, Popup, PopupCloseBehavior, Rect, Response, Role, ScrollArea,
+    Sense, Shape, Stroke, StrokeKind, TextBuffer, TextEdit, TextStyle, Ui, UiBuilder, Vec2,
+    WidgetInfo, emath::Numeric, epaint::RectShape, pos2, text_edit::TextEditOutput, vec2,
 };
 
 use super::{
@@ -168,7 +168,7 @@ impl<'a> TextField<'a> {
 
     /// Stable id for the text and its focus.
     pub fn id_salt(mut self, salt: impl AsIdSalt) -> Self {
-        self.id = Some(Id::new(salt));
+        self.id = Some(Id::unique(salt));
         self
     }
 
@@ -249,7 +249,7 @@ impl<'a> TextField<'a> {
             .cursor_at_end(self.cursor_at_end)
             .desired_width(inner.width())
             .min_size(inner.size())
-            .vertical_align(Align::Center);
+            .align(Align2::LEFT_CENTER);
         if let Some(limit) = self.char_limit {
             edit = edit.char_limit(limit);
         }
@@ -356,7 +356,7 @@ impl<'a> TextArea<'a> {
 
     /// Stable id for the text and its focus.
     pub fn id_salt(mut self, salt: impl AsIdSalt) -> Self {
-        self.id = Some(Id::new(salt));
+        self.id = Some(Id::unique(salt));
         self
     }
 
@@ -669,7 +669,7 @@ impl<'a, V: PartialEq + Clone> Dropdown<'a, V> {
         let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
         let current = options.iter().position(|(v, _)| v == value);
         let label = current.map_or(placeholder, |i| options[i].1);
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, ui.is_enabled(), label));
+        response.widget_info(|| WidgetInfo::labeled(Role::ComboBox, ui.is_enabled(), label));
 
         let popup_id = id.with("list");
         if response.has_focus() {
@@ -785,9 +785,7 @@ fn option_row(ui: &mut Ui, text: &str, selected: bool) -> Response {
     let min_w = galley.size().x + 2.0 * FIELD_PAD_X + m.icon_sm + ICON_GAP;
     let size = vec2(fill_width(ui).max(min_w), m.row_h);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::SelectableLabel, ui.is_enabled(), selected, text)
-    });
+    response.widget_info(|| WidgetInfo::selected(Role::Button, ui.is_enabled(), selected, text));
     if ui.is_rect_visible(rect) {
         let (state, _) = state_of(ui, &response);
         if state != State::Rest {

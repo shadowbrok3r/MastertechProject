@@ -48,7 +48,7 @@ static CONSECUTIVE_FAILURES: AtomicU32 = AtomicU32::new(0);
 static FIRST_COMPOSITE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 fn params_id() -> Id {
-    Id::new(PARAMS_KEY)
+    Id::unique(PARAMS_KEY)
 }
 
 /// The glass material a theme asks for: how far the backdrop is smeared, the film painted over it,
@@ -276,7 +276,7 @@ pub fn glass_frame<R>(
     frame: Frame,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> InnerResponse<R> {
-    let id = ui.id().with(id_salt);
+    let id = ui.scope_id().with(id_salt);
     if let Some(rect) = ui.ctx().data(|d| d.get_temp::<Rect>(id)) {
         frost(ui, rect);
     }
@@ -603,7 +603,7 @@ mod backend {
                 true
             };
             let frost = |ui: &Ui| {
-                frost_behind_floating_with(ui.ctx(), Id::new("surface"), rect, glass(), enqueue)
+                frost_behind_floating_with(ui.ctx(), Id::unique("surface"), rect, glass(), enqueue)
             };
             let mut warm = ctx.run_ui(input(), |ui| {
                 frost(ui);
@@ -654,7 +654,7 @@ mod backend {
                     for (id, rect) in floating_surfaces(ui.ctx()) {
                         frost_stand_in(ui.ctx(), id, rect, &mut enqueued);
                     }
-                    Area::new(Id::new("toast"))
+                    Area::new(Id::unique("toast"))
                         .order(Order::Foreground)
                         .anchor(Align2::RIGHT_TOP, vec2(-10.0, 10.0))
                         .show(ui.ctx(), |ui| {
@@ -806,7 +806,7 @@ mod tests {
     fn backdrop_frame(ctx: &Context, rect: Rect) -> (usize, Vec<Rect>) {
         let mut enqueued = 0;
         let mut full = ctx.run_ui(input(), |ui| {
-            frost_stand_in(ui.ctx(), Id::new("surface"), rect, &mut enqueued);
+            frost_stand_in(ui.ctx(), Id::unique("surface"), rect, &mut enqueued);
         });
         full.textures_delta.clear();
         let clips = full

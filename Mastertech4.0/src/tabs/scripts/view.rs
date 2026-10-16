@@ -98,7 +98,7 @@ impl MastertechContext {
         }
         let modal = controls::modal(
             ui.ctx(),
-            Id::new("scripts_reboot_prompt"),
+            Id::unique("scripts_reboot_prompt"),
             svg::ARROWS_CLOCKWISE,
             "Reboot required",
             ModalWidth::Narrow,
@@ -131,7 +131,7 @@ impl MastertechContext {
         }
         let modal = controls::modal(
             ui.ctx(),
-            Id::new("scripts_data_transfer"),
+            Id::unique("scripts_data_transfer"),
             svg::FOLDER_OPEN,
             "Data Transfer",
             ModalWidth::Regular,

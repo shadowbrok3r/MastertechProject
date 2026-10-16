@@ -32,9 +32,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 eframe = { workspace = true }
 
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
-eframe = { version = "0.36", features = ["serde", "default_fonts"], default-features = false }
+eframe = { version = "0.37", features = ["serde", "default_fonts"], default-features = false }
 
 [dev-dependencies]
 # Parses and rasterises the icon pack in tests.
 resvg = { version = "0.45", default-features = false }
-egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
+egui_extras = { version = "0.37", default-features = false, features = ["svg"] }

@@ -116,7 +116,7 @@ const STRIP: [Icon; 18] = [
 
 /// Every kit control in collapsible sections, in rest, hover, press, focus and disabled states.
 pub fn gallery(ui: &mut Ui) {
-    let id = Id::new("mtech.controls.gallery");
+    let id = Id::unique("mtech.controls.gallery");
     let mut s = ui.data(|d| d.get_temp::<Samples>(id)).unwrap_or_default();
     ui.push_id(id, |ui| {
         buttons(ui);

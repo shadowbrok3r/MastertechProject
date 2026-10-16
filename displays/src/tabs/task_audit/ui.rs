@@ -66,7 +66,7 @@ impl TaskAuditViewer {
             let header = &format!("{} - {}", order.customer.name, order.order.id);
 
             let mut side_panel_open = self.services_viewer.selected.is_some();
-            eframe::egui::Panel::right(Id::new("Task Audit Side Panel"))
+            eframe::egui::Panel::right(Id::unique("Task Audit Side Panel"))
                 .default_size(280.)
                 .max_size(900.)
                 .resizable(true)

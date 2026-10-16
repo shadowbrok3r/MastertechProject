@@ -16,8 +16,8 @@ use crate::tokens::Tokens;
 const SUCCESS_KEY: &str = "mtech.theme.success_color";
 const ACCENT2_KEY: &str = "mtech.theme.accent_secondary";
 
-fn success_id() -> Id { Id::new(SUCCESS_KEY) }
-fn accent2_id() -> Id { Id::new(ACCENT2_KEY) }
+fn success_id() -> Id { Id::unique(SUCCESS_KEY) }
+fn accent2_id() -> Id { Id::unique(ACCENT2_KEY) }
 
 pub fn set_success_color(ctx: &Context, c: Color32) {
     ctx.data_mut(|d| d.insert_temp(success_id(), c));

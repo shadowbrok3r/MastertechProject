@@ -244,7 +244,7 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
 
         let t = Tokens::get(ctx);
         let painter =
-            ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
+            ctx.layer_painter(LayerId::new(Order::Foreground, Id::unique("file_drop_target")));
 
         let screen_rect = ctx.input(|i| i.content_rect());
         painter.rect_filled(screen_rect, 0.0, t.base.gamma_multiply(SCRIM));

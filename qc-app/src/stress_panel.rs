@@ -695,7 +695,7 @@ impl StressPanel {
         let ctx = ui.ctx().clone();
         let outcome = controls::modal(
             &ctx,
-            egui::Id::new("stress_conn_gate"),
+            egui::Id::unique("stress_conn_gate"),
             svg::WIFI_SLASH,
             "Not connected",
             ModalWidth::Regular,
@@ -820,10 +820,11 @@ impl StressPanel {
                 });
             });
 
+        let mut temps_open = self.temps_open;
         egui::Panel::right("stress_panel_side")
             .resizable(true)
             .default_size(440.0)
-            .show_animated_inside(ui, self.temps_open, |ui| {
+            .show_collapsible(ui, &mut temps_open, |ui| {
                 self.ui_side_panel(ui);
             });
 

@@ -13,7 +13,7 @@ impl SharedContext {
         };
         let out = controls::modal(
             ctx,
-            Id::new("Admin Notification"),
+            Id::unique("Admin Notification"),
             svg::MEGAPHONE,
             "Admin Notification",
             ModalWidth::Narrow,

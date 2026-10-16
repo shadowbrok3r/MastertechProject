@@ -1046,7 +1046,7 @@ impl crate::app_state::SharedContext {
         let m = Metrics::get(ctx);
         let fill = composite(t.warn.gamma_multiply(PILL_WASH), t.window);
         let edge = composite(t.warn.gamma_multiply(PILL_EDGE), t.window);
-        eframe::egui::Area::new(eframe::egui::Id::new("db_status_pill"))
+        eframe::egui::Area::new(eframe::egui::Id::unique("db_status_pill"))
             .anchor(eframe::egui::Align2::RIGHT_BOTTOM, [-12.0, -12.0])
             .order(eframe::egui::Order::Foreground)
             .show(ctx, |ui| {
@@ -1162,7 +1162,7 @@ impl crate::app_state::SharedContext {
         let mut still_open = true;
         let title = format!("Diagnostics — {target}");
         controls::icon_window(ctx, svg::STETHOSCOPE, &title)
-            .id(eframe::egui::Id::new(("client_diagnostics_popup", &target)))
+            .id(eframe::egui::Id::unique(("client_diagnostics_popup", &target)))
             .open(&mut still_open)
             .resizable(true)
             .collapsible(false)

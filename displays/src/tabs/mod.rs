@@ -121,7 +121,7 @@ impl egui_dock::TabViewer for SharedContext {
     type Tab = TabId;
 
     fn id(&mut self, tab: &mut Self::Tab) -> Id {
-        Id::new(*tab)
+        Id::unique(*tab)
     }
 
     fn ui(&mut self, ui: &mut egui_dock::egui::Ui, tab: &mut Self::Tab) {

@@ -731,7 +731,7 @@ impl QcApp {
         }
         let outcome = controls::modal(
             ctx,
-            egui::Id::new("qc_crash_modal"),
+            egui::Id::unique("qc_crash_modal"),
             svg::BUG,
             "Crash detected",
             ModalWidth::Regular,
@@ -887,7 +887,7 @@ impl egui_dock::TabViewer for QcApp {
     type Tab = QcTab;
 
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
-        egui::Id::new(*tab)
+        egui::Id::unique(*tab)
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {

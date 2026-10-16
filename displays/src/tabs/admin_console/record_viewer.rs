@@ -133,7 +133,7 @@ impl RecordViewer {
             let mut open = window.open;
             let title = format!("{} — {key}", window.kind.label());
             controls::icon_window(ctx, window.kind.icon(), &title)
-                .id(egui::Id::new(("admin_record_viewer", key.as_str())))
+                .id(egui::Id::unique(("admin_record_viewer", key.as_str())))
                 .default_size([460., 520.])
                 .open(&mut open)
                 .show(ctx, |ui| {

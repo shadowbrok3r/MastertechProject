@@ -4,7 +4,7 @@ use database::schema::{
     LiveTaskPayload, Priority, RecordIdExt, Status, TaskField, User, assignable_users,
 };
 use eframe::egui::{
-    Align, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Widget,
+    Align2, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Widget,
 };
 use egui_extras::DatePickerButton;
 use log::info;
@@ -20,8 +20,7 @@ impl Interaction for LiveTaskPayload {
         let text_edit = TextEdit::singleline(service_number)
             .desired_width(325.)
             .margin(Margin::symmetric(6, 3))
-            .horizontal_align(Align::Min)
-            .vertical_align(Align::Center)
+            .align(Align2::LEFT_CENTER)
             .ui(ui);
 
         if text_edit.lost_focus() {
@@ -104,7 +103,7 @@ pub(crate) fn task_name_edit(task: &mut LiveTaskPayload, ui: &mut Ui, width: f32
     ui.style_mut().override_font_id = Some(FontId::monospace(12.0));
 
     // Focused edits type into a buffer so per-frame live refreshes can't wipe keystrokes.
-    let buf_id = Id::new(("task_name_edit", task.id.key_string()));
+    let buf_id = Id::unique(("task_name_edit", task.id.key_string()));
     let buffered: Option<String> = ui.data_mut(|d| d.get_temp(buf_id));
     let had_buffer = buffered.is_some();
     let mut text = buffered.unwrap_or_else(|| task.task_name.clone());
@@ -112,8 +111,7 @@ pub(crate) fn task_name_edit(task: &mut LiveTaskPayload, ui: &mut Ui, width: f32
     let text_edit = TextEdit::singleline(&mut text)
         .desired_width(width)
         .margin(Margin::symmetric(6, 3))
-        .horizontal_align(Align::Min)
-        .vertical_align(Align::Center)
+        .align(Align2::LEFT_CENTER)
         .ui(ui);
 
     if text_edit.has_focus() {
@@ -143,7 +141,7 @@ pub(crate) fn task_description_edit(
     ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
 
     // Focused edits type into a buffer so per-frame live refreshes can't wipe keystrokes.
-    let buf_id = Id::new(("task_description_edit", task.id.key_string()));
+    let buf_id = Id::unique(("task_description_edit", task.id.key_string()));
     let buffered: Option<String> = ui.data_mut(|d| d.get_temp(buf_id));
     let had_buffer = buffered.is_some();
     let mut text = buffered.unwrap_or_else(|| task.task_description.clone());
@@ -152,7 +150,7 @@ pub(crate) fn task_description_edit(
         .desired_rows(6)
         .margin(Margin::symmetric(6, 3))
         .desired_width(width)
-        .horizontal_align(Align::Center)
+        .align(Align2::CENTER_TOP)
         .ui(ui);
 
     if text_edit.has_focus() {
@@ -180,7 +178,7 @@ pub(crate) fn status_combo(
     ui: &mut Ui,
     width: f32,
 ) -> Response {
-    ComboBox::from_id_salt(Id::new(task.id.key_string()))
+    ComboBox::from_id_salt(Id::unique(task.id.key_string()))
         .selected_text(RichText::new(task.status.as_str()))
         .width(width)
         .height(150.)
@@ -238,7 +236,7 @@ pub(crate) fn priority_combo(task: &mut LiveTaskPayload, ui: &mut Ui, width: f32
             .options_mut(|o| o.input_options.line_scroll_speed = 50.0);
     };
 
-    ComboBox::from_id_salt(Id::new(task.id.key_string()))
+    ComboBox::from_id_salt(Id::unique(task.id.key_string()))
         .selected_text(RichText::new(task.priority.as_str()))
         .width(width)
         .height(150.)
@@ -274,7 +272,7 @@ pub(crate) fn assignee_combo(
         .unwrap_or_else(|| "Unassigned".to_string());
     let my_store = current_user.get_store();
 
-    ComboBox::from_id_salt(Id::new(task.id.key_string()))
+    ComboBox::from_id_salt(Id::unique(task.id.key_string()))
         .selected_text(current_name)
         .width(width)
         .height(150.)

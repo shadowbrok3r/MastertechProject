@@ -58,7 +58,7 @@ pub fn expandable_text(ui: &mut Ui, id_salt: &str, text: &str, collapsed_lines: 
     if text.trim().is_empty() {
         return;
     }
-    let state_id = Id::new(("mtech.expandable_text", id_salt));
+    let state_id = Id::unique(("mtech.expandable_text", id_salt));
     let open = ui
         .ctx()
         .data(|d| d.get_temp::<bool>(state_id))

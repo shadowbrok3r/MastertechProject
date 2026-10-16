@@ -81,7 +81,7 @@ impl ScriptEditor {
         if self.show_ai_popup {
             let outcome = controls::modal(
                 ui.ctx(),
-                Id::new("AI Script Generator"),
+                Id::unique("AI Script Generator"),
                 svg::SPARKLE,
                 "AI Script Generator",
                 ModalWidth::Regular,
@@ -109,7 +109,7 @@ impl ScriptEditor {
         }
 
         let mut file_browser_open = self.open_file_browser;
-        eframe::egui::Panel::right(Id::new("Script editor sidebar"))
+        eframe::egui::Panel::right(Id::unique("Script editor sidebar"))
         .default_size(160.)
         .frame(
             Frame::default()
@@ -144,7 +144,7 @@ impl ScriptEditor {
                 if self.open_notification_modal {
                     let outcome = controls::modal(
                         ui.ctx(),
-                        Id::new("Upload Script"),
+                        Id::unique("Upload Script"),
                         svg::WARNING_CIRCLE,
                         "Upload Script",
                         ModalWidth::Narrow,

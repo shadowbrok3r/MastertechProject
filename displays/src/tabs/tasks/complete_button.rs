@@ -45,7 +45,7 @@ enum Phase {
 /// state this frame, for the caller to stage.
 pub fn complete_button(ui: &mut Ui, task: &LiveTaskPayload) -> (Response, Option<bool>) {
     let key = task.id.key_string();
-    let armed_id = Id::new(("task_complete_arm", &key));
+    let armed_id = Id::unique(("task_complete_arm", &key));
 
     let (rect, response) = ui.allocate_exact_size(BUTTON_SIZE, Sense::click());
 

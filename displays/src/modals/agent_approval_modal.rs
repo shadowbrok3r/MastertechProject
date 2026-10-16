@@ -328,7 +328,7 @@ impl AgentApprovalQueue {
         } else {
             (svg::LOCK, "The AI agent needs approval")
         };
-        controls::modal(ctx, Id::new("agent_approval_modal"), icon, title, ModalWidth::Regular, &[], |ui| {
+        controls::modal(ctx, Id::unique("agent_approval_modal"), icon, title, ModalWidth::Regular, &[], |ui| {
             let t = Tokens::get(ui.ctx());
             let m = Metrics::get(ui.ctx());
             if queued > 1 {

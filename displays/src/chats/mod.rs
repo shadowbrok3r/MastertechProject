@@ -21,7 +21,7 @@ use database::{
     },
 };
 use eframe::egui::{
-    Align, CentralPanel, CornerRadius, Direction, Frame, Label, Layout, Margin, Popup,
+    Align, CentralPanel, CornerRadius, Direction, Frame, Id, Label, Layout, Margin, Popup,
     PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Stroke, Ui,
 };
 use itertools::Itertools;
@@ -104,7 +104,7 @@ pub(crate) fn bubble_actions(
 pub(crate) fn sender_chip(ui: &mut Ui, name: &str, popup_key: &str) -> Response {
     let chip = controls::pill(ui, svg::USER, name, false);
     if chip.clicked() {
-        Popup::open_id(ui.ctx(), format!("sub_menu-from-{popup_key}").into());
+        Popup::open_id(ui.ctx(), Id::unique(format!("sub_menu-from-{popup_key}")));
     }
     chip
 }

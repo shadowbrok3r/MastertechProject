@@ -30,7 +30,7 @@ inline = []
 skia-render = ["dep:egui_skia", "dep:skia-safe", "dep:softbuffer", "dep:winit"]
 
 [dependencies]
-eframe = { version="0.36", features=["persistence", "serde",  "default_fonts", "glow", "x11", "accesskit", "links"], default-features=false }
+eframe = { version="0.37", features=["persistence", "serde",  "default_fonts", "glow", "x11", "accesskit", "links"], default-features=false }
 displays = { path="../displays", features = ["tokio", "wasm-plugins", "native-telemetry"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "cookies", "brotli", "native-tls-vendored", "form", "charset", "http2", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -78,7 +78,7 @@ directories = "6.0.0"
 image-meta = "0.1.4"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 
-egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", features = ["winit", "cpu_fix"], optional = true }
+egui_skia = { git = "https://github.com/shadowbrok3r/egui_skia", branch = "egui-037", features = ["winit", "cpu_fix"], optional = true }
 skia-safe = { version = "0.99", optional = true }
 softbuffer = { version = "0.4", optional = true }
 winit = { version = "0.30", default-features = false, features = ["rwh_06"], optional = true }
@@ -117,10 +117,10 @@ once_cell.workspace = true
 base64.workspace = true
 fuzzy-matcher.workspace = true
 uuid.workspace = true
-egui_inspection = { version = "0.36", features = ["plugin"] }
+egui_inspection = { version = "0.37", features = ["plugin"] }
 
 [dependencies.egui]
-version = "0.36"
+version = "0.37"
 default-features = false
 features = ["rayon", "bytemuck"]
 

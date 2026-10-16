@@ -142,11 +142,11 @@ impl Metrics {
 }
 
 fn metrics_id() -> Id {
-    Id::new("mtech.metrics")
+    Id::unique("mtech.metrics")
 }
 
 fn density_id() -> Id {
-    Id::new("mtech.metrics.density")
+    Id::unique("mtech.metrics.density")
 }
 
 /// The density [`install_overlaid_style`] overlays on `ctx`.

@@ -1321,7 +1321,7 @@ impl HomePage {
         let mut confirmed = None;
 
         controls::icon_window(ui.ctx(), svg::SHIELD_WARNING, "Confirm driver protections")
-            .id(Id::new(("driver_protections_confirm", conn)))
+            .id(Id::unique(("driver_protections_confirm", conn)))
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
@@ -1399,7 +1399,7 @@ impl HomePage {
         let runs = format!("{} stress run(s) in progress", active.len());
         let idle = active.is_empty();
         let shown = Section::new("home-inventory", "Hardware inventory")
-            .id(Id::new(("home-inventory", scope)))
+            .id(Id::unique(("home-inventory", scope)))
             .icon(svg::CIRCUITRY)
             .icon_tone(accent)
             .title_tone(accent)
@@ -1488,7 +1488,7 @@ fn render_component_card(
         // after the header, and the live progress has to sit between the two.
         let mut state = CollapsingState::load_with_default_open(
             ui.ctx(),
-            Id::new(("home-inventory-card", card.component_id.as_str())),
+            Id::unique(("home-inventory-card", card.component_id.as_str())),
             true,
         );
         let header = ui

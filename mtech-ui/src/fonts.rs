@@ -171,7 +171,7 @@ pub fn apply_text_scale(fonts: &mut FontDefinitions, scale: TextScale) {
 }
 
 fn text_scale_id() -> Id {
-    Id::new("mtech.fonts.text_scale")
+    Id::unique("mtech.fonts.text_scale")
 }
 
 /// The text scale last installed on `ctx`.

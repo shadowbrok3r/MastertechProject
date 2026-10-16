@@ -116,7 +116,7 @@ impl TabViewer for SampleTabs {
     type Tab = (Icon, &'static str);
 
     fn id(&mut self, tab: &mut Self::Tab) -> Id {
-        Id::new(tab.1)
+        Id::unique(tab.1)
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
@@ -155,7 +155,7 @@ fn dock(ui: &mut Ui) {
     );
     surface.split_below(right, 0.5, vec![(svg::SHIELD_CHECK, "Admin Console")]);
     DockArea::new(&mut state)
-        .id(Id::new("kit_preview_dock"))
+        .id(Id::unique("kit_preview_dock"))
         .style(dock_style::style(ui.ctx()))
         .show_close_buttons(true)
         .show_add_buttons(true)

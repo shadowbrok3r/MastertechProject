@@ -20,7 +20,7 @@ const LINE_DETAIL_CHARS: usize = 4_000;
 /// Renders a transcript; `user` labels the technician's rows.
 pub fn transcript_ui(ui: &mut Ui, salt: &str, events: &[AgentEvent], show_reasoning: bool, user: &str) {
     let style = ChatStyle::from_ui(ui);
-    let scope = Id::new(("agent_transcript", salt));
+    let scope = Id::unique(("agent_transcript", salt));
     let now = Local::now();
     let newest_plan = events.iter().rev().find(|e| e.plan().is_some()).map(|e| e.seq);
     for ev in events {
@@ -582,7 +582,7 @@ mod tests {
         ];
         let ctx = eframe::egui::Context::default();
         let closed = render(&ctx, &events);
-        let scope = Id::new(("agent_transcript", "test"));
+        let scope = Id::unique(("agent_transcript", "test"));
         ctx.data_mut(|d| {
             for ev in &events {
                 d.insert_temp(scope.with(ev.id.key_string()).with("open"), true);

@@ -64,7 +64,7 @@ pub(crate) enum Preview {
 }
 
 fn preview_id() -> Id {
-    Id::new("mtech.controls.preview")
+    Id::unique("mtech.controls.preview")
 }
 
 /// Runs `add` with every kit control painting the `preview` state.
@@ -124,7 +124,7 @@ enum Weight {
 }
 
 fn weights_id() -> Id {
-    Id::new("mtech.controls.weights")
+    Id::unique("mtech.controls.weights")
 }
 
 /// Whether the medium and semibold families are installed, probed once per pass.

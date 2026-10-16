@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use eframe::egui::{
     Align, AsIdSalt, Color32, CursorIcon, FontId, Galley, Id, IdSalt, Label, Layout, OpenUrl, Rect,
-    Response, RichText, Sense, Shape, Stroke, TextStyle, TextWrapMode, Ui, UiBuilder, Vec2,
-    WidgetInfo, WidgetType,
+    Response, RichText, Role, Sense, Shape, Stroke, TextStyle, TextWrapMode, Ui, UiBuilder, Vec2,
+    WidgetInfo,
     collapsing_header::CollapsingState,
     pos2,
     text::{LayoutJob, TextFormat},
@@ -121,12 +121,7 @@ fn fold_row(
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), m.header_h), Sense::click());
     response.widget_info(|| {
-        WidgetInfo::selected(
-            WidgetType::CollapsingHeader,
-            ui.is_enabled(),
-            open,
-            look.title,
-        )
+        WidgetInfo::selected(Role::DisclosureTriangle, ui.is_enabled(), open, look.title)
     });
     let response = response.on_hover_cursor(CursorIcon::PointingHand);
     let chevron = Rect::from_center_size(
@@ -355,7 +350,7 @@ pub fn heading(ui: &mut Ui, icon: impl Into<Option<Icon>>, title: &str) -> Respo
         ui.painter()
             .galley(pos2(rect.left() + icon_w, y), galley, t.text);
     }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), title));
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), title));
     response
 }
 
@@ -383,7 +378,7 @@ pub fn subheading(ui: &mut Ui, icon: impl Into<Option<Icon>>, title: &str) -> Re
         ui.painter()
             .galley(pos2(rect.left() + icon_w, y), galley, t.text);
     }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), title));
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), title));
     response
 }
 
@@ -393,7 +388,7 @@ pub fn section_label(ui: &mut Ui, text: &str) -> Response {
     let galley = text_galley(ui, text, medium_font_sized(ui, SECTION_LABEL_PT));
     let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
     ui.painter().galley(rect.min, galley, t.text_faint);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), text));
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), text));
     response
 }
 
@@ -414,7 +409,7 @@ pub fn elided_label(ui: &mut Ui, text: &str, max_w: f32) -> Response {
     let cut = galley.elided;
     let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
     ui.painter().galley(rect.min, galley, t.text);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), text));
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), text));
     if cut {
         response.on_hover_text(text)
     } else {
@@ -550,8 +545,7 @@ impl<'a> IconLabel<'a> {
                 ui.painter()
                     .galley(pos2(slot.right() + INNER_GAP, y), galley, ink);
             }
-            response
-                .widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), self.text));
+            response.widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), self.text));
             return if cut {
                 response.on_hover_text(self.text)
             } else {
@@ -689,7 +683,7 @@ impl<'a> IconLink<'a> {
         let height = galley.size().y.max(m.icon_sm);
         let size = vec2(whole(icon_w + galley.size().x), height);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Link, ui.is_enabled(), self.text));
+        response.widget_info(|| WidgetInfo::labeled(Role::Link, ui.is_enabled(), self.text));
         if ui.is_rect_visible(rect) {
             let (state, focused) = state_of(ui, &response);
             if let Some(icon) = self.icon {
@@ -760,7 +754,7 @@ pub fn badge(ui: &mut Ui, text: &str, tone: Color32) -> Response {
         let pos = (rect.center() - galley.size() / 2.0).round();
         ui.painter().galley(pos, galley, tone);
     }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), text));
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), text));
     response
 }
 
@@ -848,12 +842,7 @@ impl<'a> Pill<'a> {
         );
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         response.widget_info(|| {
-            WidgetInfo::selected(
-                WidgetType::SelectableLabel,
-                ui.is_enabled(),
-                self.selected,
-                self.label,
-            )
+            WidgetInfo::selected(Role::Button, ui.is_enabled(), self.selected, self.label)
         });
         if ui.is_rect_visible(rect) {
             let (state, focused) = state_of(ui, &response);
@@ -946,9 +935,8 @@ pub fn tinted_spinner(ui: &mut Ui, size: SpinnerSize, tint: Color32) -> Response
 
 fn spin(ui: &mut Ui, size: SpinnerSize, arc: Color32, track: Color32) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size.side()), Sense::hover());
-    response.widget_info(|| {
-        WidgetInfo::labeled(WidgetType::ProgressIndicator, ui.is_enabled(), "Loading")
-    });
+    response
+        .widget_info(|| WidgetInfo::labeled(Role::ProgressIndicator, ui.is_enabled(), "Loading"));
     if ui.is_rect_visible(rect) {
         paint_spin(ui, rect, size, arc, track);
     }
@@ -1001,9 +989,7 @@ pub fn loading_row(ui: &mut Ui, caption: &str) -> Response {
     let height = galley.size().y.max(side);
     let (rect, response) =
         ui.allocate_exact_size(vec2(whole(side + text_w), height), Sense::hover());
-    response.widget_info(|| {
-        WidgetInfo::labeled(WidgetType::ProgressIndicator, ui.is_enabled(), caption)
-    });
+    response.widget_info(|| WidgetInfo::labeled(Role::ProgressIndicator, ui.is_enabled(), caption));
     if ui.is_rect_visible(rect) {
         let slot = Rect::from_min_size(
             pos2(rect.left(), rect.center().y - side / 2.0),

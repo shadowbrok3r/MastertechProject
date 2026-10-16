@@ -94,7 +94,7 @@ pub fn display_history_page(ui: &mut Ui, history: &TaskHistoryLoad) {
 
 /// Entries for `history`, rebuilt only when its rows, its names or the loaded user count change.
 fn prepared_entries(ui: &Ui, history: &TaskHistoryLoad) -> Arc<Vec<HistoryEntry>> {
-    let id = ui.id().with("task_history_entries");
+    let id = ui.scope_id().with("task_history_entries");
     let cached = ui.data(|d| d.get_temp::<Prepared>(id));
     // A busy user list reuses the cache, or builds without it and caches nothing.
     let Ok(users) = database::STORE_USERS.try_lock() else {

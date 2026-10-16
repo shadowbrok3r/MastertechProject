@@ -15,16 +15,16 @@ publish = false
 [dependencies]
 # Neutral spine — both the own-loop and grab-pass paths need these.
 backdrop-blur-core = { path = "../backdrop-blur-core", version = "0.3.0" }
-egui = "0.36"
+egui = "0.37"
 # Own-loop (egui-wgpu) backend deps — optional, activated only by the `own-loop` feature, so a
 # grab-pass build pulls neither wgpu nor egui-wgpu. default-features = false keeps winit OUT.
 backdrop-blur-wgpu = { path = "../backdrop-blur-wgpu", version = "0.3.0", optional = true }
-egui-wgpu = { version = "0.36", default-features = false, optional = true }
+egui-wgpu = { version = "0.37", default-features = false, optional = true }
 wgpu = { version = "30", optional = true }
 # Grab-pass (eframe-on-glow) backend deps — optional, activated only by the `grab-pass` feature, so
 # an own-loop build pulls neither. Neither pulls wgpu, so a grab-pass build stays wgpu-free.
 backdrop-blur-glow = { path = "../backdrop-blur-glow", version = "0.3.0", optional = true }
-egui_glow = { version = "0.36", default-features = false, optional = true }
+egui_glow = { version = "0.37", default-features = false, optional = true }
 # The adapter names glow::Context in its public API (GrabPassRenderer::new/destroy); pinned to the
 # same 0.17 backdrop-blur-glow + egui_glow use, so there is one glow in the graph.
 glow = { version = "0.17", optional = true }

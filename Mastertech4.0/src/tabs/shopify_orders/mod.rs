@@ -251,7 +251,7 @@ impl ShopifyOrdersTab {
             });
 
         if self.detail.is_some() || self.detail_busy || self.detail_error.is_some() {
-            egui::Panel::right(Id::new("shopify_order_detail"))
+            egui::Panel::right(Id::unique("shopify_order_detail"))
                 .default_size(360.0)
                 .resizable(true)
                 .show(ui, |ui| {

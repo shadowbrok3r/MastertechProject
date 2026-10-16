@@ -339,7 +339,7 @@ impl SqlApprovalQueue {
         let mut deny = false;
         let mut later = false;
 
-        Modal::new(Id::new("sql_approval_modal")).show(ctx, |ui| {
+        Modal::new(Id::unique("sql_approval_modal")).show(ctx, |ui| {
             ui.set_width(680.0);
 
             ui.horizontal(|ui| {

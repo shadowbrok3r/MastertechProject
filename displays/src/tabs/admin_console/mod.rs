@@ -442,7 +442,7 @@ impl AdminConsole {
         let is_root = crate::get_current_user_from_auth().map(|u| u.is_admin()).unwrap_or(false);
         let mut open = true;
         controls::icon_window(ctx, svg::MT_FIRMWARE, "Pre-Boot Viewer")
-            .id(egui::Id::new("admin_preboot_viewer"))
+            .id(egui::Id::unique("admin_preboot_viewer"))
             .default_size([920.0, 640.0])
             .open(&mut open)
             .show(ctx, |ui| {
@@ -1463,7 +1463,7 @@ impl SharedContext {
             let mut still_open = true;
             let title = format!("Confirm: {}", action.label());
             controls::icon_window(ui.ctx(), batch_icon(action), &title)
-                .id(egui::Id::new("admin_batch_confirm"))
+                .id(egui::Id::unique("admin_batch_confirm"))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)

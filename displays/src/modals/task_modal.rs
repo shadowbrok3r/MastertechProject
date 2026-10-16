@@ -762,7 +762,7 @@ impl TaskModal {
         };
         let outcome = controls::modal(
             ui.ctx(),
-            Id::new("import_computer_modal"),
+            Id::unique("import_computer_modal"),
             svg::ARROW_SQUARE_IN,
             title,
             ModalWidth::Narrow,
@@ -935,7 +935,7 @@ impl TaskModal {
         let body_h = (ui.ctx().content_rect().height() * 0.85 - chrome).max(LIST_MAX_H);
         let outcome = controls::modal(
             ui.ctx(),
-            Id::new("second_computer_modal"),
+            Id::unique("second_computer_modal"),
             svg::DESKTOP_TOWER,
             &format!("Customer Computer — {title}"),
             ModalWidth::Wide,
@@ -965,7 +965,7 @@ impl TaskModal {
         };
         let outcome = controls::modal(
             ui.ctx(),
-            Id::new("service_history_modal"),
+            Id::unique("service_history_modal"),
             svg::CLOCK_COUNTER_CLOCKWISE,
             title,
             ModalWidth::Regular,
@@ -1050,7 +1050,7 @@ impl TaskModal {
 
         let outcome = controls::modal(
             ui.ctx(),
-            Id::new("task_customer_change_modal"),
+            Id::unique("task_customer_change_modal"),
             svg::USER_SWITCH,
             "Change Customer",
             ModalWidth::Narrow,
@@ -1458,17 +1458,17 @@ impl DisplayModal for TaskModal {
 
             let id = format!("{:?} Sizing ID", self.task.id);
             // Use egui memory to track if we've already done the sizing pass
-            let sizing_pass_done = ui.memory(|mem| mem.data.get_temp::<bool>(Id::new(&id)).unwrap_or(false));
+            let sizing_pass_done = ui.memory(|mem| mem.data.get_temp::<bool>(Id::unique(&id)).unwrap_or(false));
 
             if is_sizing_pass && !sizing_pass_done {
                 ui.ctx().request_discard("Centering ComboBox sizing pass");
                 ui.ctx().request_repaint();
-                ui.memory_mut(|mem| mem.data.insert_temp(Id::new(&id), true));
+                ui.memory_mut(|mem| mem.data.insert_temp(Id::unique(&id), true));
             }
 
             // Reset the flag if the UI is repainted for other reasons (e.g., window resize)
             if !is_sizing_pass && sizing_pass_done {
-                ui.memory_mut(|mem| mem.data.insert_temp(Id::new(&id), false));
+                ui.memory_mut(|mem| mem.data.insert_temp(Id::unique(&id), false));
             }
         });
 

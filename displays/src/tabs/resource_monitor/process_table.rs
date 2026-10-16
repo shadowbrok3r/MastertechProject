@@ -186,7 +186,7 @@ impl ProcessTableViewer {
         });
 
         let mut hotkeys_open = self.process_viewer.open_hotkeys;
-        eframe::egui::Panel::bottom(Id::new("Task Audit Hot Keys"))
+        eframe::egui::Panel::bottom(Id::unique("Task Audit Hot Keys"))
             .max_size(240.)
             .show_collapsible(ui, &mut hotkeys_open, |ui|
         {

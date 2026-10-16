@@ -10,7 +10,7 @@ use displays::ui_tools::{
     icons::svg,
 };
 use displays::{ToastMessage, get_toast_sender, modals::DuplicateMergeModal};
-use eframe::egui::{Align, Align2, Area, Frame, Layout, Order, RichText, Sense, Vec2};
+use eframe::egui::{Align, Align2, Area, Frame, Id, Layout, Order, RichText, Sense, Vec2};
 use log::info;
 use std::time::Instant;
 use tokio::spawn;
@@ -114,7 +114,7 @@ impl MastertechContext {
         let mut should_submit = false;
         let mut should_cancel = false;
 
-        Area::new("confirmation_toast".into())
+        Area::new(Id::unique("confirmation_toast"))
             .anchor(Align2::RIGHT_BOTTOM, [-20.0, -80.0])
             .order(Order::Foreground)
             .interactable(true)

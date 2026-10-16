@@ -457,7 +457,7 @@ pub fn drop_hint(ui: &Ui, rect: Rect) {
     if ui.ctx().input(|i| i.raw.hovered_files.is_empty()) {
         return;
     }
-    let id = Id::new(("agent_chat_drop", rect.min.x as i32, rect.min.y as i32));
+    let id = Id::unique(("agent_chat_drop", rect.min.x as i32, rect.min.y as i32));
     let layer = egui::LayerId::new(egui::Order::Foreground, id);
     let over = Ui::new(
         ui.ctx().clone(),

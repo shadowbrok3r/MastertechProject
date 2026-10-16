@@ -110,7 +110,7 @@ impl Default for ProblemsView {
 }
 
 fn seen_id() -> Id {
-    Id::new("enhanced_ai_problems_seen_until")
+    Id::unique("enhanced_ai_problems_seen_until")
 }
 
 fn unix(at: &Datetime) -> i64 {

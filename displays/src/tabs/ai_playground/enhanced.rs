@@ -768,7 +768,7 @@ impl EnhancedAiPlayground {
         }
 
         // Sized from last frame's composer, from the minimum up to half the chat.
-        let height_id = ui.id().with("enhanced_ai_input_height");
+        let height_id = ui.scope_id().with("enhanced_ai_input_height");
         let max_height = (ui.available_height() * 0.5).max(INPUT_MIN_HEIGHT);
         let height = ui
             .memory(|m| m.data.get_temp::<f32>(height_id))
@@ -1468,7 +1468,7 @@ impl EnhancedAiPlayground {
         }
 
         let style = ChatStyle::from_ui(ui);
-        let scope = Id::new(("ai_chat_rows", self.selected_thread.as_str()));
+        let scope = Id::unique(("ai_chat_rows", self.selected_thread.as_str()));
         let now = Local::now();
         let user = self.user_label();
         ScrollArea::vertical()
@@ -1500,7 +1500,7 @@ impl EnhancedAiPlayground {
             .filter(|r| r.id.key_string() == self.selected_thread)
             .is_some_and(AgentThread::is_busy);
         let style = ChatStyle::from_ui(ui);
-        let scope = Id::new(("ai_plan", self.selected_thread.as_str()));
+        let scope = Id::unique(("ai_plan", self.selected_thread.as_str()));
         chat_bubble::floating_plan(ui, &style, scope, &event.key_string(), plan, over, busy)
     }
 
@@ -1518,11 +1518,11 @@ impl EnhancedAiPlayground {
         let user = self.user_label();
         let salt = self.selected_thread.clone();
         let style = ChatStyle::from_ui(ui);
-        let scope = Id::new(("ai_chat_rows", salt.as_str()));
+        let scope = Id::unique(("ai_chat_rows", salt.as_str()));
         let now = Local::now();
         let error = self.live.error().map(str::to_string);
         let over = ui.max_rect();
-        let covered_id = Id::new(("ai_plan_covered", salt.as_str()));
+        let covered_id = Id::unique(("ai_plan_covered", salt.as_str()));
         let covered = ui.ctx().data(|d| d.get_temp::<f32>(covered_id)).unwrap_or(0.0);
         ScrollArea::vertical()
             .id_salt(("ai_live_transcript", salt.as_str()))
@@ -2444,7 +2444,7 @@ impl EnhancedAiPlayground {
 
 /// The composer id of a chat thread.
 fn composer_id(thread: &str) -> Id {
-    Id::new(("enhanced_ai_composer", thread))
+    Id::unique(("enhanced_ai_composer", thread))
 }
 
 /// Local rows stamped after `newest`, the newest transcript row's time in unix seconds.
@@ -2651,7 +2651,7 @@ struct ThreadPick {
 }
 
 fn sessions_pinned_id() -> Id {
-    Id::new("enhanced_ai_sessions_pinned")
+    Id::unique("enhanced_ai_sessions_pinned")
 }
 
 /// Whether the session list is pinned to the side; kept across restarts.
@@ -3716,7 +3716,7 @@ mod tests {
             ),
         ];
         let ctx = Context::default();
-        let scope = Id::new(("ai_chat_rows", "t"));
+        let scope = Id::unique(("ai_chat_rows", "t"));
         let now = Local::now();
         let render = || {
             let input = RawInput {
