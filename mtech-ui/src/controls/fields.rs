@@ -6,7 +6,8 @@ use eframe::egui::{
     Align, Align2, AsIdSalt, Atom, Color32, CornerRadius, DragValue, EventFilter, Frame, Id,
     IdSalt, Key, Layout, Margin, Popup, PopupCloseBehavior, Rect, Response, Role, ScrollArea,
     Sense, Shape, Stroke, StrokeKind, TextBuffer, TextEdit, TextStyle, Ui, UiBuilder, Vec2,
-    WidgetInfo, emath::Numeric, epaint::RectShape, pos2, text_edit::TextEditOutput, vec2,
+    WidgetInfo, class::HasClasses as _, emath::Numeric, epaint::RectShape, pos2,
+    text_edit::TextEditOutput, vec2,
 };
 
 use super::{
@@ -15,6 +16,7 @@ use super::{
 };
 use crate::fonts;
 use crate::icon_pack;
+use crate::widget_theme;
 
 /// Horizontal inset of text inside a field box.
 const FIELD_PAD_X: f32 = 8.0;
@@ -48,7 +50,7 @@ const LIST_MAX_H: f32 = 320.0;
 const NO_OPTION: &str = "—";
 
 /// Border of a field box in the given interaction state.
-fn field_border(t: &Tokens, state: State, focused: bool) -> Color32 {
+pub(crate) fn field_border(t: &Tokens, state: State, focused: bool) -> Color32 {
     if focused {
         t.primary_border
     } else if state == State::Rest {
@@ -65,6 +67,21 @@ fn border_for(t: &Tokens, state: State, focused: bool, invalid: bool) -> Color32
     } else {
         field_border(t, state, focused)
     }
+}
+
+/// Fill and border of a dropdown box in `state`, `open` while its list shows.
+pub(crate) fn dropdown_colors(t: &Tokens, state: State, open: bool) -> (Color32, Color32) {
+    let fill = match state {
+        State::Rest => t.field,
+        State::Hovered => t.hover,
+        State::Pressed => t.pressed,
+    };
+    let border = if open {
+        t.primary_border
+    } else {
+        t.field_border
+    };
+    (fill, border)
 }
 
 /// Text-selection wash used inside fields only.
@@ -240,6 +257,7 @@ impl<'a> TextField<'a> {
         let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(layout));
         field_selection(&mut child, &t);
         let mut edit = TextEdit::singleline(self.text)
+            .with_class(widget_theme::STOCK)
             .id(id)
             .hint_text(self.hint)
             .frame(Frame::NONE)
@@ -398,6 +416,7 @@ impl<'a> TextArea<'a> {
             let child = &mut prepared.content_ui;
             field_selection(child, &t);
             let mut edit = TextEdit::multiline(self.text)
+                .with_class(widget_theme::STOCK)
                 .id(id)
                 .hint_text(self.hint)
                 .frame(Frame::NONE)
@@ -552,6 +571,7 @@ impl<'a, N: Numeric> ValueField<'a, N> {
         }
         let speed = self.speed.unwrap_or(if fine { 0.01 } else { 0.5 });
         let mut drag = DragValue::new(self.value)
+            .with_class(widget_theme::STOCK)
             .prefix(Atom::grow())
             .range(self.range)
             .speed(speed);
@@ -697,16 +717,7 @@ impl<'a, V: PartialEq + Clone> Dropdown<'a, V> {
         let open = Popup::is_id_open(ui.ctx(), popup_id);
         if ui.is_rect_visible(rect) {
             let (state, focused) = state_of(ui, &response);
-            let fill = match state {
-                State::Rest => t.field,
-                State::Hovered => t.hover,
-                State::Pressed => t.pressed,
-            };
-            let border = if open {
-                t.primary_border
-            } else {
-                t.field_border
-            };
+            let (fill, border) = dropdown_colors(&t, state, open);
             paint_box(ui, rect, t.radius_sm, fill, border);
 
             let center = pos2(rect.right() - m.control_h / 2.0, rect.center().y);

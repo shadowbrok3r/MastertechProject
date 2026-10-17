@@ -48,7 +48,9 @@ mod ratchet_tests;
 #[cfg(test)]
 mod title_bar_tests;
 
-pub use mtech_ui::{controls, dock_style, egui_logger, fonts, metrics, theme, tokens};
+pub use mtech_ui::{
+    controls, dock_style, egui_logger, fonts, metrics, theme, tokens, widget_theme,
+};
 
 const ZSTD_LEVEL: i32 = 9;
 

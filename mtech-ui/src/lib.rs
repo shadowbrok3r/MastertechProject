@@ -14,3 +14,4 @@ pub mod stress_dashboard;
 pub mod theme;
 pub mod title_bar;
 pub mod tokens;
+pub mod widget_theme;

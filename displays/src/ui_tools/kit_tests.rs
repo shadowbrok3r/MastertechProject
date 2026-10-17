@@ -1,15 +1,19 @@
 //! Control-kit geometry across every preset and density, and the headless preview renders.
 
-use eframe::egui::{Id, Rect, Ui, Vec2, WidgetText, vec2};
+use eframe::egui::{
+    Button, ComboBox, DragValue, Event, Id, Rect, Stroke, TextEdit, Ui, Vec2, WidgetText,
+    class::HasClasses as _, vec2,
+};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 use super::{
-    controls::{self, IconBox, Metrics},
+    controls::{self, ButtonKind, IconBox, Metrics},
     dock_style,
     headless_render::Headless,
     icons::svg::{self, Icon},
     metrics::Density,
-    theme_config::{MATCHABLE_PRESETS, PresetStyles, ThemeConfig},
+    theme_config::{self, MATCHABLE_PRESETS, PresetStyles, ThemeConfig},
+    widget_theme,
 };
 
 /// Controls in [`kit_row`].
@@ -109,6 +113,252 @@ fn the_geometry_check_fails_a_row_with_a_stock_or_shifted_control() {
     );
 }
 
+/// Runs `passes` frames of `f` without rasterising; returns the last result.
+fn settle<R>(h: &mut Headless, passes: usize, mut f: impl FnMut(&mut Ui) -> R) -> R {
+    let mut last = None;
+    for _ in 0..passes {
+        last = Some(h.frame(Vec::new(), &mut f).0);
+    }
+    last.expect("at least one pass")
+}
+
+/// Rects of a stock Button, ComboBox, DragValue, TextEdit and checkbox in one row.
+fn stock_row(ui: &mut Ui) -> Vec<Rect> {
+    let mut text = "Text".to_owned();
+    let mut size = 20.0_f32;
+    let mut choice = 0_usize;
+    let mut on = true;
+    ui.horizontal(|ui| {
+        let combo = ComboBox::from_id_salt("stock_row")
+            .width(100.0)
+            .selected_text("One")
+            .show_ui(ui, |ui| {
+                let _ = ui.selectable_value(&mut choice, 0, "One");
+            });
+        vec![
+            ui.button("Apply").rect,
+            combo.response.rect,
+            ui.add(DragValue::new(&mut size)).rect,
+            ui.add(TextEdit::singleline(&mut text).desired_width(120.0))
+                .rect,
+            ui.checkbox(&mut on, "Live").rect,
+        ]
+    })
+    .inner
+}
+
+/// Rects of a stock and a kit "Apply" button, then a prominent stock and kit primary "Save".
+fn button_row(ui: &mut Ui) -> [Rect; 4] {
+    ui.horizontal(|ui| {
+        let prominent = Button::new("Save")
+            .with_class(widget_theme::PRIMARY)
+            .with_class(widget_theme::PROMINENT);
+        [
+            ui.button("Apply").rect,
+            controls::button(ui, "Apply").rect,
+            ui.add(prominent).rect,
+            controls::primary_button(ui, "Save").rect,
+        ]
+    })
+    .inner
+}
+
+/// Whether `a` and `b` share a height and are within a point of the same width.
+fn same_size(a: Rect, b: Rect) -> bool {
+    a.height() == b.height() && (a.width() - b.width()).abs() <= 1.0
+}
+
+#[test]
+fn stock_buttons_take_kit_button_geometry_for_every_preset_and_density() {
+    let mut h = Headless::new(vec2(1200.0, 200.0), 1.0);
+    for preset in MATCHABLE_PRESETS {
+        for density in Density::ALL {
+            h.theme(preset, density);
+            let [stock, kit, prominent, primary] = settle(&mut h, 2, button_row);
+            let at = format!("{} at {density:?}", preset.as_str());
+            if h.ctx.global_style().visuals.button_frame {
+                assert!(same_size(stock, kit), "{at}: {stock:?} vs {kit:?}");
+            } else {
+                widget_theme::set_enabled(&h.ctx, false);
+                let [plain, ..] = settle(&mut h, 2, button_row);
+                widget_theme::set_enabled(&h.ctx, true);
+                assert_eq!(
+                    stock, plain,
+                    "{at}: a frameless theme keeps plain buttons stock"
+                );
+            }
+            assert!(
+                same_size(prominent, primary),
+                "{at}: {prominent:?} vs {primary:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn stock_row_controls_share_the_control_height_and_centre_for_every_preset_and_density() {
+    let mut h = Headless::new(vec2(1200.0, 200.0), 1.0);
+    for preset in MATCHABLE_PRESETS {
+        for density in Density::ALL {
+            h.theme(preset, density);
+            let rects = settle(&mut h, 2, stock_row);
+            let height = Metrics::for_density(density).control_h;
+            assert_eq!(rects.len(), 5);
+            if let Some(why) = misalignment(&rects, height) {
+                panic!("{} at {density:?}: {why}", preset.as_str());
+            }
+        }
+    }
+}
+
+/// Rects of the kit controls that wrap or sit beside stock egui widgets.
+fn kit_fields(ui: &mut Ui) -> Vec<Rect> {
+    let mut name = String::new();
+    let mut text = "Text".to_owned();
+    let mut notes = "Notes".to_owned();
+    let mut size = 20.0_f32;
+    let mut choice = 0_usize;
+    let mut rects = ui
+        .horizontal(|ui| {
+            vec![
+                controls::button(ui, "Apply").rect,
+                controls::TextButton::new("Save")
+                    .kind(ButtonKind::Primary)
+                    .show(ui)
+                    .rect,
+                controls::text_field(ui, &mut name, "Name", 120.0).rect,
+                controls::text_field(ui, &mut text, "", 120.0).rect,
+                controls::value_field(ui, &mut size, 1.0..=100.0, "px", 70.0).rect,
+                controls::dropdown(
+                    ui,
+                    "kit_fields",
+                    &mut choice,
+                    &[(0, "One"), (1, "Two")],
+                    100.0,
+                )
+                .rect,
+            ]
+        })
+        .inner;
+    rects.push(
+        controls::TextArea::new(&mut notes)
+            .rows(2)
+            .width(300.0)
+            .show(ui)
+            .rect,
+    );
+    rects
+}
+
+/// The rects `kit_fields` draws, its centre pixels, and the whole image.
+fn kit_fields_look(h: &mut Headless) -> (Vec<Rect>, Vec<image::Rgba<u8>>, image::RgbaImage) {
+    let (rects, image) = h.render(2, kit_fields);
+    let centres = rects
+        .iter()
+        .map(|r| *image.get_pixel(r.center().x as u32, r.center().y as u32))
+        .collect();
+    (rects, centres, image)
+}
+
+#[test]
+fn kit_controls_look_the_same_with_the_stock_widget_theme_on_and_off() {
+    let mut h = Headless::new(vec2(900.0, 160.0), 1.0);
+    for preset in MATCHABLE_PRESETS {
+        for density in Density::ALL {
+            h.theme(preset, density);
+            widget_theme::set_enabled(&h.ctx, true);
+            let (on_rects, on_centres, on_image) = kit_fields_look(&mut h);
+            widget_theme::set_enabled(&h.ctx, false);
+            let (off_rects, off_centres, off_image) = kit_fields_look(&mut h);
+            widget_theme::set_enabled(&h.ctx, true);
+            let at = format!("{} at {density:?}", preset.as_str());
+            assert_eq!(on_rects, off_rects, "{at}");
+            assert_eq!(on_centres, off_centres, "{at}");
+            assert!(
+                on_image == off_image,
+                "{at}: the kit row repaints differently"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_look_check_sees_stock_widgets_follow_the_switch() {
+    let mut h = Headless::new(vec2(900.0, 160.0), 1.0);
+    h.theme(PresetStyles::ShippedClassic, Density::Regular);
+    let draw = |h: &mut Headless| {
+        h.render(2, |ui| {
+            let _ = ui.button("Apply");
+        })
+        .1
+    };
+    let on = draw(&mut h);
+    widget_theme::set_enabled(&h.ctx, false);
+    let off = draw(&mut h);
+    widget_theme::set_enabled(&h.ctx, true);
+    assert!(on != off, "a stock button repaints with the switch");
+}
+
+/// A stock button in a Ui that overrides only the inactive border, as the task due-date button does.
+fn due_date_button(ui: &mut Ui) -> (Rect, bool) {
+    ui.scope(|ui| {
+        let edge = ui.visuals().warn_fg_color;
+        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(0.5, edge);
+        let response = ui.button("10/17");
+        (response.rect, response.hovered())
+    })
+    .inner
+}
+
+/// The due-date button's rect at rest and its rect and hover flag with the pointer on it.
+fn due_date_rest_and_hover(h: &mut Headless) -> (Rect, (Rect, bool)) {
+    let (rest, _) = settle(h, 2, due_date_button);
+    let _ = h.frame(vec![Event::PointerMoved(rest.center())], due_date_button);
+    let hovered = settle(h, 2, due_date_button);
+    let _ = h.frame(vec![Event::PointerGone], due_date_button);
+    (rest, hovered)
+}
+
+#[test]
+fn a_one_state_override_keeps_a_stock_button_stock_on_hover_for_every_preset_and_density() {
+    let mut h = Headless::new(vec2(400.0, 120.0), 1.0);
+    for preset in MATCHABLE_PRESETS {
+        for density in Density::ALL {
+            h.theme(preset, density);
+            let on = due_date_rest_and_hover(&mut h);
+            widget_theme::set_enabled(&h.ctx, false);
+            let off = due_date_rest_and_hover(&mut h);
+            widget_theme::set_enabled(&h.ctx, true);
+            let at = format!("{} at {density:?}", preset.as_str());
+            assert!(on.1.1, "{at}: the pointer hovers the button");
+            assert_eq!(on, off, "{at}: rest and hover match egui's own button");
+        }
+    }
+}
+
+#[test]
+fn a_style_installed_mid_pass_keeps_later_stock_buttons_kit_for_every_preset() {
+    let mut h = Headless::new(vec2(600.0, 160.0), 1.0);
+    for preset in MATCHABLE_PRESETS {
+        h.theme(preset, Density::Regular);
+        let steady = settle(&mut h, 2, |ui| ui.button("Apply").rect);
+        let (before, after) = settle(&mut h, 3, |ui| {
+            let before = ui.button("Apply").rect;
+            let mut style = (*ui.ctx().global_style()).clone();
+            style.visuals.widgets.inactive.bg_stroke.width += 1.0;
+            theme_config::install_style(ui.ctx(), style);
+            (before, ui.button("Apply").rect)
+        });
+        let at = preset.as_str();
+        assert_eq!(before.size(), steady.size(), "{at}");
+        assert_eq!(
+            after.size(),
+            steady.size(),
+            "{at}: a button after the install"
+        );
+    }
+}
+
 /// A dock of sample tabs for previewing the dock chrome.
 struct SampleTabs;
 
@@ -162,14 +412,20 @@ fn dock(ui: &mut Ui) {
         .show_inside(ui, &mut SampleTabs);
 }
 
-/// Writes the gallery and dock previews; run with `-- --ignored render_kit_previews`.
-#[test]
-#[ignore = "writes PNG previews; set MTECH_RENDER_DIR"]
-fn render_kit_previews() {
+/// `MTECH_RENDER_DIR`, or a temp folder, created if missing.
+fn render_dir() -> std::path::PathBuf {
     let dir = std::env::var_os("MTECH_RENDER_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("mtech-renders"));
     std::fs::create_dir_all(&dir).expect("render directory");
+    dir
+}
+
+/// Writes the gallery and dock previews; run with `-- --ignored render_kit_previews`.
+#[test]
+#[ignore = "writes PNG previews; set MTECH_RENDER_DIR"]
+fn render_kit_previews() {
+    let dir = render_dir();
     let ppp = std::env::var("MTECH_RENDER_PPP")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -209,6 +465,33 @@ fn render_kit_previews() {
         image
             .save(dir.join(format!("{name}_editor.png")))
             .expect("write editor png");
+    }
+}
+
+/// Writes the gallery's stock widgets section with the widget theme on and off; run with `-- --ignored render_stock_widgets`.
+#[test]
+#[ignore = "writes PNG previews; set MTECH_RENDER_DIR"]
+fn render_stock_widgets() {
+    let dir = render_dir();
+    for (name, preset) in [
+        ("mtech_studio", PresetStyles::MtechStudio),
+        ("mtech_glass", PresetStyles::MtechGlassFull),
+        ("shipped_classic", PresetStyles::ShippedClassic),
+    ] {
+        for (switch, on) in [("on", true), ("off", false)] {
+            let mut h = Headless::new(vec2(760.0, 900.0), 1.0);
+            h.theme(preset, Density::Regular);
+            widget_theme::set_enabled(&h.ctx, on);
+            let (end, image) = h.render(4, |ui| {
+                controls::stock_gallery(ui);
+                ui.cursor().top()
+            });
+            let bottom = (end + 16.0).ceil().min(image.height() as f32) as u32;
+            let image = image::imageops::crop_imm(&image, 0, 0, image.width(), bottom).to_image();
+            image
+                .save(dir.join(format!("stock_{name}_{switch}.png")))
+                .expect("write stock widgets png");
+        }
     }
 }
 
@@ -285,10 +568,7 @@ fn preset_sample(ui: &mut Ui, preset: PresetStyles) {
 #[test]
 #[ignore = "writes PNG previews; set MTECH_RENDER_DIR"]
 fn render_preset_sheets() {
-    let dir = std::env::var_os("MTECH_RENDER_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("mtech-renders"));
-    std::fs::create_dir_all(&dir).expect("render directory");
+    let dir = render_dir();
     let (cols, rows) = SHEET_GRID;
     let per_sheet = (cols * rows) as usize;
     for (sheet, presets) in MATCHABLE_PRESETS.chunks(per_sheet).enumerate() {

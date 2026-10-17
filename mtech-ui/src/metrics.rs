@@ -160,8 +160,9 @@ pub fn set_density(ctx: &Context, density: Density) {
     ctx.data_mut(|d| d.insert_temp(density_id(), density));
 }
 
-/// Overlays the current density's metrics on `style`, installs it, and publishes its metrics and tokens.
+/// Overlays the current density's metrics on `style`, installs it with the kit widget theme, and publishes its metrics and tokens.
 pub fn install_overlaid_style(ctx: &Context, mut style: Style) {
+    crate::widget_theme::install(ctx);
     let metrics = Metrics::for_density(density(ctx));
     apply_metrics(&mut style, &metrics);
     let tokens = Tokens::derive(

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use eframe::egui::{
     Color32, Context, CornerRadius, FontFamily, FontId, Galley, Id, Rect, Response, Stroke,
-    StrokeKind, TextStyle, Ui, text::LayoutJob,
+    StrokeKind, Style, TextStyle, Ui, text::LayoutJob,
 };
 
 pub use crate::icon_pack::Icon;
@@ -27,7 +27,7 @@ pub use fields::{
     Dropdown, TextArea, TextField, ValueField, dropdown, search_field, text_area, text_field,
     value_field,
 };
-pub use gallery::gallery;
+pub use gallery::{gallery, stock_gallery};
 pub use labels::{
     IconLabel, IconLink, Pill, Section, SpinnerSize, badge, count_badge, elided_label, fold_header,
     hairline, heading, icon_hyperlink, icon_label, icon_link, loading_row, note, pill,
@@ -45,7 +45,10 @@ pub use list::ListItem;
 pub use meter::{ProgressBar, Segment, Slider, meter, progress_bar, segmented, slider};
 pub use toggle::{checkbox, toggle};
 
+pub(crate) use buttons::{colors as button_colors, selected_colors};
+pub(crate) use fields::{dropdown_colors, field_border};
 pub(crate) use layout::menu_rows;
+pub(crate) use toggle::{CHECK_INSET, LABEL_GAP, box_radius, checkbox_colors};
 
 /// Interaction state a control paints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -148,11 +151,11 @@ fn installed_weights(ctx: &Context) -> (bool, bool) {
 }
 
 /// `font` in the `weight` family when it is proportional and that family is installed.
-fn weighted(ui: &Ui, font: FontId, weight: Weight) -> FontId {
+fn weighted(ctx: &Context, font: FontId, weight: Weight) -> FontId {
     if font.family != FontFamily::Proportional {
         return font;
     }
-    let (medium, semibold) = installed_weights(ui.ctx());
+    let (medium, semibold) = installed_weights(ctx);
     match weight {
         Weight::Medium if medium => FontId::new(font.size, crate::fonts::MEDIUM_FAMILY.clone()),
         Weight::Semibold if semibold => {
@@ -164,30 +167,39 @@ fn weighted(ui: &Ui, font: FontId, weight: Weight) -> FontId {
 
 /// The theme's font for `style` at the medium weight.
 pub(crate) fn medium_font(ui: &Ui, style: TextStyle) -> FontId {
-    weighted(ui, style.resolve(ui.style()), Weight::Medium)
+    medium_font_in(ui.ctx(), ui.style(), style)
+}
+
+/// `text_style` resolved against `style` at the medium weight.
+pub(crate) fn medium_font_in(ctx: &Context, style: &Style, text_style: TextStyle) -> FontId {
+    weighted(ctx, text_style.resolve(style), Weight::Medium)
 }
 
 /// The theme's body face at `size` points and the medium weight.
 pub(crate) fn medium_font_sized(ui: &Ui, size: f32) -> FontId {
     let body = TextStyle::Body.resolve(ui.style());
-    weighted(ui, FontId::new(size, body.family), Weight::Medium)
+    weighted(ui.ctx(), FontId::new(size, body.family), Weight::Medium)
 }
 
 /// The theme's body face at `size` points and the semibold weight.
 pub(crate) fn semibold_font_sized(ui: &Ui, size: f32) -> FontId {
     let body = TextStyle::Body.resolve(ui.style());
-    weighted(ui, FontId::new(size, body.family), Weight::Semibold)
+    weighted(ui.ctx(), FontId::new(size, body.family), Weight::Semibold)
+}
+
+/// A 1 px stroke in `color`, or none when `color` is invisible.
+pub(crate) fn box_stroke(color: Color32) -> Stroke {
+    if color.a() == 0 {
+        Stroke::NONE
+    } else {
+        Stroke::new(1.0, color)
+    }
 }
 
 /// Fill plus a 1 px inside stroke when `stroke` is visible.
 pub(crate) fn paint_box(ui: &Ui, rect: Rect, radius: u8, fill: Color32, stroke: Color32) {
-    let stroke = if stroke.a() == 0 {
-        Stroke::NONE
-    } else {
-        Stroke::new(1.0, stroke)
-    };
     ui.painter()
-        .rect(rect, radius, fill, stroke, StrokeKind::Inside);
+        .rect(rect, radius, fill, box_stroke(stroke), StrokeKind::Inside);
 }
 
 /// Two-pixel primary ring one pixel outside `rect`.

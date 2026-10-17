@@ -15,6 +15,8 @@ puffin = []
 stress-ui = ["dep:stress-runner"]
 
 [dependencies]
+# Makes `egui::theme` public for the kit's widget theme on every target.
+egui = { version = "0.37", default-features = false, features = ["experimental"] }
 egui_dock.workspace = true
 egui-phosphor.workspace = true
 stress-runner = { workspace = true, optional = true }
