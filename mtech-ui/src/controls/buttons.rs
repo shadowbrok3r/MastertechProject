@@ -3,14 +3,15 @@
 use std::sync::Arc;
 
 use eframe::egui::{
-    Color32, FontId, Galley, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo, pos2,
-    vec2,
+    Color32, FontId, Galley, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo,
+    class::ClassName, pos2, vec2,
 };
 
 use super::{
     Icon, Metrics, State, Tokens, elided, focus_ring, kit, medium_font, mix, paint_box, state_of,
     text_galley, whole,
 };
+use crate::widget_theme;
 
 /// Gap between a button's icon and its label.
 const ICON_GAP: f32 = 6.0;
@@ -37,6 +38,18 @@ pub enum ButtonKind {
     Danger,
     /// Transparent until hovered.
     Ghost,
+}
+
+impl ButtonKind {
+    /// The widget-theme class giving a stock egui button this kind's colours; none for neutral.
+    pub fn class(self) -> Option<ClassName> {
+        match self {
+            Self::Neutral => None,
+            Self::Primary => Some(widget_theme::PRIMARY),
+            Self::Danger => Some(widget_theme::DANGER),
+            Self::Ghost => Some(widget_theme::GHOST),
+        }
+    }
 }
 
 /// A text button with an optional leading icon.
@@ -144,7 +157,12 @@ impl<'a> TextButton<'a> {
         }
         let (_, m) = kit(ui);
         let icon_w = self.icon.map_or(0.0, |_| m.icon_md + ICON_GAP);
-        elided(ui, self.label, font, self.max_width - icon_w - 2.0 * m.pad.x)
+        elided(
+            ui,
+            self.label,
+            font,
+            self.max_width - icon_w - 2.0 * m.pad.x,
+        )
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
@@ -208,7 +226,7 @@ fn face(ui: &Ui, mono: bool) -> FontId {
 }
 
 /// Fill, border and ink for a button of `kind` in `state`.
-fn colors(t: &Tokens, kind: ButtonKind, state: State) -> (Color32, Color32, Color32) {
+pub(crate) fn colors(t: &Tokens, kind: ButtonKind, state: State) -> (Color32, Color32, Color32) {
     match kind {
         ButtonKind::Neutral => match state {
             State::Rest => (t.field, t.field_border, t.text),
@@ -246,6 +264,11 @@ fn colors(t: &Tokens, kind: ButtonKind, state: State) -> (Color32, Color32, Colo
             State::Pressed => (t.pressed, Color32::TRANSPARENT, t.text),
         },
     }
+}
+
+/// Fill, border and ink of a selected control.
+pub(crate) fn selected_colors(t: &Tokens) -> (Color32, Color32, Color32) {
+    (t.primary_soft, t.primary_border, t.text)
 }
 
 /// Neutral button at [`Metrics::control_h`].
@@ -385,7 +408,8 @@ impl<'a> IconButton<'a> {
             let (state, focused) = state_of(ui, &response);
             let glyph = self.size.glyph(&m);
             if self.selected {
-                paint_box(ui, rect, t.radius_sm, t.primary_soft, t.primary_border);
+                let (fill, edge, _) = selected_colors(&t);
+                paint_box(ui, rect, t.radius_sm, fill, edge);
                 self.icon.paint_duo(
                     ui,
                     rect,
@@ -464,10 +488,16 @@ mod max_width_tests {
         let ctx = context();
         let long = "[88412] Dana Whitfield-Montgomery of the Northern Valley";
         let (free, free_cut) = drawn(&ctx, || TextButton::new(long).icon(crate::icon_pack::GEAR));
-        let (capped, capped_cut) =
-            drawn(&ctx, || TextButton::new(long).icon(crate::icon_pack::GEAR).max_width(160.0));
-        let (short, short_cut) =
-            drawn(&ctx, || TextButton::new("Dana").icon(crate::icon_pack::GEAR).max_width(160.0));
+        let (capped, capped_cut) = drawn(&ctx, || {
+            TextButton::new(long)
+                .icon(crate::icon_pack::GEAR)
+                .max_width(160.0)
+        });
+        let (short, short_cut) = drawn(&ctx, || {
+            TextButton::new("Dana")
+                .icon(crate::icon_pack::GEAR)
+                .max_width(160.0)
+        });
         assert!(free > 160.0 && !free_cut, "uncapped: {free}");
         assert!(capped <= 160.0 && capped_cut, "capped: {capped}");
         assert!(short < 160.0 && !short_cut, "short: {short}");

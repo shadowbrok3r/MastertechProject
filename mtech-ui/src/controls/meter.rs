@@ -435,7 +435,7 @@ pub fn segmented<V: PartialEq + Clone>(
                     mix(t.field, tone, SEGMENT_TONE_EDGE),
                     tone,
                 ),
-                None => (t.primary_soft, t.primary_border, t.text),
+                None => super::selected_colors(&t),
             };
             ui.painter().rect(
                 wash,

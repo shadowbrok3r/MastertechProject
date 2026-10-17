@@ -260,7 +260,7 @@ impl<'a> ListItem<'a> {
         let (state, focused) = state_of(ui, &response);
         let action_hot = action.as_ref().is_some_and(|(_, hit)| hit.hovered());
         let fill = match (self.selected, state, action_hot) {
-            (true, _, _) => t.primary_soft,
+            (true, _, _) => super::selected_colors(&t).0,
             (false, _, true) | (false, State::Hovered, _) => t.hover,
             (false, State::Pressed, _) => t.pressed,
             (false, State::Rest, false) => Color32::TRANSPARENT,

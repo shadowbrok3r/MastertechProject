@@ -1,19 +1,23 @@
 //! Every kit control in every state, for the theme editor's live preview.
 
-use eframe::egui::{Align, Frame, Id, Layout, Ui, Vec2};
+use eframe::egui::{
+    Align, Button, ComboBox, DragValue, Frame, Id, Layout, TextEdit, Ui, Vec2,
+    class::HasClasses as _, containers::menu,
+};
 
 use super::{
     BarKind, ButtonKind, Dropdown, IconBox, IconButton, IconLabel, IconLink, ListItem, MenuButton,
     MenuItem, Pill, Preview, ProgressBar, Role, Section, Segment, Slider, SpinnerSize, TextArea,
     TextButton, TextField, Tokens, ValueField, badge, bar, button, callout, card, checkbox,
     count_badge, dialog_buttons_enabled, dialog_contents, dropdown, elided_label, empty_state,
-    ghost_button, heading, icon_button, icon_hyperlink, icon_label, icon_link, icon_text_button,
-    kit, loading_row, loading_state, menu_body, menu_check_item, menu_danger_item, menu_item,
-    menu_picker, menu_separator, meter, panel_header, pill, search_field, section_header,
-    section_label, segmented, spinner, status_label, subheading, submenu, text_field,
-    tinted_spinner, toggle, value_field, vline, with_preview,
+    ghost_button, hairline, heading, icon_button, icon_hyperlink, icon_label, icon_link,
+    icon_text_button, kit, loading_row, loading_state, menu_body, menu_check_item,
+    menu_danger_item, menu_item, menu_picker, menu_separator, meter, note, panel_header, pill,
+    primary_button, search_field, section_header, section_label, segmented, spinner, status_label,
+    subheading, submenu, text_field, tinted_spinner, toggle, value_field, vline, with_preview,
 };
 use crate::icon_pack::{self as svg, Icon};
+use crate::widget_theme;
 
 /// Width of the gallery's text fields.
 const FIELD_W: f32 = 160.0;
@@ -61,6 +65,9 @@ struct Samples {
     view: usize,
     scale: f32,
     picked: usize,
+    stock_text: String,
+    stock_notes: String,
+    stock_line: String,
 }
 
 impl Default for Samples {
@@ -82,6 +89,9 @@ impl Default for Samples {
             view: 0,
             scale: 1.5,
             picked: 0,
+            stock_text: String::new(),
+            stock_notes: String::new(),
+            stock_line: "One line".to_owned(),
         }
     }
 }
@@ -114,9 +124,13 @@ const STRIP: [Icon; 18] = [
     svg::ROBOT,
 ];
 
+fn gallery_id() -> Id {
+    Id::unique("mtech.controls.gallery")
+}
+
 /// Every kit control in collapsible sections, in rest, hover, press, focus and disabled states.
 pub fn gallery(ui: &mut Ui) {
-    let id = Id::unique("mtech.controls.gallery");
+    let id = gallery_id();
     let mut s = ui.data(|d| d.get_temp::<Samples>(id)).unwrap_or_default();
     ui.push_id(id, |ui| {
         buttons(ui);
@@ -132,8 +146,17 @@ pub fn gallery(ui: &mut Ui) {
         empty(ui);
         dialog(ui);
         menus(ui, &mut s);
+        stock(ui, &mut s);
         icons(ui);
     });
+    ui.data_mut(|d| d.insert_temp(id, s));
+}
+
+/// The gallery's stock egui widgets section on its own.
+pub fn stock_gallery(ui: &mut Ui) {
+    let id = gallery_id();
+    let mut s = ui.data(|d| d.get_temp::<Samples>(id)).unwrap_or_default();
+    ui.push_id(id, |ui| stock(ui, &mut s));
     ui.data_mut(|d| d.insert_temp(id, s));
 }
 
@@ -733,6 +756,165 @@ fn menus(ui: &mut Ui, s: &mut Samples) {
             let _ = menu_danger_item(ui, svg::TRASH, "Delete file");
             with_preview(ui, Preview::Hovered, |ui| {
                 menu_danger_item(ui, svg::TRASH, "Delete folder")
+            });
+        });
+    });
+}
+
+/// Stock egui widgets beside their kit equivalents, under the kit-look switch.
+fn stock(ui: &mut Ui, s: &mut Samples) {
+    if !section_header(ui, "gallery.stock", svg::PUZZLE_PIECE, "Stock egui widgets") {
+        return;
+    }
+    let mut on = widget_theme::enabled(ui.ctx());
+    if toggle(ui, &mut on, "Kit look for stock widgets").changed() {
+        widget_theme::set_enabled(ui.ctx(), on);
+    }
+    if ui.visuals().override_text_color.is_some() {
+        let _ = note(
+            ui,
+            svg::INFO,
+            "This theme sets a text colour, so stock labels use it and mt-primary takes the selected look.",
+            Tokens::get(ui.ctx()).text_dim,
+        );
+    }
+    let kinds = [
+        (ButtonKind::Neutral, "Neutral"),
+        (ButtonKind::Primary, "Primary"),
+        (ButtonKind::Danger, "Danger"),
+        (ButtonKind::Ghost, "Ghost"),
+    ];
+    ui.horizontal(|ui| {
+        for (kind, label) in kinds {
+            let button = match kind.class() {
+                Some(class) => Button::new(label).with_class(class),
+                None => Button::new(label),
+            };
+            let _ = ui.add(button);
+        }
+        vline(ui, VLINE_H);
+        for (kind, label) in kinds {
+            let _ = TextButton::new(label).kind(kind).show(ui);
+        }
+    });
+    ui.horizontal(|ui| {
+        let prominent = Button::new("Prominent")
+            .with_class(widget_theme::PRIMARY)
+            .with_class(widget_theme::PROMINENT);
+        let _ = ui.add(prominent);
+        let _ = ui.small_button("Small");
+        let _ = ui.add(Button::new("Frameless").frame(false));
+        let _ = ui.selectable_label(true, "Selected");
+        let _ = ui.selectable_label(false, "Unselected");
+        vline(ui, VLINE_H);
+        let _ = primary_button(ui, "Prominent");
+        let _ = segmented(
+            ui,
+            &mut s.view,
+            &[Segment::new(0, "Selected"), Segment::new(1, "Unselected")],
+        );
+    });
+    ui.horizontal(|ui| {
+        let current = CHOICES
+            .iter()
+            .find(|(value, _)| *value == s.choice)
+            .map_or("", |(_, label)| *label);
+        ComboBox::from_id_salt("gallery.stock.combo")
+            .width(DROPDOWN_W)
+            .selected_text(current)
+            .show_ui(ui, |ui| {
+                for (value, label) in CHOICES {
+                    let _ = ui.selectable_value(&mut s.choice, value, label);
+                }
+            });
+        let _ = ui.add(
+            DragValue::new(&mut s.size)
+                .range(1.0..=2500.0)
+                .suffix(" px"),
+        );
+        vline(ui, VLINE_H);
+        let _ = dropdown(
+            ui,
+            "gallery.stock.dropdown",
+            &mut s.choice,
+            &CHOICES,
+            DROPDOWN_W,
+        );
+        let _ = value_field(ui, &mut s.size, 1.0..=2500.0, "px", VALUE_W);
+    });
+    ui.horizontal(|ui| {
+        let edit = TextEdit::singleline(&mut s.stock_text)
+            .hint_text("Customer name")
+            .desired_width(FIELD_W);
+        let _ = ui.add(edit);
+        let mut fixed = "Read-only";
+        let _ = ui.add(TextEdit::singleline(&mut fixed).desired_width(FIELD_W));
+        vline(ui, VLINE_H);
+        let _ = text_field(ui, &mut s.stock_text, "Customer name", FIELD_W);
+        let mut fixed = "Read-only";
+        let _ = TextField::new(&mut fixed).width(FIELD_W).show(ui);
+    });
+    ui.horizontal_top(|ui| {
+        for text in [&mut s.stock_notes, &mut s.stock_line] {
+            let edit = TextEdit::multiline(text)
+                .hint_text("Describe the fault")
+                .desired_rows(3)
+                .desired_width(FIELD_W);
+            let _ = ui.add(edit);
+        }
+        vline(ui, VLINE_H);
+        for text in [&mut s.stock_notes, &mut s.stock_line] {
+            let _ = TextArea::new(text)
+                .hint("Describe the fault")
+                .rows(3)
+                .width(FIELD_W)
+                .show(ui);
+        }
+    });
+    ui.horizontal(|ui| {
+        let _ = ui.checkbox(&mut s.on, "Startup.ps1");
+        let _ = ui.checkbox(&mut s.off, "Cleanup.ps1");
+        vline(ui, VLINE_H);
+        let _ = checkbox(ui, &mut s.on, "Startup.ps1");
+        let _ = checkbox(ui, &mut s.off, "Cleanup.ps1");
+    });
+    let _ = ui.separator();
+    let _ = hairline(ui);
+    ui.horizontal(|ui| {
+        let _ = ui.menu_button("Stock menu", |ui| {
+            let _ = ui.button("Open");
+            let _ = ui.button("Save as");
+            let _ = ui.separator();
+            let _ = ui.checkbox(&mut s.on, "Wrap lines");
+        });
+        vline(ui, VLINE_H);
+        let _ = MenuButton::new("Kit menu").show(ui, |ui| {
+            let _ = menu_item(ui, svg::FOLDER_OPEN, "Open");
+            let _ = menu_item(ui, svg::FLOPPY_DISK, "Save as");
+            menu_separator(ui);
+            let _ = menu_check_item(ui, None, "Wrap lines", s.on);
+        });
+    });
+    ui.horizontal_top(|ui| {
+        Frame::menu(ui.style()).show(ui, |ui| {
+            ui.set_width(super::layout::MENU_MIN_W);
+            ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
+                menu::menu_style(ui.style_mut());
+                let _ = ui.button("Open");
+                let _ = ui.button("Save as");
+                let _ = ui.separator();
+                let _ = ui.checkbox(&mut s.on, "Wrap lines");
+            });
+        });
+        Frame::menu(ui.style()).show(ui, |ui| {
+            ui.set_width(super::layout::MENU_MIN_W);
+            ui.vertical(|ui| {
+                menu_body(ui, |ui| {
+                    let _ = menu_item(ui, svg::FOLDER_OPEN, "Open");
+                    let _ = menu_item(ui, svg::FLOPPY_DISK, "Save as");
+                    menu_separator(ui);
+                    let _ = menu_check_item(ui, None, "Wrap lines", s.on);
+                });
             });
         });
     });

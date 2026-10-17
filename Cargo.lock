@@ -6715,6 +6715,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "eframe",
+ "egui",
  "egui-phosphor",
  "egui_dock",
  "egui_extras",
